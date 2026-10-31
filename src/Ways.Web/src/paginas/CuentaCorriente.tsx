@@ -32,6 +32,7 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { SeccionesDeCobros } from '../componentes/cobros/SeccionesDeCobros'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { guardarPuntoVentaSeleccionado, leerPuntoVentaGuardado, ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
 import { formatearImporte } from '../formato/importes'
@@ -571,7 +572,7 @@ function TablaDelLibroDeCuenta({ movimientos }: { movimientos: MovimientoDeCuent
 
   return (
     <div className="table-responsive">
-      <table className="table table-sm table-striped table-bordered align-middle">
+      <table className="table table-sm table-striped table-bordered align-middle" aria-label="Movimientos">
         <thead>
           <tr>
             <EncabezadoOrdenable columna="fecha" orden={orden} onAlternar={alternar}>
@@ -651,6 +652,8 @@ function PantallaCuentaCorriente({
   // Aviso compartido por las tres acciones de escritura (pago, ajuste, reliquidación) — mismo
   // patrón de banner único que ya usaba el pago (rule 10 sweep: el aviso de éxito aplica parejo).
   const [aviso, setAviso] = useState('')
+  // Sube tras un pago a cuenta: los recibos y las ventas pendientes de las secciones de cobros pudieron cambiar.
+  const [versionCobros, setVersionCobros] = useState(0)
 
   const { usuario } = useAuth()
   // Cosmético (design: Web Composition — "el servidor vuelve a exigir SupervisionDeCuentaCorriente
@@ -898,6 +901,16 @@ function PantallaCuentaCorriente({
             {cargandoEstado && <p className="text-muted">Actualizando…</p>}
 
             <TablaDelLibroDeCuenta movimientos={estado.movimientos} />
+
+            <SeccionesDeCobros
+              idCliente={idCliente}
+              puedeSupervisar={esSupervisorOAdmin}
+              versionExterna={versionCobros}
+              onEscritura={(mensaje) => {
+                setAviso(mensaje)
+                cargarEstado()
+              }}
+            />
           </>
         )}
       </Box>
@@ -918,6 +931,7 @@ function PantallaCuentaCorriente({
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal — si
             // falla, no pisa el aviso de éxito de arriba (solo el propio error de carga del
             // ledger, que ya tiene su mensaje distinguible).
+            setVersionCobros((v) => v + 1)
             cargarEstado()
           }}
         />

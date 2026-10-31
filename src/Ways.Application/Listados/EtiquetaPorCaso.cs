@@ -23,4 +23,13 @@ public static class EtiquetaPorCaso
 
         return cuerpo;
     }
+
+    /// <summary>Selector <c>x =&gt; CASE x.clave ... END</c> listo para <c>OrderBy</c>: el texto que muestra la pantalla
+    /// para un enum que la base guarda como código.</summary>
+    public static Expression<Func<TEntidad, string>> Selector<TEntidad, TClave>(
+        Expression<Func<TEntidad, TClave>> clave, IReadOnlyDictionary<TClave, string> etiquetas)
+        where TClave : notnull =>
+        Expression.Lambda<Func<TEntidad, string>>(
+            De(clave.Body, etiquetas, Expression.Constant(string.Empty)),
+            clave.Parameters);
 }

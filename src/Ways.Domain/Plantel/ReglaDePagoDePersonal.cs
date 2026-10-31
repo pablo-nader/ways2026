@@ -1,9 +1,9 @@
 using Ways.Domain.Common;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 
 namespace Ways.Domain.Plantel;
 
-/// <summary>Una entrega de dinero del pago: se vuelve un gasto de categoría sueldos. El medio de pago y su
+/// <summary>Una entrega de dinero del pago: se vuelve un pago de categoría sueldos. El medio de pago y su
 /// referencia (cupón u operación) los elige quien paga.</summary>
 public sealed record LineaDePagoDePersonal(int IdMedioPago, decimal Importe, string? Referencia);
 
@@ -11,14 +11,14 @@ public sealed record LineaDePagoDePersonal(int IdMedioPago, decimal Importe, str
 public sealed record PlanDePagoDePersonal(
     decimal? DescuentoDeCuentaCorriente,
     IReadOnlyList<LineaDePagoDePersonal> Lineas,
-    OrigenFondosGasto? OrigenFondos,
+    OrigenFondosPago? OrigenFondos,
     decimal Total,
     string? Detalle);
 
 /// <summary>
 /// Combinaciones legales de un pago de personal y su total, sin base de datos. Un pago tiene un descuento
 /// de la cuenta corriente del cliente vinculado (a lo sumo uno, no mueve dinero), líneas de dinero (cero o
-/// más, cada una un gasto) o ambos, pero no puede estar vacío. El origen de los fondos solo existe cuando
+/// más, cada una un pago) o ambos, pero no puede estar vacío. El origen de los fondos solo existe cuando
 /// hay líneas de dinero. Los límites de importe son los de <c>numeric(14,2)</c>.
 /// </summary>
 public static class ReglaDePagoDePersonal
@@ -27,7 +27,7 @@ public static class ReglaDePagoDePersonal
     public const int LongitudMaximaDeReferencia = 100;
 
     public static PlanDePagoDePersonal Planificar(
-        decimal? descuento, IReadOnlyList<LineaDePagoDePersonal?>? lineas, OrigenFondosGasto? origenFondos, string? detalle)
+        decimal? descuento, IReadOnlyList<LineaDePagoDePersonal?>? lineas, OrigenFondosPago? origenFondos, string? detalle)
     {
         // El binder acepta cualquier entero para un enum: un valor sin nombre se rechaza antes que nada, porque
         // ninguna otra regla ni el servicio saben qué hacer con él.
@@ -77,7 +77,7 @@ public static class ReglaDePagoDePersonal
     /// venta) exigen el punto de venta.</summary>
     public static void ExigirUbicacion(PlanDePagoDePersonal plan, int? idEmpresa, int? idPuntoVenta)
     {
-        var tesoreria = plan.OrigenFondos == OrigenFondosGasto.Tesoreria;
+        var tesoreria = plan.OrigenFondos == OrigenFondosPago.Tesoreria;
 
         if (tesoreria && idEmpresa is null)
         {
@@ -92,7 +92,7 @@ public static class ReglaDePagoDePersonal
                 "La empresa solo se indica en un pago de la tesorería; en los demás sale del punto de venta.", 400);
         }
 
-        var exigePuntoVenta = plan.OrigenFondos == OrigenFondosGasto.CajaTurno || plan.DescuentoDeCuentaCorriente is not null;
+        var exigePuntoVenta = plan.OrigenFondos == OrigenFondosPago.CajaTurno || plan.DescuentoDeCuentaCorriente is not null;
         if (exigePuntoVenta && idPuntoVenta is null)
         {
             throw new ErrorDominio(
@@ -101,7 +101,7 @@ public static class ReglaDePagoDePersonal
         }
     }
 
-    private static void ValidarOrigen(int cantidadDeLineas, OrigenFondosGasto? origenFondos)
+    private static void ValidarOrigen(int cantidadDeLineas, OrigenFondosPago? origenFondos)
     {
         if (cantidadDeLineas > 0 && origenFondos is null)
         {
@@ -139,5 +139,5 @@ public static class ReglaDePagoDePersonal
     }
 
     private static bool EsImporteValido(decimal importe) =>
-        importe > 0 && importe <= ReglaDeMovimientoDePersonal.ImporteMaximo && decimal.Round(importe, 2) == importe;
+        importe <= ReglaDeMovimientoDePersonal.ImporteMaximo && ReglaDeLineasDePago.EsImporteValido(importe);
 }

@@ -48,7 +48,7 @@ namespace Ways.Application.Bajas;
 /// referencian estos 5 catálogos — <c>ServicioDeArticulos.CrearAsync</c>/<c>ActualizarAsync</c>
 /// reemplazan su pre-chequeo <c>AnyAsync</c> filtrado por <see cref="BloquearSiEstaVivaAsync{T}"/>
 /// dentro de su propia transacción). Sigue ABIERTO para el resto de los escritores (ventas,
-/// gastos, compras, órdenes de compra, ofertas, clientes, precios): cada uno conserva un
+/// pagos, compras, órdenes de compra, ofertas, clientes, precios): cada uno conserva un
 /// pre-chequeo filtrado sin lock.
 /// </summary>
 public sealed class GuardaDeReferencias(IWaysDbContext db, InspectorDeUso inspector)

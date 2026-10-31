@@ -67,7 +67,7 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .IsRequired();
 
         // Habilita la FK compuesta autorreferenciada de fk_comprobantes_venta_comprobante_asociado
-        // y las FKs compuestas de items_comprobante_venta/pagos_comprobante/movimientos_stock/
+        // y las FKs compuestas de items_comprobante_venta/cobros/movimientos_stock/
         // movimientos_cuenta_corriente — mismo patrón que Oferta/Cliente.
         builder.HasAlternateKey(c => new { c.Id, c.IdTenant })
             .HasName("ak_comprobantes_venta_id_comprobante_venta_id_tenant");

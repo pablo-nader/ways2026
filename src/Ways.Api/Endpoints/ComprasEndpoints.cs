@@ -4,7 +4,7 @@ using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.Exportacion;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Domain.Compras;
 
 namespace Ways.Api.Endpoints;
@@ -32,12 +32,17 @@ public static class ComprasEndpoints
             OrigenCompra? origen,
             int? pagina,
             int? tamanio,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, origen, ct))
+            servicio.ListarAsync(
+                idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, origen, orden, direccion, ct))
         .WithSummary(
+            "orden (numero, proveedor, tipo, estado, fechaRecepcion, total) y direccion (ascendente, " +
+            "descendente) ordenan todo el conjunto filtrado antes de paginar; 400 si no son válidos. " +
             "Lista comprobantes de compra con filtros y paginado. idEmpresa (stage-tesoreria-por-" +
             "empresa, PR5) filtra por la empresa del punto de venta de la compra — usado por el " +
-            "picker 'Vincular a compra' de Gastos para no ofrecer compras de otra empresa. origen " +
+            "picker 'Vincular a compra' de Pagos para no ofrecer compras de otra empresa. origen " +
             "filtra por quién cargó la compra (Manual o Asistente); la API no permite fijarlo.");
 
         // stage-11-exportacion-reportes (Slice 3, design decisión 7): sibling declarado
@@ -98,11 +103,17 @@ public static class ComprasEndpoints
 
         grupo.MapPut("/{id:int}", async (ServicioDeCompras servicio, int id, SolicitudDeCompra solicitud, CancellationToken ct) =>
         {
-            var actualizada = await servicio.ActualizarBorradorAsync(id, solicitud, ct);
+            var actualizada = await servicio.ActualizarAsync(id, solicitud, ct);
             return Results.Ok(actualizada);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Reemplaza el header y el set completo de items de un borrador (borrador únicamente).");
+        .WithSummary(
+            "Reemplaza el header y el set completo de items de una compra. Un borrador se reemplaza tal cual; una " +
+            "confirmada se edita por diferencia (el stock y la cuenta del proveedor se corrigen con movimientos nuevos, " +
+            "409 compra_edicion_stock_negativo si el stock no alcanza). Si el total baja por debajo de lo aplicado se " +
+            "recortan las aplicaciones, la más nueva primero, y si cambia el proveedor o el punto de venta se liberan " +
+            "todas y se cortan los vínculos de los pagos; el redondeo de la compra se revierte. Una anulada responde " +
+            "409 compra_no_editable.");
 
         grupo.MapDelete("/{id:int}", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {
@@ -132,11 +143,18 @@ public static class ComprasEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Anula una compra confirmada: contramovimientos de stock, nunca revierte costo_nominal.");
 
+        grupo.MapPost("/{id:int}/ajuste-de-redondeo", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.AjustarRedondeoDeCompraAsync(id, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Cierra en cero una compra confirmada con saldo pendiente de hasta la tolerancia de redondeo: perdona el saldo " +
+            "con un movimiento de redondeo de la cuenta corriente del proveedor.");
+
         grupo.MapPost("/{id:int}/pagos", async (
-            ServicioDeGastos servicio, int id, SolicitudDePagoDeCompra solicitud, CancellationToken ct) =>
+            ServicioDePagos servicio, int id, SolicitudDePagoDeCompra solicitud, CancellationToken ct) =>
         {
             var resultado = await servicio.PagarCompraAsync(id, solicitud, ct);
-            return Results.Created($"/api/gastos/administracion/{resultado.Gasto.Id}", resultado);
+            return Results.Created($"/api/gastos/administracion/{resultado.Pago.Id}", resultado);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(

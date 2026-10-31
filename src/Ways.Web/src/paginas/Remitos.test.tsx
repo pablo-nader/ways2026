@@ -212,6 +212,120 @@ describe('Remitos — pager', () => {
   })
 })
 
+describe('Remitos — orden en el servidor', () => {
+  const llamadasAlListado = () =>
+    apiGetMock.mock.calls.map((c: unknown[]) => c[0] as string).filter((ruta) => ruta.startsWith('/remitos?'))
+
+  it('el clic en un encabezado pide el orden al servidor, recorre ascendente, descendente y el orden de siempre', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('0007-00000012')
+    expect(llamadasAlListado().every((ruta) => !ruta.includes('orden='))).toBe(true)
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=total&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Total/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=total&direccion=descendente'))
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).not.toContain('orden='))
+  })
+
+  it.each([
+    ['Número', 'numero'],
+    ['Cliente', 'cliente'],
+    ['Punto de venta', 'puntoVenta'],
+    ['Estado', 'estado'],
+    ['Fecha de emisión', 'fechaEmision'],
+    ['Total', 'total'],
+  ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('0007-00000012')
+
+    await usuario.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain(`orden=${clave}&direccion=ascendente`))
+  })
+
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/remitos?')
+        ? Promise.resolve(paginaFixture({ total: 50, pagina: ruta.includes('pagina=2') ? 2 : 1, tamanio: 25 }))
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText(/Página 1 de 2/)
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Facturado')
+    await screen.findByText(/Página 1 de 2/)
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 2/)
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+
+    await waitFor(() => {
+      const ultima = llamadasAlListado().at(-1)!
+      expect(ultima).toContain('orden=total&direccion=ascendente')
+      expect(ultima).toContain('pagina=1')
+      expect(ultima).toContain('estado=Facturado')
+    })
+    await screen.findByText(/Página 1 de 2/)
+  })
+
+  it('una respuesta stale de un orden anterior no pisa la del orden más nuevo', async () => {
+    let resolverPorTotal: (v: PaginaDeRemitos) => void = () => {}
+    let promesaPorTotal: Promise<PaginaDeRemitos> = Promise.resolve(paginaFixture())
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/remitos?') && ruta.includes('orden=total')) {
+        promesaPorTotal = new Promise((resolve) => (resolverPorTotal = resolve))
+        return promesaPorTotal
+      }
+      if (ruta.startsWith('/remitos?') && ruta.includes('orden=estado')) {
+        return Promise.resolve(paginaFixture({ items: [remitoFixture({ id: 2, numeroFormateado: '0007-00000099' })] }))
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('0007-00000012')
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Estado/ }))
+    await screen.findByText('0007-00000099')
+
+    await act(async () => {
+      resolverPorTotal(paginaFixture({ items: [remitoFixture({ id: 3, numeroFormateado: '0007-00000199' })] }))
+      await promesaPorTotal
+    })
+
+    expect(screen.getByText('0007-00000099')).toBeInTheDocument()
+    expect(screen.queryByText('0007-00000199')).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Estado/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('si la consulta con orden falla, la tabla y su encabezado desaparecen: nunca queda un orden que las filas no tienen', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/remitos?') && ruta.includes('orden=total')
+        ? Promise.reject(new Error('caída'))
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('0007-00000012')
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+
+    await screen.findByText('No se pudieron cargar los remitos.')
+    expect(screen.queryByRole('columnheader', { name: /Total/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('0007-00000012')).not.toBeInTheDocument()
+  })
+})
+
 describe('Remitos — herramientas ("Nuevo remito" / "Facturar remitos")', () => {
   it('ambos botones siempre están visibles — cualquier rol que llega a la pantalla puede despachar/facturar', async () => {
     mockearRutasBase()

@@ -306,7 +306,7 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
 
         if (conPago)
         {
-            db.PagosComprobante.Add(new PagoComprobante
+            db.Cobros.Add(new Cobro
             {
                 IdTenant = e.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = idMedioPago,
                 Importe = importe, Vuelto = vuelto, CreatedAt = ahora, UpdatedAt = ahora
@@ -316,7 +316,7 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
 
         foreach (var (idMedio, importeExtra, vueltoExtra) in pagosAdicionales ?? [])
         {
-            db.PagosComprobante.Add(new PagoComprobante
+            db.Cobros.Add(new Cobro
             {
                 IdTenant = e.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = idMedio,
                 Importe = importeExtra, Vuelto = vueltoExtra, CreatedAt = ahora, UpdatedAt = ahora

@@ -5,6 +5,7 @@
  * (`design.md`: "client + pure mappers; `tipos.ts` mirrors the read/write DTOs").
  */
 import { api } from './cliente'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import { esTextoDeCantidadValido } from './cantidadPorUnidad'
 import { formatearImporte } from '../formato/importes'
 import type {
@@ -51,11 +52,33 @@ export function filtrosDeOrdenesDeCompraVacios(): FiltrosDeOrdenesDeCompra {
   return { idProveedor: null, idPuntoVenta: null, estado: null, desde: '', hasta: '', pagina: 1, tamanio: 25 }
 }
 
+/** Claves de `orden` que acepta `GET /api/ordenes-compra`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_ORDENES_DE_COMPRA = [
+  'numero',
+  'proveedor',
+  'puntoVenta',
+  'estado',
+  'fechaEmision',
+  'fechaEsperada',
+] as const
+
+export type ColumnaOrdenableDeOrdenesDeCompra = (typeof COLUMNAS_ORDENABLES_DE_ORDENES_DE_COMPRA)[number]
+
+export type OrdenDeOrdenesDeCompra = OrdenDeServidor<ColumnaOrdenableDeOrdenesDeCompra>
+
+export function esColumnaOrdenableDeOrdenesDeCompra(columna: string): columna is ColumnaOrdenableDeOrdenesDeCompra {
+  return (COLUMNAS_ORDENABLES_DE_ORDENES_DE_COMPRA as readonly string[]).includes(columna)
+}
+
 /** Arma el query string de `GET /api/ordenes-compra` — `desde`/`hasta` filtran por
  * `fecha_emision` (`ServicioDeOrdenesDeCompra.ListarAsync`), con el mismo offset horario
  * explícito que el resto de la web (mutation-proof-tests regla 10). */
-export function construirQueryDeOrdenesDeCompra(filtros: FiltrosDeOrdenesDeCompra): string {
+export function construirQueryDeOrdenesDeCompra(
+  filtros: FiltrosDeOrdenesDeCompra,
+  orden: OrdenDeOrdenesDeCompra = null,
+): string {
   const parametros = new URLSearchParams()
+  agregarOrdenAlQuery(parametros, orden)
   if (filtros.idProveedor !== null) parametros.set('idProveedor', String(filtros.idProveedor))
   if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
   if (filtros.estado !== null) parametros.set('estado', filtros.estado)
@@ -67,7 +90,8 @@ export function construirQueryDeOrdenesDeCompra(filtros: FiltrosDeOrdenesDeCompr
 }
 
 export const clienteDeOrdenesDeCompra = {
-  listar: (filtros: FiltrosDeOrdenesDeCompra) => api.get<PaginaDeOrdenesDeCompra>(`/ordenes-compra${construirQueryDeOrdenesDeCompra(filtros)}`),
+  listar: (filtros: FiltrosDeOrdenesDeCompra, orden: OrdenDeOrdenesDeCompra = null) =>
+    api.get<PaginaDeOrdenesDeCompra>(`/ordenes-compra${construirQueryDeOrdenesDeCompra(filtros, orden)}`),
   obtener: (id: number) => api.get<OrdenDeCompraDetalle>(`/ordenes-compra/${id}`),
   crear: (solicitud: SolicitudDeOrdenDeCompra) => api.post<OrdenDeCompraBorrador>('/ordenes-compra', solicitud),
   actualizar: (id: number, solicitud: SolicitudDeOrdenDeCompra) => api.put<OrdenDeCompraBorrador>(`/ordenes-compra/${id}`, solicitud),

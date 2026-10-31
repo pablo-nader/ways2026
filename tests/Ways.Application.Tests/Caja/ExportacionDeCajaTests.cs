@@ -1,8 +1,8 @@
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Ventas;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Tests.Caja;
@@ -124,7 +124,7 @@ public class ExportacionDeCajaTests
     public void DetalleEscribeLosEgresosPorCategoriaYPorAreaMasElTotalDeRetiros()
     {
         var egresos = new EgresosDeTurno(
-            PorCategoria: [new EgresoPorCategoria(CategoriaGasto.Otros, 40m)],
+            PorCategoria: [new EgresoPorCategoria(CategoriaPago.Otros, 40m)],
             PorArea: [new EgresoPorArea(IdArea: null, NombreArea: "Sin área", Total: 40m)],
             Retiros: 100m);
         var detalle = new DetalleDeTurno(ResumenVacio(egresos: egresos), [], [], null, null);
@@ -141,19 +141,19 @@ public class ExportacionDeCajaTests
     }
 
     [Fact]
-    public void DetalleEscribeTicketsYGastosConSuFechaConvertidaALaZonaLocal()
+    public void DetalleEscribeTicketsYPagosConSuFechaConvertidaALaZonaLocal()
     {
         var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
         var ticket = new ComprobanteListado(
             1, 1L, "0003-00000001", EstadoComprobante.Emitido, fecha, 3, 1, 150m, 0m, 0m);
-        var gasto = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m, OrigenFondosGasto.CajaTurno,
-            7, false, null, null, "Gasto", null, null, null, null);
-        var detalle = new DetalleDeTurno(ResumenVacio(), [ticket], [gasto], null, null);
+        var pago = new PagoListado(1, 3, fecha, CategoriaPago.Otros, 1, 40m, OrigenFondosPago.CajaTurno,
+            7, false, null, null, "Gasto", null, null, null, null, []);
+        var detalle = new DetalleDeTurno(ResumenVacio(), [ticket], [pago], null, null);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
 
         // Fila 0 = Retiros (siempre presente, ver DetalleEscribeUnaFilaPorMedioEnLaSeccionMediosDePago),
-        // fila 1 = Tickets, fila 2 = Gastos.
+        // fila 1 = Tickets, fila 2 = Pagos.
         Assert.Equal(3, tabla.Filas.Count);
         Assert.Equal("Tickets", tabla.Filas[1][0].Valor);
         Assert.Equal("0003-00000001", tabla.Filas[1][1].Valor);
@@ -167,13 +167,13 @@ public class ExportacionDeCajaTests
     }
 
     [Fact]
-    public void DetalleEtiquetaLosGastosDeCajaGeneralParaDistinguirlosDeLosEgresosDelArqueo()
+    public void DetalleEtiquetaLosPagosDeCajaGeneralParaDistinguirlosDeLosEgresosDelArqueo()
     {
         var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
-        var deCaja = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m, OrigenFondosGasto.CajaTurno,
-            7, false, null, null, "Gasto", null, null, null, null);
-        var deTesoreria = new GastoListado(2, 3, fecha, CategoriaGasto.Proveedor, 1, 70m, OrigenFondosGasto.Tesoreria,
-            7, false, 4, null, "Pago", null, null, null, null);
+        var deCaja = new PagoListado(1, 3, fecha, CategoriaPago.Otros, 1, 40m, OrigenFondosPago.CajaTurno,
+            7, false, null, null, "Gasto", null, null, null, null, []);
+        var deTesoreria = new PagoListado(2, 3, fecha, CategoriaPago.Proveedor, 1, 70m, OrigenFondosPago.Tesoreria,
+            7, false, 4, null, "Pago", null, null, null, null, []);
         var detalle = new DetalleDeTurno(ResumenVacio(), [], [deCaja, deTesoreria], null, null);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);

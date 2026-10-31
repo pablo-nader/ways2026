@@ -31,6 +31,15 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
 {
     // ---- identidad de lote (design decisión 4/5) -----------------------------------------------
 
+    /// <summary>El código con el que <see cref="ResolverOCrearAsync"/> toma el lock del lote: el recortado, o el derivado
+    /// del vencimiento si viene vacío. Los escritores que ordenan sus lotes (artículo, código) para respetar el orden de locks
+    /// ordenan por ESTE código y con <see cref="StringComparer.Ordinal"/>. Sin vencimiento ni código devuelve vacío (esa
+    /// línea se rechaza antes de tocar el lote).</summary>
+    public static string CodigoResuelto(string? codigo, DateOnly? fechaVencimiento) =>
+        !string.IsNullOrWhiteSpace(codigo) ? codigo.Trim()
+        : fechaVencimiento is { } fecha ? ReglaDeLotes.DerivarCodigo(fecha)
+        : string.Empty;
+
     /// <summary>Get-or-create sobre <c>ux_lotes_articulo_codigo</c> (design decisión 4):
     /// <c>INSERT ... ON CONFLICT (id_tenant, id_articulo, codigo) WHERE deleted_at IS NULL DO
     /// UPDATE ... RETURNING</c> — nunca <c>DO NOTHING</c>. La <c>RETURNING</c> toma el lock en el
@@ -41,7 +50,7 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, string? codigo,
         DateOnly fechaVencimiento, DateTimeOffset momento, CancellationToken ct)
     {
-        var codigoResuelto = string.IsNullOrWhiteSpace(codigo) ? ReglaDeLotes.DerivarCodigo(fechaVencimiento) : codigo.Trim();
+        var codigoResuelto = CodigoResuelto(codigo, fechaVencimiento);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;

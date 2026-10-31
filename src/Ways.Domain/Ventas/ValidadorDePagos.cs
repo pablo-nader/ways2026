@@ -69,8 +69,8 @@ public static class ValidadorDePagos
         // <c>consumoCuentaCorriente > 0m</c> es falso con un consumo negativo) — un Importe
         // negativo no tiene significado de negocio para un pago, se rechaza de plano.
         //
-        // Backstop de esquema: CHECK ck_pagos_comprobante_importe_no_negativo sobre
-        // pagos_comprobante.importe >= 0 (mismo criterio que ck_comprobantes_venta_numero_positivo),
+        // Backstop de esquema: CHECK ck_cobros_importe_no_negativo sobre
+        // cobros.importe >= 0 (mismo criterio que ck_comprobantes_venta_numero_positivo),
         // traducida al mismo código "pago_importe_negativo" en ManejadorDeErrores.ClasificarCheckDeVentas.
         foreach (var pago in pagos)
         {

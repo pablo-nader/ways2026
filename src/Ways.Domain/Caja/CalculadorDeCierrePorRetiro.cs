@@ -4,7 +4,7 @@ namespace Ways.Domain.Caja;
 
 /// <summary>
 /// Una línea de <see cref="ResultadoDeCierrePorRetiro.VentasPorMedio"/> — ventas NETAS de vuelto
-/// (nunca de gastos: eso es un renglón aparte, <see cref="ResultadoDeCierrePorRetiro.GastosEnEfectivo"/>).
+/// (nunca de pagos: eso es un renglón aparte, <see cref="ResultadoDeCierrePorRetiro.PagosEnEfectivo"/>).
 /// Es plata COBRADA por medio (ventas y recibos de cuenta corriente); la cuenta corriente no es una
 /// línea, se informa aparte en <see cref="ResultadoDeCierrePorRetiro.VentasACuentaCorriente"/>.
 /// </summary>
@@ -17,7 +17,7 @@ public sealed record LineaDeVentaPorMedio(int IdMedioPago, decimal Importe);
 /// datos ni el catálogo de medios — esos son responsabilidad del armador de Application.
 ///
 /// SIN <c>Diferencia</c> a propósito (judgment-day JD-E5a-1): estos campos solo dependen de la
-/// ACTIVIDAD del turno (pagos, gastos, retiros, refuerzos), nunca de lo que el cajero declaró, así
+/// ACTIVIDAD del turno (pagos, pagos de caja, retiros, refuerzos), nunca de lo que el cajero declaró, así
 /// que valen igual sin importar qué endpoint cerró el turno. <c>Diferencia</c> SÍ depende de lo
 /// declarado — que es el fondo inicial en el modo retiro, pero el conteo real del cajero en el
 /// modo clásico — así que no tiene una fórmula única y NO puede vivir acá: <see
@@ -29,7 +29,7 @@ public sealed record ResultadoDeCierrePorRetiro(
     IReadOnlyList<LineaDeVentaPorMedio> VentasPorMedio,
     decimal TotalVentas,
     decimal VentasEnEfectivoNetas,
-    decimal GastosEnEfectivo,
+    decimal PagosEnEfectivo,
     decimal Refuerzos,
     decimal TotalRetiros,
     decimal VentasACuentaCorriente);
@@ -39,20 +39,20 @@ public sealed record ResultadoDeCierrePorRetiro(
 /// inicial en el cajón; nada se cuenta al cierre). Pura, sin base de datos — mismo criterio que
 /// <see cref="CalculadorDeArqueo"/>, y deliberadamente SEPARADA de ella: <see
 /// cref="CalculadorDeArqueo"/> queda byte-identical (mismo criterio que la nota de la etapa 8
-/// sobre gastos de proveedor), esta clase solo LEE su resultado (<paramref name="arqueables"/>)
+/// sobre pagos de proveedor), esta clase solo LEE su resultado (<paramref name="arqueables"/>)
 /// para el listado de "ventas por medio" y usa <see cref="InsumosDeArqueo"/> directo para los
 /// totales del ancla.
 ///
 /// "Ventas por medio" difiere de "esperado" del arqueo: neta el vuelto (mismo término
 /// <c>vueltosTotales</c>, absorbido solo por el ancla — design decisión 2 de
-/// <see cref="CalculadorDeArqueo"/>) pero NUNCA resta gastos ni suma/resta fondo, retiros o
+/// <see cref="CalculadorDeArqueo"/>) pero NUNCA resta pagos ni suma/resta fondo, retiros o
 /// refuerzos — esos son conceptos de caja física, no de venta, y viajan aparte
-/// (<see cref="ResultadoDeCierrePorRetiro.GastosEnEfectivo"/>/<see
+/// (<see cref="ResultadoDeCierrePorRetiro.PagosEnEfectivo"/>/<see
 /// cref="ResultadoDeCierrePorRetiro.Refuerzos"/>/<see cref="ResultadoDeCierrePorRetiro.TotalRetiros"/>).
 ///
 /// NO calcula <c>Diferencia</c> (ver el doc-comment de <see cref="ResultadoDeCierrePorRetiro"/>) —
 /// antes de judgment-day JD-E5a-1 esta clase la derivaba como <c>retiros − (ventasEfectivoNetas −
-/// gastosEfectivo + refuerzos)</c>, una fórmula que solo es correcta cuando el ancla se declaró con
+/// pagosEfectivo + refuerzos)</c>, una fórmula que solo es correcta cuando el ancla se declaró con
 /// el fondo inicial (modo retiro). Sobre un cierre CLÁSICO (el cajero declara lo que contó, un
 /// número arbitrario) esa fórmula fabricaba un número que no tenía nada que ver con lo persistido
 /// en <c>arqueos_turno</c>.
@@ -75,19 +75,19 @@ public static class CalculadorDeCierrePorRetiro
         // Del ANCLA directo sobre insumos (no de ventasPorMedio): tiene que valer aunque el
         // ancla no haya quedado arqueable (sin fila en el arqueo persistido).
         var ventasEnEfectivoNetas = PagosDe(insumos, idMedioAncla) - vueltosTotales;
-        var gastosEnEfectivo = GastosDe(insumos, idMedioAncla);
+        var pagosEnEfectivo = PagosDeCajaDe(insumos, idMedioAncla);
         var ventasACuentaCorriente = insumos.Actividad
             .Where(a => a.Comportamiento == ComportamientoMedioPago.CuentaCorriente)
             .Sum(a => a.Pagos);
 
         return new ResultadoDeCierrePorRetiro(
-            ventasPorMedio, totalVentas, ventasEnEfectivoNetas, gastosEnEfectivo, insumos.Refuerzos,
+            ventasPorMedio, totalVentas, ventasEnEfectivoNetas, pagosEnEfectivo, insumos.Refuerzos,
             insumos.Retiros, ventasACuentaCorriente);
     }
 
     private static decimal PagosDe(InsumosDeArqueo insumos, int idMedioPago) =>
         insumos.Actividad.FirstOrDefault(a => a.IdMedioPago == idMedioPago).Pagos;
 
-    private static decimal GastosDe(InsumosDeArqueo insumos, int idMedioPago) =>
-        insumos.Actividad.FirstOrDefault(a => a.IdMedioPago == idMedioPago).Gastos;
+    private static decimal PagosDeCajaDe(InsumosDeArqueo insumos, int idMedioPago) =>
+        insumos.Actividad.FirstOrDefault(a => a.IdMedioPago == idMedioPago).PagosDeCaja;
 }

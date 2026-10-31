@@ -26,7 +26,9 @@ import { PaginadorDePadron } from '../componentes/padron/PaginadorDePadron'
 import { usePadronEnServidor } from '../componentes/padron/usePadronEnServidor'
 import { SelectorConBusqueda } from '../componentes/SelectorConBusqueda'
 import { formatearImporte } from '../formato/importes'
+import { sanearTipeoDeHoras } from './cuentaDePersonalFormularios'
 import {
+  DIAS_DEL_HORARIO,
   aDatos,
   aFormulario,
   copiaDeBajaDePersonal,
@@ -375,6 +377,17 @@ export function Personal() {
       >
         Buscar
       </button>
+      <Link
+        to="/personal/horas"
+        className={`btn btn-sm btn-outline-secondary text-nowrap${bloqueado ? ' disabled' : ''}`}
+        aria-disabled={bloqueado}
+        tabIndex={bloqueado ? -1 : undefined}
+        onClick={(evento) => {
+          if (bloqueado) evento.preventDefault()
+        }}
+      >
+        Cargar horas de la semana
+      </Link>
       {puedeEscribir && (
         <BotonIcono
           icono="agregar"
@@ -710,6 +723,38 @@ function ModalDePersonal({
           alBuscar={buscarClientes}
           onElegir={(opcion) => onElegirVinculo('cliente', opcion)}
         />
+
+        <fieldset className="col-12" aria-describedby={error?.campo === 'horario' ? 'per-horario-error' : 'per-horario-ayuda'}>
+          <legend className="form-label fs-6">Horario habitual</legend>
+          <div className="d-flex flex-wrap gap-2">
+            {DIAS_DEL_HORARIO.map((dia, i) => (
+              <div key={dia} style={{ width: '5rem' }}>
+                <label className="form-label small mb-1" htmlFor={`per-horario-${i}`}>
+                  {dia}
+                </label>
+                <input
+                  id={`per-horario-${i}`}
+                  className={`form-control form-control-sm${error?.campo === 'horario' ? ' is-invalid' : ''}`}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={valor.horario[i]}
+                  aria-invalid={error?.campo === 'horario' || undefined}
+                  onChange={(e) =>
+                    onCambio({
+                      ...valor,
+                      horario: valor.horario.map((h, j) => (j === i ? sanearTipeoDeHoras(e.target.value) : h)),
+                    })
+                  }
+                  disabled={bloqueado}
+                />
+              </div>
+            ))}
+          </div>
+          <div id="per-horario-ayuda" className="form-text">
+            Dejar vacío para no usar horario habitual. 0 = franco.
+          </div>
+          <ErrorDeCampo id="per-horario-error" error={error} campo="horario" />
+        </fieldset>
 
         <div className="col-12">
           <label className="form-label" htmlFor="per-observaciones">

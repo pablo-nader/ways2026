@@ -70,12 +70,17 @@ public class BajasEstructuralesTests
     /// alícuotas y percepciones. Es un borrador sin efecto de stock ni de cuenta corriente (ningún asiento lo referencia), tomado
     /// con <c>FOR UPDATE ... WHERE estado='borrador'</c> y por su id, y deja la fila de auditoría <c>compra.descarte</c> en la misma
     /// transacción. Una compra confirmada o anulada conserva su historia: el lock no la toma. No toca tablas de organización.
+    ///
+    /// <c>AplicarCobrosHistoricosPorAntiguedad</c> (E7-S4, decisión del dueño 2026-10-30) borra en su <c>Down</c> solo las
+    /// filas de <c>aplicaciones_cobro</c> con <c>origen = 'historial'</c>, que son las que su propio <c>Up</c> insertó, antes
+    /// de quitar la columna que las distingue. No toca tablas de organización.
     /// </summary>
     private static readonly string[] DeleteFromPermitidos =
     [
         Path.Combine("Ways.Application", "Compras", "ServicioDeCompras.cs"),
         Path.Combine("Ways.Application", "Fiscal", "ServicioDeFacturacionDeVentas.cs"),
         Path.Combine("Ways.Infrastructure", "Persistencia", "Migraciones", "20260917025328_QuitarVueltoMaximo.cs"),
+        Path.Combine("Ways.Infrastructure", "Persistencia", "Migraciones", "20261030202550_AplicarCobrosHistoricosPorAntiguedad.cs"),
     ];
 
     private static IReadOnlyList<(string Archivo, string Contenido)> LeerFuentesDeProduccion()

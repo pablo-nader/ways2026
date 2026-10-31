@@ -77,6 +77,9 @@ public class MovimientosPersonalSchemaTests(WaysApiFixture fixture) : IClassFixt
     [InlineData("horas", "24", "100", "2400")]
     [InlineData("horas", "0.25", "1200.50", "300.13")]
     [InlineData("horas", "8", "0", "0")]
+    [InlineData("horas", "-8", "1500", "-12000")]
+    [InlineData("horas", "-24", "100", "-2400")]
+    [InlineData("horas", "-0.01", "0.50", "-0.01")]
     [InlineData("ajuste", "NULL", "NULL", "-50")]
     [InlineData("ajuste", "NULL", "NULL", "50")]
     [InlineData("pago", "NULL", "NULL", "-0.01")]
@@ -92,6 +95,8 @@ public class MovimientosPersonalSchemaTests(WaysApiFixture fixture) : IClassFixt
     [Theory]
     [InlineData("horas", "0", "100", "0", "ck_movimientos_personal_horas")]
     [InlineData("horas", "24.01", "100", "2401", "ck_movimientos_personal_horas")]
+    [InlineData("horas", "-24.01", "100", "-2401", "ck_movimientos_personal_horas")]
+    [InlineData("horas", "-8", "100", "800", "ck_movimientos_personal_horas")]
     [InlineData("horas", "8", "-1", "-8", "ck_movimientos_personal_horas")]
     [InlineData("horas", "0.01", "-0.01", "0.00", "ck_movimientos_personal_horas")]
     [InlineData("horas", "8", "100", "799.99", "ck_movimientos_personal_horas")]
@@ -114,6 +119,33 @@ public class MovimientosPersonalSchemaTests(WaysApiFixture fixture) : IClassFixt
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => insertar.ExecuteNonQueryAsync());
         Assert.Equal("23514", excepcion.SqlState);
         Assert.Equal(constraint, excepcion.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData("NULL", true)]
+    [InlineData("ARRAY[8,8,8,8,8,0,0]::numeric[]", true)]
+    [InlineData("ARRAY[0,0,0,0,0,0,24]::numeric[]", true)]
+    [InlineData("ARRAY[8,8,8,8,8,0]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,0,0]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,-1]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,25]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,NULL]::numeric[]", false)]
+    public async Task ElHorarioHabitualSoloAceptaNullOSieteValoresEntreCeroYVeinticuatro(string valor, bool valido)
+    {
+        var s = await SembrarAsync(nameof(ElHorarioHabitualSoloAceptaNullOSieteValoresEntreCeroYVeinticuatro) + valor.GetHashCode());
+
+        await using var actualizar = await ComandoAsync(
+            s.IdTenantA, $"UPDATE personal SET horario_habitual = {valor} WHERE id_personal = $1", s.IdPersonalDeA);
+
+        if (valido)
+        {
+            Assert.Equal(1, await actualizar.ExecuteNonQueryAsync());
+            return;
+        }
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => actualizar.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_personal_horario_habitual", excepcion.ConstraintName);
     }
 
     [Fact]

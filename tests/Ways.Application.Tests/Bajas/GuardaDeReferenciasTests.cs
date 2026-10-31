@@ -30,10 +30,22 @@ public class GuardaDeReferenciasTests
     public void DosEtiquetasSeUnenConYSinComa()
     {
         var mensaje = GuardaDeReferencias.ComponerMensaje(
-            "el área", ["articulos", "gastos"], etiquetasPropias: null);
+            "el área", ["articulos", "pagos"], etiquetasPropias: null);
 
         Assert.Equal("No se puede dar de baja el área porque tiene artículos y gastos.", mensaje);
         Assert.DoesNotContain(", y", mensaje);
+    }
+
+    /// <summary>Cláusula: la hija <c>items_pago</c> se nombra igual que <c>pagos</c>, así un medio de
+    /// pago usado por un pago (que bloquea por las dos tablas) sigue diciendo solo "gastos".</summary>
+    [Fact]
+    public void LosItemsDePagoSeNombranComoLosGastosYSeDeduplican()
+    {
+        var mensaje = GuardaDeReferencias.ComponerMensaje(
+            "el medio de pago", ["pagos", "items_pago"], etiquetasPropias: null);
+
+        Assert.Equal("No se puede dar de baja el medio de pago porque tiene gastos.", mensaje);
+        Assert.Equal("gastos", EtiquetasDeTablas.Describir("items_pago"));
     }
 
     /// <summary>Cláusula: tres o más etiquetas se unen con comas y un solo " y " antes de la
@@ -42,7 +54,7 @@ public class GuardaDeReferenciasTests
     public void TresEtiquetasSeUnenConComasYUnSoloYFinal()
     {
         var mensaje = GuardaDeReferencias.ComponerMensaje(
-            "el proveedor", ["articulos", "gastos", "ordenes_compra"], etiquetasPropias: null);
+            "el proveedor", ["articulos", "pagos", "ordenes_compra"], etiquetasPropias: null);
 
         Assert.Equal(
             "No se puede dar de baja el proveedor porque tiene artículos, gastos y órdenes de compra.", mensaje);

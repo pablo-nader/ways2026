@@ -44,7 +44,7 @@ const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la 
  * estar en vuelo a la vez, sea alta/edición o baja— y `bloqueado` deja inerte toda la pantalla
  * mientras cualquiera de las dos está en vuelo.
  *
- * El alta y la edición viven en un `Modal` (mismo criterio que `Ofertas.tsx` y `Gastos.tsx`): un
+ * El alta y la edición viven en un `Modal` (mismo criterio que `Ofertas.tsx` y `Pagos.tsx`): un
  * guardado exitoso lo cierra y el aviso queda en la pantalla; el rechazo de un guardado se muestra
  * adentro (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores
  * de la carga del listado y de la baja siguen en la pantalla.

@@ -330,7 +330,7 @@ public static class InventarioDeDependientes
     /// <see cref="PuenteDeUso"/>), y también cierra una CLASE: el uso propaga HACIA ARRIBA por la
     /// jerarquía estructural. Ninguna tabla operativa lleva <c>id_empresa</c>
     /// —comprobantes, items, pagos, movimientos de stock/caja/tesorería/cuenta corriente, turnos,
-    /// presupuestos, remitos, órdenes de compra y gastos se clavan todos en <c>id_punto_venta</c>—,
+    /// presupuestos, remitos, órdenes de compra y pagos se clavan todos en <c>id_punto_venta</c>—,
     /// así que los referenciantes DIRECTOS de una empresa son solo estructura y catálogo. Sin este
     /// recorrido, una empresa con historia operativa completa lee PRÍSTINA: falla ABIERTA, la
     /// dirección de pérdida de datos.

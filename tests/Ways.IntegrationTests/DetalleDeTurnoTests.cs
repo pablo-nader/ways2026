@@ -8,12 +8,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
@@ -23,7 +23,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation, decisión 10; spec
-/// historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus Ticket And Gasto Listings, Role Split
+/// historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus Ticket And Pago Listings, Role Split
 /// — Turno Detail Under OperacionDePos): <c>GET /api/caja/turnos/{id}/detalle</c> — la casa de las
 /// 4 pruebas (cruce de tenant, anulados excluidos como el resumen, fixture hand-computed) más el
 /// caso de rol que motiva la co-locación: un Vendedor puede leer el Z-report del turno que él
@@ -137,7 +137,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         // El pago (mismo importe, medio efectivo) es lo que hace al medio "con actividad" para
         // CalculadorDeArqueo — sin esto el turno no tendría ningún medio arqueable.
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,
@@ -150,11 +150,11 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         await db.SaveChangesAsync();
     }
 
-    private static async Task RegistrarGastoAsync(Contexto ctx, HttpClient cliente, int idMedioPago, decimal importe)
+    private static async Task RegistrarPagoAsync(Contexto ctx, HttpClient cliente, int idMedioPago, decimal importe)
     {
         var respuesta = await cliente.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
+            new SolicitudDePago(ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
@@ -207,20 +207,20 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// <summary>task 5b.7 (hand-computed fixture equality): <see cref="DetalleDeTurno.Resumen"/>
     /// es EL MISMO payload que <c>/resumen</c> (mismo invariante que
     /// <c>ServicioDeResumenDeTurno</c>), y <see cref="DetalleDeTurno.Tickets"/>/<see
-    /// cref="DetalleDeTurno.Gastos"/> tienen exactamente las filas sembradas.</summary>
+    /// cref="DetalleDeTurno.Pagos"/> tienen exactamente las filas sembradas.</summary>
     [Fact]
-    public async Task ElDetalleReponeElMismoResumenMasLosTicketsYGastosSembrados()
+    public async Task ElDetalleReponeElMismoResumenMasLosTicketsYPagosSembrados()
     {
-        var ctx = await PrepararAsync(nameof(ElDetalleReponeElMismoResumenMasLosTicketsYGastosSembrados));
+        var ctx = await PrepararAsync(nameof(ElDetalleReponeElMismoResumenMasLosTicketsYPagosSembrados));
         var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 500m);
 
         // Un ticket con descuento manual (15) y otro con recargo manual (25): los totales de ajuste
         // viajan por fila en el detalle, uno por columna.
         await SembrarVentaAsync(ctx, turno.Id, 100m, descuentoManual: 15m);
         await SembrarVentaAsync(ctx, turno.Id, 200m, recargoManual: 25m);
-        await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 30m);
+        await RegistrarPagoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 30m);
 
-        // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (gasto) = 770.
+        // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (pago) = 770.
         await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 770m);
 
         var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{turno.Id}/resumen", OpcionesJson);
@@ -238,14 +238,14 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal((15m, 0m), (ticketConDescuento.DescuentoManualTotal, ticketConDescuento.RecargoManualTotal));
         var ticketConRecargo = detalle.Tickets.Single(t => t.Total == 200m);
         Assert.Equal((0m, 25m), (ticketConRecargo.DescuentoManualTotal, ticketConRecargo.RecargoManualTotal));
-        var gasto = Assert.Single(detalle.Gastos);
-        Assert.Equal(30m, gasto.Importe);
+        var pago = Assert.Single(detalle.Pagos);
+        Assert.Equal(30m, pago.Importe);
     }
 
     /// <summary>judgment-day fix (Judge B, MAJOR, mutation-proven): el filtro por
     /// <c>IdTurnoCaja</c> en <see cref="LectorDeLineasDelTurno"/> es lo único que separa el detalle
     /// de DOS turnos del MISMO tenant — RLS y los fixtures de un solo turno no lo cubren. Se abren y
-    /// cierran dos turnos consecutivos del mismo PV, cada uno con su propio ticket y gasto (importes
+    /// cierran dos turnos consecutivos del mismo PV, cada uno con su propio ticket y pago (importes
     /// únicos), y se verifica que el detalle del segundo turno solo trae sus propias filas.</summary>
     [Fact]
     public async Task ElDetalleDeUnTurnoExcluyeLasLineasDeOtroTurnoDelMismoTenant()
@@ -254,12 +254,12 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         var turnoA = await AbrirTurnoAsync(ctx, ctx.Admin, 0m);
         await SembrarVentaAsync(ctx, turnoA.Id, 555m);
-        await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 45m);
+        await RegistrarPagoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 45m);
         await CerrarTurnoAsync(ctx.Admin, turnoA.Id, ctx.IdMedioEfectivo, 510m);
 
         var turnoB = await AbrirTurnoAsync(ctx, ctx.Admin, 0m);
         await SembrarVentaAsync(ctx, turnoB.Id, 321m);
-        await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 17m);
+        await RegistrarPagoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 17m);
         await CerrarTurnoAsync(ctx.Admin, turnoB.Id, ctx.IdMedioEfectivo, 304m);
 
         var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turnoB.Id}/detalle", OpcionesJson);
@@ -269,9 +269,9 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(321m, ticket.Total);
         Assert.DoesNotContain(detalle.Tickets, t => t.Total == 555m);
 
-        var gasto = Assert.Single(detalle.Gastos);
-        Assert.Equal(17m, gasto.Importe);
-        Assert.DoesNotContain(detalle.Gastos, g => g.Importe == 45m);
+        var pago = Assert.Single(detalle.Pagos);
+        Assert.Equal(17m, pago.Importe);
+        Assert.DoesNotContain(detalle.Pagos, g => g.Importe == 45m);
     }
 
     // ---- task 5b.8: el Vendedor lee el Z-report del turno que él mismo cerró ------------------
@@ -296,7 +296,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     private const string ContentTypeXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     /// <summary>task 5b.9 (spec: G2 And G3 Endpoints Have Export Siblings Equal To Their JSON): el
-    /// workbook seccionado (medios de pago, tickets, gastos) se compara contra el MISMO
+    /// workbook seccionado (medios de pago, tickets, pagos) se compara contra el MISMO
     /// <see cref="DetalleDeTurno"/> que devuelve la ruta JSON — no solo un total combinado, el
     /// esperado por medio y la lista completa de tickets/gastos.</summary>
     [Fact]
@@ -307,10 +307,10 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         await SembrarVentaAsync(ctx, turno.Id, 100m);
         await SembrarVentaAsync(ctx, turno.Id, 200m);
-        await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 30m);
+        await RegistrarPagoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 30m);
         await RegistrarRetiroAsync(ctx.Admin, turno.Id, 25m);
 
-        // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (gasto) - 25 (retiro) = 745.
+        // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (pago) - 25 (retiro) = 745.
         await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 745m);
 
         var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
@@ -355,11 +355,11 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             detalle.Tickets,
             ticket => Assert.Contains(filasTickets, f => f.Detalle == ticket.NumeroVisible && f.Importe == ticket.Total));
 
-        var filasGastos = filas.Where(f => f.Seccion == "Gastos").ToList();
-        Assert.Equal(detalle.Gastos.Count, filasGastos.Count);
+        var filasPagos = filas.Where(f => f.Seccion == "Gastos").ToList();
+        Assert.Equal(detalle.Pagos.Count, filasPagos.Count);
         Assert.All(
-            detalle.Gastos,
-            gasto => Assert.Contains(filasGastos, f => f.Detalle == gasto.Categoria.ToString() && f.Importe == gasto.Importe));
+            detalle.Pagos,
+            pago => Assert.Contains(filasPagos, f => f.Detalle == pago.Categoria.ToString() && f.Importe == pago.Importe));
 
         var filaRetiros = Assert.Single(filas, f => f.Seccion == "Retiros");
         Assert.Equal(detalle.Resumen.Egresos.Retiros, filaRetiros.Importe);
@@ -450,17 +450,17 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     // Esta ruta no tenía NINGÚN test de tope: su único GuardaDeTope.Exigir (CajaEndpoints.cs:142)
     // podía borrarse sin que la suite se rompiera. ExportacionDeCaja.De(DetalleDeTurno, ...) arma
     // tabla.Filas sumando SEIS bloques (Medios + Egresos por categoría + Egresos por área + Retiros
-    // (SIEMPRE una fila, incondicional) + Tickets + Gastos). Para que la cuenta sea determinística
+    // (SIEMPRE una fila, incondicional) + Tickets + Pagos). Para que la cuenta sea determinística
     // se sella la actividad del turno a UN SOLO medio de pago (Efectivo, vía fondoInicial != 0 y
-    // ventas solo con ese medio) y CERO gastos:
+    // ventas solo con ese medio) y CERO pagos:
     //   - Medios: 1 fila (Efectivo es el único con TuvoFilas/ancla — ResolvedorDeMedioDeCajaFisica
     //     exige exactamente un medio Efectivo, y ningún otro medio tiene actividad).
     //   - Egresos por categoría / por área: 0 filas cada uno — LectorDeContenidoDeResumen agrupa
-    //     con GroupBy sobre `db.Gastos.Where(turno)`; sin gastos sembrados, el GroupBy no emite
+    //     con GroupBy sobre `db.Pagos.Where(turno)`; sin pagos sembrados, el GroupBy no emite
     //     ningún grupo (a diferencia de "1 grupo con total 0").
     //   - Retiros: 1 fila siempre (ExportacionDeCaja.cs:136-142 la agrega incondicionalmente).
     //   - Tickets: N filas, una por venta sembrada (SembrarVentaAsync, estado Emitido).
-    //   - Gastos: 0 filas (ninguno sembrado).
+    //   - Pagos: 0 filas (ninguno sembrado).
     // Total = 1 (Medios) + 0 + 0 + 1 (Retiros) + N (Tickets) + 0 = 2 + N. Con tope = 3, N = 1 pega
     // EXACTO en el tope; N = 2 pega en tope + 1.
 
@@ -468,7 +468,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// lado del ÉXITO: sin este test, mutar <c>Exigir(tabla.Filas.Count, tope)</c> a
     /// <c>Exigir(tabla.Filas.Count, tope - 1)</c> sobrevive — nada más en este archivo ejercita el
     /// export con el tope bajado. Un ticket sembrado (más el "Medios" y el "Retiros" incondicional,
-    /// sin gastos) da EXACTAMENTE 3 filas contra un tope de 3.</summary>
+    /// sin pagos) da EXACTAMENTE 3 filas contra un tope de 3.</summary>
     [Fact]
     public async Task UnaExportacionDelDetalleDeExactamenteElTopeDeFilasSeAceptaCompleta()
     {
@@ -480,7 +480,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 100m);
 
         await SembrarVentaAsync(ctx, turno.Id, 50m);
-        // esperado efectivo = 100 (fondo) + 50 (venta) = 150 — sin gastos ni retiros.
+        // esperado efectivo = 100 (fondo) + 50 (venta) = 150 — sin pagos ni retiros.
         await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 150m);
 
         var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/detalle/export?formato=xlsx");
@@ -519,7 +519,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         await SembrarVentaAsync(ctx, turno.Id, 50m);
         await SembrarVentaAsync(ctx, turno.Id, 60m);
-        // esperado efectivo = 100 (fondo) + 50 + 60 (ventas) = 210 — sin gastos ni retiros.
+        // esperado efectivo = 100 (fondo) + 50 + 60 (ventas) = 210 — sin pagos ni retiros.
         await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 210m);
 
         var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/detalle/export?formato=xlsx");

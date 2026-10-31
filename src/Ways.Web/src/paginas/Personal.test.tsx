@@ -84,6 +84,7 @@ function personal(sobrescribir: Partial<PersonalListado> = {}): PersonalListado 
     nombreUsuario: null,
     idCliente: null,
     nombreCliente: null,
+    horarioHabitual: null,
     ...sobrescribir,
   }
 }
@@ -302,6 +303,7 @@ describe('Personal — alta', () => {
         idEmpresa: null,
         idUsuario: 11,
         idCliente: 21,
+        horarioHabitual: null,
       }),
     )
     expect(await screen.findByText('Personal "Carla" creado.')).toBeInTheDocument()
@@ -444,9 +446,84 @@ describe('Personal — edición', () => {
         idEmpresa: 4,
         idUsuario: null,
         idCliente: null,
+        horarioHabitual: null,
       }),
     )
     expect(await screen.findByText('Personal "Ana Gómez" actualizado.')).toBeInTheDocument()
+  })
+})
+
+describe('Personal — horario habitual', () => {
+  const dias = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+
+  async function abrirEdicion(usuarioEvento: Usuario) {
+    renderPersonal()
+    await screen.findByText('Ana Gómez')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Editar Ana Gómez' }))
+  }
+
+  it('al editar muestra el horario existente día por día', async () => {
+    filas = [personal({ horarioHabitual: [8, 8, 7.5, 8, 8, 4, 0] })]
+    const usuarioEvento = userEvent.setup()
+    await abrirEdicion(usuarioEvento)
+
+    const valores = dias.map((d) => (screen.getByLabelText(d) as HTMLInputElement).value)
+    expect(valores).toEqual(['8', '8', '7,5', '8', '8', '4', '0'])
+  })
+
+  it('un horario sin cargar queda vacío y se guarda como null', async () => {
+    filas = [personal()]
+    apiPutMock.mockResolvedValue(personal())
+    const usuarioEvento = userEvent.setup()
+    await abrirEdicion(usuarioEvento)
+
+    for (const d of dias) expect(screen.getByLabelText(d)).toHaveValue('')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/personal/1', expect.objectContaining({ horarioHabitual: null })))
+  })
+
+  it('al cargar algunos días, los vacíos viajan como franco y acepta coma decimal', async () => {
+    filas = [personal()]
+    apiPutMock.mockResolvedValue(personal())
+    const usuarioEvento = userEvent.setup()
+    await abrirEdicion(usuarioEvento)
+
+    await usuarioEvento.type(screen.getByLabelText('Lun'), '8')
+    await usuarioEvento.type(screen.getByLabelText('Mié'), '7,5')
+    await usuarioEvento.type(screen.getByLabelText('Sáb'), '4.25')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/personal/1',
+        expect.objectContaining({ horarioHabitual: [8, 0, 7.5, 0, 0, 4.25, 0] }),
+      ),
+    )
+  })
+
+  it('un valor mayor a 24 marca el horario y no manda nada', async () => {
+    filas = [personal()]
+    const usuarioEvento = userEvent.setup()
+    await abrirEdicion(usuarioEvento)
+
+    await usuarioEvento.type(screen.getByLabelText('Mar'), '25')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText(/Cada día del horario habitual/)).toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('el rechazo horario_habitual_invalido del servidor se muestra legible', async () => {
+    filas = [personal()]
+    apiPutMock.mockRejectedValue(new ErrorApi(400, 'horario_habitual_invalido', 'inválido'))
+    const usuarioEvento = userEvent.setup()
+    await abrirEdicion(usuarioEvento)
+
+    await usuarioEvento.type(screen.getByLabelText('Lun'), '8')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText(/Cada día del horario habitual/)).toBeInTheDocument()
   })
 })
 
@@ -506,6 +583,7 @@ describe('Personal — semántica de la edición', () => {
         idEmpresa: 4,
         idUsuario: 12,
         idCliente: 21,
+        horarioHabitual: null,
       }),
     )
   })

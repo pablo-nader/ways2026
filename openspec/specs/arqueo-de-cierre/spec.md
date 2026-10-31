@@ -47,18 +47,18 @@ at all, only the closing withdrawal amount, which is itself never a total
 ### Requirement: Importe Esperado Derivation Per Medio
 
 For a medio with `Comportamiento = efectivo`, `importe_esperado` MUST equal
-`fondo_inicial + SUM(pagos_comprobante.importe) − SUM(pagos_comprobante.vuelto)
+`fondo_inicial + SUM(cobros.importe) − SUM(cobros.vuelto)
 − SUM(gastos.importe on that medio) − SUM(movimientos_caja retiro) +
-SUM(movimientos_caja refuerzo)`, reading only `pagos_comprobante` of
+SUM(movimientos_caja refuerzo)`, reading only `cobros` of
 comprobantes with `estado = emitido`. For any other non-`cuenta_corriente`
-medio, `importe_esperado` MUST equal `SUM(pagos_comprobante.importe) −
+medio, `importe_esperado` MUST equal `SUM(cobros.importe) −
 SUM(gastos.importe on that medio)` — no fondo, vuelto, retiro, or refuerzo
 term applies, since those are physical-cash-only concepts. An RC's
-efectivo/tarjeta pagos participate in this `SUM(pagos_comprobante.importe)`
+efectivo/tarjeta pagos participate in this `SUM(cobros.importe)`
 term exactly like a TX's pagos — RC introduces no new term and no separate
 derivation.
 (Previously: silent on RC; the formula is unchanged, RC simply flows through
-the existing `pagos_comprobante` join like any other comprobante.)
+the existing `cobros` join like any other comprobante.)
 
 #### Scenario: Efectivo expected includes fondo, pagos, vuelto, gastos, and movimientos
 - GIVEN `fondo_inicial = 500`, efectivo pagos totaling `3000` with `120` in
@@ -82,13 +82,13 @@ the existing `pagos_comprobante` join like any other comprobante.)
 - GIVEN a turno with a TX sale paid `1000` efectivo and an RC pago a cuenta
   of `300` efectivo
 - WHEN the efectivo derivation runs
-- THEN both contribute to the same `SUM(pagos_comprobante.importe)` term —
+- THEN both contribute to the same `SUM(cobros.importe)` term —
   `importe_esperado` includes both amounts with no separate RC line
 
 ### Requirement: Arqueo Rows Only For Medios With Activity, Never Cuenta Corriente
 
 A medio gets an `arqueos_turno` row only if it has at least one
-`pagos_comprobante` (non-anulado), `gastos`, or — for the efectivo medio —
+`cobros` (non-anulado), `gastos`, or — for the efectivo medio —
 `movimientos_caja` row or `fondo_inicial > 0` in the turno. Medios with
 `Comportamiento = cuenta_corriente` MUST NEVER get an arqueo row, regardless
 of activity — there is nothing physical to count.

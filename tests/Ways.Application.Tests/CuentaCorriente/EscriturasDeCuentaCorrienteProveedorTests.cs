@@ -16,11 +16,11 @@ namespace Ways.Application.Tests.CuentaCorriente;
 public class EscriturasDeCuentaCorrienteProveedorTests
 {
     private static Task<int> InsertarAsync(
-        TipoMovimientoCcProveedor tipo, int? idComprobanteCompra = null, int? idGasto = null,
+        TipoMovimientoCcProveedor tipo, int? idComprobanteCompra = null, int? idPago = null,
         int? idPuntoVenta = null, int? idEmpleado = null) =>
         EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             null!, null, idTenant: 1, idProveedor: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta, idEmpleado,
-            tipo, idComprobanteCompra, idGasto, importe: 100m, saldoResultante: 100m, detalle: null,
+            tipo, idComprobanteCompra, idPago, importe: 100m, saldoResultante: 100m, detalle: null,
             CancellationToken.None);
 
     // ---- apertura ---------------------------------------------------------------------------------
@@ -53,10 +53,10 @@ public class EscriturasDeCuentaCorrienteProveedorTests
     }
 
     [Fact]
-    public async Task UnaAperturaConIdGastoViolaLaFormaYLanza()
+    public async Task UnaAperturaConIdPagoViolaLaFormaYLanza()
     {
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            InsertarAsync(TipoMovimientoCcProveedor.Apertura, idGasto: 5));
+            InsertarAsync(TipoMovimientoCcProveedor.Apertura, idPago: 5));
 
         Assert.Contains("Apertura", excepcion.Message);
     }
@@ -74,10 +74,10 @@ public class EscriturasDeCuentaCorrienteProveedorTests
     }
 
     [Fact]
-    public async Task UnaCompraConIdGastoViolaLaFormaYLanza()
+    public async Task UnaCompraConIdPagoViolaLaFormaYLanza()
     {
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            InsertarAsync(TipoMovimientoCcProveedor.Compra, idComprobanteCompra: 5, idGasto: 9, idPuntoVenta: 1, idEmpleado: 1));
+            InsertarAsync(TipoMovimientoCcProveedor.Compra, idComprobanteCompra: 5, idPago: 9, idPuntoVenta: 1, idEmpleado: 1));
 
         Assert.Contains("Compra", excepcion.Message);
     }
@@ -94,20 +94,20 @@ public class EscriturasDeCuentaCorrienteProveedorTests
     // ---- pago ---------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task UnPagoSinIdGastoViolaLaFormaYLanza()
+    public async Task UnPagoSinIdPagoViolaLaFormaYLanza()
     {
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             InsertarAsync(TipoMovimientoCcProveedor.Pago, idPuntoVenta: 1, idEmpleado: 1));
 
         Assert.Contains("Pago", excepcion.Message);
-        Assert.Contains("id_gasto", excepcion.Message);
+        Assert.Contains("id_pago", excepcion.Message);
     }
 
     [Fact]
     public async Task UnPagoSinActorViolaLaFormaYLanza()
     {
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            InsertarAsync(TipoMovimientoCcProveedor.Pago, idGasto: 9));
+            InsertarAsync(TipoMovimientoCcProveedor.Pago, idPago: 9));
 
         Assert.Contains("Pago", excepcion.Message);
     }
@@ -115,10 +115,10 @@ public class EscriturasDeCuentaCorrienteProveedorTests
     // ---- ajuste --------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task UnAjusteConIdGastoViolaLaFormaYLanza()
+    public async Task UnAjusteConIdPagoViolaLaFormaYLanza()
     {
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            InsertarAsync(TipoMovimientoCcProveedor.Ajuste, idGasto: 9, idPuntoVenta: 1, idEmpleado: 1));
+            InsertarAsync(TipoMovimientoCcProveedor.Ajuste, idPago: 9, idPuntoVenta: 1, idEmpleado: 1));
 
         Assert.Contains("Ajuste", excepcion.Message);
     }
@@ -130,6 +130,46 @@ public class EscriturasDeCuentaCorrienteProveedorTests
             InsertarAsync(TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: 5));
 
         Assert.Contains("Ajuste", excepcion.Message);
+    }
+
+    // ---- redondeo (E4) -------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task UnRedondeoSinCompraNiPagoViolaLaFormaYLanza()
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            InsertarAsync(TipoMovimientoCcProveedor.Redondeo, idPuntoVenta: 1, idEmpleado: 1));
+
+        Assert.Contains("Redondeo", excepcion.Message);
+    }
+
+    [Fact]
+    public async Task UnRedondeoConCompraYPagoALaVezViolaLaFormaYLanza()
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            InsertarAsync(TipoMovimientoCcProveedor.Redondeo, idComprobanteCompra: 5, idPago: 9, idPuntoVenta: 1, idEmpleado: 1));
+
+        Assert.Contains("Redondeo", excepcion.Message);
+    }
+
+    [Fact]
+    public async Task UnRedondeoSinActorViolaLaFormaYLanza()
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            InsertarAsync(TipoMovimientoCcProveedor.Redondeo, idPago: 9));
+
+        Assert.Contains("Redondeo", excepcion.Message);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnRedondeoConUnSoloDestinoPasaLaGuardaYLlegaALaConexion(bool conCompra)
+    {
+        // La guarda de forma corre antes de tocar la conexión: con una conexión nula lo que falla es el acceso a ella.
+        await Assert.ThrowsAsync<NullReferenceException>(() => InsertarAsync(
+            TipoMovimientoCcProveedor.Redondeo, idComprobanteCompra: conCompra ? 5 : null, idPago: conCompra ? null : 9,
+            idPuntoVenta: 1, idEmpleado: 1));
     }
 
     // ---- mutation target #13: Apertura forbids actor/PV (arm aislado de compra/pago/ajuste) ---------

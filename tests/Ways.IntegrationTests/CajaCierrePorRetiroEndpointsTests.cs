@@ -5,12 +5,12 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
@@ -22,8 +22,8 @@ namespace Ways.IntegrationTests;
 /// etapa 5 (cierre por retiro, práctica del dueño): <c>POST /api/caja/turnos/{id}/cierre-por-retiro</c>
 /// y <c>GET /api/caja/turnos/{id}/resumen-de-cierre</c> punta a punta — spec arqueo-de-cierre,
 /// sección "Cierre Por Retiro". Mismo criterio de siembra directa por EF que
-/// <see cref="CajaCierreEndpointsTests"/>: la derivación solo lee <c>pagos_comprobante</c> +
-/// <c>comprobantes_venta.{id_turno_caja,estado}</c> + <c>gastos</c> + <c>movimientos_caja</c>.
+/// <see cref="CajaCierreEndpointsTests"/>: la derivación solo lee <c>cobros</c> +
+/// <c>comprobantes_venta.{id_turno_caja,estado}</c> + <c>pagos</c> + <c>movimientos_caja</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -116,7 +116,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,
@@ -136,17 +136,17 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
-    private static async Task RegistrarGastoAsync(Contexto ctx, int idMedioPago, decimal importe)
+    private static async Task RegistrarPagoAsync(Contexto ctx, int idMedioPago, decimal importe)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }
 
-    // ---- feliz camino: cash+tarjeta, vuelto, retiro intra-turno, gasto en efectivo, refuerzo ----
+    // ---- feliz camino: cash+tarjeta, vuelto, retiro intra-turno, pago en efectivo, refuerzo ----
 
     /// <summary>Mutation-proof-tests: se corrió la mutación de verdad sobre la cláusula "fondo
     /// declarado" de <c>ServicioDeTurnos.EjecutarCierrePorRetiroAsync</c> — cambiar
@@ -166,7 +166,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioTarjeta, importe: 300m);
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Retiro, 80m, "retiro intra-turno");
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Refuerzo, 40m, "refuerzo de prueba");
-        await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 60m);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 60m);
 
         var solicitud = new SolicitudDeCierrePorRetiro(200m, "Cierre por retiro de prueba");
         var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre-por-retiro", solicitud);
@@ -183,14 +183,14 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(500m, resumen.FondoInicial);
 
         // Ventas por medio: efectivo neto de vuelto (1000 - 50 = 950), tarjeta tal cual (300) —
-        // SIN restar el gasto de 60.
+        // SIN restar el pago de 60.
         var ventaEfectivo = resumen.VentasPorMedio.Single(v => v.IdMedioPago == ctx.IdMedioEfectivo);
         var ventaTarjeta = resumen.VentasPorMedio.Single(v => v.IdMedioPago == ctx.IdMedioTarjeta);
         Assert.Equal(950m, ventaEfectivo.Importe);
         Assert.Equal(300m, ventaTarjeta.Importe);
         Assert.Equal(1250m, resumen.TotalVentas);
         Assert.Equal(950m, resumen.VentasEnEfectivoNetas);
-        Assert.Equal(60m, resumen.GastosEnEfectivo);
+        Assert.Equal(60m, resumen.PagosEnEfectivo);
         Assert.Equal(40m, resumen.Refuerzos);
 
         // Retiros: el intra-turno (80) + el de cierre (200) = 280, en ese orden.
@@ -202,12 +202,12 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("Retiro de cierre de turno", resumen.Retiros[1].Motivo);
         Assert.Equal(280m, resumen.TotalRetiros);
 
-        // diferencia = retiros - (ventas_efectivo_netas - gastos_efectivo + refuerzos)
+        // diferencia = retiros - (ventas_efectivo_netas - pagos_efectivo + refuerzos)
         //            = 280 - (950 - 60 + 40) = 280 - 930 = -650.
         Assert.Equal(-650m, resumen.Diferencia);
 
         // Persistencia: el ancla se declaró con el FONDO INICIAL (500), tarjeta con su esperado
-        // (300 - 0 gastos = 300); la diferencia del ancla es el negativo de resumen.Diferencia.
+        // (300 - 0 pagos = 300); la diferencia del ancla es el negativo de resumen.Diferencia.
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var arqueos = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == turno.Id).ToListAsync();
         Assert.Equal(2, arqueos.Count);
@@ -230,7 +230,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("Apertura de prueba\nCierre por retiro de prueba", turnoPersistido.Observaciones);
 
         // Tesorería: UN movimiento, ingreso = Σ retiros (280). stage-gastos-origen-fondos-pos
-        // (PR2): egreso pasa a ser SIEMPRE 0 — el gasto de 60 (origen caja_turno por default) ya
+        // (PR2): egreso pasa a ser SIEMPRE 0 — el pago de 60 (origen caja_turno por default) ya
         // descontó el efectivo del cajón (ver el esperado del ancla arriba), restarlo de nuevo acá
         // lo descontaría dos veces.
         var tesoreria = await db.MovimientosTesoreria.SingleAsync(m => m.IdTurnoCaja == turno.Id);
@@ -379,7 +379,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(post.VentasACuentaCorriente, get.VentasACuentaCorriente);
         Assert.Equal(post.TotalRetiros, get.TotalRetiros);
         Assert.Equal(post.VentasEnEfectivoNetas, get.VentasEnEfectivoNetas);
-        Assert.Equal(post.GastosEnEfectivo, get.GastosEnEfectivo);
+        Assert.Equal(post.PagosEnEfectivo, get.PagosEnEfectivo);
         Assert.Equal(post.Refuerzos, get.Refuerzos);
         Assert.Equal(post.Diferencia, get.Diferencia);
 
@@ -462,10 +462,10 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
 
     /// <summary>LA CLÁUSULA que este fix corrige. Antes de JD-E5a-1, <c>resumen-de-cierre</c>
     /// calculaba <c>diferencia</c> con la fórmula del modo retiro (<c>totalRetiros −
-    /// (ventasEfectivoNetas − gastosEfectivo + refuerzos)</c>), que asume que el ancla se declaró
+    /// (ventasEfectivoNetas − pagosEfectivo + refuerzos)</c>), que asume que el ancla se declaró
     /// con el fondo inicial. Sobre un cierre CLÁSICO eso es falso: el cajero declara lo que
     /// realmente contó. Con los números exactos del hallazgo — fondo 500, ventas efectivo 1000,
-    /// sin gastos/retiros/refuerzos, conteo declarado 1400 (ni el fondo ni el esperado) — la
+    /// sin pagos/retiros/refuerzos, conteo declarado 1400 (ni el fondo ni el esperado) — la
     /// fórmula vieja daba <c>-1000</c> (el negativo del fondo); el valor correcto, leído de la fila
     /// YA PERSISTIDA de <c>arqueos_turno</c>, es <c>declarado − esperado = 1400 − 1500 = -100</c>.
     ///
@@ -517,7 +517,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
     public async Task ElResumenDeCierreSinNingunaActividadFisicaDeEfectivoDaDiferenciaCero()
     {
         var ctx = await PrepararAsync(nameof(ElResumenDeCierreSinNingunaActividadFisicaDeEfectivoDaDiferenciaCero));
-        var turno = await AbrirTurnoAsync(ctx); // fondo 0, sin ningún pago/gasto/movimiento.
+        var turno = await AbrirTurnoAsync(ctx); // fondo 0, sin ningún pago/pago de caja/movimiento.
 
         var cierre = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", new SolicitudDeCierre([], null));
         Assert.Equal(HttpStatusCode.OK, cierre.StatusCode);

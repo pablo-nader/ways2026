@@ -243,7 +243,7 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
         Assert.Equal(0, await db.ItemsComprobanteVenta.CountAsync());
-        Assert.Equal(0, await db.PagosComprobante.CountAsync());
+        Assert.Equal(0, await db.Cobros.CountAsync());
         Assert.Equal(0, await db.MovimientosStock.CountAsync());
         Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync());
     }
@@ -329,7 +329,7 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 4");
 
         var respuesta = await IntentarConPrivilegioRevocadoAsync(
-            ctx, SolicitudSimple(ctx, idCliente, idArticulo, 100m), "pagos_comprobante", "INSERT");
+            ctx, SolicitudSimple(ctx, idCliente, idArticulo, 100m), "cobros", "INSERT");
 
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
         await VerificarNadaPersistidoAsync(ctx);
@@ -379,7 +379,7 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         {
             Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
             Assert.Equal(0, await db.ItemsComprobanteVenta.CountAsync());
-            Assert.Equal(0, await db.PagosComprobante.CountAsync());
+            Assert.Equal(0, await db.Cobros.CountAsync());
             Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync());
 
             // Único movimiento esperado: el de motivo = ajuste que sembró

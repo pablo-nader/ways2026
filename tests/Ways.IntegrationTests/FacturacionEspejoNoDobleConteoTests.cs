@@ -153,7 +153,7 @@ public class FacturacionEspejoNoDobleConteoTests(WaysApiFixture fixture) : IClas
                 PrecioUnitario = total / cantidad, Descuento = 0m, Total = total,
                 CostoUnitario = CostoUnitarioVenta, CostoEsEstimado = false, CreatedAt = ahora, UpdatedAt = ahora
             });
-            db.PagosComprobante.Add(new PagoComprobante
+            db.Cobros.Add(new Cobro
             {
                 IdTenant = ctx.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = ctx.IdMedioPago,
                 Importe = total, Vuelto = 0m, CreatedAt = ahora, UpdatedAt = ahora

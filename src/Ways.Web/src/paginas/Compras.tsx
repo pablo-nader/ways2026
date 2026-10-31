@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { clienteDeCompras, etiquetaDeEstadoCompra, etiquetaDeEstadoPago, filtrosDeComprasVacios, type FiltrosDeCompras } from '../api/compras'
+import {
+  clienteDeCompras,
+  esColumnaOrdenableDeCompras,
+  etiquetaDeEstadoCompra,
+  etiquetaDeEstadoPago,
+  filtrosDeComprasVacios,
+  type FiltrosDeCompras,
+  type OrdenDeCompras,
+} from '../api/compras'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
@@ -18,6 +26,8 @@ import type {
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
@@ -79,6 +89,9 @@ export function Compras() {
 
   const [filtros, setFiltros] = useState<FiltrosDeCompras>(filtrosDeComprasVacios())
 
+  // `null` = el orden de siempre del listado (más nuevas primero). Si una consulta falla, la tabla desaparece junto con
+  // su encabezado: nunca queda un encabezado que declare un orden que las filas no tienen.
+  const [orden, setOrden] = useState<OrdenDeCompras>(null)
   const [pagina, setPagina] = useState<PaginaDeCompras | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -124,7 +137,7 @@ export function Compras() {
     setError('')
 
     clienteDeCompras
-      .listar(filtros)
+      .listar(filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(datos)
@@ -138,7 +151,18 @@ export function Compras() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [filtros])
+  }, [filtros, orden])
+
+  // Ascendente → descendente → orden de siempre. Cambiar el orden vuelve a la página 1 y conserva los filtros; los dos
+  // setState se agrupan en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeCompras(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
+  }
 
   useEffect(() => {
     cargar()
@@ -314,13 +338,25 @@ export function Compras() {
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Número</th>
-                    <th>Proveedor</th>
-                    <th>Tipo</th>
-                    <th>Estado</th>
+                    <EncabezadoOrdenable columna="numero" orden={orden} onAlternar={alternarOrden}>
+                      Número
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="proveedor" orden={orden} onAlternar={alternarOrden}>
+                      Proveedor
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="tipo" orden={orden} onAlternar={alternarOrden}>
+                      Tipo
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternarOrden}>
+                      Estado
+                    </EncabezadoOrdenable>
                     <th>Estado de pago</th>
-                    <th>Fecha de recepción</th>
-                    <th className="text-end">Total</th>
+                    <EncabezadoOrdenable columna="fechaRecepcion" orden={orden} onAlternar={alternarOrden}>
+                      Fecha de recepción
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="total" orden={orden} onAlternar={alternarOrden} className="text-end">
+                      Total
+                    </EncabezadoOrdenable>
                   </tr>
                 </thead>
                 <tbody>

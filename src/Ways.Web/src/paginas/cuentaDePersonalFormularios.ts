@@ -2,7 +2,7 @@ import { LONGITUD_MINIMA_DETALLE_AJUSTE } from '../api/cuentaCorriente'
 import type {
   LineaDeDesgloseDePago,
   MedioPagoListado,
-  OrigenFondosGasto,
+  OrigenFondosPago,
   SolicitudDeAjusteDePersonal,
   SolicitudDeCargaDeHoras,
   SolicitudDePagoDePersonal,
@@ -10,7 +10,7 @@ import type {
 } from '../api/tipos'
 import { isoATexto } from '../formato/fechas'
 import { formatearImporte, formatearImporteConSigno, productoRedondeado, redondearImporte } from '../formato/importes'
-import { etiquetaDeOrigenFondos } from './utilidadesGastosDelTurno'
+import { etiquetaDeOrigenFondos } from './utilidadesPagosDelTurno'
 
 /** Campo de un formulario de la cuenta donde se muestra un rechazo; `general` va arriba del formulario. */
 export type CampoDeCuenta =
@@ -188,7 +188,7 @@ export type FormularioDePago = {
   descuento: number | null
   lineas: LineaDeFormulario[]
   /** `''` mientras no se eligió: con líneas es obligatorio, sin ellas no existe. */
-  origen: OrigenFondosGasto | ''
+  origen: OrigenFondosPago | ''
   idEmpresa: number | null
   detalle: string
 }

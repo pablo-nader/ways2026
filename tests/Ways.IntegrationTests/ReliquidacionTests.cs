@@ -223,7 +223,7 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         {
             IdTenant = ctx.IdTenant, IdCliente = idCliente, Fecha = ahora, IdPuntoVenta = ctx.IdPuntoVenta,
             IdEmpleado = ctx.IdEmpleadoAdmin, Tipo = TipoMovimientoCc.Consumo, IdComprobanteVenta = comprobante.Id,
-            IdPagoComprobante = null, Importe = precio, SaldoResultante = 0m
+            IdCobro = null, Importe = precio, SaldoResultante = 0m
         });
         await db.SaveChangesAsync();
     }
@@ -1110,7 +1110,7 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             {
                 IdTenant = ctx.IdTenant, IdCliente = idCliente, Fecha = fecha, IdPuntoVenta = ctx.IdPuntoVenta,
                 IdEmpleado = ctx.IdEmpleadoAdmin, Tipo = TipoMovimientoCc.Consumo, IdComprobanteVenta = c.Id,
-                IdPagoComprobante = null, Importe = precio, SaldoResultante = 0m
+                IdCobro = null, Importe = precio, SaldoResultante = 0m
             })
             .ToList();
         db.MovimientosCuentaCorriente.AddRange(movimientos);

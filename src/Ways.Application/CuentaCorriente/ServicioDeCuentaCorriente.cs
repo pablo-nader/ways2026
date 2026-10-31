@@ -29,14 +29,15 @@ namespace Ways.Application.CuentaCorriente;
 /// autoridad sobre <c>clientes.saldo</c>/<c>movimientos_cuenta_corriente</c>).
 /// </summary>
 public class ServicioDeCuentaCorriente(
-    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeTurnos servicioDeTurnos)
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeTurnos servicioDeTurnos,
+    ServicioDeCobros servicioDeCobros)
 {
     /// <summary>Design: Transactions — PAGO A CUENTA (orden de statements pineado). La mitad que
     /// decide (cliente, punto de venta, turno, medios, validación) corre AFUERA de la
     /// transacción de escritura — mismo criterio que <c>ServicioDeVentas.EmitirAsync</c> — y la
     /// numeración se reserva y comitea en su PROPIA transacción, ANTES de la que escribe el
     /// resto (design decisión 7).</summary>
-    public async Task<ComprobanteEmitido> RegistrarPagoAsync(
+    public async Task<PagoACuentaRegistrado> RegistrarPagoAsync(
         int idCliente, SolicitudDePagoACuenta solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -89,6 +90,17 @@ public class ServicioDeCuentaCorriente(
 
         var importeAplicado = ValidadorDePagoACuenta.Validar(pagosAValidar);
 
+        // E7-S3: aplicaciones opcionales. Ausente o vacío es el comportamiento de siempre. La forma, el 404 de cada venta y
+        // los importes, el cliente y los topes se miden acá sin locks, antes de reservar el número, para no quemar numeración con un pedido
+        // que se sabe rechazado; la medición autoritativa (y las carreras) quedan bajo los locks de la transacción.
+        IReadOnlyList<AplicacionDeCobroPedida> aplicaciones = solicitud.Aplicaciones is { Count: > 0 } pedidas
+            ? await servicioDeCobros.ExigirPedidasExistentesAsync(pedidas, ct)
+            : [];
+        if (aplicaciones.Count > 0)
+        {
+            await servicioDeCobros.ExigirAplicacionesViablesAsync(cliente.Id, importeAplicado, aplicaciones, ct);
+        }
+
         // Misma corrección que ServicioDeVentas.EmitirAsync: el número se reserva y COMITEA en su
         // propia transacción, ANTES de la que escribe el resto — "se consume aunque falle el
         // resto" es literal, no una aproximación.
@@ -108,7 +120,7 @@ public class ServicioDeCuentaCorriente(
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransaccionAsync(
                 idTenant, idEmpleado, momento, tipo.Id, numero, puntoVenta.Id, turno.Id, cliente.Id, importeAplicado,
-                pagos, NormalizarOpcional(solicitud.Observaciones), ct));
+                pagos, NormalizarOpcional(solicitud.Observaciones), aplicaciones, ct));
     }
 
     /// <summary>Design: Transactions — AJUSTE MANUAL (orden pineado: "fuera:
@@ -167,7 +179,7 @@ public class ServicioDeCuentaCorriente(
         // "es un ajuste manual, no un contramovimiento de anulación").
         var idMovimiento = await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
             conexion, transaccionCruda, idTenant, idCliente, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCc.Ajuste, idComprobanteVenta: null, idPagoComprobante: null, importe, nuevoSaldo, detalle, ct);
+            TipoMovimientoCc.Ajuste, idComprobanteVenta: null, idCobro: null, importe, nuevoSaldo, detalle, ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -283,10 +295,10 @@ public class ServicioDeCuentaCorriente(
         return consulta;
     }
 
-    private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(
+    private async Task<PagoACuentaRegistrado> EjecutarTransaccionAsync(
         int idTenant, int idEmpleado, DateTimeOffset momento, int idTipoComprobante, long numero, int idPuntoVenta,
         int idTurnoCaja, int idCliente, decimal importeAplicado, IReadOnlyList<PagoDeCuenta> pagos,
-        string? observaciones, CancellationToken ct)
+        string? observaciones, IReadOnlyList<AplicacionDeCobroPedida> aplicaciones, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -322,7 +334,7 @@ public class ServicioDeCuentaCorriente(
         // 3. Pagos — sin items, sin movimientos_stock (spec: RC Carries Zero Items And No Stock
         // Effect).
         var pagosEntidad = pagos
-            .Select(p => new PagoComprobante
+            .Select(p => new Cobro
             {
                 IdComprobanteVenta = comprobante.Id,
                 IdMedioPago = p.IdMedioPago,
@@ -333,8 +345,18 @@ public class ServicioDeCuentaCorriente(
                 UpdatedAt = momento
             })
             .ToList();
-        db.PagosComprobante.AddRange(pagosEntidad);
+        db.Cobros.AddRange(pagosEntidad);
         await db.SaveChangesAsync(ct);
+
+        // 3b. Aplicaciones (E7-S3). Antes de la fila del cliente (paso 4): el orden de locks de ServicioDeCobros pone los
+        // comprobantes (las ventas, en id ascendente) antes que el cliente, y la anulación de una venta toma la venta y
+        // después el cliente. Los topes y el cliente se miden acá, bajo los locks; un rechazo deshace el recibo entero.
+        IReadOnlyList<AplicacionDeCobroListada> aplicacionesVivas = [];
+        if (aplicaciones.Count > 0)
+        {
+            aplicacionesVivas = await servicioDeCobros.AplicarBajoLocksAsync(
+                idTenant, comprobante.Id, aplicaciones, idEmpleado, momento, ct);
+        }
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
@@ -343,7 +365,7 @@ public class ServicioDeCuentaCorriente(
         var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
             conexion, transaccionCruda, idTenant, idCliente, -importeAplicado, ct);
 
-        // 5. Movimiento — id_pago_comprobante siempre NULL en un Pago (design decisión 1/5): a
+        // 5. Movimiento — id_cobro siempre NULL en un Pago (design decisión 1/5): a
         // diferencia de un Consumo, no hay UN pago físico que "lo generó" — lo genera el
         // comprobante entero, que puede traer varios medios.
         await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
@@ -352,7 +374,7 @@ public class ServicioDeCuentaCorriente(
 
         await transaccion.CommitAsync(ct);
 
-        return Proyectar(comprobante, pagosEntidad);
+        return PagoACuentaRegistrado.De(Proyectar(comprobante, pagosEntidad), aplicacionesVivas);
     }
 
     // ---- Resolución de datos, fuera de la transacción ----------------------------------------
@@ -400,7 +422,7 @@ public class ServicioDeCuentaCorriente(
     }
 
     private static ComprobanteEmitido Proyectar(
-        ComprobanteVenta comprobante, IReadOnlyList<PagoComprobante> pagos) => new(
+        ComprobanteVenta comprobante, IReadOnlyList<Cobro> pagos) => new(
         comprobante.Id, comprobante.Numero,
         NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
         comprobante.Estado, comprobante.Fecha, comprobante.IdPuntoVenta, comprobante.IdCliente,

@@ -91,7 +91,7 @@ public class MedioPagoConfiguration : ConfiguracionDeCatalogo<MedioPago>
             .OnDelete(DeleteBehavior.Restrict);
 
         // stage-5-pos-ventas (Slice 3, design: Table Shapes — write path A): clave alterna
-        // (Id, IdTenant) para que fk_pagos_comprobante_medio_pago pueda ser compuesta — mismo
+        // (Id, IdTenant) para que fk_cobros_medio_pago pueda ser compuesta — mismo
         // patrón que AreaConfiguration/ListaPrecioConfiguration.
         builder.HasAlternateKey(m => new { m.Id, m.IdTenant })
             .HasName("ak_medios_pago_id_medio_pago_id_tenant");

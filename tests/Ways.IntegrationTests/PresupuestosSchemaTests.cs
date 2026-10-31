@@ -14,7 +14,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
@@ -761,7 +761,7 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<EstadoTurno>("estado_turno");
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                    npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
                     npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
@@ -866,7 +866,7 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<EstadoTurno>("estado_turno");
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                    npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
                     npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
@@ -883,8 +883,10 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     // HEAD por dentro — necesita conocer cada enum nuevo que aparezca, para
                     // siempre (mismo motivo que CuentaCorrienteProveedorBackfillTests).
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
-                    // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
-                    npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
+                    // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
+                    npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
+                    npgsql.MapEnum<OrigenAplicacionPago>("origen_aplicacion_pago");
+                    npgsql.MapEnum<OrigenAplicacionCobro>("origen_aplicacion_cobro");
                 })
                 .Options;
 

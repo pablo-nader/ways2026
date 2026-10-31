@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Listados;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
@@ -51,8 +52,12 @@ public class ServicioDeRemitos(
         DateTimeOffset? hasta = null,
         int pagina = 1,
         int tamanio = 25,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -60,9 +65,7 @@ public class ServicioDeRemitos(
 
         var total = await query.CountAsync(ct);
 
-        var pagados = await query
-            .OrderByDescending(r => r.FechaEmision)
-            .ThenByDescending(r => r.Id)
+        var pagados = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .ToListAsync(ct);
@@ -71,6 +74,52 @@ public class ServicioDeRemitos(
 
         return new PaginaDeRemitos(items, total, pagina, tamanio);
     }
+
+    /// <summary>Sin orden pedido: <c>FechaEmision</c> y <c>Id</c> descendentes (el orden de siempre). Con orden: la
+    /// columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. Mismas reglas que
+    /// <c>ServicioDePresupuestos.Ordenar</c> para número (punto de venta y número; el borrador sin número va al
+    /// final), cliente (número de cliente) y punto de venta (nombre); el estado ordena por su etiqueta.</summary>
+    private IOrderedQueryable<Remito> Ordenar(IQueryable<Remito> query, OrdenDeListado<ColumnaDeOrdenDeRemitos>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(r => r.FechaEmision).ThenByDescending(r => r.Id);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeRemitos.Numero => desc
+                ? query.OrderBy(r => r.Numero == null).ThenByDescending(r => r.IdPuntoVenta).ThenByDescending(r => r.Numero)
+                : query.OrderBy(r => r.Numero == null).ThenBy(r => r.IdPuntoVenta).ThenBy(r => r.Numero),
+            ColumnaDeOrdenDeRemitos.Cliente => OrdenarPor.ClaveConVacios(
+                query,
+                r => db.Clientes.Where(c => c.Id == r.IdCliente).Select(c => (int?)c.Numero).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDeRemitos.PuntoVenta => OrdenarPor.ClaveConVacios(
+                query,
+                r => db.PuntosVenta.Where(pv => pv.Id == r.IdPuntoVenta).Select(pv => pv.Nombre).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDeRemitos.Estado => OrdenarPor.Clave(
+                query, EtiquetaPorCaso.Selector((Remito r) => r.Estado, EtiquetasDeEstadoDeDocumento.Remito), desc),
+            ColumnaDeOrdenDeRemitos.FechaEmision => OrdenarPor.Clave(query, r => r.FechaEmision, desc),
+            ColumnaDeOrdenDeRemitos.Total => OrdenarPor.Clave(query, r => r.Total, desc),
+            _ => query.OrderByDescending(r => r.FechaEmision),
+        };
+
+        return ordenado.ThenBy(r => r.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeRemitos> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeRemitos>(StringComparer.Ordinal)
+        {
+            ["numero"] = ColumnaDeOrdenDeRemitos.Numero,
+            ["cliente"] = ColumnaDeOrdenDeRemitos.Cliente,
+            ["puntoVenta"] = ColumnaDeOrdenDeRemitos.PuntoVenta,
+            ["estado"] = ColumnaDeOrdenDeRemitos.Estado,
+            ["fechaEmision"] = ColumnaDeOrdenDeRemitos.FechaEmision,
+            ["total"] = ColumnaDeOrdenDeRemitos.Total,
+        };
 
     /// <summary>Cláusulas bajo prueba (<c>mutation-proof-tests</c>, mutation target #59, mitad
     /// remito), mismo criterio que <c>ServicioDePresupuestos.ConstruirQuery</c>: <c>Where(r =>

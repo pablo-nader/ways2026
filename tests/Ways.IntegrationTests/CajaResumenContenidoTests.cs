@@ -5,14 +5,14 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Ventas;
@@ -182,13 +182,13 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
             UpdatedAt = ahora
         });
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,
             IdMedioPago = idMedioPago,
             // el pago nunca es negativo, incluso para una NCX con Total negativo (mismo criterio
-            // que ck_pagos_comprobante_importe_no_negativo).
+            // que ck_cobros_importe_no_negativo).
             Importe = Math.Abs(importe),
             Vuelto = 0m,
             CreatedAt = ahora,
@@ -206,12 +206,12 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
-    private static async Task RegistrarGastoAsync(
-        Contexto ctx, CategoriaGasto categoria, int idMedioPago, decimal importe, int? idArea = null)
+    private static async Task RegistrarPagoAsync(
+        Contexto ctx, CategoriaPago categoria, int idMedioPago, decimal importe, int? idArea = null)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(ctx.IdPuntoVenta, categoria, null, idArea, "Gasto de prueba", null, idMedioPago, null, importe));
+            new SolicitudDePago(ctx.IdPuntoVenta, categoria, null, idArea, "Gasto de prueba", null, idMedioPago, null, importe));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }
@@ -234,10 +234,10 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         await SembrarVentaAsync(
             ctx, turno.Id, idAreaAlmacen, ctx.IdMedioEfectivo, 999m, baseFecha.AddMinutes(3), EstadoComprobante.Anulado);
 
-        await RegistrarGastoAsync(ctx, CategoriaGasto.Proveedor, ctx.IdMedioEfectivo, 30m, idAreaAlmacen);
-        await RegistrarGastoAsync(ctx, CategoriaGasto.Sueldos, ctx.IdMedioEfectivo, 70m, idAreaVerduleria);
+        await RegistrarPagoAsync(ctx, CategoriaPago.Proveedor, ctx.IdMedioEfectivo, 30m, idAreaAlmacen);
+        await RegistrarPagoAsync(ctx, CategoriaPago.Sueldos, ctx.IdMedioEfectivo, 70m, idAreaVerduleria);
         // sin área declarada — cae en el bucket "Sin área", no se descarta.
-        await RegistrarGastoAsync(ctx, CategoriaGasto.Otros, ctx.IdMedioEfectivo, 15m, idArea: null);
+        await RegistrarPagoAsync(ctx, CategoriaPago.Otros, ctx.IdMedioEfectivo, 15m, idArea: null);
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Retiro, 40m, "retiro de prueba");
         // el refuerzo NUNCA es un egreso — no debe aparecer en Egresos.
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Refuerzo, 10m, "refuerzo de prueba");
@@ -264,11 +264,11 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(200m, verduleria.Total);
 
         Assert.Equal(3, resumen.Egresos.PorCategoria.Count);
-        var proveedor = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaGasto.Proveedor);
+        var proveedor = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaPago.Proveedor);
         Assert.Equal(30m, proveedor.Total);
-        var sueldos = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaGasto.Sueldos);
+        var sueldos = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaPago.Sueldos);
         Assert.Equal(70m, sueldos.Total);
-        var otros = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaGasto.Otros);
+        var otros = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaPago.Otros);
         Assert.Equal(15m, otros.Total);
         Assert.Equal(40m, resumen.Egresos.Retiros);
 

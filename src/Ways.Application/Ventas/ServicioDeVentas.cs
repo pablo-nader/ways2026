@@ -841,7 +841,7 @@ public class ServicioDeVentas(
             .OrderBy(i => i.Orden)
             .ToListAsync(ct);
 
-        var pagos = await db.PagosComprobante
+        var pagos = await db.Cobros
             .Where(p => p.IdComprobanteVenta == comprobante.Id)
             .ToListAsync(ct);
 
@@ -860,7 +860,7 @@ public class ServicioDeVentas(
     {
         var comprobante = await BuscarComprobanteAsync(id, ct);
 
-        var pagos = await db.PagosComprobante
+        var pagos = await db.Cobros
             .Where(p => p.IdComprobanteVenta == id)
             .ToListAsync(ct);
 
@@ -1100,7 +1100,7 @@ public class ServicioDeVentas(
             .Select(cl => new { cl.Id, cl.Nombre, cl.Apellido, cl.RazonSocial })
             .ToDictionaryAsync(cl => cl.Id, cl => cl.RazonSocial ?? $"{cl.Nombre} {cl.Apellido}".Trim(), ct);
 
-        var pagos = await db.PagosComprobante.AsNoTracking()
+        var pagos = await db.Cobros.AsNoTracking()
             .Where(p => idsComprobante.Contains(p.IdComprobanteVenta))
             .Select(p => new { p.IdComprobanteVenta, p.IdMedioPago, p.Importe, p.Vuelto })
             .ToListAsync(ct);
@@ -1299,6 +1299,24 @@ public class ServicioDeVentas(
                 valorAnteriorVentaAnulacion, valorNuevoVentaAnulacion),
             ct);
 
+        // 1.7. E7-S2: libera las aplicaciones de cobro del comprobante, sea el recibo o la venta, con una fila de
+        // auditoría por cada una (id_entidad = el recibo). Corre con la fila del comprobante ya bloqueada por el UPDATE del
+        // paso 1 y ANTES de stock y cuenta corriente; ServicioDeCobros toma el FOR UPDATE de los dos comprobantes antes de
+        // tocar una aplicación, así que nunca espera una fila de aplicaciones_cobro que esta anulación tenga tomada.
+        var liberadas = await Ways.Application.CuentaCorriente.EscriturasDeAplicacionesDeCobro.LiberarDelComprobanteAsync(
+            conexion, transaccionCruda, idTenant, id, momento, ct);
+        foreach (var liberada in liberadas)
+        {
+            var (anteriorDesaplicacion, nuevoDesaplicacion) = Ways.Domain.Auditoria.PayloadDeAuditoria.DesaplicacionDeCobro(
+                liberada.IdAplicacion, liberada.IdComprobanteVenta, liberada.Importe, idComprobanteAnulado: id);
+            await servicioDeAuditoriaAnulacion.RegistrarAsync(
+                conexion, transaccionCruda,
+                new Ways.Domain.Auditoria.RegistroDeAuditoria(
+                    idTenant, liberada.IdPuntoVentaDelRecibo, Ways.Domain.Auditoria.AccionAuditada.CobroDesaplicacion,
+                    liberada.IdComprobanteCobro, anteriorDesaplicacion, nuevoDesaplicacion),
+                ct);
+        }
+
         // 2. Movimientos de stock inversos — uno por cada movimiento ORIGINAL de motivo = venta
         // de este comprobante (nunca recalculado desde items: ver el doc-comment de
         // AnularAsync). Orden ascendente (id_articulo, id_lote), mismo criterio anti-deadlock que
@@ -1383,14 +1401,14 @@ public class ServicioDeVentas(
                     "consumo_reliquidado", "El consumo ya fue reliquidado; no se puede anular.", 409);
             }
 
-            // Un Consumo siempre trae id_pago_comprobante (EjecutarTransaccionAsync paso 6 lo
+            // Un Consumo siempre trae id_cobro (EjecutarTransaccionAsync paso 6 lo
             // setea siempre); un Pago (RC) nunca lo trae (RegistrarPagoAsync lo inserta con
-            // id_pago_comprobante NULL, design decisión 1) — invariante de escritura por tipo,
+            // id_cobro NULL, design decisión 1) — invariante de escritura por tipo,
             // forzarlo acá es defensa en profundidad, no un caso de negocio alcanzable.
-            var idPagoComprobante = movimiento.Tipo == TipoMovimientoCc.Consumo
-                ? movimiento.IdPagoComprobante
+            var idCobro = movimiento.Tipo == TipoMovimientoCc.Consumo
+                ? movimiento.IdCobro
                     ?? throw new InvalidOperationException(
-                        $"El movimiento de consumo {movimiento.Id} no tiene id_pago_comprobante — invariante de escritura violado.")
+                        $"El movimiento de consumo {movimiento.Id} no tiene id_cobro — invariante de escritura violado.")
                 : (int?)null;
 
             var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
@@ -1398,7 +1416,7 @@ public class ServicioDeVentas(
 
             await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 conexion, transaccionCruda, idTenant, movimiento.IdCliente, momento, movimiento.IdPuntoVenta, idEmpleado,
-                TipoMovimientoCc.Ajuste, id, idPagoComprobante, -movimiento.Importe, nuevoSaldo, detalle: null, ct);
+                TipoMovimientoCc.Ajuste, id, idCobro, -movimiento.Importe, nuevoSaldo, detalle: null, ct);
         }
 
         await transaccion.CommitAsync(ct);
@@ -1599,7 +1617,7 @@ public class ServicioDeVentas(
         // transacción — sin este re-chequeo, una venta concurrente a un cierre podría comitear
         // dentro de un turno cuyo arqueo YA se derivó. Reusa
         // ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync tal cual (mismo criterio que
-        // ServicioDeGastos.InsertarGastoAsync) — el IWaysDbContext es el mismo por scope de DI,
+        // ServicioDePagos.InsertarPagoAsync) — el IWaysDbContext es el mismo por scope de DI,
         // así que ve esta misma transacción recién abierta.
         await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(plan.IdTurnoCaja, ct);
 
@@ -1717,7 +1735,7 @@ public class ServicioDeVentas(
         db.ItemsComprobanteVenta.AddRange(itemsEntidad);
 
         var pagosEntidad = plan.Pagos
-            .Select(p => new PagoComprobante
+            .Select(p => new Cobro
             {
                 IdComprobanteVenta = comprobante.Id,
                 IdMedioPago = p.IdMedioPago,
@@ -1728,7 +1746,7 @@ public class ServicioDeVentas(
                 UpdatedAt = plan.Momento
             })
             .ToList();
-        db.PagosComprobante.AddRange(pagosEntidad);
+        db.Cobros.AddRange(pagosEntidad);
 
         await db.SaveChangesAsync(ct);
 
@@ -2875,7 +2893,7 @@ public class ServicioDeVentas(
     /// <c>items_comprobante_venta.id_lote</c> ya se escribe en <see cref="EjecutarTransaccionAsync"/>),
     /// el fallback queda solo por si algún día <paramref name="planItems"/> falta.</summary>
     private static ComprobanteEmitido Proyectar(
-        ComprobanteVenta comprobante, IReadOnlyList<ItemComprobanteVenta> items, IReadOnlyList<PagoComprobante> pagos,
+        ComprobanteVenta comprobante, IReadOnlyList<ItemComprobanteVenta> items, IReadOnlyList<Cobro> pagos,
         IReadOnlyList<LineaDelPlan>? planItems = null)
     {
         var itemsEmitidos = items
@@ -2900,14 +2918,14 @@ public class ServicioDeVentas(
     /// en vez de a partir de <see cref="ItemComprobanteVenta"/> — mismo tail de proyección del
     /// header/pagos, distinto origen de items.</summary>
     private static ComprobanteEmitido Proyectar(
-        ComprobanteVenta comprobante, IReadOnlyList<ItemEmitido> items, IReadOnlyList<PagoComprobante> pagos) =>
+        ComprobanteVenta comprobante, IReadOnlyList<ItemEmitido> items, IReadOnlyList<Cobro> pagos) =>
         ProyectarConItems(comprobante, items, pagos);
 
     /// <summary>judgment-day slice-8 ronda 2 (juez A, SUGGESTION): tail común de las dos
     /// sobrecargas de <see cref="Proyectar"/> — los 9 campos del header y el mapping de pagos eran
     /// duplicados verbatim entre ambas; un campo futuro ahora se agrega en UN solo lugar.</summary>
     private static ComprobanteEmitido ProyectarConItems(
-        ComprobanteVenta comprobante, IReadOnlyList<ItemEmitido> items, IReadOnlyList<PagoComprobante> pagos) => new(
+        ComprobanteVenta comprobante, IReadOnlyList<ItemEmitido> items, IReadOnlyList<Cobro> pagos) => new(
         comprobante.Id, comprobante.Numero,
         NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
         comprobante.Estado, comprobante.Fecha, comprobante.IdPuntoVenta, comprobante.IdCliente,

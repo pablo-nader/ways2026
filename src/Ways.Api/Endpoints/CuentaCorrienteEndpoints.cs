@@ -24,7 +24,22 @@ public static class CuentaCorrienteEndpoints
             var emitido = await servicio.RegistrarPagoAsync(idCliente, solicitud, ct);
             return Results.Created($"/api/ventas/{emitido.Id}", emitido);
         })
-        .WithSummary("Registra un pago a cuenta (RC). Cero items, un único movimiento Pago negativo.");
+        .WithSummary(
+            "Registra un pago a cuenta (RC). Cero items, un único movimiento Pago negativo. Con `aplicaciones` " +
+            "(opcional, hasta 20 ventas del cliente) aplica el cobro a esas ventas en la misma transacción.");
+
+        // E7-S3: ventas del cliente con saldo pendiente — el POS las necesita para aplicar un cobro en el momento de
+        // cobrarlo, así que van bajo OperacionDePos (el grupo entero), igual que el estado de cuenta.
+        grupo.MapGet("/ventas-pendientes", async (
+            ServicioDeCobros servicio, int idCliente, CancellationToken ct) =>
+            Results.Ok(await servicio.ListarVentasPendientesAsync(idCliente, ct)))
+        .WithSummary("Ventas del cliente con saldo pendiente en cuenta corriente, la más nueva primero.");
+
+        // E7-S3: recibos no anulados del cliente con lo cobrado, aplicado y disponible, y sus aplicaciones vivas.
+        grupo.MapGet("/recibos", async (
+            ServicioDeCobros servicio, int idCliente, bool? conDisponible, CancellationToken ct) =>
+            Results.Ok(await servicio.ListarRecibosAsync(idCliente, conDisponible ?? false, ct)))
+        .WithSummary("Recibos del cliente con cobrado, aplicado y disponible; `conDisponible=true` deja los que tienen saldo.");
 
         // stage-7-cuenta-corriente (Slice 3, task 3.5, design: API Surface): preview — la MISMA
         // ReliquidadorDeConsumos que el commit, sin lock, nunca autoritativo.

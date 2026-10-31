@@ -107,7 +107,7 @@ public class CajaMedioPagoEfectivoPineadoTests(WaysApiFixture fixture) : IClassF
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,
@@ -211,7 +211,7 @@ public class CajaMedioPagoEfectivoPineadoTests(WaysApiFixture fixture) : IClassF
 
         Assert.Equal(antesDelCambio!.Diferencia, despuesDelCambio!.Diferencia);
         Assert.Equal(antesDelCambio.VentasEnEfectivoNetas, despuesDelCambio.VentasEnEfectivoNetas);
-        Assert.Equal(antesDelCambio.GastosEnEfectivo, despuesDelCambio.GastosEnEfectivo);
+        Assert.Equal(antesDelCambio.PagosEnEfectivo, despuesDelCambio.PagosEnEfectivo);
         Assert.Equal(antesDelCambio.TotalVentas, despuesDelCambio.TotalVentas);
         Assert.Equal(antesDelCambio.VentasPorMedio.Count, despuesDelCambio.VentasPorMedio.Count);
         foreach (var (esperado, obtenido) in antesDelCambio.VentasPorMedio.Zip(despuesDelCambio.VentasPorMedio))

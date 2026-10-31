@@ -30,7 +30,7 @@ public sealed record ValoresCompartidosDeFamilia(
     CostoListaPor CostoListaPor,
     bool CostoListaIncluyeIva,
     decimal? DescuentoProveedor,
-    decimal PorcentajeImpuestoInterno,
+    decimal ImpuestoInterno,
     decimal? CostoNominal)
 {
     public static ValoresCompartidosDeFamilia De(Articulo articulo) => new(
@@ -48,7 +48,7 @@ public sealed record ValoresCompartidosDeFamilia(
         articulo.CostoListaPor,
         articulo.CostoListaIncluyeIva,
         articulo.DescuentoProveedor,
-        articulo.PorcentajeImpuestoInterno,
+        articulo.ImpuestoInterno,
         articulo.CostoNominal);
 
     /// <summary>Copia SOLO los dieciséis campos compartidos sobre <paramref name="articulo"/>. No toca
@@ -70,7 +70,7 @@ public sealed record ValoresCompartidosDeFamilia(
         articulo.CostoListaPor = CostoListaPor;
         articulo.CostoListaIncluyeIva = CostoListaIncluyeIva;
         articulo.DescuentoProveedor = DescuentoProveedor;
-        articulo.PorcentajeImpuestoInterno = PorcentajeImpuestoInterno;
+        articulo.ImpuestoInterno = ImpuestoInterno;
         articulo.CostoNominal = CostoNominal;
     }
 
@@ -151,9 +151,9 @@ public sealed record ValoresCompartidosDeFamilia(
             distintos.Add("descuento_proveedor");
         }
 
-        if (PorcentajeImpuestoInterno != otros.PorcentajeImpuestoInterno)
+        if (ImpuestoInterno != otros.ImpuestoInterno)
         {
-            distintos.Add("porcentaje_impuesto_interno");
+            distintos.Add("impuesto_interno");
         }
 
         if (CostoNominal != otros.CostoNominal)

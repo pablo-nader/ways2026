@@ -1591,7 +1591,7 @@ public class ServicioDeFacturacionDeVentas(
     {
         await using var comando = await NuevoComandoAsync(
             "SELECT p.id_medio_pago, p.importe - p.vuelto " +
-            "FROM pagos_comprobante p " +
+            "FROM cobros p " +
             "WHERE p.id_comprobante_venta = $1 AND p.deleted_at IS NULL",
             ct, idVenta);
 

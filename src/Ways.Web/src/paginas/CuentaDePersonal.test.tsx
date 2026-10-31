@@ -96,6 +96,7 @@ function empleadoBase(sobrescribir: Partial<PersonalListado> = {}): PersonalList
     nombreUsuario: null,
     idCliente: 21,
     nombreCliente: 'Cliente Ana',
+    horarioHabitual: null,
     ...sobrescribir,
   }
 }
@@ -134,8 +135,8 @@ const MOV_PAGO = movimiento({
   desglose: {
     descuentoDeCuentaCorriente: 500,
     lineas: [
-      { idGasto: 70, idMedioPago: 4, nombreMedioPago: 'Efectivo', importe: 6000, origenFondos: 'CajaTurno', referencia: null },
-      { idGasto: 71, idMedioPago: 5, nombreMedioPago: null, importe: 0.5, origenFondos: 'Tesoreria', referencia: 'op-9' },
+      { idGasto: 70, idItem: 700, idMedioPago: 4, nombreMedioPago: 'Efectivo', importe: 6000, origenFondos: 'CajaTurno', referencia: null },
+      { idGasto: 71, idItem: 710, idMedioPago: 5, nombreMedioPago: null, importe: 0.5, origenFondos: 'Tesoreria', referencia: 'op-9' },
     ],
   },
 })

@@ -30,9 +30,15 @@ public static class PresupuestosEndpoints
             DateTimeOffset? hasta,
             int? pagina,
             int? tamanio,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(idPuntoVenta, idCliente, estado, vencido, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista presupuestos con filtros y paginado. 'vencido' requiere idPuntoVenta.");
+            servicio.ListarAsync(
+                idPuntoVenta, idCliente, estado, vencido, desde, hasta, pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
+        .WithSummary(
+            "Lista presupuestos con filtros y paginado. 'vencido' requiere idPuntoVenta. orden (numero, " +
+            "cliente, puntoVenta, estado, vencimiento, fechaEmision, total) y direccion (ascendente, " +
+            "descendente) ordenan todo el conjunto filtrado antes de paginar; 400 si no son válidos.");
 
         grupo.MapGet("/{id:int}", (ServicioDePresupuestos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerDetalleAsync(id, ct))

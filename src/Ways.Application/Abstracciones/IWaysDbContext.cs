@@ -13,7 +13,7 @@ using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
@@ -62,6 +62,7 @@ public interface IWaysDbContext
     DbSet<Proveedor> Proveedores { get; }
     DbSet<Personal> Personal { get; }
     DbSet<MovimientoPersonal> MovimientosPersonal { get; }
+    DbSet<JornadaPersonal> JornadasPersonal { get; }
     DbSet<ListaPrecio> ListasPrecio { get; }
     DbSet<NumeracionCliente> NumeracionesClientes { get; }
 
@@ -98,7 +99,8 @@ public interface IWaysDbContext
     // crudo, no un DbSet.
     DbSet<ComprobanteVenta> ComprobantesVenta { get; }
     DbSet<ItemComprobanteVenta> ItemsComprobanteVenta { get; }
-    DbSet<PagoComprobante> PagosComprobante { get; }
+    DbSet<Cobro> Cobros { get; }
+    DbSet<AplicacionCobro> AplicacionesCobro { get; }
     DbSet<Ways.Domain.Stock.Stock> Stock { get; }
     DbSet<MovimientoStock> MovimientosStock { get; }
     DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente { get; }
@@ -118,9 +120,11 @@ public interface IWaysDbContext
     DbSet<CuentaTesoreria> CuentasTesoreria { get; }
     DbSet<MovimientoCuenta> MovimientosCuenta { get; }
 
-    // stage-6-turnos-caja, Slice 3: ServicioDeGastos es el primer consumidor de Application de
+    // stage-6-turnos-caja, Slice 3: ServicioDePagos es el primer consumidor de Application de
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).
-    DbSet<Gasto> Gastos { get; }
+    DbSet<Pago> Pagos { get; }
+    DbSet<ItemPago> ItemsPago { get; }
+    DbSet<AplicacionPago> AplicacionesPago { get; }
 
     // stage-8-compras-transferencias-inventario, Slice 2: ServicioDeCompras es el primer
     // consumidor de Application de estos 2 — Slice 1 solo adelantaba el modelo a la migración

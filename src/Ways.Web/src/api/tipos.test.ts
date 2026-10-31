@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { CATALOGO_DE_ACCIONES_AUDITADAS, CATEGORIAS_GASTO } from './tipos'
+import { CATALOGO_DE_ACCIONES_AUDITADAS, CATEGORIAS_PAGO } from './tipos'
 
 // El servidor ordena por estas mismas etiquetas (lo que se ve es lo que se ordena). Cada lista literal de abajo
-// es idéntica a la de su test espejo del backend: `EtiquetasDeAccionTests` y `EtiquetasDeCategoriaDeGastoTests`
+// es idéntica a la de su test espejo del backend: `EtiquetasDeAccionTests` y `EtiquetasDeCategoriaDePagoTests`
 // (tests/Ways.Application.Tests/Listados/EtiquetasDeOrdenTests.cs). Si una cambia, las dos tienen que cambiar.
 
 describe('etiquetas que el servidor replica para ordenar', () => {
@@ -11,6 +11,13 @@ describe('etiquetas que el servidor replica para ordenar', () => {
       ['precio.cambio', 'Cambio de precio'],
       ['venta.anulacion', 'Anulación de venta'],
       ['compra.anulacion', 'Anulación de compra'],
+      ['compra.edicion', 'Edición de compra'],
+      ['compra.redondeo', 'Ajuste de redondeo de compra'],
+      ['pago.aplicacion', 'Aplicación de pago a compras'],
+      ['pago.desaplicacion', 'Desaplicación de pago de una compra'],
+      ['pago.redondeo', 'Ajuste de redondeo de pago'],
+      ['cobro.aplicacion', 'Aplicación de cobro a ventas'],
+      ['cobro.desaplicacion', 'Desaplicación de cobro de una venta'],
       ['stock.ajuste', 'Ajuste de stock'],
       ['stock.decomiso', 'Decomiso de stock'],
       ['stock.conteo', 'Conteo de inventario'],
@@ -26,8 +33,8 @@ describe('etiquetas que el servidor replica para ordenar', () => {
     ])
   })
 
-  it('CATEGORIAS_GASTO es la lista que fija EtiquetasDeCategoriaDeGastoTests', () => {
-    expect(CATEGORIAS_GASTO.map((c) => [c.valor, c.etiqueta])).toEqual([
+  it('CATEGORIAS_PAGO es la lista que fija EtiquetasDeCategoriaDePagoTests', () => {
+    expect(CATEGORIAS_PAGO.map((c) => [c.valor, c.etiqueta])).toEqual([
       ['Proveedor', 'Proveedores'],
       ['Sueldos', 'Sueldos'],
       ['Viaticos', 'Viáticos'],

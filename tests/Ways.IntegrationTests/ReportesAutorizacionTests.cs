@@ -89,7 +89,7 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
         return cliente;
     }
 
-    /// <summary>`ventas/resumen`/`gastos/resumen` exigen `granularidad`; el resto no lo lee
+    /// <summary>`ventas/resumen`/`pagos/resumen` exigen `granularidad`; el resto no lo lee
     /// (dto-contract-honesty) — agregarlo de más no rompe nada, así que viaja siempre para
     /// simplificar la matriz. Las dos rutas de resumen de stock (<c>stock/*/resumen</c>) no leen
     /// ninguno de esos campos, solo <c>idPuntoVenta</c> (judgment-day slice 7 juez B, WARNING

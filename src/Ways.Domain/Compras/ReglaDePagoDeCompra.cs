@@ -9,12 +9,12 @@ namespace Ways.Domain.Compras;
 /// </summary>
 public static class ReglaDePagoDeCompra
 {
-    /// <summary>Lo que falta pagar de una compra confirmada. Una compra sobrepagada (un gasto
+    /// <summary>Lo que falta pagar de una compra confirmada. Una compra sobrepagada (un pago
     /// editado hacia arriba después de imputarse) no tiene saldo negativo: queda en cero.</summary>
     public static decimal SaldoPendiente(EstadoCompra estado, decimal total, decimal pagado) =>
         estado == EstadoCompra.Confirmada ? Math.Max(0m, total - pagado) : 0m;
 
-    /// <summary>Concepto del gasto cuando el pedido no trae uno: <c>Pago &lt;tipo&gt; &lt;número&gt;</c>,
+    /// <summary>Concepto del pago cuando el pedido no trae uno: <c>Pago &lt;tipo&gt; &lt;número&gt;</c>,
     /// con el id de la compra si no tiene número externo.</summary>
     public static string ConceptoPorDefecto(string? nombreDelTipo, string? numeroExterno, int idComprobanteCompra)
     {

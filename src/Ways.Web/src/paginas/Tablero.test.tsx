@@ -10,7 +10,7 @@ import type {
   MedioPagoListado,
   PuntoVentaListado,
   Rentabilidad,
-  ResumenDeGastos,
+  ResumenDePagos,
   ResumenDeReposicion,
   ResumenDeVencimientos,
   ResumenDeVentas,
@@ -115,7 +115,7 @@ function ventasFixture(sobrescribir: Partial<ResumenDeVentas> = {}): ResumenDeVe
   }
 }
 
-function gastosFixture(sobrescribir: Partial<ResumenDeGastos> = {}): ResumenDeGastos {
+function pagosFixture(sobrescribir: Partial<ResumenDePagos> = {}): ResumenDePagos {
   return {
     desde: '2026-08-05',
     hasta: '2026-08-11',
@@ -257,7 +257,7 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     if (ruta.startsWith('/reportes/ventas/resumen?')) return Promise.resolve(ventasFixture())
-    if (ruta.startsWith('/reportes/gastos/resumen?')) return Promise.resolve(gastosFixture())
+    if (ruta.startsWith('/reportes/gastos/resumen?')) return Promise.resolve(pagosFixture())
     if (ruta.startsWith('/reportes/ventas/por-punto-venta?')) return Promise.resolve(ventasPorPuntoVentaFixture())
     if (ruta.startsWith('/reportes/ventas/por-vendedor?')) return Promise.resolve(ventasPorVendedorFixture())
     if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) return Promise.resolve(ventasPorMedioPagoFixture())
@@ -314,7 +314,7 @@ beforeEach(() => {
 })
 
 describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () => {
-  it('por defecto carga el rango de los últimos 7 días y muestra ventas, gastos y ticket promedio', async () => {
+  it('por defecto carga el rango de los últimos 7 días y muestra ventas, pagos y ticket promedio', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 7, 15, 12, 0, 0))
     mockearRutasBase()
@@ -325,10 +325,10 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     expect(screen.getByLabelText('Hasta')).toHaveValue('15/08/2026')
 
     expect(await screen.findByText('$ 1.000,00')).toBeInTheDocument() // ventas netas
-    expect(screen.getByText('$ 300,00')).toBeInTheDocument() // gastos
+    expect(screen.getByText('$ 300,00')).toBeInTheDocument() // pagos
     expect(screen.getByText('$ 250,00')).toBeInTheDocument() // ticket promedio
     expect(screen.getByRole('img', { name: 'Serie de ventas netas por período' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Serie de gastos por período' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Serie de pagos por período' })).toBeInTheDocument()
   })
 
   it('un ticket promedio null se muestra como "—", nunca como $ 0,00', async () => {
@@ -433,7 +433,7 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
   })
 
-  it('mapea neto e importe como valor de las series de ventas y gastos', async () => {
+  it('mapea neto e importe como valor de las series de ventas y pagos', async () => {
     mockearRutasBase()
     renderTablero()
 
@@ -1175,7 +1175,7 @@ describe('Tablero — Card de comisiones, PROVISIONAL (stage-10-agregacion-dashb
 })
 
 describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
-  it('la card G1 tiene botones de descarga de ventas y gastos, cada uno apuntando a su ruta /export con los filtros vigentes', async () => {
+  it('la card G1 tiene botones de descarga de ventas y pagos, cada uno apuntando a su ruta /export con los filtros vigentes', async () => {
     mockearRutasBase()
     renderTablero()
 
@@ -1189,7 +1189,7 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
       ),
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Descargar gastos' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Descargar pagos' }))
     await waitFor(() =>
       expect(apiDescargarMock).toHaveBeenCalledWith(
         `/reportes/gastos/resumen/export?idEmpresa=1&desde=${rangoEsperado.desde}&hasta=${rangoEsperado.hasta}&granularidad=Dia&formato=xlsx`,
@@ -1224,7 +1224,7 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
     renderTablero()
 
     await screen.findByText('Empresa Uno SA')
-    fireEvent.click(await screen.findByRole('button', { name: 'Descargar gastos' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar pagos' }))
 
     expect(await screen.findByText('El export supera el tope de 25000 filas.')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/')

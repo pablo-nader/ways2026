@@ -2,6 +2,10 @@
 
 ## 7. Caja: turnos, arqueos y tesorería
 
+> **Vocabulario (etapa E1):** el *gasto* pasa a llamarse **pago**: tabla `pagos`, columna `id_pago` y tipo de
+> movimiento de tesorería `pago`. Las rutas HTTP siguen siendo `/api/gastos…` (y el valor JSON `Gasto` del tipo de
+> movimiento) hasta el contrato nuevo de la etapa E2.
+
 ```sql
 turnos_caja (                 -- [operativa]
     id_turno_caja, id_punto_venta,
@@ -49,7 +53,7 @@ movimientos_caja (            -- [operativa]  — plata física fuera de la vent
 
 arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PAGO
     id_arqueo, id_turno_caja, id_medio_pago,
-    importe_esperado numeric(14,2),          -- calculado: pagos + fondo − vueltos − gastos − retiros
+    importe_esperado numeric(14,2),          -- calculado: cobros + fondo − vueltos − pagos − retiros
     importe_declarado numeric(14,2),         -- lo que el cajero contó
     diferencia numeric(14,2),                -- esperado − declarado (el "saldo" del legacy, por medio)
     importe_esperado_original numeric(14,2) NULL  -- esperado del cierre, si un recálculo lo cambió
@@ -57,7 +61,7 @@ arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PA
 ```
 
 > **Recálculo administrativo del arqueo (DB CHANGE GATE aprobado).** Un admin puede editar o dar
-> de baja un gasto de caja de un turno ya cerrado. En la misma transacción se recalcula
+> de baja un pago de caja de un turno ya cerrado. En la misma transacción se recalcula
 > `importe_esperado` de ese turno con la derivación del cierre y el ancla pineada: las filas que
 > cambian guardan su esperado del cierre en `importe_esperado_original` (solo la primera vez), un
 > medio que ganó actividad recibe una fila nueva (original `0`, declarado `0`) y ninguna fila se
@@ -69,7 +73,7 @@ arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PA
 > tesorería se agregan como movimientos `ajuste` nuevos.
 
 **Cerrar caja deja de ser un INSERT de 30 columnas.** Los totales del turno (por área,
-por medio de pago, tickets, gastos) se **derivan** de los comprobantes y gastos que
+por medio de pago, tickets, pagos) se **derivan** de los comprobantes y pagos que
 apuntan al turno — no se copian a mano por POST manipulable como hoy (D7 ⚠). El cierre:
 calcula esperados, registra `arqueos_turno` con lo declarado, marca `estado = cerrado`
 y encadena tesorería. Todo en una transacción.
@@ -77,8 +81,8 @@ y encadena tesorería. Todo en una transacción.
 ```sql
 movimientos_tesoreria (       -- [operativa] — ex cajaz: el fondo fuera de la caja diaria
     id_movimiento, id_empresa, id_punto_venta, fecha,
-    tipo tipo_movimiento_tesoreria,          -- enum: retiro_caja | deposito | gasto | ajuste
-    id_turno_caja NULL, id_gasto NULL, concepto,
+    tipo tipo_movimiento_tesoreria,          -- enum: retiro_caja | deposito | pago | ajuste
+    id_turno_caja NULL, id_pago NULL, concepto,
     inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_empresa)
     id_empleado
 );
@@ -90,33 +94,33 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > re-ancla de `id_punto_venta` a `(id_tenant, id_empresa)` — varios puntos de venta de la misma
 > empresa comparten un solo fondo de tesorería, en vez de uno por punto de venta. `id_empresa`
 > aterriza NOT NULL (FK compuesta a `empresas`, RESTRICT), resuelto server-side igual que en
-> `gastos`, con backfill de una sola vez para las filas preexistentes: el backfill re-computa
+> `pagos`, con backfill de una sola vez para las filas preexistentes: el backfill re-computa
 > `inicio`/`final` de TODAS las filas existentes como una suma acumulada de
 > `(ingreso − egreso)` ordenada por `(fecha, id)` dentro de cada partición `(id_tenant,
 > id_empresa)` — el invariante `final = inicio + ingreso − egreso`
 > (`ck_movimientos_tesoreria_cadena`) se preserva por construcción. El append a la cadena se
 > serializa por `(id_tenant, id_empresa)` con `pg_advisory_xact_lock`
 > (`EscriturasDeTesoreria.TomarLockDeEmpresaAsync`), tomado ANTES de leer el último `final` de la
-> cadena. `id_gasto NULL` aterriza la columna + FK compuesta a `gastos.ak_gastos_id_gasto_id_tenant`
-> (RESTRICT) y su índice único parcial (`ux_movimientos_tesoreria_id_gasto`, solo cuando no es
+> cadena. `id_pago NULL` aterriza la columna + FK compuesta a `pagos.ak_pagos_id_pago_id_tenant`
+> (RESTRICT) y su índice único parcial (`ux_movimientos_tesoreria_id_pago`, solo cuando no es
 > nulo).
 >
-> **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `id_gasto` ya tiene escritor: un
-> gasto de origen `tesoreria` (`ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync`) agrega, en la
-> MISMA transacción del insert del gasto, una fila `tipo = 'gasto'` con `id_gasto` = ese gasto,
+> **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `id_pago` ya tiene escritor: un
+> pago de origen `tesoreria` (`ServicioDePagos.EscribirMovimientoDeTesoreriaAsync`) agrega, en la
+> MISMA transacción del insert del pago, una fila `tipo = 'pago'` con `id_pago` = ese pago,
 > `ingreso = 0`, `egreso = importe` — mismo protocolo lock+lectura+append que el cierre, extraído a
 > `EscriturasDeTesoreria` (única clase que escribe esta tabla). El cierre cambia de forma: su fila
-> `retiro_caja` pasa a llevar SIEMPRE `egreso = 0` (antes, PR1: `egreso` = suma de TODOS los gastos
-> del turno) — un gasto `caja_turno` ya salió del cajón, y un gasto `tesoreria` ya escribió su
+> `retiro_caja` pasa a llevar SIEMPRE `egreso = 0` (antes, PR1: `egreso` = suma de TODOS los pagos
+> del turno) — un pago `caja_turno` ya salió del cajón, y un pago `tesoreria` ya escribió su
 > propio movimiento en el momento en que se registró; restarlo de nuevo al cerrar lo descontaría
 > dos veces. `ingreso` sigue siendo la suma de los retiros físicos del turno, sin cambios.
 >
 > **Estado (stage-tesoreria-por-empresa, PR5 — RESUELTO):** confirmado, UNA sola cadena por
-> `(id_tenant, id_empresa)` — hay exactamente tres escritores, los dos de arriba más el gasto de
-> administración (`ServicioDeGastos.RegistrarDeAdministracionAsync`, mismo camino de
-> `EscriturasDeTesoreria` que un gasto de origen `tesoreria` del POS): cierre de turno
-> (`tipo = 'retiro_caja'`, `egreso` SIEMPRE 0), gasto de origen `tesoreria` desde el POS y gasto de
-> administración (ambos `tipo = 'gasto'`, `egreso = importe`). La lectura
+> `(id_tenant, id_empresa)` — hay exactamente tres escritores, los dos de arriba más el pago de
+> administración (`ServicioDePagos.RegistrarDeAdministracionAsync`, mismo camino de
+> `EscriturasDeTesoreria` que un pago de origen `tesoreria` del POS): cierre de turno
+> (`tipo = 'retiro_caja'`, `egreso` SIEMPRE 0), pago de origen `tesoreria` desde el POS y pago de
+> administración (ambos `tipo = 'pago'`, `egreso = importe`). La lectura
 > (`ServicioDeTesoreria.ListarAsync`/`GET /api/reportes/tesoreria`) toma `id_empresa` como filtro
 > OBLIGATORIO (ADR-8) y admite `id_punto_venta` como filtro OPCIONAL adicional sobre esa misma
 > cadena — un filtro por punto de venta muestra un SUBCONJUNTO de filas (las originadas ahí), que
@@ -195,7 +199,7 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > medios se procesan por id ascendente, así que dos medios de la misma cuenta encadenan en ese orden. Una cuenta inactiva
 > recibe movimientos (desactivar solo impide asignarla a medios nuevos); un medio sin cuenta, con la cuenta dada de baja o con
 > una cuenta de otra empresa que la del turno no escribe nada y nunca frena el cierre. Un pago de un medio nunca es negativo
-> (`ck_pagos_comprobante_importe_no_negativo`) y `ValidadorDePagos` rechaza los pagos en una nota de crédito, así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
+> (`ck_cobros_importe_no_negativo`) y `ValidadorDePagos` rechaza los pagos en una nota de crédito, así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
 > ejerce.
 >
 > **Ajuste manual (`POST /api/cuentas-tesoreria/{id}/ajustes`, solo Admin).** `ServicioDeAjusteDeCuentaDeTesoreria` escribe UNA fila
@@ -221,12 +225,12 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
-> ajuste manual (ver "Ajuste manual"). (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
+> ajuste manual (ver "Ajuste manual"). (b) Un pago hecho con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
 > cuenta; también se corrige con un ajuste manual. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
 > `pago_en_comprobante_negativo` un comprobante de total negativo con algún pago de importe o vuelto positivo, así que el lector del
 > turno, que suma los importes sin el signo del documento, nunca cuenta como cobrado el dinero de una nota de crédito (fijado por
 > `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo`). La regla vive en el servicio: ninguna CHECK puede
-> ligar `pagos_comprobante` con el total de `comprobantes_venta`, así que una fila anterior a la regla no está protegida por la base.
+> ligar `cobros` con el total de `comprobantes_venta`, así que una fila anterior a la regla no está protegida por la base.
 >
 > **Locks del escritor.** Orden: fila del turno (exclusivo) → advisory de la empresa (tesorería de efectivo) → medios
 > `FOR SHARE` por id ascendente → cuentas de la empresa del turno `FOR NO KEY UPDATE` por id ascendente (las de otra empresa no se bloquean porque no se acreditan). El medio se lee una sola vez bajo su lock (cuenta
@@ -235,7 +239,7 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > con sí mismo, pero no con el `FOR KEY SHARE` de los chequeos de FK, que no se bloquean. La idempotencia la da primero el
 > UPDATE guardado por estado del turno (409 `turno_ya_cerrado`); si una fila de cierre repetida llegara a la base,
 > `ux_movimientos_cuenta_cierre` da 23505 y `ManejadorDeErrores` lo traduce al mismo 409 (supone que solo el cierre escribe filas cubiertas por ese índice). Recalcular el arqueo de un turno
-> cerrado (edición de gastos) no toca `movimientos_cuenta`.
+> cerrado (edición de pagos) no toca `movimientos_cuenta`.
 >
 > **Lock del ajuste manual.** Toma solo la fila de la cuenta con el MISMO `FOR NO KEY UPDATE` y la misma lectura de cola que el cierre
 > (`EscriturasDeCuentaDeTesoreria.BloquearYLeerSaldoAsync`, sin filtrar por empresa porque un ajuste no pertenece a un turno), de modo

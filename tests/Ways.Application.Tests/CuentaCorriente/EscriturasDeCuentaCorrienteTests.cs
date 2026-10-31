@@ -13,24 +13,24 @@ namespace Ways.Application.Tests.CuentaCorriente;
 public class EscriturasDeCuentaCorrienteTests
 {
     [Fact]
-    public async Task UnConsumoSinIdPagoComprobanteViolaLaFormaYLanza()
+    public async Task UnConsumoSinIdCobroViolaLaFormaYLanza()
     {
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
-                TipoMovimientoCc.Consumo, idComprobanteVenta: 10, idPagoComprobante: null, importe: 100m,
+                TipoMovimientoCc.Consumo, idComprobanteVenta: 10, idCobro: null, importe: 100m,
                 saldoResultante: 100m, detalle: null, CancellationToken.None));
 
         Assert.Contains("Consumo", excepcion.Message);
     }
 
     [Fact]
-    public async Task UnPagoConIdPagoComprobanteViolaLaFormaYLanza()
+    public async Task UnPagoConIdCobroViolaLaFormaYLanza()
     {
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
-                TipoMovimientoCc.Pago, idComprobanteVenta: 10, idPagoComprobante: 5, importe: -100m,
+                TipoMovimientoCc.Pago, idComprobanteVenta: 10, idCobro: 5, importe: -100m,
                 saldoResultante: 0m, detalle: null, CancellationToken.None));
 
         Assert.Contains("Pago", excepcion.Message);
@@ -45,7 +45,7 @@ public class EscriturasDeCuentaCorrienteTests
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
-                TipoMovimientoCc.ActualizacionPrecios, idComprobanteVenta: 10, idPagoComprobante: null, importe: 50m,
+                TipoMovimientoCc.ActualizacionPrecios, idComprobanteVenta: 10, idCobro: null, importe: 50m,
                 saldoResultante: 150m, detalle: "[]", CancellationToken.None));
 
         Assert.Contains("ActualizacionPrecios", excepcion.Message);
@@ -57,7 +57,7 @@ public class EscriturasDeCuentaCorrienteTests
         var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
-                TipoMovimientoCc.DescuentoPersonal, idComprobanteVenta: null, idPagoComprobante: null, importe: -50m,
+                TipoMovimientoCc.DescuentoPersonal, idComprobanteVenta: null, idCobro: null, importe: -50m,
                 saldoResultante: 50m, detalle: null, CancellationToken.None));
 
         Assert.Contains("DescuentoPersonal", excepcion.Message);

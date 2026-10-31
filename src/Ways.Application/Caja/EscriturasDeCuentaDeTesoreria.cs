@@ -18,7 +18,7 @@ namespace Ways.Application.Caja;
 /// acredite la misma cuenta, que es lo que serializa su cadena, pero no con el <c>FOR KEY SHARE</c> de los chequeos de FK, así
 /// que insertar un movimiento o asignar la cuenta a un medio no queda bloqueado. Ninguno de esos escritores forma un ciclo
 /// con este: el ABM de cuentas solo lee los medios, el guardado de un medio pide <c>FOR KEY SHARE</c> sobre la cuenta (que no
-/// choca) y los gastos solo toman el lock de empresa. El saldo de partida se lee de la fila de la cuenta ya bloqueada y la
+/// choca) y los pagos solo toman el lock de empresa. El saldo de partida se lee de la fila de la cuenta ya bloqueada y la
 /// cola de la cadena después, nunca antes.
 ///
 /// Que el medio sea electrónico no se vuelve a chequear: <c>ck_medios_pago_cuenta_solo_electronico</c> impide que un
@@ -35,7 +35,7 @@ namespace Ways.Application.Caja;
 ///
 /// Lo que el libro todavía NO refleja: (a) una devolución por nota de crédito de una venta cobrada con un medio digital
 /// no descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta
-/// un ajuste manual; (b) un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
+/// un ajuste manual; (b) un pago pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
 /// cuenta. El soporte de un bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún
 /// camino actual ejerce: los importes de pago nunca son negativos y <c>ValidadorDePagos</c> rechaza los pagos en una nota de
 /// crédito.

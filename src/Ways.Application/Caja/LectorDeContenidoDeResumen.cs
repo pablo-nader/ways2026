@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Caja;
@@ -77,25 +77,25 @@ public class LectorDeContenidoDeResumen(IWaysDbContext db)
             .OrderBy(i => i.IdArea)
             .ToList();
 
-        // 6. egresos por categoría — gastos del turno agrupados; los retiros NO son un gasto
-        // (spec: No Magic Tipo Encodes A Retiro As A Gasto) y llegan de afuera (insumos.Retiros,
+        // 6. egresos por categoría — pagos del turno agrupados; los retiros NO son un pago
+        // (spec: No Magic Tipo Encodes A Retiro As A Pago) y llegan de afuera (insumos.Retiros,
         // ya leído por LectorDeMovimientosDelTurno para la misma llamada — nunca se re-consulta).
         // stage-gastos-origen-fondos-pos (PR2): filtra a OrigenFondos.CajaTurno — mismo criterio
-        // que LectorDeMovimientosDelTurno.gastosPorMedio: "egresos" es un total de caja física, y
-        // un gasto de tesorería nunca tocó el cajón.
-        var egresosPorCategoria = await db.Gastos
-            .Where(g => g.IdTurnoCaja == idTurnoCaja && g.OrigenFondos == OrigenFondosGasto.CajaTurno)
+        // que LectorDeMovimientosDelTurno.pagosPorMedio: "egresos" es un total de caja física, y
+        // un pago de tesorería nunca tocó el cajón.
+        var egresosPorCategoria = await db.Pagos
+            .Where(g => g.IdTurnoCaja == idTurnoCaja && g.OrigenFondos == OrigenFondosPago.CajaTurno)
             .GroupBy(g => g.Categoria)
             .OrderBy(g => g.Key)
             .Select(g => new EgresoPorCategoria(g.Key, g.Sum(x => x.Importe)))
             .ToListAsync(ct);
 
         // 7. egresos por área — mismo criterio que ingresos por área (catálogo ya cargado en el
-        // paso 5), pero Gasto.IdArea es NULLABLE (a diferencia del snapshot inmutable del ítem de
-        // venta): los gastos sin área declarada se agrupan bajo un bucket "Sin área" con IdArea
+        // paso 5), pero Pago.IdArea es NULLABLE (a diferencia del snapshot inmutable del ítem de
+        // venta): los pagos sin área declarada se agrupan bajo un bucket "Sin área" con IdArea
         // null, en vez de descartarlos. Mismo filtro CajaTurno que el paso 6.
-        var totalesEgresoPorArea = await db.Gastos
-            .Where(g => g.IdTurnoCaja == idTurnoCaja && g.OrigenFondos == OrigenFondosGasto.CajaTurno)
+        var totalesEgresoPorArea = await db.Pagos
+            .Where(g => g.IdTurnoCaja == idTurnoCaja && g.OrigenFondos == OrigenFondosPago.CajaTurno)
             .GroupBy(g => g.IdArea)
             .Select(g => new { IdArea = g.Key, Total = g.Sum(x => x.Importe) })
             .ToListAsync(ct);

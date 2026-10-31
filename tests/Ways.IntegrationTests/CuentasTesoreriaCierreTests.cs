@@ -10,14 +10,14 @@ using Npgsql;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Ventas;
@@ -137,7 +137,7 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = idMedioPago, Importe = importe,
             Vuelto = 0m, CreatedAt = ahora, UpdatedAt = ahora
@@ -385,7 +385,7 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
 
     // ---- bruto negativo, cero y sin actividad ---------------------------------------------------
 
-    /// <summary>Un importe de pago nunca es negativo (<c>ck_pagos_comprobante_importe_no_negativo</c>) y una nota de crédito no
+    /// <summary>Un importe de pago nunca es negativo (<c>ck_cobros_importe_no_negativo</c>) y una nota de crédito no
     /// lleva pagos, así que el cierre no llega hoy a un bruto negativo: el escritor se ejercita directamente, con la
     /// actividad que daría un bruto neto negativo, dentro de una transacción real.</summary>
     [Fact]
@@ -598,31 +598,31 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
     }
 
     [Fact]
-    public async Task ElRecalculoDeUnTurnoCerradoPorUnGastoNoTocaLasFilasDeCuenta()
+    public async Task ElRecalculoDeUnTurnoCerradoPorUnPagoNoTocaLasFilasDeCuenta()
     {
-        var ctx = await PrepararAsync(nameof(ElRecalculoDeUnTurnoCerradoPorUnGastoNoTocaLasFilasDeCuenta));
+        var ctx = await PrepararAsync(nameof(ElRecalculoDeUnTurnoCerradoPorUnPagoNoTocaLasFilasDeCuenta));
         using var _ = ctx.Admin;
         var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago", saldoInicial: 100m);
         var medio = await CrearMedioAsync(ctx, "QR MP", cuenta, comision: 5m);
         var turno = await AbrirTurnoAsync(ctx);
         await SembrarPagoAsync(ctx, turno, medio, 1000m);
 
-        var gastoRespuesta = await ctx.Admin.PostAsJsonAsync(
+        var pagoRespuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Gasto original", null, medio, null, 40m,
-                OrigenFondos: OrigenFondosGasto.CajaTurno));
-        var cuerpoGasto = await gastoRespuesta.Content.ReadAsStringAsync();
-        Assert.True(gastoRespuesta.StatusCode == HttpStatusCode.Created, cuerpoGasto);
-        var idGasto = JsonDocument.Parse(cuerpoGasto).RootElement.GetProperty("id").GetInt32();
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto original", null, medio, null, 40m,
+                OrigenFondos: OrigenFondosPago.CajaTurno));
+        var cuerpoPago = await pagoRespuesta.Content.ReadAsStringAsync();
+        Assert.True(pagoRespuesta.StatusCode == HttpStatusCode.Created, cuerpoPago);
+        var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
 
         await CerrarOkAsync(ctx, turno, "clasico");
         var antes = await LibroAsync(ctx, cuenta);
         Assert.Equal(2, antes.Count);
 
         var edicion = await ctx.Admin.PutAsJsonAsync(
-            $"/api/gastos/administracion/{idGasto}",
-            new SolicitudDeEdicionDeGasto(CategoriaGasto.Otros, null, null, "Gasto editado", null, medio, null, 90m));
+            $"/api/gastos/administracion/{idPago}",
+            new SolicitudDeEdicionDePago(CategoriaPago.Otros, null, null, "Gasto editado", null, medio, null, 90m));
         Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
 
         await using (var db = Db(ctx))

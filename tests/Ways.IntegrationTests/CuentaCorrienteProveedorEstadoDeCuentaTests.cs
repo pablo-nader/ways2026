@@ -89,15 +89,15 @@ public class CuentaCorrienteProveedorEstadoDeCuentaTests(WaysApiFixture fixture)
     /// que el header también sea consistente.</summary>
     private Task<int> SembrarMovimientoAsync(
         Contexto ctx, TipoMovimientoCcProveedor tipo, DateTimeOffset fecha, decimal importe, string? detalle = null,
-        int? idComprobanteCompra = null, int? idGasto = null) =>
-        SembrarMovimientoAsync(ctx, ctx.IdProveedor, tipo, fecha, importe, detalle, idComprobanteCompra, idGasto);
+        int? idComprobanteCompra = null, int? idPago = null) =>
+        SembrarMovimientoAsync(ctx, ctx.IdProveedor, tipo, fecha, importe, detalle, idComprobanteCompra, idPago);
 
     /// <summary>Sobrecarga con <paramref name="idProveedor"/> explícito — permite sembrar movimientos
     /// para UN SEGUNDO proveedor del MISMO tenant (judgment-day round 1, CRITICAL 3), algo que la
     /// sobrecarga atada a <c>ctx.IdProveedor</c> no puede expresar.</summary>
     private async Task<int> SembrarMovimientoAsync(
         Contexto ctx, int idProveedor, TipoMovimientoCcProveedor tipo, DateTimeOffset fecha, decimal importe,
-        string? detalle = null, int? idComprobanteCompra = null, int? idGasto = null)
+        string? detalle = null, int? idComprobanteCompra = null, int? idPago = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == idProveedor);
@@ -112,7 +112,7 @@ public class CuentaCorrienteProveedorEstadoDeCuentaTests(WaysApiFixture fixture)
             IdEmpleado = ctx.IdEmpleadoAdmin,
             Tipo = tipo,
             IdComprobanteCompra = idComprobanteCompra,
-            IdGasto = idGasto,
+            IdPago = idPago,
             Importe = importe,
             SaldoResultante = nuevoSaldo,
             Detalle = detalle

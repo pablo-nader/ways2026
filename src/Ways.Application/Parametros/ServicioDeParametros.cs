@@ -4,6 +4,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Stock;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
+using Ways.Domain.Pagos;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Parametros;
@@ -194,6 +195,15 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
                     $"El importe del envío tiene que ser de 0 a {ReglaDeEnvio.ImporteMaximo:0.00} y tener como máximo 2 decimales.",
                     400);
             }
+        }
+
+        if (conocido.Clave == ParametroConocido.ToleranciaRedondeoPagoProveedor.Clave
+            && !ReglaDeRedondeoDePago.ToleranciaEsValida((decimal)valor))
+        {
+            throw new ErrorDominio(
+                "parametro_tolerancia_redondeo_invalida",
+                $"La tolerancia de redondeo tiene que ser de 0 a {ReglaDeRedondeoDePago.ToleranciaMaxima:0.00} y tener como máximo 2 decimales.",
+                400);
         }
 
         if (conocido.Clave == ParametroConocido.ZonaHoraria.Clave)

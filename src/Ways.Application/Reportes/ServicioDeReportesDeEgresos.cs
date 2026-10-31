@@ -13,8 +13,8 @@ namespace Ways.Application.Reportes;
 /// Los dos reportes de egresos de stage-10-agregacion-dashboard, slice 5 (design: File Changes,
 /// Raw-SQL Invariant Checklist). <c>compras/por-proveedor</c> es LINQ puro (<c>FechaRecepcion</c>,
 /// <c>Estado == Confirmada</c>) — las filas de EF ya traen <c>deleted_at IS NULL</c> y el filtro de
-/// tenant gratis (<c>WaysDbContext.cs:332,355</c>). <c>gastos/resumen</c> reusa la SERIE cruda de
-/// <see cref="LectorDeSerieTemporal.EjecutarGastosAsync"/> (design decisión 2: TODO el SQL crudo de
+/// tenant gratis (<c>WaysDbContext.cs:332,355</c>). <c>pagos/resumen</c> reusa la SERIE cruda de
+/// <see cref="LectorDeSerieTemporal.EjecutarPagosAsync"/> (design decisión 2: TODO el SQL crudo de
 /// la etapa vive en ese único archivo) y suma un desglose por categoría vía LINQ, aparte.
 ///
 /// Duplica <c>ExigirEmpresaAsync</c>/<c>ResolverPuntosDeVentaAsync</c>/<c>ResolverZonaAsync</c> de
@@ -66,12 +66,12 @@ public class ServicioDeReportesDeEgresos(IWaysDbContext db, LectorDeSerieTempora
         return new ComprasPorProveedor(desde, hasta, porProveedor, porProveedor.Sum(f => f.Total));
     }
 
-    /// <summary>Reusa <see cref="LectorDeSerieTemporal.EjecutarGastosAsync"/> para la serie
+    /// <summary>Reusa <see cref="LectorDeSerieTemporal.EjecutarPagosAsync"/> para la serie
     /// bucketeada (mismo left-join de gap-fill en C# que <c>ServicioDeReportesDeVentas.
     /// ObtenerResumenAsync</c>, design decisión 4) y agrega, aparte, un desglose LINQ por
-    /// categoría sobre el mismo rango y alcance — <c>gastos</c> no necesita SQL crudo para
+    /// categoría sobre el mismo rango y alcance — <c>pagos</c> no necesita SQL crudo para
     /// agrupar por columna, solo para bucketear por fecha (design decisión 1).</summary>
-    public async Task<ResumenDeGastos> ObtenerGastosResumenAsync(
+    public async Task<ResumenDePagos> ObtenerPagosResumenAsync(
         int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta, Granularidad granularidad,
         CancellationToken ct = default)
     {
@@ -81,9 +81,9 @@ public class ServicioDeReportesDeEgresos(IWaysDbContext db, LectorDeSerieTempora
 
         var rango = RangoDeReporte.Crear(desde, hasta, granularidad, zona);
 
-        IReadOnlyList<FilaSerieDeGastos> filas = idsPuntoVenta.Count == 0
-            ? Array.Empty<FilaSerieDeGastos>()
-            : await lector.EjecutarGastosAsync(
+        IReadOnlyList<FilaSerieDePagos> filas = idsPuntoVenta.Count == 0
+            ? Array.Empty<FilaSerieDePagos>()
+            : await lector.EjecutarPagosAsync(
                 granularidad, zonaId, idTenant, idsPuntoVenta, rango.DesdeUtc, rango.HastaUtcExclusivo, ct);
 
         var filaPorBucket = filas.ToDictionary(f => f.Bucket);
@@ -92,24 +92,24 @@ public class ServicioDeReportesDeEgresos(IWaysDbContext db, LectorDeSerieTempora
             .Select(bucket =>
             {
                 filaPorBucket.TryGetValue(bucket.Inicio, out var fila);
-                return new BucketDeGastos(bucket.Etiqueta, bucket.Inicio, fila?.Importe ?? 0m);
+                return new BucketDePagos(bucket.Etiqueta, bucket.Inicio, fila?.Importe ?? 0m);
             })
             .ToList();
 
         var porCategoria = idsPuntoVenta.Count == 0
             ? []
-            : await db.Gastos
-                // Gasto.IdPuntoVenta es nullable (un gasto de origen tesorería, etapa futura, no
-                // nace de ningún punto de venta) — un gasto sin PV nunca pertenece a un alcance
+            : await db.Pagos
+                // Pago.IdPuntoVenta es nullable (un pago de origen tesorería, etapa futura, no
+                // nace de ningún punto de venta) — un pago sin PV nunca pertenece a un alcance
                 // filtrado por punto de venta, así que se excluye explícitamente en vez de dejar
                 // que la comparación lifted lo excluya en silencio.
                 .Where(g => g.IdPuntoVenta != null && idsPuntoVenta.Contains(g.IdPuntoVenta.Value))
                 .Where(g => g.Fecha >= rango.DesdeUtc && g.Fecha < rango.HastaUtcExclusivo)
                 .GroupBy(g => g.Categoria)
-                .Select(g => new GastoPorCategoria(g.Key, g.Sum(x => x.Importe), g.Count()))
+                .Select(g => new PagoPorCategoria(g.Key, g.Sum(x => x.Importe), g.Count()))
                 .ToListAsync(ct);
 
-        return new ResumenDeGastos(desde, hasta, granularidad, zonaId, serie, filas.Sum(f => f.Importe), porCategoria);
+        return new ResumenDePagos(desde, hasta, granularidad, zonaId, serie, filas.Sum(f => f.Importe), porCategoria);
     }
 
     // ---- resolución de alcance — duplicada de ServicioDeReportesDeVentas por diseño (doc-comment de clase) ----

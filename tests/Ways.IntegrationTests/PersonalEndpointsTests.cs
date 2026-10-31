@@ -146,6 +146,86 @@ public class PersonalEndpointsTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     [Fact]
+    public async Task ElHorarioHabitualSePersisteEnAltaYEdicionYSeDevuelveEnListadoYDetalle()
+    {
+        var ctx = await PrepararAsync(nameof(ElHorarioHabitualSePersisteEnAltaYEdicionYSeDevuelveEnListadoYDetalle));
+        decimal[] semana = [8m, 8m, 8m, 8m, 8.25m, 0m, 0m];
+        decimal[] otra = [0m, 6m, 6m, 6m, 6m, 6m, 24m];
+
+        var creado = await CrearOkAsync(ctx.Admin, Datos() with { HorarioHabitual = semana });
+        Assert.Equal(semana, creado.HorarioHabitual);
+
+        var lista = (await ctx.Admin.GetFromJsonAsync<PaginaDe<PersonalListado>>("/api/personal"))!;
+        Assert.Equal(semana, Assert.Single(lista.Items).HorarioHabitual);
+
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            $"/api/personal/{creado.Id}", Datos() with { HorarioHabitual = otra });
+        Assert.Equal(HttpStatusCode.OK, edicion.StatusCode);
+        Assert.Equal(otra, (await edicion.Content.ReadFromJsonAsync<PersonalListado>())!.HorarioHabitual);
+        Assert.Equal(otra, (await ctx.Admin.GetFromJsonAsync<PersonalListado>($"/api/personal/{creado.Id}"))!.HorarioHabitual);
+
+        var sinHorario = await ctx.Admin.PutAsJsonAsync($"/api/personal/{creado.Id}", Datos());
+        Assert.Equal(HttpStatusCode.OK, sinHorario.StatusCode);
+        Assert.Null((await sinHorario.Content.ReadFromJsonAsync<PersonalListado>())!.HorarioHabitual);
+
+        var crudo = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/personal/{creado.Id}");
+        Assert.Equal(JsonValueKind.Null, crudo.GetProperty("horarioHabitual").ValueKind);
+    }
+
+    [Fact]
+    public async Task ElHorarioHabitualSeSerializaComoArregloDeSieteNumeros()
+    {
+        var ctx = await PrepararAsync(nameof(ElHorarioHabitualSeSerializaComoArregloDeSieteNumeros));
+
+        var alta = await ctx.Admin.PostAsJsonAsync(
+            "/api/personal", Datos() with { HorarioHabitual = [8m, 8m, 8m, 8m, 8m, 4.5m, 0m] });
+
+        var crudo = await alta.Content.ReadFromJsonAsync<JsonElement>();
+        var horario = crudo.GetProperty("horarioHabitual");
+        Assert.Equal(7, horario.GetArrayLength());
+        Assert.Equal(4.5m, horario[5].GetDecimal());
+    }
+
+    [Theory]
+    [InlineData("6 valores")]
+    [InlineData("8 valores")]
+    [InlineData("24.01")]
+    [InlineData("negativo")]
+    [InlineData("tres decimales")]
+    public async Task UnHorarioHabitualInvalidoResponde400EnAltaYEdicion(string caso)
+    {
+        var ctx = await PrepararAsync(nameof(UnHorarioHabitualInvalidoResponde400EnAltaYEdicion) + caso);
+        decimal[] horario = caso switch
+        {
+            "6 valores" => [8m, 8m, 8m, 8m, 8m, 8m],
+            "8 valores" => [8m, 8m, 8m, 8m, 8m, 8m, 8m, 8m],
+            "24.01" => [8m, 8m, 8m, 24.01m, 8m, 0m, 0m],
+            "negativo" => [8m, -1m, 8m, 8m, 8m, 0m, 0m],
+            _ => [8m, 8m, 8m, 8m, 8.001m, 0m, 0m]
+        };
+
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/personal", Datos() with { HorarioHabitual = horario });
+        Assert.Equal(HttpStatusCode.BadRequest, alta.StatusCode);
+        Assert.Equal("horario_habitual_invalido", await CodigoAsync(alta));
+
+        var creado = await CrearOkAsync(ctx.Admin, Datos());
+        var edicion = await ctx.Admin.PutAsJsonAsync($"/api/personal/{creado.Id}", Datos() with { HorarioHabitual = horario });
+        Assert.Equal(HttpStatusCode.BadRequest, edicion.StatusCode);
+        Assert.Equal("horario_habitual_invalido", await CodigoAsync(edicion));
+    }
+
+    [Fact]
+    public async Task EditarUnPersonalInexistenteResponde404AunConHorarioInvalido()
+    {
+        var ctx = await PrepararAsync(nameof(EditarUnPersonalInexistenteResponde404AunConHorarioInvalido));
+
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            "/api/personal/999999", Datos() with { HorarioHabitual = [1m, 2m] });
+
+        Assert.Equal(HttpStatusCode.NotFound, edicion.StatusCode);
+    }
+
+    [Fact]
     public async Task ElListadoMuestraLosNombresDelUsuarioYDelClienteVinculados()
     {
         var ctx = await PrepararAsync(nameof(ElListadoMuestraLosNombresDelUsuarioYDelClienteVinculados));

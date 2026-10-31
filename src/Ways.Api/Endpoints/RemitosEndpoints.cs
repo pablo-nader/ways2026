@@ -36,9 +36,15 @@ public static class RemitosEndpoints
             DateTimeOffset? hasta,
             int? pagina,
             int? tamanio,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(idPuntoVenta, idCliente, estado, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista remitos con filtros y paginado.");
+            servicio.ListarAsync(
+                idPuntoVenta, idCliente, estado, desde, hasta, pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
+        .WithSummary(
+            "Lista remitos con filtros y paginado. orden (numero, cliente, puntoVenta, estado, fechaEmision, " +
+            "total) y direccion (ascendente, descendente) ordenan todo el conjunto filtrado antes de paginar; " +
+            "400 si no son válidos.");
 
         grupo.MapGet("/{id:int}", (ServicioDeRemitos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerDetalleAsync(id, ct))

@@ -30,6 +30,7 @@ const datos: DatosDePersonal = {
   idEmpresa: null,
   idUsuario: null,
   idCliente: null,
+  horarioHabitual: [8, 8, 8, 8, 8, 0, 0],
 }
 
 beforeEach(() => {

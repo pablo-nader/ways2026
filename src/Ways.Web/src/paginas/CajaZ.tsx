@@ -26,7 +26,7 @@ function formatearMoneda(valor: number): string {
 /**
  * Caja Z (stage-11-exportacion-reportes, Slice 6b, design: Web Composition) — detalle del turno
  * cerrado: el mismo `ResumenDeTurno` que `/caja/cierre` usó para derivar el arqueo, más los
- * tickets y gastos del turno, con descarga XLSX. Misma política que `/caja`
+ * tickets y pagos del turno, con descarga XLSX. Misma política que `/caja`
  * (`Politicas.OperacionDePos`): el cajero puede leer su propio cierre — mismo gate que
  * `GET .../resumen`.
  *
@@ -307,7 +307,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
             <h6>Medios de pago (esperado)</h6>
             <TablaDeMediosEsperados medios={detalle.resumen.medios} />
 
-            <DetalleDeTurnoListas tickets={detalle.tickets} gastos={detalle.gastos} />
+            <DetalleDeTurnoListas tickets={detalle.tickets} pagos={detalle.gastos} />
           </>
         )}
       </Box>

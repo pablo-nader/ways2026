@@ -9,9 +9,9 @@ namespace Ways.Application.CuentaCorriente;
 /// <c>clientes.saldo</c>/<c>movimientos_cuenta_corriente</c> (design decisión 1: "una sola
 /// <c>EscriturasDeCuentaCorriente</c>") — extraídos VERBATIM de
 /// <c>ServicioDeVentas.ActualizarSaldoClienteAsync</c>/<c>InsertarMovimientoCcAsync</c>
-/// (stage-5-pos-ventas), con un único cambio: <c>id_comprobante_venta</c>/<c>id_pago_comprobante</c>
+/// (stage-5-pos-ventas), con un único cambio: <c>id_comprobante_venta</c>/<c>id_cobro</c>
 /// pasan a <see cref="Nullable{T}"/> porque un <see cref="TipoMovimientoCc.Pago"/> (RC, stage 7)
-/// nunca lleva <c>id_pago_comprobante</c> (a diferencia de un <see cref="TipoMovimientoCc.Consumo"/>,
+/// nunca lleva <c>id_cobro</c> (a diferencia de un <see cref="TipoMovimientoCc.Consumo"/>,
 /// que siempre lo lleva) — el SQL en sí no cambia una coma.
 /// <c>ServicioDeVentas</c> (TX/NCX, contramovimiento de anulación) y
 /// <c>ServicioDeCuentaCorriente</c> (RC, ajuste manual — stage 7) llaman a esta clase en vez de
@@ -61,10 +61,10 @@ public static class EscriturasDeCuentaCorriente
         return resultado is null ? null : Convert.ToDecimal(resultado);
     }
 
-    /// <summary><c>id_comprobante_venta</c>/<c>id_pago_comprobante</c> nullable per-tipo (design
+    /// <summary><c>id_comprobante_venta</c>/<c>id_cobro</c> nullable per-tipo (design
     /// decisión 5): un <see cref="TipoMovimientoCc.Consumo"/> siempre trae ambos poblados, un
     /// <see cref="TipoMovimientoCc.Pago"/> (RC) trae <c>id_comprobante_venta</c> pero nunca
-    /// <c>id_pago_comprobante</c> (el pago físico de la RC no es "el que generó" el movimiento —
+    /// <c>id_cobro</c> (el pago físico de la RC no es "el que generó" el movimiento —
     /// el movimiento lo genera el comprobante entero), y un <see cref="TipoMovimientoCc.Ajuste"/>
     /// manual (Slice 4) no trae ninguno de los dos. El llamador decide qué pasa; esta clase solo
     /// escribe.
@@ -79,11 +79,11 @@ public static class EscriturasDeCuentaCorriente
     /// Shapes A — columna <c>text</c>, doc-10 §8).</summary>
     public static Task<int> InsertarMovimientoCcAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, DateTimeOffset fecha,
-        int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante,
+        int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idCobro,
         decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct) =>
         InsertarAsync(
             conexion, transaccion, idTenant, idCliente, fecha, idPuntoVenta, idEmpleado, tipo, idComprobanteVenta,
-            idPagoComprobante, idMovimientoPersonal: null, importe, saldoResultante, detalle, ct);
+            idCobro, idMovimientoPersonal: null, importe, saldoResultante, detalle, ct);
 
     /// <summary>La parte de un pago de personal que baja la deuda del cliente vinculado al empleado. Tiene su
     /// propio método porque su forma es única: siempre apunta al movimiento <c>pago</c> del libro de personal,
@@ -94,22 +94,22 @@ public static class EscriturasDeCuentaCorriente
         string? detalle, CancellationToken ct) =>
         InsertarAsync(
             conexion, transaccion, idTenant, idCliente, fecha, idPuntoVenta, idEmpleado,
-            TipoMovimientoCc.DescuentoPersonal, idComprobanteVenta: null, idPagoComprobante: null,
+            TipoMovimientoCc.DescuentoPersonal, idComprobanteVenta: null, idCobro: null,
             idMovimientoPersonal, importe, saldoResultante, detalle, ct);
 
     private static async Task<int> InsertarAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, DateTimeOffset fecha,
-        int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante,
+        int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idCobro,
         int? idMovimientoPersonal, decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct)
     {
-        ValidarFormaPorTipo(tipo, idComprobanteVenta, idPagoComprobante, idMovimientoPersonal, importe);
+        ValidarFormaPorTipo(tipo, idComprobanteVenta, idCobro, idMovimientoPersonal, importe);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente " +
             "(id_tenant, id_cliente, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_venta, " +
-            " id_pago_comprobante, importe, saldo_resultante, detalle, id_movimiento_personal) " +
+            " id_cobro, importe, saldo_resultante, detalle, id_movimiento_personal) " +
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) " +
             "RETURNING id_movimiento";
 
@@ -120,7 +120,7 @@ public static class EscriturasDeCuentaCorriente
         ParametrosDeComando.Agregar(comando, idEmpleado);
         ParametrosDeComando.Agregar(comando, tipo);
         ParametrosDeComando.AgregarNulo(comando, idComprobanteVenta);
-        ParametrosDeComando.AgregarNulo(comando, idPagoComprobante);
+        ParametrosDeComando.AgregarNulo(comando, idCobro);
         ParametrosDeComando.Agregar(comando, importe);
         ParametrosDeComando.Agregar(comando, saldoResultante);
         ParametrosDeComando.AgregarNulo(comando, detalle);
@@ -138,7 +138,7 @@ public static class EscriturasDeCuentaCorriente
     /// tienen una forma única y fija (el resto — un <c>Ajuste</c> puede ser un contramovimiento de
     /// anulación o un ajuste manual — es estructuralmente dual, no viola nada acá).</summary>
     private static void ValidarFormaPorTipo(
-        TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante, int? idMovimientoPersonal,
+        TipoMovimientoCc tipo, int? idComprobanteVenta, int? idCobro, int? idMovimientoPersonal,
         decimal importe)
     {
         if (tipo == TipoMovimientoCc.DescuentoPersonal && (idMovimientoPersonal is null || importe >= 0m))
@@ -148,22 +148,22 @@ public static class EscriturasDeCuentaCorriente
                 "movimiento de personal y su importe es negativo — invariante de escritura violado.");
         }
 
-        if (tipo == TipoMovimientoCc.Consumo && idPagoComprobante is null)
+        if (tipo == TipoMovimientoCc.Consumo && idCobro is null)
         {
             throw new InvalidOperationException(
-                "Un movimiento de tipo Consumo requiere id_pago_comprobante — invariante de escritura violado.");
+                "Un movimiento de tipo Consumo requiere id_cobro — invariante de escritura violado.");
         }
 
-        if (tipo == TipoMovimientoCc.Pago && idPagoComprobante is not null)
+        if (tipo == TipoMovimientoCc.Pago && idCobro is not null)
         {
             throw new InvalidOperationException(
-                "Un movimiento de tipo Pago nunca lleva id_pago_comprobante — invariante de escritura violado.");
+                "Un movimiento de tipo Pago nunca lleva id_cobro — invariante de escritura violado.");
         }
 
-        if (tipo == TipoMovimientoCc.ActualizacionPrecios && (idComprobanteVenta is not null || idPagoComprobante is not null))
+        if (tipo == TipoMovimientoCc.ActualizacionPrecios && (idComprobanteVenta is not null || idCobro is not null))
         {
             throw new InvalidOperationException(
-                "Un movimiento de tipo ActualizacionPrecios no lleva id_comprobante_venta ni id_pago_comprobante — " +
+                "Un movimiento de tipo ActualizacionPrecios no lleva id_comprobante_venta ni id_cobro — " +
                 "invariante de escritura violado.");
         }
     }
