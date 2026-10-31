@@ -43,6 +43,7 @@ function personalFixture(sobrescribir: Partial<PersonalListado> = {}): PersonalL
     nombreUsuario: null,
     idCliente: null,
     nombreCliente: null,
+    horarioHabitual: null,
     ...sobrescribir,
   }
 }
