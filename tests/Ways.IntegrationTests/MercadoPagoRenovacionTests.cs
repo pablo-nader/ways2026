@@ -1,5 +1,9 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -56,8 +60,8 @@ public class MercadoPagoRenovacionTests(WaysApiFixture fixture) : IClassFixture<
 
     private static string Etiqueta() => Guid.NewGuid().ToString("N")[..8];
 
-    private static HttpResponseMessage Rechazo(HttpStatusCode estado) =>
-        new(estado) { Content = new StringContent("""{"error":"invalid_grant"}""", Encoding.UTF8, "application/json") };
+    private static HttpResponseMessage Rechazo(HttpStatusCode estado, string error = "invalid_grant") =>
+        new(estado) { Content = new StringContent($$"""{"error":"{{error}}"}""", Encoding.UTF8, "application/json") };
 
     /// <summary>Conecta la empresa del contexto con tokens propios del test y deja al manejador sin guion (503 a todo).</summary>
     private async Task<Conectada> ConectarAsync(Contexto ctx)
@@ -250,15 +254,12 @@ public class MercadoPagoRenovacionTests(WaysApiFixture fixture) : IClassFixture<
 
     // ---- Rechazos y fallas ------------------------------------------------------------------------------------------
 
-    [Theory]
-    [InlineData(HttpStatusCode.BadRequest)]
-    [InlineData(HttpStatusCode.Unauthorized)]
-    [InlineData(HttpStatusCode.Forbidden)]
-    public async Task UnRechazo4xxPasaLaConexionARequiereReconexionBorraElMaterialYPermiteVolverAConectar(HttpStatusCode estado)
+    [Fact]
+    public async Task UnBadRequestInvalidGrantPasaLaConexionARequiereReconexionBorraElMaterialYPermiteVolverAConectar()
     {
         var ctx = await _apoyo.PrepararAsync("mp-ren-4xx");
         var conectada = await ConectarAsync(ctx);
-        ctx.MercadoPago.Responder = new Guion().Con(conectada.Refresco, () => Rechazo(estado)).Responder;
+        ctx.MercadoPago.Responder = new Guion().Con(conectada.Refresco, () => Rechazo(HttpStatusCode.BadRequest)).Responder;
         var ahora = conectada.Fila.AccessExpiraEn.AddDays(-10);
 
         using (var alcance = ctx.Host.Services.CreateScope())
@@ -390,6 +391,154 @@ public class MercadoPagoRenovacionTests(WaysApiFixture fixture) : IClassFixture<
         var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
         AfirmarRequiereReconexion(fila, ahora);
         Assert.Equal(ctx.MercadoPago.IdUsuario, fila.IdUsuarioMercadoPago);
+    }
+
+    // ---- Credenciales de la aplicación y rotaciones perdidas --------------------------------------------------------
+
+    private sealed class RegistroDeLogs : ILoggerProvider
+    {
+        private readonly ConcurrentQueue<(LogLevel Nivel, string Categoria, string Texto)> _entradas = [];
+
+        public IReadOnlyList<(LogLevel Nivel, string Categoria, string Texto)> Entradas => [.. _entradas];
+
+        public ILogger CreateLogger(string categoryName) => new Registrador(categoryName, _entradas);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Registrador(
+            string categoria, ConcurrentQueue<(LogLevel Nivel, string Categoria, string Texto)> entradas) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                entradas.Enqueue((logLevel, categoria, formatter(state, exception) + exception));
+        }
+    }
+
+    private sealed class InterceptorDeGuardado(Action alGuardar) : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            alGuardar();
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    private static WebApplicationFactory<Program> Derivar(
+        Contexto ctx, RegistroDeLogs logs, SaveChangesInterceptor? interceptor = null) =>
+        ctx.Host.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services => services.AddLogging(l => l.AddProvider(logs)));
+            if (interceptor is not null)
+            {
+                builder.ConfigureServices(services =>
+                    services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor)));
+            }
+        });
+
+    private static List<string> ErroresDelServicio(RegistroDeLogs logs) =>
+        [.. logs.Entradas
+            .Where(e => e.Nivel == LogLevel.Error && e.Categoria.Contains(nameof(ServicioDeRenovacionDeConexionesMercadoPago)))
+            .Select(e => e.Texto)];
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "invalid_client")]
+    [InlineData(HttpStatusCode.Forbidden, "invalid_client")]
+    [InlineData(HttpStatusCode.BadRequest, "invalid_client")]
+    [InlineData(HttpStatusCode.NotFound, "not_found")]
+    public async Task UnRechazoDeLasCredencialesDeLaAplicacionNoTocaNingunaConexionYCortaLaCorrida(HttpStatusCode estado, string error)
+    {
+        var a = await _apoyo.PrepararAsync("mp-ren-cred-a");
+        var b = await _apoyo.PrepararAsync("mp-ren-cred-b");
+        var queRechazan = await ConectarAsync(a);
+        var queNoSeAlcanzan = await ConectarAsync(b);
+        var (acceso2, refresco2) = ($"APP_USR-{Etiqueta()}-nuevo", $"TG-{Etiqueta()}-nuevo");
+        a.MercadoPago.Responder = new Guion()
+            .Con(queRechazan.Refresco, () => Rechazo(estado, error))
+            .Con(queNoSeAlcanzan.Refresco, () => Exitoso(acceso2, refresco2, b.MercadoPago.IdUsuario)).Responder;
+        var ahora = queNoSeAlcanzan.Fila.AccessExpiraEn.AddDays(-10);
+        var logs = new RegistroDeLogs();
+
+        await using var derivado = Derivar(a, logs);
+        using var alcance = derivado.Services.CreateScope();
+        var resumen = await Servicio(alcance).RenovarConexionesPorVencerAsync(ahora);
+
+        Assert.True(queRechazan.Fila.Id < queNoSeAlcanzan.Fila.Id);
+        Assert.True(resumen.Interrumpida);
+        Assert.Equal(1, Llamadas(a, queRechazan.Refresco));
+        Assert.Equal(0, Llamadas(a, queNoSeAlcanzan.Refresco));
+        AfirmarSinCambios(queRechazan.Fila, Assert.Single(await _apoyo.FilasAsync(a.IdEmpresa)));
+        AfirmarSinCambios(queNoSeAlcanzan.Fila, Assert.Single(await _apoyo.FilasAsync(b.IdEmpresa)));
+
+        var errores = ErroresDelServicio(logs);
+        var unico = Assert.Single(errores);
+        Assert.DoesNotContain(ClientSecret, unico);
+        Assert.DoesNotContain(queRechazan.Refresco, unico);
+        Assert.DoesNotContain(queRechazan.Acceso, unico);
+    }
+
+    [Fact]
+    public async Task SiElGuardadoFallaDespuesDeQueMercadoPagoRotoElTokenLaRotacionSeInformaComoPerdidaYNoComoReintentable()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-ren-rotacion-perdida");
+        var conectada = await ConectarAsync(ctx);
+        var (acceso2, refresco2) = ($"APP_USR-{Etiqueta()}-nuevo", $"TG-{Etiqueta()}-nuevo");
+        ctx.MercadoPago.Responder = new Guion()
+            .Con(conectada.Refresco, () => Exitoso(acceso2, refresco2, ctx.MercadoPago.IdUsuario)).Responder;
+        var ahora = conectada.Fila.AccessExpiraEn.AddDays(-10);
+        var logs = new RegistroDeLogs();
+        var interceptor = new InterceptorDeGuardado(() => throw new InvalidOperationException("el guardado falló"));
+
+        await using var derivado = Derivar(ctx, logs, interceptor);
+        using (var alcance = derivado.Services.CreateScope())
+        {
+            var resultado = await Servicio(alcance).RenovarConexionAsync(conectada.Fila.Id, ctx.IdTenant, ahora);
+            Assert.Equal(ResultadoDeRenovacion.RotacionPerdida, resultado);
+        }
+
+        Assert.Equal(1, Llamadas(ctx, conectada.Refresco));
+        AfirmarSinCambios(conectada.Fila, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)));
+
+        var unico = Assert.Single(ErroresDelServicio(logs));
+        Assert.Contains("rotación se perdió", unico);
+        Assert.DoesNotContain("se reintenta", unico);
+        foreach (var secreto in new[] { acceso2, refresco2, conectada.Acceso, conectada.Refresco, ClientSecret })
+        {
+            Assert.DoesNotContain(secreto, unico);
+        }
+
+        // La corrida lo cuenta aparte de las fallas reintentables.
+        using var otraCorrida = derivado.Services.CreateScope();
+        var resumen = await Servicio(otraCorrida).RenovarConexionesPorVencerAsync(ahora);
+        Assert.Equal(1, resumen.RotacionesPerdidas);
+        Assert.False(resumen.Interrumpida);
+    }
+
+    [Fact]
+    public async Task UnApagadoDespuesDeQueMercadoPagoRotoElTokenNoAbortaElGuardadoDeLaRotacion()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-ren-apagado");
+        var conectada = await ConectarAsync(ctx);
+        var (acceso2, refresco2) = ($"APP_USR-{Etiqueta()}-nuevo", $"TG-{Etiqueta()}-nuevo");
+        ctx.MercadoPago.Responder = new Guion()
+            .Con(conectada.Refresco, () => Exitoso(acceso2, refresco2, ctx.MercadoPago.IdUsuario)).Responder;
+        var ahora = conectada.Fila.AccessExpiraEn.AddDays(-10);
+        using var apagado = new CancellationTokenSource();
+        var interceptor = new InterceptorDeGuardado(apagado.Cancel);
+
+        await using var derivado = Derivar(ctx, new RegistroDeLogs(), interceptor);
+        using var alcance = derivado.Services.CreateScope();
+        var resultado = await Servicio(alcance).RenovarConexionAsync(conectada.Fila.Id, ctx.IdTenant, ahora, apagado.Token);
+
+        Assert.True(apagado.IsCancellationRequested);
+        Assert.Equal(ResultadoDeRenovacion.Renovada, resultado);
+        AfirmarRenovada(conectada, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)), acceso2, refresco2, ahora);
     }
 
     // ---- Carreras entre la selección y el lock ----------------------------------------------------------------------

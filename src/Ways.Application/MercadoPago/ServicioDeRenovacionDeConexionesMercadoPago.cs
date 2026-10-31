@@ -19,10 +19,20 @@ public enum ResultadoDeRenovacion
     RequiereReconexion,
 
     /// <summary>Falla de Mercado Pago, de red o ilegible localmente: la conexión queda como estaba y se reintenta en la próxima corrida.</summary>
-    Fallida
+    Fallida,
+
+    /// <summary>Mercado Pago rechazó las credenciales de la aplicación (no el token de la conexión): la fila queda intacta y la
+    /// corrida se corta, porque las mismas credenciales fallarían en todas las demás.</summary>
+    CredencialesRechazadas,
+
+    /// <summary>Mercado Pago aceptó la renovación y rotó el refresh token, pero el resultado no llegó a guardarse: el token nuevo
+    /// se perdió y la fila conserva el anterior, que ya no sirve. Lo probable es que la conexión necesite reconectarse.</summary>
+    RotacionPerdida
 }
 
-public sealed record ResumenDeRenovacion(int Seleccionadas, int Renovadas, int Omitidas, int RequierenReconexion, int Fallidas);
+public sealed record ResumenDeRenovacion(
+    int Seleccionadas, int Renovadas, int Omitidas, int RequierenReconexion, int Fallidas, int RotacionesPerdidas = 0,
+    bool Interrumpida = false);
 
 /// <summary>
 /// Renueva los tokens de Mercado Pago antes de que venzan, en todos los tenants. Cada renovación rota el refresh token (el
@@ -36,8 +46,11 @@ public sealed record ResumenDeRenovacion(int Seleccionadas, int Renovadas, int O
 /// Nunca se llama dos veces a Mercado Pago por la misma conexión en una corrida: la estrategia es sin reintento y cada conexión
 /// se procesa una sola vez.
 ///
-/// Un rechazo 4xx (o una cuenta de Mercado Pago distinta de la guardada) deja la conexión en <c>requiere_reconexion</c> y borra
-/// el material cifrado; un 5xx, un tiempo agotado o un fallo de red no toca nada. Una conexión que falla no frena a las demás.
+/// Un 400 <c>invalid_grant</c> (o una cuenta de Mercado Pago distinta de la guardada) deja la conexión en
+/// <c>requiere_reconexion</c> y borra el material cifrado; un 5xx, un tiempo agotado o un fallo de red no toca nada y una conexión
+/// que falla así no frena a las demás. Cualquier otro 4xx (credenciales de la aplicación) tampoco toca la fila, pero corta la
+/// corrida: las mismas credenciales fallarían en todas. Una vez que Mercado Pago aceptó la renovación, el guardado no se cancela
+/// por un apagado: la rotación ya se gastó del lado de Mercado Pago.
 /// </summary>
 public class ServicioDeRenovacionDeConexionesMercadoPago(
     IServiceScopeFactory alcances,
@@ -68,7 +81,8 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
             .Select(c => new { c.Id, c.IdTenant })
             .ToListAsync(ct);
 
-        int renovadas = 0, omitidas = 0, reconexion = 0, fallidas = 0;
+        int renovadas = 0, omitidas = 0, reconexion = 0, fallidas = 0, perdidas = 0;
+        var interrumpida = false;
         foreach (var pendiente in pendientes)
         {
             ct.ThrowIfCancellationRequested();
@@ -91,11 +105,22 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
                 case ResultadoDeRenovacion.Renovada: renovadas++; break;
                 case ResultadoDeRenovacion.Omitida: omitidas++; break;
                 case ResultadoDeRenovacion.RequiereReconexion: reconexion++; break;
+                case ResultadoDeRenovacion.RotacionPerdida: perdidas++; break;
                 default: fallidas++; break;
+            }
+
+            if (resultado == ResultadoDeRenovacion.CredencialesRechazadas)
+            {
+                log.LogError(
+                    "Mercado Pago rechazó las credenciales de la aplicación al renovar la conexión {IdConexion}: se corta la corrida " +
+                    "sin tocar las {Restantes} conexiones restantes. Hay que revisar ClientId y ClientSecret.",
+                    pendiente.Id, pendientes.Count - pendientes.IndexOf(pendiente) - 1);
+                interrumpida = true;
+                break;
             }
         }
 
-        return new ResumenDeRenovacion(pendientes.Count, renovadas, omitidas, reconexion, fallidas);
+        return new ResumenDeRenovacion(pendientes.Count, renovadas, omitidas, reconexion, fallidas, perdidas, interrumpida);
     }
 
     /// <summary>Renueva una conexión puntual con el criterio de la corrida: bajo lock y releída, solo si sigue activa y le toca.
@@ -153,6 +178,13 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
                 await MarcarRequiereReconexionAsync(db, transaccion, conexion, ahora, ct);
                 return ResultadoDeRenovacion.RequiereReconexion;
             }
+            catch (ErrorDominio error) when (error.Codigo == CodigosDeErrorDeMercadoPago.CredencialesRechazadas)
+            {
+                log.LogWarning(
+                    "Mercado Pago rechazó las credenciales de la aplicación al renovar la conexión {IdConexion}; la fila no se toca.",
+                    idConexion);
+                return ResultadoDeRenovacion.CredencialesRechazadas;
+            }
             catch (ErrorDominio)
             {
                 log.LogWarning(
@@ -161,33 +193,47 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
                 return ResultadoDeRenovacion.Fallida;
             }
 
-            if (nuevos.IdUsuario != conexion.IdUsuarioMercadoPago)
+            // Desde acá Mercado Pago ya rotó el refresh token: guardar no depende de la cancelación del llamador (un apagado
+            // no debe abortar una rotación gastada) y una falla ya no es reintentable.
+            try
             {
-                log.LogWarning(
-                    "La renovación de la conexión {IdConexion} devolvió otra cuenta de Mercado Pago: requiere reconexión.",
-                    idConexion);
-                await MarcarRequiereReconexionAsync(db, transaccion, conexion, ahora, ct);
-                return ResultadoDeRenovacion.RequiereReconexion;
+                if (nuevos.IdUsuario != conexion.IdUsuarioMercadoPago)
+                {
+                    log.LogWarning(
+                        "La renovación de la conexión {IdConexion} devolvió otra cuenta de Mercado Pago: requiere reconexión.",
+                        idConexion);
+                    await MarcarRequiereReconexionAsync(db, transaccion, conexion, ahora, CancellationToken.None);
+                    return ResultadoDeRenovacion.RequiereReconexion;
+                }
+
+                var cifrados = almacen.Cifrar(
+                    conexion.IdTenant, conexion.IdEmpresa, conexion.Id, nuevos.AccessToken, nuevos.RefreshToken);
+
+                conexion.AccessTokenCifrado = cifrados.AccessTokenCifrado;
+                conexion.AccessTokenNonce = cifrados.AccessTokenNonce;
+                conexion.AccessTokenTag = cifrados.AccessTokenTag;
+                conexion.RefreshTokenCifrado = cifrados.RefreshTokenCifrado;
+                conexion.RefreshTokenNonce = cifrados.RefreshTokenNonce;
+                conexion.RefreshTokenTag = cifrados.RefreshTokenTag;
+                conexion.IdClaveMaestra = cifrados.IdClaveMaestra;
+                conexion.AccessTokenExpiraEn = ahora.AddSeconds(nuevos.ExpiraEnSegundos);
+                conexion.FechaUltimaRenovacion = ahora;
+                conexion.UpdatedAt = ahora;
+
+                await db.SaveChangesAsync(CancellationToken.None);
+                await transaccion.CommitAsync(CancellationToken.None);
+
+                return ResultadoDeRenovacion.Renovada;
             }
-
-            var cifrados = almacen.Cifrar(
-                conexion.IdTenant, conexion.IdEmpresa, conexion.Id, nuevos.AccessToken, nuevos.RefreshToken);
-
-            conexion.AccessTokenCifrado = cifrados.AccessTokenCifrado;
-            conexion.AccessTokenNonce = cifrados.AccessTokenNonce;
-            conexion.AccessTokenTag = cifrados.AccessTokenTag;
-            conexion.RefreshTokenCifrado = cifrados.RefreshTokenCifrado;
-            conexion.RefreshTokenNonce = cifrados.RefreshTokenNonce;
-            conexion.RefreshTokenTag = cifrados.RefreshTokenTag;
-            conexion.IdClaveMaestra = cifrados.IdClaveMaestra;
-            conexion.AccessTokenExpiraEn = ahora.AddSeconds(nuevos.ExpiraEnSegundos);
-            conexion.FechaUltimaRenovacion = ahora;
-            conexion.UpdatedAt = ahora;
-
-            await db.SaveChangesAsync(ct);
-            await transaccion.CommitAsync(ct);
-
-            return ResultadoDeRenovacion.Renovada;
+            catch (Exception error)
+            {
+                log.LogError(
+                    error,
+                    "Mercado Pago rotó el refresh token de la conexión {IdConexion} (empresa {IdEmpresa}) pero no se pudo guardar: " +
+                    "la rotación se perdió y la conexión probablemente necesite reconectarse.",
+                    idConexion, conexion.IdEmpresa);
+                return ResultadoDeRenovacion.RotacionPerdida;
+            }
         });
     }
 

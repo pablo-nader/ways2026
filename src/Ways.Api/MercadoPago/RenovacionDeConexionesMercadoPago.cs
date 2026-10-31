@@ -28,8 +28,10 @@ public sealed class RenovacionDeConexionesMercadoPago(
 
         log.LogInformation(
             "Renovación de conexiones de Mercado Pago: {Seleccionadas} seleccionadas, {Renovadas} renovadas, {Omitidas} omitidas, " +
-            "{RequierenReconexion} requieren reconexión, {Fallidas} fallidas.",
-            resumen.Seleccionadas, resumen.Renovadas, resumen.Omitidas, resumen.RequierenReconexion, resumen.Fallidas);
+            "{RequierenReconexion} requieren reconexión, {Fallidas} fallidas, {RotacionesPerdidas} rotaciones perdidas, " +
+            "interrumpida: {Interrumpida}.",
+            resumen.Seleccionadas, resumen.Renovadas, resumen.Omitidas, resumen.RequierenReconexion, resumen.Fallidas,
+            resumen.RotacionesPerdidas, resumen.Interrumpida);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

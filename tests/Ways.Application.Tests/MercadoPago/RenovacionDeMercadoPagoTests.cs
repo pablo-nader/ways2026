@@ -90,18 +90,36 @@ public class RenovacionDeMercadoPagoTests
     private static HttpResponseMessage Json(HttpStatusCode estado, string json) =>
         new(estado) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
-    [Theory]
-    [InlineData(HttpStatusCode.BadRequest)]
-    [InlineData(HttpStatusCode.Unauthorized)]
-    [InlineData(HttpStatusCode.Forbidden)]
-    [InlineData(HttpStatusCode.NotFound)]
-    public async Task UnRechazo4xxDeLaRenovacionTieneElCodigoDeRenovacionRechazada(HttpStatusCode estado)
+    [Fact]
+    public async Task UnBadRequestConInvalidGrantEsElUnicoRechazoDeLaConexion()
     {
-        var cliente = Cliente(() => Json(estado, """{"error":"invalid_grant"}"""));
+        var cliente = Cliente(() => Json(HttpStatusCode.BadRequest, """{"error":"invalid_grant","message":"refresh token inválido"}"""));
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.RenovarAsync("TG-refresh", CancellationToken.None));
 
         Assert.Equal(CodigosDeErrorDeMercadoPago.RenovacionRechazada, error.Codigo);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":"invalid_client"}""")]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":"invalid_request"}""")]
+    [InlineData(HttpStatusCode.BadRequest, """{"message":"invalid_grant"}""")]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"nombre":"invalid_grant"}}""")]
+    [InlineData(HttpStatusCode.BadRequest, """["invalid_grant"]""")]
+    [InlineData(HttpStatusCode.BadRequest, "esto no es json")]
+    [InlineData(HttpStatusCode.BadRequest, "")]
+    [InlineData(HttpStatusCode.Unauthorized, """{"error":"invalid_grant"}""")]
+    [InlineData(HttpStatusCode.Forbidden, """{"error":"invalid_grant"}""")]
+    [InlineData(HttpStatusCode.NotFound, """{"error":"invalid_grant"}""")]
+    [InlineData(HttpStatusCode.Unauthorized, """{"error":"invalid_client"}""")]
+    public async Task CualquierOtro4xxDeLaRenovacionEsUnRechazoDeLasCredencialesDeLaAplicacionYNoDeLaConexion(
+        HttpStatusCode estado, string cuerpo)
+    {
+        var cliente = Cliente(() => Json(estado, cuerpo));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.RenovarAsync("TG-refresh", CancellationToken.None));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.CredencialesRechazadas, error.Codigo);
     }
 
     [Theory]

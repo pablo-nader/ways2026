@@ -4,10 +4,14 @@ namespace Ways.Application.MercadoPago;
 
 public static class CodigosDeErrorDeMercadoPago
 {
-    /// <summary><see cref="IClienteOAuthMercadoPago.RenovarAsync"/> lo lanza cuando Mercado Pago rechaza el refresh token con
-    /// un 4xx: la credencial no sirve y hay que reconectar. Cualquier otro fallo (5xx, tiempo agotado, red) lleva otro código y
-    /// es transitorio.</summary>
+    /// <summary><see cref="IClienteOAuthMercadoPago.RenovarAsync"/> lo lanza cuando Mercado Pago responde 400 con
+    /// <c>invalid_grant</c>: el refresh token de esa conexión no sirve y hay que reconectar. Cualquier otro fallo lleva otro código.</summary>
     public const string RenovacionRechazada = "mercadopago_renovacion_rechazada";
+
+    /// <summary><see cref="IClienteOAuthMercadoPago.RenovarAsync"/> lo lanza ante cualquier otro 4xx (salvo 408 y 429):
+    /// <c>invalid_client</c>, 401, 403 o 404 señalan las credenciales o la configuración de la plataforma, no a una conexión.
+    /// Los 5xx, el tiempo agotado y la red llevan <c>mercadopago_intercambio_fallido</c> y son transitorios.</summary>
+    public const string CredencialesRechazadas = "mercadopago_credenciales_rechazadas";
 }
 
 public interface IClienteOAuthMercadoPago
