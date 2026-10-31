@@ -878,15 +878,17 @@ function ModalDeOferta({
                 className="form-check-input"
                 checked={valor.soloMultiplos}
                 disabled={valor.cantidadMinima.trim() === ''}
+                aria-describedby="of-solo-multiplos-ayuda"
                 onChange={(e) => onCambio({ ...valor, soloMultiplos: e.target.checked })}
               />
               <label className="form-check-label" htmlFor="of-solo-multiplos">
                 Solo múltiplos de la cantidad
               </label>
             </div>
-            <div className="form-text">
+            <div className="form-text" id="of-solo-multiplos-ayuda">
               Solo se rebajan los grupos completos de la cantidad mínima; el resto paga el precio normal. Ej.: 2 x $7.500, con 3 unidades =
               $7.500 + 1 a precio normal.
+              {valor.cantidadMinima.trim() === '' && ' Requiere cargar una cantidad mínima.'}
             </div>
           </div>
 

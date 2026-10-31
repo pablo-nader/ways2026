@@ -173,3 +173,7 @@ unchecked without cantidad mínima; `aAltaOferta` never sends `soloMultiplos: tr
 `resultado.descuentoDeLinea` (3 units of 4000 with 2 x 3750 → 11500; mutation removing it fails 2 tests). The only
 consumer of the line total is `previaDeLinea` (via `Pos.tsx` and `calcularSubtotalPrevia`). Public store: `online/carrito.ts`
 totals `precio × cantidad` with the price shown on the card; it does not resolve quantity offers, so nothing changed.
+
+## Judgment-day T3
+
+`JUDGMENT: APPROVED` — polished: page-level edit tests (checkbox checked from the saved offer, emptied minimum sends `soloMultiplos: false`), `aria-describedby` and a "requires cantidad mínima" hint on the checkbox, `descuentoDeLinea` JSDoc aligned with the code, and `previaDeLinea` cases (combo, return, zero discount).

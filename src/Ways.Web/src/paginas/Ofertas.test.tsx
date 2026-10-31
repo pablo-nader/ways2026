@@ -465,6 +465,41 @@ describe('Ofertas — solo múltiplos de la cantidad mínima', () => {
 
     expect(apiPostMock).toHaveBeenCalledWith('/ofertas', expect.objectContaining({ soloMultiplos: false }))
   })
+
+  it('editar una oferta con soloMultiplos abre la casilla marcada y el PUT lo reenvía', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', cantidadMinima: 2, soloMultiplos: true })
+    mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
+    apiPutMock.mockResolvedValue(oferta)
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Cantidad mínima')).toHaveValue('2'))
+    expect(screen.getByLabelText('Solo múltiplos de la cantidad')).toBeChecked()
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Oferta "Oferta existente" actualizada.')
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/ofertas/2', expect.objectContaining({ cantidadMinima: 2, soloMultiplos: true }))
+  })
+
+  it('al vaciar la cantidad mínima en la edición la casilla se desmarca y el PUT manda soloMultiplos false', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', cantidadMinima: 2, soloMultiplos: true })
+    mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
+    apiPutMock.mockResolvedValue(oferta)
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad mínima')).toHaveValue('2'))
+
+    await userEvent.clear(screen.getByLabelText('Cantidad mínima'))
+
+    const casilla = screen.getByLabelText('Solo múltiplos de la cantidad')
+    expect(casilla).toBeDisabled()
+    expect(casilla).not.toBeChecked()
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Oferta "Oferta existente" actualizada.')
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/ofertas/2', expect.objectContaining({ cantidadMinima: null, soloMultiplos: false }))
+  })
 })
 
 describe('Ofertas — ventana deshabilitada durante el guardado (react-async-state rule 5/9)', () => {

@@ -165,6 +165,34 @@ describe('previaDeLinea', () => {
     expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 10350, ajusteManual: -1150 })
   })
 
+  it('con descuentoDeLinea y un combo, el descuento recae solo en las unidades fuera de combo y el combo suma su propio neto', () => {
+    const linea = lineaFixture({ cantidad: 5 })
+    const resultado = resultadoFixture({
+      precioOriginal: 4000,
+      precioFinal: 3750,
+      descuentoUnitario: 250,
+      descuentoDeLinea: 500,
+      combo: { unidadesConsumidas: 2, ahorro: 1000, idCombo: 9 },
+    })
+
+    // (5 − 2) × 4000 − 500 = 11500, más 2 × 4000 − 1000 = 7000.
+    expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 18500, ajusteManual: 0, ahorroDeCombo: 1000 })
+  })
+
+  it('con descuentoDeLinea y cantidad negativa (devolución) lo resta del importe con su signo', () => {
+    const linea = lineaFixture({ cantidad: -3 })
+    const resultado = resultadoFixture({ precioOriginal: 4000, precioFinal: 3750, descuentoUnitario: 250, descuentoDeLinea: -500 })
+
+    expect(previaDeLinea(linea, resultado)).toMatchObject({ total: -11500, ajusteManual: 0 })
+  })
+
+  it('un descuentoDeLinea de 0 es un valor: no cae al descuento unitario', () => {
+    const linea = lineaFixture({ cantidad: 3 })
+    const resultado = resultadoFixture({ precioOriginal: 4000, precioFinal: 3750, descuentoUnitario: 250, descuentoDeLinea: 0 })
+
+    expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 12000 })
+  })
+
   it('un descuento manual es negativo y se resta del neto', () => {
     const linea = lineaFixture({ cantidad: 3, ajusteManualPorcentaje: -10 })
     const resultado = resultadoFixture({ precioOriginal: 100, precioFinal: 90, descuentoUnitario: 10 })
