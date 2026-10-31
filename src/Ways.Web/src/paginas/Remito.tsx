@@ -27,6 +27,7 @@ import { SelectorDeLote } from '../componentes/SelectorDeLote'
 import { formatearImporte } from '../formato/importes'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { fechaHoraATexto } from '../formato/fechas'
+import { toast } from '../toasts/toasts'
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? fechaHoraATexto(iso) : '—'
@@ -320,7 +321,6 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
 
   const [emitiendo, setEmitiendo] = useState(false)
   const emitiendoRef = useRef(false)
@@ -361,7 +361,6 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
     guardandoRef.current = true
     setGuardando(true)
     setError('')
-    setAviso('')
     // regla 3: bumpear la generación de carga ANTES de la escritura.
     generacionRef.current += 1
 
@@ -378,7 +377,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
         await clienteDeRemitos.actualizar(idRemito, solicitud)
         guardandoRef.current = false
         setGuardando(false)
-        setAviso('Borrador guardado.')
+        toast.exito('Borrador guardado.')
         // regla 6: el refetch posterior vive aislado de este try/catch.
         cargarDetalle()
       }
@@ -402,7 +401,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
       await clienteDeRemitos.emitir(idRemito)
       emitiendoRef.current = false
       setEmitiendo(false)
-      setAviso('Remito emitido — stock actualizado.')
+      toast.exito('Remito emitido — stock actualizado.')
       cargarDetalle()
     } catch (e) {
       emitiendoRef.current = false
@@ -435,7 +434,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
       anulandoRef.current = false
       setAnulando(false)
       setConfirmandoAnular(false)
-      setAviso('Remito anulado.')
+      toast.exito('Remito anulado.')
       cargarDetalle()
     } catch (e) {
       anulandoRef.current = false
@@ -481,7 +480,6 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
           <div className="alert alert-warning py-1 px-2 small">

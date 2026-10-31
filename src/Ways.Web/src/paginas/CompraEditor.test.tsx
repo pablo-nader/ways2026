@@ -7,6 +7,7 @@ import { RutaProtegida } from '../auth/RutaProtegida'
 import { cargarConcepto, cargarFila, filaDeItems, filasDeItems } from './compras/ayudasDePruebaDeGrilla'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type {
   AlicuotaIvaListado,
   ArticuloListado,
@@ -252,6 +253,14 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
   }
 }
 
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string | RegExp) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success:not(.py-1)')).toBeNull()
+}
+
 function renderEditor(idCompra: string | number = 1) {
   return render(
     <MemoryRouter initialEntries={[`/compras/${idCompra}`]}>
@@ -259,6 +268,7 @@ function renderEditor(idCompra: string | number = 1) {
         <Route path="/compras/:id" element={<CompraEditor />} />
         <Route path="/compras" element={<div>Listado de compras</div>} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
 }
@@ -272,6 +282,7 @@ function renderEditorEnRuta(ruta: string) {
         <Route path="/compras/:id" element={<CompraEditor />} />
         <Route path="/compras" element={<div>Listado de compras</div>} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
 }
@@ -293,6 +304,7 @@ function renderEditorProtegido(idCompra: string | number = 1) {
         />
         <Route path="/" element={<div>Inicio (redirigido)</div>} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
 }
@@ -386,7 +398,7 @@ describe('CompraEditor — borrador existente', () => {
     expect(cuerpo.idTipoComprobante).toBe(5)
     expect(cuerpo.idPuntoVenta).toBe(2)
 
-    expect(await screen.findByText('Borrador guardado.')).toBeInTheDocument()
+    await toastDeExito('Borrador guardado.')
   })
 
   it('guardar un borrador sin tocar sus líneas las manda exactamente como estaban guardadas', async () => {
@@ -462,7 +474,7 @@ describe('CompraEditor — borrador existente', () => {
     await act(async () => {
       resolverConfirmar(compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-05T12:00:00Z' }))
     })
-    expect(await screen.findByText('Compra confirmada: el stock y el costo ya se actualizaron.')).toBeInTheDocument()
+    await toastDeExito('Compra confirmada: el stock y el costo ya se actualizaron.')
 
     expect(apiPutMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras/1/confirmar')).toHaveLength(1)
@@ -698,7 +710,7 @@ describe('CompraEditor — compra confirmada', () => {
     await usuario.selectOptions(screen.getByLabelText('Lista de precios'), '1')
     await usuario.click(screen.getByRole('button', { name: 'Aplicar' }))
 
-    expect(await screen.findByText('Precios aplicados — revisá el detalle por línea abajo.')).toBeInTheDocument()
+    await toastDeExito('Precios aplicados — revisá el detalle por línea abajo.')
     expect(screen.getByText('Aplicado')).toBeInTheDocument()
 
     const [, cuerpo] = apiPostMock.mock.calls.find((call: unknown[]) => call[0] === '/compras/1/precios') as [string, Record<string, unknown>]
@@ -915,7 +927,7 @@ describe('CompraEditor — compra nueva', () => {
     await prepararCompraNuevaListaParaConfirmar(usuario)
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Compra confirmada.')).toBeInTheDocument()
+    await toastDeExito('Compra confirmada.')
     expect(await screen.findByRole('button', { name: 'Anular compra' })).toBeInTheDocument()
     expect(apiPostMock.mock.calls.map((c: unknown[]) => c[0])).toEqual(['/compras', '/compras/99/confirmar'])
   })
@@ -941,7 +953,9 @@ describe('CompraEditor — compra nueva', () => {
     await guardarUnaCompraNuevaCuyaConfirmacionFalla(usuario)
 
     // Aterrizó en la compra 99 (ya no es "Nueva compra") con la advertencia y el error del servidor.
-    expect(await screen.findByText('Ya existe una compra confirmada con ese número.')).toBeInTheDocument()
+    const falla = await screen.findByText('Ya existe una compra confirmada con ese número.')
+    expect(falla.closest('.alert-danger')).not.toBeNull()
+    expect(falla.closest('.ws-toaster')).toBeNull()
     expect(screen.getByText('El borrador quedó guardado, pero la compra NO se confirmó.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Compra 0003-00012345/ })).toBeInTheDocument()
     expect(screen.queryByText(/Compra confirmada/)).not.toBeInTheDocument()
@@ -1059,7 +1073,7 @@ describe('CompraEditor — cancelar', () => {
     await screen.findByDisplayValue('00012345')
     await usuario.type(screen.getByLabelText('Observaciones'), 'cambio')
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
-    await screen.findByText('Borrador guardado.')
+    await toastDeExito('Borrador guardado.')
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
@@ -2041,7 +2055,7 @@ describe('CompraEditor — pre-carga desde un pago (?desdePago=)', () => {
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     // La compra queda confirmada IGUAL — el fallo del vínculo nunca la revierte.
-    expect(await screen.findByText('Compra confirmada: el stock y el costo ya se actualizaron.')).toBeInTheDocument()
+    await toastDeExito('Compra confirmada: el stock y el costo ya se actualizaron.')
     expect(await screen.findByText('El pago ya está vinculado a una compra.')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Reintentar vínculo' }))
@@ -2201,7 +2215,7 @@ describe('CompraEditor — líneas por concepto', () => {
     expect(aviso).not.toHaveTextContent('stock')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Compra confirmada.')).toBeInTheDocument()
+    await toastDeExito('Compra confirmada.')
   })
 
   it('con artículos, el aviso de irreversibilidad junto al botón dice que el stock entra y el costo se actualiza', async () => {
@@ -2530,7 +2544,7 @@ describe('CompraEditor — pagar una compra confirmada', () => {
     await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
-    expect(await screen.findByText('Pago registrado: $ 1.149,50.')).toBeInTheDocument()
+    await toastDeExito('Pago registrado: $ 1.149,50.')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
     expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument()
@@ -2614,7 +2628,7 @@ describe('CompraEditor — ajustar el redondeo de una compra confirmada', () => 
     expect(screen.getByRole('button', { name: 'Anular compra' })).toBeDisabled()
 
     resolver({ idCompra: 1, redondeo: 3.5, pagado: 1149.5, saldoPendiente: 0 })
-    expect(await screen.findByText(/Redondeo aplicado: se perdonaron \$\s3,50/)).toBeInTheDocument()
+    await toastDeExito(/Redondeo aplicado: se perdonaron \$\s3,50/)
     expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
     expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
     expect(apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/ajuste-de-redondeo')).toHaveLength(1)
@@ -3390,7 +3404,7 @@ describe('CompraEditor — editar una compra confirmada (E6-W1)', () => {
     await usuario.type(cantidad, '7')
     await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
 
-    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+    await toastDeExito(/Cambios guardados/)
     expect(apiPutMock).toHaveBeenCalledTimes(1)
     const [ruta, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
     expect(ruta).toBe('/compras/1')
@@ -3427,7 +3441,7 @@ describe('CompraEditor — editar una compra confirmada (E6-W1)', () => {
     await act(async () => {
       resolverPut(confirmada())
     })
-    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+    await toastDeExito(/Cambios guardados/)
   })
 
   it('Cancelar descarta lo tipeado, sale de la edición y vuelve a pedir la compra', async () => {
@@ -3468,19 +3482,6 @@ describe('CompraEditor — editar una compra confirmada (E6-W1)', () => {
     expect(await screen.findByText(/No se pudo recargar la compra/)).toBeInTheDocument()
     expect(lecturas).toBe(1)
     expect(screen.getByRole('button', { name: 'Editar compra' })).toBeEnabled()
-  })
-
-  it('Editar borra el aviso de éxito anterior', async () => {
-    const usuario = userEvent.setup()
-    await renderizarConfirmada()
-    apiPutMock.mockResolvedValue(confirmada())
-    await entrarEnEdicion(usuario)
-    await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
-    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
-
-    await usuario.click(await screen.findByRole('button', { name: 'Editar compra' }))
-
-    expect(screen.queryByText(/Cambios guardados/)).not.toBeInTheDocument()
   })
 
   it.each([

@@ -44,6 +44,7 @@ import {
 } from './utilidadesVentasDelTurno'
 import type { EstadoFiltro, FiltrosDeVentasDelTurno } from './utilidadesVentasDelTurno'
 import { pluralizar } from '../formato/pluralizar'
+import { toast } from '../toasts/toasts'
 
 const COLUMNAS_DE_VENTAS: ColumnasOrdenables<VentaDeTurnoListado> = {
   numero: { valor: (v) => v.numeroVisible },
@@ -379,7 +380,7 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
    * estar bloqueada, porque hasta entonces el botón de la fila (y "Actualizar") siguen deshabilitados. */
   const focoPendienteRef = useRef(false)
   const [anulando, setAnulando] = useState(false)
-  /** Resultado de una anulación que terminó cuando su listado ya no era el de la pantalla. */
+  /** Estado fiscal de la nota de crédito o fallo de una anulación que terminó cuando su listado ya no era el de la pantalla. */
   const [avisoDeAnulacion, setAvisoDeAnulacion] = useState<{ error: boolean; texto: string } | null>(null)
   const anulandoRef = useRef(false)
   const [errorAnular, setErrorAnular] = useState('')
@@ -519,10 +520,11 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
       // La NC ya está emitida en el servidor: se imprime aunque la pantalla haya cambiado de listado mientras tanto.
       const avisoDeNotaDeCredito = imprimirNotaDeCreditoDeAnulacion(anulada)
       if (generacionRef.current !== miGeneracion) {
-        setAvisoDeAnulacion({
-          error: avisoDeNotaDeCredito?.error ?? false,
-          texto: `La venta ${fila.numeroVisible} se anuló.${avisoDeNotaDeCredito ? ` ${avisoDeNotaDeCredito.texto}` : ''}`,
-        })
+        if (avisoDeNotaDeCredito) {
+          setAvisoDeAnulacion({ error: avisoDeNotaDeCredito.error, texto: `La venta ${fila.numeroVisible} se anuló. ${avisoDeNotaDeCredito.texto}` })
+        } else {
+          toast.exito(`La venta ${fila.numeroVisible} se anuló.`)
+        }
         return
       }
       if (avisoDeNotaDeCredito) {
@@ -708,7 +710,7 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
       <Box titulo="Ventas del turno" variante="inverse" herramientas={herramientas}>
         {avisoDeAnulacion && (
           <div
-            className={`alert ${avisoDeAnulacion.error ? 'alert-danger' : 'alert-success'} d-flex justify-content-between align-items-center gap-2`}
+            className={`alert ${avisoDeAnulacion.error ? 'alert-danger' : 'alert-warning'} d-flex justify-content-between align-items-center gap-2`}
             role={avisoDeAnulacion.error ? 'alert' : 'status'}
           >
             <span>{avisoDeAnulacion.texto}</span>

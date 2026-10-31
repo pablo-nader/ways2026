@@ -1269,7 +1269,8 @@ describe('Articulos — alta de un artículo nuevo', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByRole('dialog', { name: 'Editando artículo A0005' })).toBeInTheDocument()
-    expect(screen.getByText(/creado con código interno A0005/)).toBeInTheDocument()
+    expect((await screen.findByText(/creado con código interno A0005/)).closest('.ws-toaster')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(screen.getByText('Códigos de barra')).toBeInTheDocument()
     expect(screen.getByText('Precios por lista')).toBeInTheDocument()
     // El cambio de URL (/articulos/create → /articulos/edit/5) no debe disparar un refetch del
@@ -2003,6 +2004,7 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
         <Routes>
           <Route path="/articulos/*" element={<ArnesConHistorial />} />
         </Routes>
+        <Toaster />
       </MemoryRouter>
     )
     return render(estricto ? <StrictMode>{arbol}</StrictMode> : arbol)
@@ -3213,7 +3215,7 @@ describe('Articulos — disponibilidad del artículo', () => {
 
     await userEvent.click(interruptor)
 
-    expect(await within(dialogo).findByText('El artículo quedó fuera de la tienda online.')).toBeInTheDocument()
+    expect((await screen.findByText('El artículo quedó fuera de la tienda online.')).closest('.ws-toaster')).not.toBeNull()
     expect(apiPutMock).toHaveBeenCalledTimes(1)
     expect(apiPutMock).toHaveBeenCalledWith('/articulos/1/disponibilidad', { disponibleVenta: true, disponibleOnline: false })
 
@@ -3304,7 +3306,7 @@ describe('Articulos — disponibilidad del artículo', () => {
 
     await userEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Confirmar quitar imagen' }))
 
-    expect(await within(dialogo).findByText('Se quitó la imagen.')).toBeInTheDocument()
+    expect((await screen.findByText('Se quitó la imagen.')).closest('.ws-toaster')).not.toBeNull()
     await waitFor(() => expect(nuevaMarca).toBeEnabled())
   })
 

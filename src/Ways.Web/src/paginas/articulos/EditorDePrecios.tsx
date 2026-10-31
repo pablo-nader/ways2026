@@ -14,6 +14,7 @@ import { contextoDeAlcance, descripcionDeFamilia, mensajeDePrecioParaToda, type 
 import { ordenarListasParaTabla } from './ordenDeListas'
 import { PreguntaDeAlcance } from './PreguntaDeAlcance'
 import { fechaHoraATexto } from '../../formato/fechas'
+import { toast } from '../../toasts/toasts'
 
 type EstadoDeLista = {
   monto: string
@@ -112,9 +113,6 @@ export function EditorDePrecios({
   const [sinSugerencia, setSinSugerencia] = useState(false)
   const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
   const [errorSugerencia, setErrorSugerencia] = useState('')
-  // Resultado de la última escritura con alcance de familia que llegó a todos los miembros: la tabla solo
-  // muestra los precios de este artículo, así que lo que pasó con los demás hay que decirlo.
-  const [aviso, setAviso] = useState('')
 
   const cargarVigentes = useCallback(
     async (opciones?: { relanzarError?: boolean }) => {
@@ -200,7 +198,6 @@ export function EditorDePrecios({
   /** Un clic en "Establecer ahora" o "Programar": valida el borrador y, si el artículo es miembro de una
    * familia, pregunta el alcance en vez de escribir. Quien no es miembro escribe directo. */
   function iniciarGuardado(idLista: number) {
-    setAviso('')
     const estado = estadoDe(idLista)
     const error = errorDelBorrador(estado)
     if (error) {
@@ -231,7 +228,6 @@ export function EditorDePrecios({
     }
 
     escribiendoRef.current = true
-    setAviso('')
     // El reemplazo confirmado deja abierta su confirmación mientras escribe: si el servidor lo rechaza, el motivo se
     // muestra adentro. Cierra con el éxito (el estado de la lista se reinicia) o con las ramas que la reemplazan.
     actualizarEstado(idLista, {
@@ -288,7 +284,8 @@ export function EditorDePrecios({
       alEscribirPrecio()
       const nombreDeLaFamilia = familia?.nombre ?? null
       if (alcance === 'SoloEste') alSalirDeLaFamilia(nombreDeLaFamilia)
-      if (alcance === 'Familia') setAviso(mensajeDePrecioParaToda(estado.programado, nombreDeLaFamilia))
+      // La tabla solo muestra los precios de este artículo: lo que pasó con los demás miembros hay que decirlo.
+      if (alcance === 'Familia') toast.exito(mensajeDePrecioParaToda(estado.programado, nombreDeLaFamilia))
 
       // El precio ya quedó confirmado en el servidor: a partir de acá un fallo es solo de refresco
       // de vista, nunca "no se guardó" — evita que el usuario reintente un guardado que ya se aplicó.
@@ -357,8 +354,6 @@ export function EditorDePrecios({
           Este artículo es parte {descripcionDeFamilia(familia)}: al cambiar un precio se pregunta si se aplica a toda la familia.
         </p>
       )}
-
-      {aviso && <div className="alert alert-success py-2 px-2 small mt-2">{aviso}</div>}
 
       <div className="table-responsive mt-2">
         <table className="table table-sm table-bordered align-middle mb-0">
