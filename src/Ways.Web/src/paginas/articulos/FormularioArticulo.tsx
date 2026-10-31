@@ -41,6 +41,7 @@ import {
   type EstadoDeUnionAFamilia,
 } from './familia'
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
+import { GestorDeCodigosProveedor } from './GestorDeCodigosProveedor'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
 import { SeccionDeFamilia } from './SeccionDeFamilia'
 import { SeccionDeDisponibilidad } from './SeccionDeDisponibilidad'
@@ -1141,6 +1142,14 @@ export function FormularioArticulo({
       ) : (
         <>
           <GestorDeCodigosBarra idArticulo={valor.id} bloqueadoPorPadre={bloqueado} alDeEscribir={alDeEscribir} />
+          <hr />
+          <GestorDeCodigosProveedor
+            idArticulo={valor.id}
+            idProveedorHabitual={valor.idProveedorHabitual}
+            proveedores={proveedores}
+            bloqueadoPorPadre={bloqueado}
+            alDeEscribir={alDeEscribir}
+          />
           <hr />
           <EditorDePrecios
             idArticulo={valor.id}
