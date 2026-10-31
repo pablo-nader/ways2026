@@ -263,6 +263,15 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         return anonimo.GetAsync($"{RutaCallback}?{consulta}");
     }
 
+    /// <summary>Cierra la conexión como lo hace la web: POST autenticado con el code y el state del retorno.</summary>
+    public static Task<HttpResponseMessage> CompletarAsync(
+        Contexto ctx, string estado, string codigo = "TG-codigo-de-autorizacion", HttpClient? cliente = null) =>
+        (cliente ?? ctx.Admin).PostAsJsonAsync($"{ctx.Ruta}/completar", new SolicitudDeCompletarConexion(codigo, estado));
+
+    /// <summary>Parsea el fragmento (<c>#a=b&amp;c=d</c>) de la ubicación de una redirección.</summary>
+    public static System.Collections.Specialized.NameValueCollection Fragmento(string ubicacion) =>
+        HttpUtility.ParseQueryString(new Uri(ubicacion).Fragment.TrimStart('#'));
+
     public static string Ubicacion(HttpResponseMessage respuesta)
     {
         Assert.Equal(HttpStatusCode.Redirect, respuesta.StatusCode);

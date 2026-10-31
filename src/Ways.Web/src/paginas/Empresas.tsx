@@ -33,6 +33,7 @@ import {
   type FormularioDeEmpresa,
 } from './empresaFormulario'
 import { ModalDeEmpresa } from './organizacion/ModalDeEmpresa'
+import { SeccionMercadoPago } from './organizacion/SeccionMercadoPago'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -94,6 +95,8 @@ const CELDAS_PLATAFORMA = ['id', 'tenant', 'razonSocial', 'nombreFantasia', 'cui
 export function Empresas() {
   const { usuario } = useAuth()
   const esPlataforma = usuario?.rolId === ROL.Root
+  /** Mercado Pago lo administra solo un Admin de tenant: los endpoints exigen un tenant en la sesión. */
+  const esAdmin = usuario?.rolId === ROL.Admin
 
   const [items, setItems] = useState<EmpresaListado[]>([])
   /** Solo la primera lectura reemplaza la tabla por "Cargando…": los refrescos la dejan montada para que los filtros conserven lo escrito y el foco. */
@@ -432,6 +435,8 @@ export function Empresas() {
           </>
         )}
       </Box>
+
+      {esAdmin && cargada && <SeccionMercadoPago empresas={items} />}
     </div>
   )
 }

@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Net;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 using static Ways.IntegrationTests.ApoyoDeMercadoPago;
@@ -8,15 +9,12 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// El esquema de <c>conexiones_mercadopago</c> contra Postgres real: RLS bajo <c>ways_app</c>, los CHECK del estado y del material
 /// cifrado, la FK compuesta que impide una cuenta de otra empresa y los dos índices únicos parciales, cada uno con su carrera
-/// (SQLSTATE 23505 y nombre del índice) y con el backstop del callback anónimo forzado entre el chequeo previo y el INSERT.
+/// (SQLSTATE 23505 y nombre del índice) y con el backstop del completar autenticado forzado entre el chequeo previo y el INSERT.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class MercadoPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private readonly ApoyoDeMercadoPago _apoyo = new(fixture);
-
-    private static string Retorno(int idEmpresa, string resultado) =>
-        $"http://localhost/organizacion/empresas?mercadopago={resultado}&empresa={idEmpresa}";
 
     private static async Task<PostgresException> ViolacionAsync(Task tarea) =>
         await Assert.ThrowsAsync<PostgresException>(() => tarea);
@@ -257,10 +255,9 @@ public class MercadoPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     [Fact]
-    public async Task SiOtraConexionActivaGanaLaEmpresaEntreElChequeoYElInsertElCallbackVuelveYaConectadaPorElIndice()
+    public async Task SiOtraConexionActivaGanaLaEmpresaEntreElChequeoYElInsertElCompletarResponde409YaConectadaPorElIndice()
     {
         var ctx = await _apoyo.PrepararAsync("mp-backstop-empresa");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
         var interceptor = new InterceptorQueCompiteLaInsercion(async () =>
             await _apoyo.InsertarAsync(ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, NuevoIdUsuario(), ctx.IdUsuarioAdmin));
@@ -268,21 +265,21 @@ public class MercadoPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<Way
         HttpResponseMessage respuesta;
         using (fixture.ConInterceptorEnElHost(interceptor))
         {
-            respuesta = await LlamarAlCallbackAsync(anonimo, estado);
+            respuesta = await CompletarAsync(ctx, estado);
         }
 
         Assert.Equal(1, interceptor.Disparos);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "ya_conectada"), Ubicacion(respuesta));
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("mercadopago_ya_conectada", await CodigoAsync(respuesta));
         var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
         Assert.NotEqual(ctx.MercadoPago.IdUsuario, fila.IdUsuarioMercadoPago);
     }
 
     [Fact]
-    public async Task SiOtraEmpresaConectaLaMismaCuentaDeMercadoPagoEntreElChequeoYElInsertElCallbackVuelveCuentaEnUsoPorElIndice()
+    public async Task SiOtraEmpresaConectaLaMismaCuentaDeMercadoPagoEntreElChequeoYElInsertElCompletarResponde409CuentaEnUsoPorElIndice()
     {
         var ctx = await _apoyo.PrepararAsync("mp-backstop-usuario");
         var (idOtraEmpresa, idOtraCuenta) = await _apoyo.CrearOtraEmpresaConCuentaAsync(ctx, "Otra empresa");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
         var interceptor = new InterceptorQueCompiteLaInsercion(async () =>
             await _apoyo.InsertarAsync(ctx.IdTenant, idOtraEmpresa, idOtraCuenta, ctx.MercadoPago.IdUsuario, ctx.IdUsuarioAdmin));
@@ -290,11 +287,12 @@ public class MercadoPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<Way
         HttpResponseMessage respuesta;
         using (fixture.ConInterceptorEnElHost(interceptor))
         {
-            respuesta = await LlamarAlCallbackAsync(anonimo, estado);
+            respuesta = await CompletarAsync(ctx, estado);
         }
 
         Assert.Equal(1, interceptor.Disparos);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "cuenta_en_uso"), Ubicacion(respuesta));
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("mercadopago_cuenta_en_uso", await CodigoAsync(respuesta));
         Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
         Assert.Single(await _apoyo.FilasAsync(idOtraEmpresa));
     }
