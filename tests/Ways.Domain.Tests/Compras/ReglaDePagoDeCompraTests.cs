@@ -61,4 +61,23 @@ public class ReglaDePagoDeCompraTests
     {
         Assert.Equal(esperado, ReglaDePagoDeCompra.ConceptoPorDefecto(tipo, numero, 7));
     }
+
+    [Theory]
+    [InlineData(1000, 1000, EstadoDePagoDeCompra.Pagada)]
+    [InlineData(1000, 1200, EstadoDePagoDeCompra.Pagada)]
+    [InlineData(0, 0, EstadoDePagoDeCompra.Pagada)]
+    [InlineData(1000, 999.99, EstadoDePagoDeCompra.Pendiente)]
+    [InlineData(1000, 0, EstadoDePagoDeCompra.Pendiente)]
+    public void UnaCompraConfirmadaEstaPagadaSoloSiNoQuedaSaldo(double total, double pagado, EstadoDePagoDeCompra esperado)
+    {
+        Assert.Equal(esperado, ReglaDePagoDeCompra.EstadoDePago(EstadoCompra.Confirmada, (decimal)total, (decimal)pagado));
+    }
+
+    [Theory]
+    [InlineData(EstadoCompra.Borrador)]
+    [InlineData(EstadoCompra.Anulada)]
+    public void UnaCompraQueNoEstaConfirmadaNoTieneEstadoDePago(EstadoCompra estado)
+    {
+        Assert.Null(ReglaDePagoDeCompra.EstadoDePago(estado, 1000m, 1000m));
+    }
 }
