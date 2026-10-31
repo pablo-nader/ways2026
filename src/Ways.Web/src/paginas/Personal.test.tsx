@@ -800,7 +800,7 @@ describe('Personal — esqueleto asíncrono', () => {
   })
 })
 
-describe('Personal — cada acción borra lo que dijo la anterior', () => {
+describe('Personal — cada acción borra los errores que dejó la anterior', () => {
   /** Cláusula bajo prueba: `setErrorFormulario(null)` de `guardar`, con el segundo POST pendiente. */
   it('reintentar un guardado rechazado borra el rechazo mientras la nueva request está en vuelo', async () => {
     apiPostMock
