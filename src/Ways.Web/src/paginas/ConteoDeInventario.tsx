@@ -15,6 +15,7 @@ import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeParametros } from '../api/parametros'
 import type { ArticuloListado, PuntoVentaListado, ResultadoConteo } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { TituloDeSeccion } from '../componentes/TituloDeSeccion'
 
 // ---- Selector de artículo por búsqueda — duplicado de Transferencias.tsx/CompraEditor.tsx: no
 // hay un módulo compartido de selectores todavía. ------------------------------------------------
@@ -449,7 +450,7 @@ export function ConteoDeInventario() {
 
         {esLoteEfectivo && (
           <div className="mb-3">
-            <strong className="text-muted small text-uppercase">Conteo por lote</strong>
+            <TituloDeSeccion>Conteo por lote</TituloDeSeccion>
             {errorLotes && <div className="alert alert-danger py-1 px-2 small mt-2">{errorLotes}</div>}
             {cargandoLotes && lineasDeLote.length === 0 ? (
               <p className="text-muted small mt-2">Cargando lotes…</p>

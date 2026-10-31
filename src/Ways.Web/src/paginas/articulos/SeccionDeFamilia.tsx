@@ -3,6 +3,7 @@ import type { FamiliaDetalle, ListaPrecioListado } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 import { Modal } from '../../componentes/Modal'
+import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
 import { VistaDePrevisualizacion } from '../familias/VistaDePrevisualizacion'
 import type { NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaFamilia } from './AltaRapidaFamilia'
@@ -174,7 +175,7 @@ function EleccionDeFamilia({
 
   return (
     <div className="mb-3">
-      <strong className="text-muted small text-uppercase">Familia</strong>
+      <TituloDeSeccion>Familia</TituloDeSeccion>
       {familia.errorOpciones && <div className="alert alert-warning py-1 px-2 small mt-2">{familia.errorOpciones}</div>}
 
       <div className="row g-3 mt-0">
@@ -473,7 +474,7 @@ function PertenenciaAFamilia({
 
   return (
     <div className="mb-3">
-      <strong className="text-muted small text-uppercase">Familia</strong>
+      <TituloDeSeccion>Familia</TituloDeSeccion>
       <div className="d-flex flex-wrap align-items-center gap-2 mt-2">
         <span className="badge text-bg-info">{etiquetaDeFamilia(pertenencia)}</span>
         <button

@@ -43,6 +43,7 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
+import { TituloDeSeccion } from '../componentes/TituloDeSeccion'
 import { atributosDeCampoDecimal, atributosDeCampoEntero } from '../formato/numeros'
 
 const ID_FORMULARIO_OFERTA = 'formulario-oferta'
@@ -613,7 +614,7 @@ function ModalDeOferta({
             guardado en vuelo (react-async-state rule 5/9), mismo criterio que Articulos.tsx. */}
         <fieldset disabled={ocupado} className="row g-3 border-0 p-0 m-0">
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Identificación</strong>
+            <TituloDeSeccion>Identificación</TituloDeSeccion>
           </div>
 
           <div className="col-md-5">
@@ -680,7 +681,7 @@ function ModalDeOferta({
           </div>
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Alcance (exactamente uno)</strong>
+            <TituloDeSeccion>Alcance (exactamente uno)</TituloDeSeccion>
           </div>
 
           <div className="col-12 d-flex gap-3">
@@ -783,7 +784,7 @@ function ModalDeOferta({
           )}
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Vigencia</strong>
+            <TituloDeSeccion>Vigencia</TituloDeSeccion>
           </div>
 
           <div className="col-md-3">
@@ -868,7 +869,7 @@ function ModalDeOferta({
           </div>
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Beneficio (exactamente uno)</strong>
+            <TituloDeSeccion>Beneficio (exactamente uno)</TituloDeSeccion>
           </div>
 
           <div className="col-12 d-flex gap-3">
@@ -933,7 +934,7 @@ function ModalDeOferta({
           )}
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Listas de precio</strong>
+            <TituloDeSeccion>Listas de precio</TituloDeSeccion>
           </div>
 
           <div className="col-12">
