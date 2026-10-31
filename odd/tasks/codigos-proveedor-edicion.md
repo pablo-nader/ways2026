@@ -34,7 +34,7 @@ No schema change. `codigos_proveedor` (doc 10, articulos part) already has `dele
 
 Both slices `JUDGMENT: APPROVED` in round 1 (no CRITICAL from either judge). Info carried as follow-ups:
 
-- Backend (both judges, WARNING/SUGGESTION): a concurrent PUT and DELETE on the same code are not serialized (FOR KEY SHARE only on the article), so a PUT racing a DELETE can answer 200 on a row that was just soft-deleted. Fix: lock the code row `FOR UPDATE`.
+- Backend (both judges, WARNING/SUGGESTION): a concurrent PUT and DELETE on the same code were not serialized (FOR KEY SHARE only on the article). **Resolved** in commit 264c9278 at the owner's request: `FOR UPDATE` on the code row with the live predicate in its WHERE, two deterministic race tests (PUT and DELETE → 404), mutation evidence (removing `FOR UPDATE` turns both red); class 50/50, structural guards 169/169; scoped re-judgment by both judges: fixed, nothing introduced.
 - Web (judge B, WARNING): with more than 200 suppliers the list is truncated; a supplier outside it shows "(no disponible)" and the add select can hold a habitual supplier it does not show (use `opcionesConValorActual`).
 - Web (suggestions): error banner without `role="alert"`, focus not restored after a failed save, empty-state text shown when the initial load fails.
 
