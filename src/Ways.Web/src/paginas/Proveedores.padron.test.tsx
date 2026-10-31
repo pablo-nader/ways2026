@@ -336,15 +336,15 @@ describe('Proveedores — paginación en el servidor', () => {
     renderProveedores()
     await screen.findByText('Proveedor Uno SA')
 
-    expect(screen.getByText('Página 1 de 3 — 60 proveedor(es)')).toBeInTheDocument()
+    expect(screen.getByText('Página 1 de 3 — 60 proveedores')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/proveedores?pagina=2'))
-    expect(await screen.findByText('Página 2 de 3 — 60 proveedor(es)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 3 — 60 proveedores')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
-    expect(await screen.findByText('Página 3 de 3 — 60 proveedor(es)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 3 de 3 — 60 proveedores')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Anterior' }))
@@ -362,7 +362,7 @@ describe('Proveedores — paginación en el servidor', () => {
     await usuario.selectOptions(screen.getByLabelText('Filas por página'), '50')
 
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/proveedores?tamanio=50'))
-    expect(await screen.findByText('Página 1 de 2 — 60 proveedor(es)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 1 de 2 — 60 proveedores')).toBeInTheDocument()
   })
 
   it('con una página fuera de rango pide la última válida en vez de mostrar una página vacía', async () => {
@@ -377,7 +377,7 @@ describe('Proveedores — paginación en el servidor', () => {
 
     renderProveedores()
 
-    expect(await screen.findByText('Página 2 de 2 — 50 proveedor(es)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 2 — 50 proveedores')).toBeInTheDocument()
     expect(rutasDelListado()).toEqual(['/proveedores', '/proveedores?pagina=2'])
   })
 
@@ -409,7 +409,7 @@ describe('Proveedores — paginación en el servidor', () => {
     await usuario.click(within(screen.getByRole('row', { name: /Proveedor Uno SA/ })).getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    expect(await screen.findByText('Página 1 de 1 — 25 proveedor(es)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 1 de 1 — 25 proveedores')).toBeInTheDocument()
     expect(rutasDelListado().at(-1)).toBe('/proveedores')
   })
 })

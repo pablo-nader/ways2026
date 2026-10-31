@@ -19,6 +19,24 @@ public class OpcionesDeMercadoPago
 
     public string UrlApi { get; set; } = "https://api.mercadopago.com";
 
+    public const int DiasDeAnticipacionPorDefecto = 30;
+    public const int IntervaloDeRenovacionPorDefectoEnHoras = 6;
+
+    /// <summary>Se renueva el token cuando le quedan este o menos días. Un valor no positivo vuelve al valor por defecto.</summary>
+    public int DiasDeAnticipacionRenovacion { get; set; } = DiasDeAnticipacionPorDefecto;
+
+    /// <summary>Cada cuántas horas corre la renovación automática. Un valor no positivo vuelve al valor por defecto.</summary>
+    public int IntervaloRenovacionHoras { get; set; } = IntervaloDeRenovacionPorDefectoEnHoras;
+
+    /// <summary>Apaga la renovación automática sin tocar las credenciales (los tests de integración la manejan a mano).</summary>
+    public bool RenovacionAutomatica { get; set; } = true;
+
+    public TimeSpan VentanaDeRenovacion =>
+        TimeSpan.FromDays(DiasDeAnticipacionRenovacion > 0 ? DiasDeAnticipacionRenovacion : DiasDeAnticipacionPorDefecto);
+
+    public TimeSpan IntervaloDeRenovacion =>
+        TimeSpan.FromHours(IntervaloRenovacionHoras > 0 ? IntervaloRenovacionHoras : IntervaloDeRenovacionPorDefectoEnHoras);
+
     public bool EstaConfigurado =>
         !string.IsNullOrWhiteSpace(ClientId)
         && !string.IsNullOrWhiteSpace(ClientSecret)

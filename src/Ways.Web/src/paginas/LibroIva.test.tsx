@@ -403,7 +403,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     )
     renderLibroIva()
 
-    expect(await screen.findByText('1 comprobante(s) no cierran contra sus importes: revisá la columna Dif.')).toBeInTheDocument()
+    expect(await screen.findByText('1 comprobante no cierra contra sus importes: revisá la columna Dif.')).toBeInTheDocument()
     expect(screen.getAllByRole('columnheader').map(textoDeEncabezado)).toContain('Dif.')
     const filaMala = screen.getByRole('row', { name: /0003-00000003/ })
     expect(within(filaMala).getAllByRole('cell').at(-1)).toHaveTextContent('$ 153,00')

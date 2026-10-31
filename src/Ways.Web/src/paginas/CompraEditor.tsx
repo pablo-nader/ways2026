@@ -1527,7 +1527,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
 
             {cantidadDeIncompletas > 0 && (
               <div className="alert alert-warning py-1 px-2 small mb-3">
-                {cantidadDeIncompletas} línea(s) incompleta(s) — complételas o quítelas para poder guardar.
+                {cantidadDeIncompletas === 1
+                  ? '1 línea incompleta — complétela o quítela para poder guardar.'
+                  : `${cantidadDeIncompletas} líneas incompletas — complételas o quítelas para poder guardar.`}
               </div>
             )}
 
@@ -1686,7 +1688,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               {resultadoAnulacion && (
                 <div className="alert alert-warning">
                   Compra anulada. {resultadoAnulacion.gastosLigados > 0
-                    ? `Quedan ${resultadoAnulacion.gastosLigados} pago(s) ligado(s) a esta compra sin desvincular — la anulación no los revierte, quedan como historial de lo ya pagado.`
+                    ? resultadoAnulacion.gastosLigados === 1
+                      ? 'Queda 1 pago ligado a esta compra sin desvincular — la anulación no lo revierte, queda como historial de lo ya pagado.'
+                      : `Quedan ${resultadoAnulacion.gastosLigados} pagos ligados a esta compra sin desvincular — la anulación no los revierte, quedan como historial de lo ya pagado.`
                     : 'No había ningún pago ligado a esta compra.'}
                 </div>
               )}

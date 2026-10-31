@@ -47,6 +47,7 @@ import { ModalDeAltaDePago } from './pagos/ModalDeAltaDePago'
 import { areaPorDefecto } from './utilidadesPagosDelTurno'
 import { errorDeLineasDePago, textoDeMediosDelPago } from '../api/lineasDePago'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { pluralizar } from '../formato/pluralizar'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
@@ -730,7 +731,7 @@ export function Pagos() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} pago(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'pago')}
               </span>
               <div className="d-flex gap-2">
                 <button
