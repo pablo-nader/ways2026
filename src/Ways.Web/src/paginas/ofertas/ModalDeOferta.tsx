@@ -35,6 +35,7 @@ export function ModalDeOferta({
   guardando,
   ocupado,
   error,
+  avisos = [],
   disparoDelError,
   focoDeReserva,
   onCambio,
@@ -50,6 +51,8 @@ export function ModalDeOferta({
   guardando: boolean
   ocupado: boolean
   error: string
+  /** Aclaraciones fijas (alcance de la oferta, catálogos que no cargaron), visibles mientras el modal está abierto. */
+  avisos?: readonly string[]
   disparoDelError: number
   focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: FormularioOferta) => void
@@ -94,6 +97,11 @@ export function ModalDeOferta({
       pie={pie}
       onCerrar={onCancelar}
     >
+      {avisos.map((aviso) => (
+        <div key={aviso} className="alert alert-warning py-1 px-2 small">
+          {aviso}
+        </div>
+      ))}
       <ErrorDeFormulario mensaje={error} disparo={disparoDelError} />
       <form
         id={ID_FORMULARIO_OFERTA}

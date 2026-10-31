@@ -82,9 +82,16 @@ type Opciones = {
   familia?: { id: number; nombre: string | null } | null
   idArticulo?: number
   bloqueadoPorPadre?: boolean
+  alDeEscribir?: (enCurso: boolean) => void
 }
 
-function elemento({ rolId = ROL.Admin, familia = { id: 5, nombre: 'Sabores' }, idArticulo = 7, bloqueadoPorPadre = false }: Opciones = {}) {
+function elemento({
+  rolId = ROL.Admin,
+  familia = { id: 5, nombre: 'Sabores' },
+  idArticulo = 7,
+  bloqueadoPorPadre = false,
+  alDeEscribir = () => {},
+}: Opciones = {}) {
   return (
     <AuthContext.Provider value={sesion(rolId)}>
       <GestorDeOfertas
@@ -92,7 +99,7 @@ function elemento({ rolId = ROL.Admin, familia = { id: 5, nombre: 'Sabores' }, i
         nombreArticulo="Cola 2L"
         familia={familia}
         bloqueadoPorPadre={bloqueadoPorPadre}
-        alDeEscribir={() => {}}
+        alDeEscribir={alDeEscribir}
       />
     </AuthContext.Provider>
   )
@@ -137,6 +144,13 @@ describe('GestorDeOfertas', () => {
   it('sin ofertas muestra el estado vacío', async () => {
     listarMock.mockResolvedValue([])
     render(elemento())
+
+    expect(await screen.findByText('Este artículo ni su familia tienen ofertas.')).toBeTruthy()
+  })
+
+  it('sin ofertas y sin familia el estado vacío habla solo del artículo', async () => {
+    listarMock.mockResolvedValue([])
+    render(elemento({ familia: null }))
 
     expect(await screen.findByText('Este artículo no tiene ofertas.')).toBeTruthy()
   })
@@ -282,5 +296,209 @@ describe('GestorDeOfertas', () => {
 
     expect(screen.queryByText('Del viejo')).toBeNull()
     expect(screen.getByText('Del nuevo')).toBeTruthy()
+  })
+
+  describe('avisos de catálogos', () => {
+    const CATALOGOS_VACIOS = { grupos: [], categorias: [], familias: [], empresas: [], listasPrecio: [] }
+
+    it('muestra los avisos al abrir y los reintenta en la próxima apertura; sin avisos cachea', async () => {
+      const usuario = userEvent.setup()
+      catalogosMock
+        .mockReset()
+        .mockResolvedValueOnce({ ...CATALOGOS_VACIOS, avisos: ['No se pudieron cargar los grupos.'] })
+        .mockResolvedValue({ ...CATALOGOS_VACIOS, avisos: [] })
+      render(elemento())
+      await screen.findByText('Dos por uno')
+
+      await usuario.click(screen.getByRole('button', { name: 'Nueva oferta para este artículo' }))
+      expect(await screen.findByText('No se pudieron cargar los grupos.')).toBeTruthy()
+      await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+      // Cerrado el modal, el aviso sigue visible en la sección.
+      expect(screen.getByText('No se pudieron cargar los grupos.')).toBeTruthy()
+
+      await usuario.click(screen.getByRole('button', { name: 'Nueva oferta para este artículo' }))
+      await screen.findByLabelText('Nombre')
+      expect(catalogosMock).toHaveBeenCalledTimes(2)
+      expect(screen.queryByText('No se pudieron cargar los grupos.')).toBeNull()
+      await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+      await usuario.click(screen.getByRole('button', { name: 'Nueva oferta para este artículo' }))
+      await screen.findByLabelText('Nombre')
+      expect(catalogosMock).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('señal alDeEscribir', () => {
+    function diferido<T>() {
+      let resolver: (valor: T) => void = () => {}
+      const promesa = new Promise<T>((r) => {
+        resolver = r
+      })
+
+      return { promesa, resolver }
+    }
+
+    it('queda levantada durante la carga de apertura y el modal, y se suelta al cancelar', async () => {
+      const usuario = userEvent.setup()
+      const alDeEscribir = vi.fn()
+      const catalogos = diferido<unknown>()
+      catalogosMock.mockReset().mockReturnValue(catalogos.promesa)
+      render(elemento({ alDeEscribir }))
+      await screen.findByText('Dos por uno')
+
+      await usuario.click(screen.getByRole('button', { name: 'Nueva oferta para este artículo' }))
+      expect(alDeEscribir.mock.calls).toEqual([[true]])
+
+      await act(async () => {
+        catalogos.resolver({ ...{ grupos: [], categorias: [], familias: [], empresas: [], listasPrecio: [] }, avisos: [] })
+      })
+      await screen.findByLabelText('Nombre')
+      expect(alDeEscribir.mock.calls).toEqual([[true]])
+
+      await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+      expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+    })
+
+    it('si la apertura falla se suelta', async () => {
+      const usuario = userEvent.setup()
+      const alDeEscribir = vi.fn()
+      catalogosMock.mockReset().mockRejectedValue(new ErrorApi(500, 'x', 'Falló la carga.'))
+      render(elemento({ alDeEscribir }))
+      await screen.findByText('Dos por uno')
+
+      await usuario.click(screen.getByRole('button', { name: 'Nueva oferta para este artículo' }))
+
+      expect(await screen.findByText('Falló la carga.')).toBeTruthy()
+      expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+    })
+
+    it('se sostiene durante la recarga posterior al guardado y se suelta cuando aterriza', async () => {
+      const usuario = userEvent.setup()
+      const alDeEscribir = vi.fn()
+      render(elemento({ alDeEscribir }))
+      await screen.findByText('Dos por uno')
+      await usuario.click(screen.getByRole('button', { name: 'Editar oferta Dos por uno' }))
+      await screen.findByDisplayValue('Dos por uno')
+      const recarga = diferido<OfertaListado[]>()
+      listarMock.mockReturnValue(recarga.promesa)
+
+      await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+      await waitFor(() => expect(listarMock).toHaveBeenCalledTimes(2))
+      expect(alDeEscribir.mock.calls).toEqual([[true]])
+
+      await act(async () => {
+        recarga.resolver([oferta({ id: 10, nombre: 'Renombrada', idArticulo: 7 })])
+      })
+      await screen.findByText('Renombrada')
+      expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+    })
+
+    it('si el guardado falla el modal sigue abierto y la señal levantada hasta cancelar', async () => {
+      const usuario = userEvent.setup()
+      const alDeEscribir = vi.fn()
+      actualizarMock.mockRejectedValue(new Error('boom'))
+      render(elemento({ alDeEscribir }))
+      await screen.findByText('Dos por uno')
+      await usuario.click(screen.getByRole('button', { name: 'Editar oferta Dos por uno' }))
+      await screen.findByDisplayValue('Dos por uno')
+
+      await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+      await waitFor(() => expect(actualizarMock).toHaveBeenCalledTimes(1))
+      expect(alDeEscribir.mock.calls).toEqual([[true]])
+
+      await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+      expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+    })
+
+    it('la baja la levanta al abrir la confirmación y la suelta tras la recarga', async () => {
+      const usuario = userEvent.setup()
+      const alDeEscribir = vi.fn()
+      render(elemento({ alDeEscribir }))
+      await screen.findByText('Dos por uno')
+
+      await usuario.click(screen.getByRole('button', { name: 'Eliminar oferta Dos por uno' }))
+      expect(alDeEscribir.mock.calls).toEqual([[true]])
+      const recarga = diferido<OfertaListado[]>()
+      listarMock.mockReturnValue(recarga.promesa)
+      await usuario.click(await screen.findByRole('button', { name: 'Confirmar baja' }))
+      await waitFor(() => expect(listarMock).toHaveBeenCalledTimes(2))
+      expect(alDeEscribir.mock.calls).toEqual([[true]])
+
+      await act(async () => {
+        recarga.resolver([DE_FAMILIA])
+      })
+      await waitFor(() => expect(screen.queryByText('Dos por uno')).toBeNull())
+      expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+    })
+
+    it('al desmontar con el modal abierto se suelta una sola vez', async () => {
+      const usuario = userEvent.setup()
+      const alDeEscribir = vi.fn()
+      const { unmount } = render(elemento({ alDeEscribir }))
+      await screen.findByText('Dos por uno')
+      await usuario.click(screen.getByRole('button', { name: 'Nueva oferta para este artículo' }))
+      await screen.findByLabelText('Nombre')
+
+      unmount()
+
+      expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+    })
+
+    it('al desmontar con la apertura en vuelo se suelta y la respuesta tardía no vuelve a levantar', async () => {
+      const usuario = userEvent.setup()
+      const alDeEscribir = vi.fn()
+      const catalogos = diferido<unknown>()
+      catalogosMock.mockReset().mockReturnValue(catalogos.promesa)
+      const { unmount } = render(elemento({ alDeEscribir }))
+      await screen.findByText('Dos por uno')
+      await usuario.click(screen.getByRole('button', { name: 'Nueva oferta para este artículo' }))
+
+      unmount()
+      await act(async () => {
+        catalogos.resolver({ grupos: [], categorias: [], familias: [], empresas: [], listasPrecio: [], avisos: [] })
+      })
+
+      expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+    })
+  })
+
+  it('relee la lista cuando cambia la familia del artículo', async () => {
+    const { rerender } = render(elemento({ familia: { id: 5, nombre: 'Sabores' } }))
+    await screen.findByText('Dos por uno')
+    expect(listarMock).toHaveBeenCalledTimes(1)
+
+    rerender(elemento({ familia: { id: 6, nombre: 'Otra' } }))
+
+    await waitFor(() => expect(listarMock).toHaveBeenCalledTimes(2))
+    await screen.findByText('Dos por uno')
+  })
+
+  describe('oferta de familia', () => {
+    const AVISO = 'Es una oferta de la familia Sabores: el cambio afecta a todos sus artículos.'
+
+    it('el modal de edición avisa que afecta a todos los artículos de la familia', async () => {
+      const usuario = userEvent.setup()
+      render(elemento())
+      await screen.findByText('Verano')
+
+      await usuario.click(screen.getByRole('button', { name: 'Editar oferta Verano' }))
+
+      expect(await screen.findByText(AVISO)).toBeTruthy()
+    })
+
+    it('la confirmación de baja avisa lo mismo; una oferta del artículo no', async () => {
+      const usuario = userEvent.setup()
+      render(elemento())
+      await screen.findByText('Verano')
+
+      await usuario.click(screen.getByRole('button', { name: 'Eliminar oferta Verano' }))
+      expect(await screen.findByText(AVISO)).toBeTruthy()
+      await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Confirmar baja' })).toBeNull())
+
+      await usuario.click(screen.getByRole('button', { name: 'Eliminar oferta Dos por uno' }))
+      await screen.findByRole('button', { name: 'Confirmar baja' })
+      expect(screen.queryByText(AVISO)).toBeNull()
+    })
   })
 })

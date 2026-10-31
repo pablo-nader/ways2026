@@ -50,12 +50,18 @@ export function GestorDeOfertas(props: Props) {
 }
 
 /**
- * Las lecturas llevan generación (la última iniciada gana; cambiar de artículo o desmontar las invalida). Las escrituras
- * comparten una guarda de reentrancia (`ocupadoRef`) y no gatean su respuesta (`react-async-state` regla 2): mientras
- * dura una, el modal de la oferta o la confirmación de baja están abiertos e inertes y `alDeEscribir` deja inerte el
- * modal del artículo, así que nada puede reemplazar lo que la respuesta escribe, y no navega. Mientras el modal o la
- * confirmación están abiertos se avisa a `alDeEscribir` para que el formulario del artículo no se pueda tocar por
- * debajo; por eso las escrituras de acá no miran `bloqueadoPorPadre` (lo habríamos levantado nosotros mismos).
+ * Las lecturas llevan generación (la última iniciada gana; cambiar de artículo o de familia, o desmontar, las invalida).
+ * Las escrituras comparten una guarda de reentrancia (`ocupadoRef`) y no gatean su respuesta (`react-async-state`
+ * regla 2): mientras dura una, el modal de la oferta o la confirmación de baja están abiertos e inertes y
+ * `alDeEscribir` deja inerte el modal del artículo, así que nada puede reemplazar lo que la respuesta escribe.
+ *
+ * `alDeEscribir(true)` se levanta al empezar a abrir el modal (carga de catálogos y detalle) o al abrir la confirmación
+ * de baja, y se suelta una sola vez (`elevadaRef` hace cada pareja true/false exacta) cuando: la apertura falla o queda
+ * obsoleta, el modal o la confirmación se cierran, termina el guardado o la baja exitosa (después de que aterriza la
+ * recarga de la lista) o se desmonta la sección. Un guardado o una baja que fallan dejan el modal abierto y la señal
+ * levantada. Por eso las escrituras de acá no miran `bloqueadoPorPadre` una vez levantada la señal (lo habríamos
+ * levantado nosotros mismos); la guarda de entrada de `abrir` sí lo mira, y como la señal se levanta antes de
+ * cualquier espera, otra sección no puede empezar a escribir mientras la apertura está en vuelo.
  */
 function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoPorPadre, alDeEscribir }: Props) {
   const [ofertas, setOfertas] = useState<OfertaListado[] | null>(null)
@@ -78,10 +84,29 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
   const aperturas = useRef(0)
   const contenedorRef = useRef<HTMLDivElement>(null)
 
+  // Espejo de si esta sección tiene levantada la señal de `alDeEscribir`: cada true se empareja con un único false.
+  const elevadaRef = useRef(false)
+
+  const levantar = useCallback(() => {
+    if (elevadaRef.current) return
+    elevadaRef.current = true
+    alDeEscribir(true)
+  }, [alDeEscribir])
+
+  const soltar = useCallback(() => {
+    if (!elevadaRef.current) return
+    elevadaRef.current = false
+    alDeEscribir(false)
+  }, [alDeEscribir])
+
+  useEffect(() => soltar, [soltar])
+
   const invalidarLecturas = useCallback(() => {
     generacion.current++
     aperturas.current++
   }, [])
+
+  const idFamilia = familia?.id ?? null
 
   const cargar = useCallback(
     async (mensajeDeFallo: string): Promise<void> => {
@@ -98,35 +123,39 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
     [idArticulo],
   )
 
+  // La familia cambia qué ofertas alcanzan al artículo: el listado se relee también cuando ella cambia.
   useEffect(() => {
     setCargando(true)
     setError('')
     setOfertas(null)
     void cargar('No se pudieron cargar las ofertas.')
     return invalidarLecturas
-  }, [cargar, invalidarLecturas])
+  }, [cargar, invalidarLecturas, idFamilia])
 
   const superficieAbierta = formulario !== null || baja !== null
-
-  useEffect(() => {
-    if (!superficieAbierta) return
-
-    alDeEscribir(true)
-
-    return () => alDeEscribir(false)
-  }, [superficieAbierta, alDeEscribir])
-
   const bloqueado = ocupado || bloqueadoPorPadre || superficieAbierta
+
+  const nombreDeLaFamilia = familia === null ? null : (familia.nombre ?? `#${familia.id}`)
+
+  function avisoDeFamilia(id: number | '' | null): string | null {
+    if (id === null || id === '') return null
+    const nombre = id === familia?.id ? nombreDeLaFamilia : `#${id}`
+
+    return `Es una oferta de la familia ${nombre}: el cambio afecta a todos sus artículos.`
+  }
 
   async function abrir(obtenerFormulario: () => Promise<FormularioOferta>) {
     if (ocupadoRef.current || bloqueadoPorPadre) return
     ocupadoRef.current = true
     setOcupado(true)
     setError('')
+    levantar()
     const mia = ++aperturas.current
+    let abierto = false
     try {
       let propios = catalogos
-      if (propios === null) {
+      // Un resultado con avisos (algún catálogo no cargó) no se reutiliza: la próxima apertura lo reintenta.
+      if (propios === null || propios.avisos.length > 0) {
         propios = await cargarCatalogosDeOferta()
         if (aperturas.current !== mia) return
         setCatalogos(propios)
@@ -135,11 +164,13 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
       if (aperturas.current !== mia) return
       setErrorDeFormulario('')
       setFormulario(inicial)
+      abierto = true
     } catch (e) {
       if (aperturas.current === mia) setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir la oferta.')
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
+      if (!abierto) soltar()
     }
   }
 
@@ -167,6 +198,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
   function cancelar() {
     if (ocupadoRef.current) return
     setFormulario(null)
+    soltar()
   }
 
   async function guardar() {
@@ -183,6 +215,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
     setOcupado(true)
     setGuardando(true)
     setErrorDeFormulario('')
+    let guardado = false
     try {
       try {
         if (formulario.id === null) await clienteDeOfertas.crear(aAltaOferta(formulario))
@@ -191,12 +224,14 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
         setErrorDeFormulario(copiaDeFalloAlGuardarOferta(e))
         return
       }
+      guardado = true
       setFormulario(null)
       await cargar('Se guardó, pero no se pudo actualizar la lista.')
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
       setGuardando(false)
+      if (guardado) soltar()
     }
   }
 
@@ -205,6 +240,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
     ocupadoRef.current = true
     setOcupado(true)
     setErrorDeBaja('')
+    let eliminada = false
     try {
       try {
         await clienteDeOfertas.eliminar(baja.oferta.id)
@@ -212,11 +248,13 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
         setErrorDeBaja(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja la oferta.')
         return
       }
+      eliminada = true
       setBaja(null)
       await cargar('Se dio de baja, pero no se pudo actualizar la lista.')
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
+      if (eliminada) soltar()
     }
   }
 
@@ -224,9 +262,8 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
     if (ocupadoRef.current) return
     setErrorDeBaja('')
     setBaja(null)
+    soltar()
   }
-
-  const nombreDeLaFamilia = familia === null ? null : (familia.nombre ?? `#${familia.id}`)
 
   return (
     <>
@@ -238,11 +275,16 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
             {error}
           </div>
         )}
+        {formulario === null && catalogos !== null && catalogos.avisos.length > 0 && (
+          <div className="alert alert-warning py-1 px-2 small mt-2">{catalogos.avisos.join(' ')}</div>
+        )}
 
         {cargando ? (
           <Cargando texto="Cargando ofertas…" />
         ) : ofertas === null ? null : ofertas.length === 0 ? (
-          <p className="text-muted small mt-2 mb-2">Este artículo no tiene ofertas.</p>
+          <p className="text-muted small mt-2 mb-2">
+            {familia === null ? 'Este artículo no tiene ofertas.' : 'Este artículo ni su familia tienen ofertas.'}
+          </p>
         ) : (
           <div className="table-responsive mt-2">
             <table className="table table-sm align-middle mb-2">
@@ -284,6 +326,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
                         disabled={bloqueado}
                         onClick={(evento) => {
                           setErrorDeBaja('')
+                          levantar()
                           setBaja({
                             oferta: o,
                             disparador: evento.currentTarget,
@@ -321,6 +364,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
             guardando={guardando}
             ocupado={ocupado}
             error={errorDeFormulario}
+            avisos={[avisoDeFamilia(formulario.idFamilia), ...catalogos.avisos].filter((a): a is string => a !== null)}
             disparoDelError={rechazosDeValidacion}
             focoDeReserva={contenedorRef}
             onCambio={setFormulario}
@@ -335,6 +379,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
             ocupado={ocupado}
             disparador={baja.disparador}
             regreso={contenedorRef}
+            nota={avisoDeFamilia(baja.oferta.idFamilia) ?? undefined}
             error={errorDeBaja || null}
             onConfirmar={() => void confirmarBaja()}
             onCancelar={cancelarBaja}
