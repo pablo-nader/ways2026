@@ -72,11 +72,11 @@ Branch `pnader/mercadopago-e3-t1`, stacked on E2 T6. Backend only.
 - Table `cobros_mercadopago` (operativa: id_tenant + id_empresa, RLS): `id_cobro_mercadopago`, `id_tenant`, `id_empresa`,
   `id_punto_venta`, `id_dispositivo`, `id_medio_pago`, `numero_preasignado` (same type as `SolicitudDeVenta.NumeroPreasignado`),
   `intento int`, `tipo` (`qr` | `point`), `importe numeric(18,2)`, `external_reference varchar(64)`, `id_orden_mercadopago
-  varchar(64)`, `estado` (`pendiente` | `aprobado` | `cancelado` | `expirado` | `devuelto`), `id_pago_mercadopago varchar(64)`,
+  varchar(64)`, `estado` (`creando` | `pendiente` | `aprobado` | `cancelado` | `expirado` | `devuelto`; `creando` added in judgment-day round 1), `id_pago_mercadopago varchar(64)`,
   `referencia_pago_mercadopago bigint` (the numeric `reference_id`), `importe_pagado numeric(18,2)`, `qr_data text`,
   `expira_en`, `fecha_ultima_consulta`, `fecha_aprobacion`, `created_at`/`updated_at`. Partial UNIQUE (`id_punto_venta`,
-  `numero_preasignado`) WHERE `estado IN ('pendiente','aprobado')`: at most one live charge per sale number.
-- `external_reference` = `W{tenant}P{pv}N{numero}I{intento}`; idempotency key = hash of (pv, numero, intento, importe).
+  `numero_preasignado`) WHERE `estado IN ('creando','pendiente','aprobado')`: at most one live charge per sale number.
+- `external_reference` = `W{tenant}P{pv}N{numero}I{intento}`; idempotency key = hash of the full request body (stored in `clave_idempotencia`; see round 1).
 - Device endpoints (device session; the charge's PV is the device's PV; 404 for another PV/tenant):
   - `POST /api/pos/mercadopago/cobros` `{idMedioPago, numeroPreasignado, importe}`: the medio must have proveedor
     `mercadopago_qr`; the PV needs a registered caja for the current seller (`mercadopago_caja_no_registrada`); a live
@@ -87,7 +87,7 @@ Branch `pnader/mercadopago-e3-t1`, stacked on E2 T6. Backend only.
   - `GET /api/pos/mercadopago/cobros/{id}`: a `pendiente` charge refreshes from `GET /v1/orders/{id}` at most once per 2 s
     (`fecha_ultima_consulta`) under a per-charge lock: `processed` -> `aprobado` (payment id, reference_id, paid amount,
     approval date; a paid amount different from `importe` is still `aprobado` but the response flags `importeDistinto`);
-    `canceled` -> `cancelado`; `expired` -> `expirado`; `refunded` -> `devuelto`.
+    `canceled` -> `cancelado`; `expired` -> `expirado`; `refunded` -> `devuelto` (only observed while the charge is pending; a refund after approval is E6's job, reconciliation).
   - `POST /api/pos/mercadopago/cobros/{id}/cancelar`: `pendiente` -> `POST /v1/orders/{id}/cancel`; a 409 from Mercado Pago
     refreshes the order instead (it may have been paid in the meantime, then the answer is `aprobado`).
 - Mercado Pago 401/no connection reuse the E1 errors; `no_disponible` keeps the charge `pendiente`.
@@ -103,3 +103,15 @@ Done on `pnader/mercadopago-e3-t1`, commit `feat(mercadopago): el POS crea, cons
 - Decisions beyond the design: a pending charge past `expira_en` is refreshed from Mercado Pago before deciding reuse/409 (it may have expired or been paid); `intento` is `max + 1` over all charges of the number; same-amount reuse also requires the same medio (otherwise 409 `cobro_mercadopago_en_curso`); cancelling an `aprobado` charge is 409 `cobro_mercadopago_ya_aprobado`, cancelling a cancelado/expirado/devuelto one returns it as is; an order status Ways does not know (`created`, `at_terminal`) leaves the charge pending; `reference_id` is read tolerantly (number or string) and never blocks approving.
 - Verification: build, `has-pending-model-changes` clean, Domain 2417, Application 1650, integration filter 359 (14 m). Mutation evidence: see the commit report (proveedor rule and CHECK, live-charge index, same-amount reuse, 2 s throttle, per-charge/per-PV locks, status mapping, cancel-409 refresh, device PV scoping, RLS).
 - Open: single-clause mutation of each of the three device-PV conjuncts survives by design (pre-check + locked read are redundant, a charge never changes PV); the tests kill them only together. Nothing here was exercised against the real Mercado Pago API.
+
+## Judgment-day E3-T1 round 1 (2026-11-01)
+
+Both blind judges confirmed F1-F4 (F5 judge A only, F6 judge B only). The migration `CobrosMercadoPago` was not shipped, so it was edited in place (Designer + snapshot synced; `has-pending-model-changes` clean).
+
+- F1 — `processed` approves only with a readable payment: `paid_amount` else `amount`, 0 < x <= max, 2 decimals. Otherwise the charge stays `pendiente` and a warning is logged (order and charge ids only); the next poll retries. `ImportePagado` is set on approval and `importeDistinto` follows from it.
+- F2 — reserve-then-call: inside the PV lock the row is inserted as `creando` (with `external_reference`, `importe`, `id_medio_pago`, new `external_pos_id varchar(40)` and `clave_idempotencia varchar(64)` = `ways-cobro-` + SHA-256 of the full body) and committed in its own transaction; only then `POST /v1/orders` and the update to `pendiente`. `creando` counts as live in `ux_cobros_mercadopago_vivo_numero` and in the estado CHECK; `id_orden_mercadopago` became nullable with `ck_cobros_mercadopago_orden`. Create / GET / cancel of a `creando` row first re-send the ORIGINAL body (rebuilt from the stored fields, not from the current caja) with the stored key, then the normal rules apply (other importe -> 409 `cobro_mercadopago_en_curso`). The `qr_data` guard applies only to non-terminal statuses; terminal ones go through the status mapping. A 400/422 to the re-send marks the row `cancelado`; other errors leave it `creando`. Create is a bounded loop (5 turns) of PV-locked transactions: a turn that reserves returns nothing and the next one completes it.
+- F3 — every path that returns or mutates a live charge takes the per-charge lock and re-reads after it (create's reuse branch included). Lock order PV -> charge everywhere; GET/cancel of a `creando` row take the PV lock first. Terminal rows are returned without lock.
+- F4 — `ServicioDeMediosPago` rejects (409 `medio_con_cobros_mercadopago_vivos`) changing the `proveedor`, leaving `Electronico` or deactivating a medio that has `creando`/`pendiente` charges (`FOR UPDATE` on the medio vs the reservation's `FOR KEY SHARE`, which also re-validates the medio under the lock). `aprobado` charges do not block.
+- F5 — a 404 on `GET /v1/orders/{id}` for a pending charge past `expira_en` marks it `expirado`; before expiry it stays the 502.
+- F6 — doc comments (entity, ODD design, docs/10 part 07) now say `devuelto` is only observed while pending; refunds after approval belong to E6.
+- Known limits: a `creando` row whose re-send keeps failing with a non-definitive error (for example a 2xx with an invalid body) stays `creando` and keeps the number occupied until Mercado Pago answers; nothing here was exercised against the real API. The old test that injected a competing live row between the call and the save no longer applies (the reservation precedes the call); the 23505 -> 409 translation remains as a backstop.
