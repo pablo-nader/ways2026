@@ -176,6 +176,8 @@ describe('copiaDeFalloDeMercadoPago — locales, cajas y terminales', () => {
     ['nombre_invalido_para_mercadopago', /nombre del punto de venta/],
     ['mercadopago_no_conectada', /no tiene Mercado Pago conectado/],
     ['mercadopago_requiere_reconexion', /volver a conectar/],
+    ['mercadopago_renovacion_rechazada', /rechazó la renovación/],
+    ['mercadopago_credenciales_rechazadas', /credenciales de la plataforma/],
     ['mercadopago_local_no_registrado', /registrar la sucursal/],
     ['mercadopago_local_duplicado', /más de un local/],
     ['mercadopago_caja_duplicada', /más de una caja/],

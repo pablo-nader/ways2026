@@ -504,3 +504,14 @@ E2 complete; next E3 (dynamic QR charge).
   modal can overwrite an address saved meanwhile by another admin (no concurrency token, same as the name).
 - Info (one judge each): an over-long provincia answers `provincia_muy_largo` instead of `provincia_invalida`; the web and
   server provincia lists are duplicated by hand with no test tying them.
+
+## Judgment-day T6 verdict
+
+- 2026-11-01: **APPROVED** in round zero: no CRITICAL finding from either judge on b7a885b8. RDD is off.
+- Applied after the verdict (judge B warning, trivial): copies for `mercadopago_renovacion_rechazada` and
+  `mercadopago_credenciales_rechazadas`, with their cases in `mercadoPago.test.ts`.
+- Info (one judge each, not fixed): the caja modal does not re-read after a register failure caused by a server-side state
+  change; an `http:` QR url is accepted (mixed content, no `onError` fallback); a `registrada` caja without QR has no re-sync
+  action; the `desactualizada` copy omits the local re-registration cause; assign/remove stay enabled during a terminals refresh.
+
+E2 is complete with T6. Next: E3 (dynamic QR charge), doc `odd/tasks/mercadopago-cobros.md`.

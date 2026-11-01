@@ -146,6 +146,8 @@ const COPIAS_POR_CODIGO: Readonly<Record<string, string>> = {
   referencia_invalida: 'La cuenta de tesorería elegida ya no existe.',
   mercadopago_no_conectada: 'La empresa no tiene Mercado Pago conectado. Conectalo desde la pantalla de Empresas.',
   mercadopago_requiere_reconexion: 'Hay que volver a conectar Mercado Pago desde la pantalla de Empresas.',
+  mercadopago_renovacion_rechazada: 'Mercado Pago rechazó la renovación de la conexión. Volvé a conectarla desde la pantalla de Empresas.',
+  mercadopago_credenciales_rechazadas: 'Mercado Pago rechazó las credenciales de la plataforma. Pedile al administrador de la plataforma que las revise.',
   mercadopago_tokens_ilegibles: 'La conexión con Mercado Pago no se puede leer. Volvé a conectarla desde la pantalla de Empresas.',
   direccion_incompleta_para_mercadopago: 'A la sucursal le faltan datos de la dirección para registrarla en Mercado Pago. Completalos y volvé a intentar.',
   nombre_invalido_para_mercadopago: 'El nombre del punto de venta no es válido para Mercado Pago. Editalo y volvé a intentar.',
