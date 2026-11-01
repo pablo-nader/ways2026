@@ -378,7 +378,8 @@ public class ServicioDeCobrosMercadoPago(
 
     /// <summary>
     /// El aviso firmado de Mercado Pago dice que la orden del cobro cambió: lee la orden y aplica su estado sin el límite de una
-    /// consulta cada <see cref="IntervaloMinimoDeConsulta"/> (el aviso es la señal de que hay algo nuevo). Corre bajo el lock del cobro
+    /// consulta cada <see cref="IntervaloMinimoDeConsulta"/> por cobro, igual que el sondeo del dispositivo: un aviso firmado capturado
+    /// y repetido dentro de la ventana de la firma no puede amplificarse en llamadas a Mercado Pago. Corre bajo el lock del cobro
     /// y con una sola lectura de la fila después de tomarlo; solo un cobro <c>pendiente</c> se refresca, cualquier otro estado ya es
     /// final (o todavía no tiene orden) y no se toca. No usa el dispositivo de la sesión: quien llama ya fijó el tenant del cobro.
     /// </summary>
@@ -389,7 +390,7 @@ public class ServicioDeCobrosMercadoPago(
             var cobro = await db.CobrosMercadoPago.FirstOrDefaultAsync(c => c.Id == idCobro, ct);
             if (cobro is { Estado: EstadosDeCobroMercadoPago.Pendiente })
             {
-                await RefrescarAsync(cobro, respetarIntervalo: false, ct);
+                await RefrescarAsync(cobro, respetarIntervalo: true, ct);
             }
 
             return true;

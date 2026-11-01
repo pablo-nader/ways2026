@@ -10,7 +10,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// El webhook de Mercado Pago (<c>POST /api/integraciones/mercadopago/webhook</c>, E3-T4) contra Postgres real y el manejador falso de
 /// Mercado Pago de <see cref="MercadoPagoCobrosTests"/>: la firma <c>x-signature</c> es la única credencial (sin sesión), un aviso válido
-/// refresca el cobro de su orden con el contexto de SU tenant sin respetar el límite de una consulta cada 2 segundos, y todo lo que no
+/// refresca el cobro de su orden con el contexto de SU tenant respetando el límite de una consulta cada 2 segundos por cobro, y todo lo que no
 /// es un aviso <c>order</c> firmado de una orden nuestra no cambia nada. El índice único de la orden tiene su traducción y su carrera.
 /// </summary>
 public partial class MercadoPagoCobrosTests
@@ -312,25 +312,56 @@ public partial class MercadoPagoCobrosTests
 
     // ---- Refresco ------------------------------------------------------------------------------------------------------------
 
-    // Clausula: el aviso no respeta el limite de una consulta cada 2 segundos (RefrescarAsync con respetarIntervalo en false).
+    // Clausula: el aviso respeta el limite de una consulta cada 2 segundos por cobro (RefrescarAsync con respetarIntervalo en true):
+    // justo despues de una consulta del dispositivo no llama a Mercado Pago, pasado el intervalo si.
     [Fact]
-    public async Task ElAvisoRefrescaAunqueElDispositivoHayaConsultadoHaceInstantes()
+    public async Task ElAvisoRespetaElIntervaloDeConsultaDelCobro()
     {
-        var e = await PrepararAsync("mp-webhook-sin-limite");
+        var e = await PrepararAsync("mp-webhook-intervalo");
         var cobro = await CrearOkAsync(e, 7040, 100m);
         var orden = (string)Assert.Single(await FilasAsync(e.IdPuntoVenta))["id_orden_mercadopago"]!;
         Assert.Equal("pendiente", (await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro))).Estado);
         Assert.Single(Lecturas(e));
         e.Ordenes.Estados[orden] = "processed";
+        var cliente = ClienteDelWebhook(e);
 
-        // Sin avanzar el reloj: una consulta del dispositivo en este instante no volvería a leer la orden.
-        Assert.Equal("pendiente", (await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro))).Estado);
+        Assert.Equal(HttpStatusCode.OK, (await AvisarAsync(cliente, orden, FirmaValida(e, orden))).StatusCode);
         Assert.Single(Lecturas(e));
+        Assert.Equal("pendiente", await EstadoDelCobroAsync(e));
 
-        Assert.Equal(HttpStatusCode.OK, (await AvisarAsync(ClienteDelWebhook(e), orden, FirmaValida(e, orden))).StatusCode);
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        Assert.Equal(HttpStatusCode.OK, (await AvisarAsync(cliente, orden, FirmaValida(e, orden))).StatusCode);
 
         Assert.Equal(2, Lecturas(e).Count);
         Assert.Equal("aprobado", await EstadoDelCobroAsync(e));
+    }
+
+    // Clausula: un aviso firmado capturado y repetido no se amplifica en llamadas a Mercado Pago (diez repeticiones, una consulta).
+    [Fact]
+    public async Task DiezAvisosRepetidosCausanUnaSolaConsultaAMercadoPago()
+    {
+        var e = await PrepararAsync("mp-webhook-repeticion");
+        var orden = await PendienteConOrdenAsync(e, 7043);
+        var cliente = ClienteDelWebhook(e);
+        var firma = FirmaValida(e, orden);
+
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.Equal(HttpStatusCode.OK, (await AvisarAsync(cliente, orden, firma)).StatusCode);
+        }
+
+        Assert.Single(Lecturas(e));
+    }
+
+    // Clausula: el cuerpo no se lee antes de validar la firma; con firma invalida y un cuerpo enorme la respuesta es 401.
+    [Fact]
+    public async Task UnCuerpoEnormeConFirmaInvalidaEsUn401()
+    {
+        var e = await PrepararAsync("mp-webhook-cuerpo-enorme");
+        var orden = await PendienteConOrdenAsync(e, 7044);
+
+        await AssertRechazadoSinEfectosAsync(
+            e, await AvisarAsync(ClienteDelWebhook(e), orden, "ts=1,v1=00", tipoEnLaUrl: null, cuerpo: new string('x', 64 * 1024)));
     }
 
     [Fact]

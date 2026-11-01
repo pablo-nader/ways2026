@@ -9,7 +9,9 @@ namespace Ways.Application.MercadoPago;
 
 /// <summary>Lo que el endpoint del webhook lee de la solicitud. <c>IdDelDato</c> es el <c>data.id</c> de la URL y <c>Tipo</c> el
 /// <c>type</c> (de la URL o, si falta, del cuerpo).</summary>
-public sealed record AvisoDeMercadoPago(string? EncabezadoFirma, string? IdDeSolicitud, string? IdDelDato, string? Tipo);
+public sealed record AvisoDeMercadoPago(
+    string? EncabezadoFirma, string? IdDeSolicitud, string? IdDelDato, string? Tipo,
+    Func<CancellationToken, Task<string?>>? LectorDeTipo = null);
 
 public enum ResultadoDelAviso
 {
@@ -49,6 +51,7 @@ public class ServicioDeAvisosDeMercadoPago(
         var secreto = opciones.Value.SecretoWebhook;
         if (string.IsNullOrWhiteSpace(secreto))
         {
+            log.LogWarning("Llegó un aviso de Mercado Pago pero el entorno no tiene configurado el secreto del webhook.");
             return ResultadoDelAviso.NoConfigurado;
         }
 
@@ -56,12 +59,18 @@ public class ServicioDeAvisosDeMercadoPago(
             aviso.EncabezadoFirma, aviso.IdDeSolicitud, aviso.IdDelDato, secreto, reloj.Ahora);
         if (firma != ResultadoDeFirmaDeWebhook.Valida)
         {
-            log.LogWarning("Se rechazó un aviso de Mercado Pago por su firma ({Motivo}).", firma);
+            log.LogDebug("Se rechazó un aviso de Mercado Pago por su firma ({Motivo}).", firma);
             return ResultadoDelAviso.FirmaInvalida;
         }
 
+        var tipo = aviso.Tipo;
+        if (string.IsNullOrEmpty(tipo) && aviso.LectorDeTipo is { } lector)
+        {
+            tipo = await lector(ct);
+        }
+
         var idDeOrden = aviso.IdDelDato!;
-        if (aviso.Tipo != TipoOrden || idDeOrden.Length > LargoMaximoDeId)
+        if (tipo != TipoOrden || idDeOrden.Length > LargoMaximoDeId)
         {
             return ResultadoDelAviso.Atendido;
         }

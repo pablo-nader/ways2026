@@ -233,7 +233,8 @@ public static class MercadoPagoEndpoints
                 contexto.Request.Headers["x-signature"].ToString(),
                 contexto.Request.Headers["x-request-id"].ToString(),
                 consulta["data.id"].ToString(),
-                tipo.Length > 0 ? tipo : await LeerTipoDelCuerpoAsync(contexto.Request, ct));
+                tipo.Length > 0 ? tipo : null,
+                tokenCuerpo => LeerTipoDelCuerpoAsync(contexto.Request, tokenCuerpo));
 
             return await servicio.ProcesarAsync(aviso, ct) switch
             {
@@ -255,8 +256,8 @@ public static class MercadoPagoEndpoints
         return app;
     }
 
-    /// <summary>El <c>type</c> del cuerpo JSON, solo cuando la URL no lo trae. El cuerpo se lee acotado y todavía sin autenticar: lo
-    /// que no es un objeto JSON chico con un <c>type</c> de texto no tiene tipo.</summary>
+    /// <summary>El <c>type</c> del cuerpo JSON, solo cuando la URL no lo trae. Se invoca únicamente después de una firma válida, y el
+    /// cuerpo se lee acotado: lo que no es un objeto JSON chico con un <c>type</c> de texto no tiene tipo.</summary>
     private static async Task<string?> LeerTipoDelCuerpoAsync(HttpRequest solicitud, CancellationToken ct)
     {
         var buffer = new byte[LimiteDelCuerpoDelWebhook + 1];
