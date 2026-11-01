@@ -1497,3 +1497,95 @@ describe('PagosDelTurno — sueldos con empleado', () => {
     expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled()
   })
 })
+
+describe('PagosDelTurno — asignar un empleado al editar un sueldo común', () => {
+  const empleados: OpcionDePersonal[] = [
+    { id: 12, nombre: 'Ana' },
+    { id: 13, nombre: 'Beto' },
+  ]
+
+  const sueldo = () => pagoFixture({ id: 12, categoria: 'Sueldos', concepto: 'Sueldo suelto', importe: 300 })
+
+  async function abrirEdicionDelSueldo() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Sueldo suelto' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await d.findByLabelText('Empleado (opcional)')
+    return d
+  }
+
+  it('pide las opciones del POS (id y nombre) y ofrece el empleado con "Sin empleado" en lugar del proveedor', async () => {
+    mockearRutas({ detalle: detalleFixture([sueldo()]), personal: empleados })
+    render(<PagosDelTurno />)
+
+    const d = await abrirEdicionDelSueldo()
+    await d.findByRole('option', { name: 'Ana' }) // espera al dato: las opciones llegan después del modal
+
+    expect(d.getByLabelText('Empleado (opcional)')).toHaveValue('')
+    expect(d.getByRole('option', { name: 'Sin empleado' })).toBeInTheDocument()
+    expect(d.queryByLabelText('Proveedor (opcional)')).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.some(([ruta]) => ruta === '/pos/personal/opciones')).toBe(true)
+    expect(apiGetMock.mock.calls.some(([ruta]) => String(ruta).startsWith('/personal'))).toBe(false)
+  })
+
+  it('guardar con un empleado manda idPersonal y concepto vacío a PUT /pagos/{id} y refresca el detalle', async () => {
+    mockearRutas({ detalle: detalleFixture([sueldo()]), personal: empleados })
+    apiPutMock.mockResolvedValueOnce({ id: 12 })
+    render(<PagosDelTurno />)
+
+    const d = await abrirEdicionDelSueldo()
+    await d.findByRole('option', { name: 'Beto' })
+    await userEvent.selectOptions(d.getByLabelText('Empleado (opcional)'), 'Beto')
+    const detallesAntes = apiGetMock.mock.calls.filter(([ruta]) => String(ruta).endsWith('/detalle')).length
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/pagos/12',
+        expect.objectContaining({ categoria: 'Sueldos', concepto: '', idProveedor: null, idPersonal: 13 }),
+      ),
+    )
+    await waitFor(() =>
+      expect(apiGetMock.mock.calls.filter(([ruta]) => String(ruta).endsWith('/detalle')).length).toBeGreaterThan(detallesAntes),
+    )
+  })
+
+  it('"Sin empleado" guarda la edición común sin idPersonal', async () => {
+    mockearRutas({ detalle: detalleFixture([sueldo()]), personal: empleados })
+    apiPutMock.mockResolvedValueOnce({ id: 12 })
+    render(<PagosDelTurno />)
+
+    const d = await abrirEdicionDelSueldo()
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalled())
+    expect(apiPutMock.mock.calls[0][1]).not.toHaveProperty('idPersonal')
+  })
+
+  it('sin conexión no pide el personal, los empleados quedan inelegibles y "Sin empleado" sigue disponible', async () => {
+    const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      mockearRutas({ detalle: detalleFixture([sueldo()]), personal: empleados })
+      render(<PagosDelTurno />)
+
+      const d = await abrirEdicionDelSueldo()
+
+      expect(d.getByLabelText('Empleado (opcional)')).toBeEnabled()
+      expect(d.getByRole('option', { name: 'Sin empleado' })).toBeEnabled()
+      expect(d.getByText(/Sin conexión: pagar a un empleado necesita conexión/)).toBeInTheDocument()
+      expect(apiGetMock.mock.calls.some(([ruta]) => ruta === '/pos/personal/opciones')).toBe(false)
+    } finally {
+      enLinea.mockRestore()
+    }
+  })
+
+  it('un pago que no es de sueldos sigue mostrando el proveedor', async () => {
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 5 })]), personal: empleados })
+    render(<PagosDelTurno />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+
+    expect(d.getByLabelText('Proveedor (opcional)')).toBeInTheDocument()
+    expect(d.queryByLabelText('Empleado (opcional)')).not.toBeInTheDocument()
+  })
+})
