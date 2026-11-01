@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Auditoria, etiquetaDeAccion } from './Auditoria'
 import { ErrorApi } from '../api/cliente'
@@ -66,7 +67,12 @@ function paginaFixture(items: FilaDeAuditoria[] = [filaFixture()], sobrescribir:
 }
 
 function renderAuditoria() {
-  return render(<Auditoria />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<Auditoria />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
@@ -77,6 +83,14 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/auditoria?')) return Promise.resolve(paginaFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -346,6 +360,18 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
       expect(llamadas.every((call: unknown[]) => !(call[0] as string).includes('idEntidad='))).toBe(true)
     })
     expect(screen.getByLabelText('#Id')).toHaveValue('')
+  })
+
+  it('una descarga fallida avisa con un toast de error', async () => {
+    mockearRutasBase()
+    apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
+    const usuario = userEvent.setup()
+    renderAuditoria()
+
+    await screen.findByText('#41')
+    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
   })
 
   it('el botón de descarga llama a rutasDeExportacion.auditoria con el filtro actual', async () => {

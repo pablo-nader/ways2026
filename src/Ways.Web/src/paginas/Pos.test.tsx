@@ -5315,6 +5315,7 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
         <Routes>
           <Route path="/pos" element={<Pos cajaDeEscritorio={cajaDeEscritorio} />} />
         </Routes>
+        <Toaster />
       </MemoryRouter>,
     )
   }
@@ -5430,7 +5431,9 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
 
       expect(vi.mocked(cajaDeEscritorio.encolarImpresion).mock.calls[0][1]).toEqual(pulsoDeCajon())
 
-      expect(await screen.findByText('Retiro registrado.')).toBeInTheDocument()
+      const aviso = await screen.findByText('Retiro registrado.')
+      expect(aviso.closest('.ws-toaster [role="status"]')).not.toBeNull()
+      expect(document.body.querySelector('.alert-success')).toBeNull()
     })
 
     it('el POST de auditoría falla: NUNCA pulsa el cajón, muestra el error y no abre el modal de monto', async () => {

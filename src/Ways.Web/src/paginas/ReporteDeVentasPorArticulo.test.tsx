@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ReporteDeVentasPorArticulo } from './ReporteDeVentasPorArticulo'
 import { rangoDeLaSemanaActual } from '../api/reportes'
@@ -108,7 +109,12 @@ function ultimaLlamadaDeReporte(): URLSearchParams {
 }
 
 function renderReporte() {
-  return render(<ReporteDeVentasPorArticulo />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<ReporteDeVentasPorArticulo />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 /** Espera a que los selectores de catálogo tengan sus opciones: el `<select>` existe antes que los datos. */
@@ -116,6 +122,14 @@ async function esperarCatalogos() {
   await screen.findByRole('option', { name: 'Almacén' })
   await screen.findByRole('option', { name: 'Cigarrillos' })
   await screen.findByRole('option', { name: 'Tabaco' })
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -361,6 +375,19 @@ describe('ReporteDeVentasPorArticulo', () => {
 
     const busqueda = apiGetMock.mock.calls.map((c) => c[0] as string).find((r) => r.startsWith('/articulos?'))!
     expect(new URLSearchParams(busqueda.split('?')[1]).get('incluirEliminados')).toBe('true')
+  })
+
+  it('una descarga fallida avisa con un toast de error', async () => {
+    mockearRutasBase()
+    apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await screen.findByText('MARL-20')
+    await esperarCatalogos()
+    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
   })
 
   it('el botón de descarga apunta al export con los mismos filtros y formato=xlsx una sola vez', async () => {

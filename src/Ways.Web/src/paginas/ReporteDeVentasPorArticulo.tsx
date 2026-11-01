@@ -21,6 +21,7 @@ import type {
   VentasPorArticulo,
 } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { Cargando } from '../componentes/Cargando'
@@ -85,7 +86,6 @@ export function ReporteDeVentasPorArticulo() {
   const [datos, setDatos] = useState<VentasPorArticulo | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   useEffect(() => {
@@ -336,8 +336,7 @@ export function ReporteDeVentasPorArticulo() {
                   <BotonDeDescarga
                     ruta={rutasDeExportacion.ventasPorArticulo(filtros)}
                     etiqueta="Descargar"
-                    onError={setErrorDescarga}
-                    onInicio={() => setErrorDescarga('')}
+                    onError={toast.error}
                   />
                 )}
               </div>
@@ -356,7 +355,6 @@ export function ReporteDeVentasPorArticulo() {
                 </button>
               </div>
             )}
-            {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
             {cargando && !datos && <Cargando />}
 

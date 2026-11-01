@@ -4,6 +4,7 @@ import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rangoDelMesActual, rutasDeExportacion, type FiltrosDeLibroIva } from '../api/reportes'
 import type { EmpresaListado, FilaDeLibroIva, LibroIva as LibroIvaRespuesta } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
@@ -49,7 +50,6 @@ export function LibroIva() {
   const [libro, setLibro] = useState<LibroIvaRespuesta | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   useEffect(() => {
@@ -103,12 +103,10 @@ export function LibroIva() {
   }, [cargar])
 
   function cambiarFiltro(cambios: Partial<FiltrosDeLibroIva>) {
-    setErrorDescarga('')
     setFiltros((prev) => ({ ...prev, ...cambios }))
   }
 
   function cambiarPestana(nueva: PestanaDeLibroIva) {
-    setErrorDescarga('')
     setPestana(nueva)
   }
 
@@ -183,13 +181,10 @@ export function LibroIva() {
               ruta={rutaDeExportacion}
               etiqueta="Descargar"
               disabled={!valido}
-              onError={setErrorDescarga}
-              onInicio={() => setErrorDescarga('')}
+              onError={toast.error}
             />
           </div>
         </div>
-
-        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
         {!valido && (
           <p className="text-muted text-center py-4">Elegí un período válido: “desde” no puede ser posterior a “hasta”.</p>

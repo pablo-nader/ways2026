@@ -8,6 +8,7 @@ import { ROL } from '../api/tipos'
 import type { ArticuloListado, EstadoDeReposicion, Existencias as ExistenciasRespuesta, FilaExistencia, PuntoVentaListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -153,7 +154,6 @@ export function Existencias() {
   )
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0) // staleness de LECTURAS (regla 2), sin tocar por esta slice
 
   // ---- Editor inline de una sola fila (decisión 15: bloquear supersede-during-write, nunca
@@ -404,14 +404,11 @@ export function Existencias() {
                 <BotonDeDescarga
                   ruta={rutasDeExportacion.existencias(idPuntoVenta)}
                   etiqueta="Descargar"
-                  onError={setErrorDescarga}
-                  onInicio={() => setErrorDescarga('')}
+                  onError={toast.error}
                   disabled={guardando !== null}
                 />
               </div>
             </div>
-
-            {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
             {cargando && !existencias && <Cargando />}
 

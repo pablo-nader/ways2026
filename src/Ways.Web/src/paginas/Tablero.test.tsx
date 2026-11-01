@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tablero } from './Tablero'
 import { rangoUltimosSieteDias } from '../api/reportes'
@@ -279,7 +280,12 @@ function primerasCeldas(panel: HTMLElement): (string | null)[] {
 }
 
 function renderTablero() {
-  return render(<Tablero />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<Tablero />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 /** Monta detrás del mismo gate de rol que `App.tsx` usa para `/tablero`
@@ -305,6 +311,14 @@ function renderTableroProtegido() {
 afterEach(() => {
   vi.useRealTimers()
 })
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
+}
 
 beforeEach(() => {
   apiGetMock.mockReset()
@@ -1197,10 +1211,9 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
     )
   })
 
-  // El aviso de descarga es un estado propio (`errorDescarga`), separado del `error` de carga:
-  // si compartiera ese estado, el botón "Reintentar" que viaja con él recargaría el reporte en
-  // vez de reintentar la descarga — un "Reintentar" engañoso.
-  it('un error 403 de descarga aparece en su propio aviso, sin ofrecer "Reintentar"', async () => {
+  // El fallo de descarga no usa el banner de carga: ese banner trae un "Reintentar" que recargaría
+  // el reporte en vez de reintentar la descarga.
+  it('un error 403 de descarga se avisa con un toast, sin ofrecer "Reintentar"', async () => {
     mockearRutasBase()
     const { ErrorApi } = await import('../api/cliente')
     apiDescargarMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para exportar este reporte.'))
@@ -1209,13 +1222,13 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
     await screen.findByText('Empresa Uno SA')
     fireEvent.click(await screen.findByRole('button', { name: 'Descargar ventas' }))
 
-    expect(await screen.findByText('No tenés permiso para exportar este reporte.')).toBeInTheDocument()
+    await toastDeErrorDeDescarga('No tenés permiso para exportar este reporte.')
     expect(screen.queryAllByText('Reintentar')).toHaveLength(0)
   })
 
   // task 4.8: un 400 de rechazo por tope de filas (`exportacion_demasiado_grande`) surge en el
   // aviso existente de la página, nunca como una navegación de la SPA a un JSON crudo.
-  it('un 400 por tope de filas surge en el aviso de descarga del panel, no navega a un JSON crudo', async () => {
+  it('un 400 por tope de filas surge como toast, no navega a un JSON crudo', async () => {
     mockearRutasBase()
     const { ErrorApi } = await import('../api/cliente')
     apiDescargarMock.mockRejectedValue(
@@ -1226,7 +1239,7 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
     await screen.findByText('Empresa Uno SA')
     fireEvent.click(await screen.findByRole('button', { name: 'Descargar pagos' }))
 
-    expect(await screen.findByText('El export supera el tope de 25000 filas.')).toBeInTheDocument()
+    await toastDeErrorDeDescarga('El export supera el tope de 25000 filas.')
     expect(window.location.pathname).toBe('/')
   })
 
@@ -1255,23 +1268,6 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
         `/reportes/rentabilidad/export?idEmpresa=1&desde=${rangoEsperado.desde}&hasta=${rangoEsperado.hasta}&incluirEstimados=true&formato=xlsx`,
       ),
     )
-  })
-
-  it('un retry exitoso limpia el banner de error de la descarga anterior', async () => {
-    mockearRutasBase()
-    const { ErrorApi } = await import('../api/cliente')
-    apiDescargarMock.mockRejectedValueOnce(new ErrorApi(403, 'prohibido', 'Sin permiso para exportar.'))
-    renderTablero()
-
-    const boton = await screen.findByRole('button', { name: 'Descargar ventas' })
-    fireEvent.click(boton)
-    expect(await screen.findByText('Sin permiso para exportar.')).toBeInTheDocument()
-
-    apiDescargarMock.mockResolvedValueOnce(undefined)
-    fireEvent.click(boton)
-    await waitFor(() => {
-      expect(screen.queryByText('Sin permiso para exportar.')).not.toBeInTheDocument()
-    })
   })
 })
 

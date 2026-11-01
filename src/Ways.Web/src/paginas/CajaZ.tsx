@@ -6,6 +6,7 @@ import { clienteDeOrganizacion } from '../api/organizacion'
 import type { DetalleDeTurno, ResumenDeCierrePorRetiro, TurnoResumen } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { DetalleDeTurnoListas } from '../componentes/DetalleDeTurnoListas'
@@ -100,7 +101,6 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
   const [detalle, setDetalle] = useState<DetalleDeTurno | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   const [errorImpresion, setErrorImpresion] = useState('')
@@ -226,8 +226,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
             <BotonDeDescarga
               ruta={rutasDeExportacionDeCaja.detalleDeTurno(idTurno)}
               etiqueta="Descargar"
-              onError={setErrorDescarga}
-              onInicio={() => setErrorDescarga('')}
+              onError={toast.error}
               className="btn btn-sm btn-outline-secondary d-print-none"
             />
             {turno?.estado === 'Cerrado' && (
@@ -252,7 +251,6 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
           </div>
         </div>
 
-        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
         {errorTurno && (
           <div className="alert alert-warning py-1 px-2 small mb-2 d-print-none">
             {errorTurno} No se ofrece la reimpresión del ticket de cierre.

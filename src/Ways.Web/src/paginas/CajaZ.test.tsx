@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CajaZ } from './CajaZ'
 import { RutaProtegida } from '../auth/RutaProtegida'
@@ -100,6 +101,7 @@ function renderCajaZ(idTurno = 412) {
         <Routes>
           <Route path="/caja/turnos/:id/z" element={children} />
         </Routes>
+        <Toaster />
       </MemoryRouter>
     ),
   })
@@ -123,6 +125,14 @@ function renderCajaZProtegido(idTurno = 412) {
       </Routes>
     </MemoryRouter>,
   )
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -211,7 +221,7 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     expect(screen.getByText('Sin pagos.')).toBeInTheDocument()
   })
 
-  it('el botón de descarga apunta a /caja/turnos/{id}/detalle/export y limpia el error al reintentar', async () => {
+  it('el botón de descarga apunta a /caja/turnos/{id}/detalle/export y un fallo se avisa con un toast', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/caja/turnos/412/detalle') return Promise.resolve(detalleFixture())
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
@@ -223,12 +233,9 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     await screen.findByText('Caja Z — turno #412')
     await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
 
-    expect(await screen.findByText('No se pudo descargar el archivo.')).toBeInTheDocument()
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
     expect(apiDescargarMock).toHaveBeenCalledWith('/caja/turnos/412/detalle/export?formato=xlsx')
 
-    apiDescargarMock.mockResolvedValueOnce(undefined)
-    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
-    await waitFor(() => expect(screen.queryByText('No se pudo descargar el archivo.')).not.toBeInTheDocument())
   })
 
   it('un id de turno inválido en la URL no dispara ningún fetch', () => {
@@ -442,6 +449,7 @@ function renderCajaZConContexto(contextoDeImpresion: typeof CONTEXTO_DE_IMPRESIO
         <Routes>
           <Route path="/caja/turnos/:id/z" element={children} />
         </Routes>
+        <Toaster />
       </MemoryRouter>
     ),
   })

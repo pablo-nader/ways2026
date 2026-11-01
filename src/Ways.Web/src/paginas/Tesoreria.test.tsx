@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tesoreria } from './Tesoreria'
 import { RutaProtegida } from '../auth/RutaProtegida'
@@ -130,7 +131,12 @@ function paginaFixture(items: MovimientoTesoreriaListado[] = [movimientoFixture(
 }
 
 function renderTesoreria() {
-  return render(<Tesoreria />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<Tesoreria />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 /** Monta detrás del mismo gate de rol que `App.tsx` usa para `/caja/tesoreria`
@@ -168,6 +174,14 @@ function mockearRutasBase(
     }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -367,7 +381,7 @@ describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)',
     await screen.findByText('Apertura de turno')
     await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
 
-    expect(await screen.findByText('No se pudo descargar el archivo.')).toBeInTheDocument()
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
     const ruta = apiDescargarMock.mock.calls[0][0] as string
     expect(ruta).toMatch(/^\/reportes\/tesoreria\/export\?idEmpresa=1/)
     expect(ruta).not.toContain('idPuntoVenta=')
