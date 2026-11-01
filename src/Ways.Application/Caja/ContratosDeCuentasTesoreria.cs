@@ -26,28 +26,7 @@ public sealed record CuentaTesoreriaListado(
     bool Activo,
     bool SaldoInicialEditable);
 
-/// <summary>Cuenta con su saldo en la pantalla de tesorería. <see cref="SaldoActual"/> es el <c>final</c> del último
-/// movimiento por id, o <see cref="SaldoInicial"/> si no tiene; <see cref="FechaUltimoMovimiento"/> es la fecha de ese
-/// mismo movimiento, <c>null</c> sin movimientos.</summary>
-public sealed record CuentaConSaldo(
-    int Id,
-    string Nombre,
-    bool Activo,
-    decimal SaldoInicial,
-    decimal SaldoActual,
-    DateTimeOffset? FechaUltimoMovimiento);
-
-/// <summary>Medio de pago electrónico y activo cuyo cobro no entra a ninguna cuenta de la empresa.</summary>
-public sealed record MedioElectronicoSinCuenta(int Id, string Nombre);
-
-/// <summary>Respuesta de <c>GET /api/reportes/tesoreria/cuentas</c>: las cuentas vivas de la empresa y los medios
-/// electrónicos activos que, al cerrar un turno, no acreditan en ninguna.</summary>
-public sealed record CuentasDeLaEmpresa(
-    int IdEmpresa,
-    IReadOnlyList<CuentaConSaldo> Cuentas,
-    IReadOnlyList<MedioElectronicoSinCuenta> MediosSinCuenta);
-
-/// <summary>Fila del libro de una cuenta. <see cref="NombreMedioPago"/> y <see cref="NombreEmpleado"/> son <c>null</c> cuando
+/// <summary>Movimiento de una cuenta tal como lo devuelve el ajuste manual. <see cref="NombreMedioPago"/> y <see cref="NombreEmpleado"/> son <c>null</c> cuando
 /// la fila no tiene medio o cuando el medio o el usuario están dados de baja; el id se conserva para distinguir los dos casos.</summary>
 public sealed record MovimientoDeCuentaListado(
     int Id,
@@ -64,36 +43,6 @@ public sealed record MovimientoDeCuentaListado(
     string? NombreEmpleado,
     decimal? BaseBruta,
     decimal? PorcentajeAplicado);
-
-/// <summary>Totales del rango, calculados por el servidor sobre TODAS las filas del rango (no sobre la página). Los
-/// descuentos (comisión y retenciones) son positivos cuando restan; <see cref="Cobrado"/> y <see cref="Ajustes"/> salen
-/// con su signo. <see cref="Otros"/> suma los tipos que hoy ningún camino escribe (transferencia, depósito, retiro).
-/// Siempre: apertura + <see cref="Neto"/> = saldo al cierre del rango.</summary>
-public sealed record TotalesDeCuentaEnElRango(
-    decimal Cobrado,
-    decimal Comision,
-    decimal RetencionIibb,
-    decimal RetencionIva,
-    decimal RetencionGanancias,
-    decimal Ajustes,
-    decimal Otros,
-    decimal Neto);
-
-/// <summary>Respuesta de <c>GET /api/reportes/tesoreria/cuentas/{idCuenta}/libro</c>. <see cref="SaldoDeApertura"/> es el
-/// <c>final</c> del último movimiento anterior al rango (o el saldo inicial) y <see cref="SaldoAlCierre"/> es
-/// apertura + neto del rango.</summary>
-public sealed record LibroDeCuenta(
-    int IdCuenta,
-    string Nombre,
-    bool Activo,
-    decimal SaldoActual,
-    decimal SaldoDeApertura,
-    decimal SaldoAlCierre,
-    TotalesDeCuentaEnElRango Totales,
-    IReadOnlyList<MovimientoDeCuentaListado> Items,
-    int Total,
-    int Pagina,
-    int Tamanio);
 
 /// <summary>Ajuste manual de una cuenta. <see cref="Concepto"/> es obligatorio y se manda exactamente uno de
 /// <see cref="Importe"/> (con signo: suma o resta) y <see cref="SaldoObjetivo"/> (el saldo real de la plataforma; el servidor

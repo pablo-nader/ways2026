@@ -168,7 +168,7 @@ export function ModalDeCombo({
               value={valor.idEmpresa}
               onChange={(e) => onCambio({ ...valor, idEmpresa: e.target.value === '' ? '' : Number(e.target.value) })}
             >
-              <option value="">Todo el tenant</option>
+              <option value="">Todas las empresas</option>
               {empresaFaltante && (
                 <option value={valor.idEmpresa}>
                   Empresa #{valor.idEmpresa}

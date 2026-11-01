@@ -190,24 +190,61 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(11250m, (await VenderAsync(ctx, 11250m, (comun, 3m))).Total);
     }
 
+    /// <summary>Entre no acumulables de la misma prioridad gana la que más descuento de línea da: a 3 unidades la común de
+    /// 3800 (600 contra 500), a 4 la "solo múltiplos" (1000 contra 800). La instantánea lleva los escalones de los dos
+    /// lados del cruce.</summary>
     [Fact]
-    public async Task LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYElRestoCaeEnLaUltimaLinea()
+    public async Task ConUnaComunEnCompetenciaGanaLaQueMasDescuentoDeLineaDaEnLaVentaYEnLaInstantanea()
     {
-        var ctx = await apoyo.PrepararAsync(nameof(LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYElRestoCaeEnLaUltimaLinea), ModoPuntoVenta.Web);
+        async Task<(Escenario Ctx, int Articulo, int IdEstricta, int IdComun)> PrepararAsync(ModoPuntoVenta modo)
+        {
+            var ctx = await apoyo.PrepararAsync(
+                $"{nameof(ConUnaComunEnCompetenciaGanaLaQueMasDescuentoDeLineaDaEnLaVentaYEnLaInstantanea)}-{modo}", modo);
+            var articulo = await apoyo.ArticuloAsync(ctx, "articulo", 4000m);
+            var idEstricta = await CrearOfertaAsync(ctx, CuerpoDeOferta(articulo, true));
+            var idComun = await CrearOfertaAsync(ctx, new
+            {
+                nombre = "Comun", idArticulo = articulo, precioUnitario = 3800m, prioridad = 0, acumulable = false,
+                activo = true, idsListas = Array.Empty<int>()
+            });
+            return (ctx, articulo, idEstricta, idComun);
+        }
+
+        var web = await PrepararAsync(ModoPuntoVenta.Web);
+        foreach (var (cantidad, total, idOferta) in new[] { (3m, 11400m, web.IdComun), (4m, 15000m, web.IdEstricta) })
+        {
+            var venta = await VenderAsync(web.Ctx, total, (web.Articulo, cantidad));
+            var item = Assert.Single(await apoyo.ItemsAsync(web.Ctx, venta.Id));
+            Assert.Equal((total, (int?)idOferta), (item.Total, item.IdOferta));
+        }
+
+        var escritorio = await PrepararAsync(ModoPuntoVenta.Escritorio);
+        var v2 = JsonSerializer.Deserialize<InstantaneaDePos>(
+            await InstantaneaAsync(escritorio.Ctx, "/api/pos/instantanea?version=2"), OpcionesJson)!;
+        var precio = Assert.Single(Assert.Single(v2.Articulos, a => a.IdArticulo == escritorio.Articulo).PreciosPorLista);
+        Assert.Equal(
+            [(2m, 4000m, (int?)escritorio.IdEstricta), (2.501m, 3800m, null), (4m, 4000m, escritorio.IdEstricta)],
+            precio.Escalones!.Take(3).Select(e => (e.CantidadDesde, e.PrecioFinal, e.AplicadasCompletas?.Single().IdOferta)));
+    }
+
+    [Fact]
+    public async Task LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYLosRepartePorUnidades()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYLosRepartePorUnidades), ModoPuntoVenta.Web);
         var familia = await apoyo.FamiliaAsync(ctx, "Gaseosas");
         var coca = await apoyo.ArticuloAsync(ctx, "coca", 4000m, idFamilia: familia);
         var sprite = await apoyo.ArticuloAsync(ctx, "sprite", 4000m, idFamilia: familia);
         await CrearOfertaAsync(ctx, CuerpoDeOferta(null, true, idFamilia: familia));
 
-        // 1 + 2 = 3 unidades de la familia: un grupo (coca y una sprite), la otra sprite paga lista.
+        // 1 + 2 = 3 unidades de la familia: un grupo (500) repartido por unidades, 166 a la coca y el resto a la sprite.
         var venta = await VenderAsync(ctx, 11500m, (coca, 1m), (sprite, 2m));
 
         Assert.Equal(11500m, venta.Total);
-        Assert.Equal([3750m, 7750m], (await apoyo.ItemsAsync(ctx, venta.Id)).Select(i => i.Total));
+        Assert.Equal([3834m, 7666m], (await apoyo.ItemsAsync(ctx, venta.Id)).Select(i => i.Total));
 
         var resolucion = await ResolverAsync(ctx, "/api/ofertas/resolver", (coca, 1m), (sprite, 2m));
         Assert.Equal(
-            [250m, 250m],
+            [166m, 334m],
             resolucion.EnumerateArray().Select(l => l.GetProperty("descuentoDeLinea").GetDecimal()));
     }
 
@@ -376,7 +413,7 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
     }
 
     /// <summary>Familia y combos offline, como los cobra el servidor online: los grupos de familia se cuentan sobre el
-    /// documento con el resto en la última línea, y la unidad que consumió un combo no cuenta para los grupos.</summary>
+    /// documento y se reparten por unidades, y la unidad que consumió un combo no cuenta para los grupos.</summary>
     [Fact]
     public async Task LaVentaOfflineDeFamiliaYConComboCobraComoElServidorYNoSeAudita()
     {
@@ -392,12 +429,12 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
         var combo = await apoyo.ComboAsync(ctx, 4000m, [Art(pancho), Art(agua)]);
 
         var deFamilia = await EmitirOfflineAsync(ctx, VentaOffline(ctx, 1, 11500m,
-            Offline(coca, 1m, 4000m, 250m), Offline(sprite, 2m, 4000m, 250m)));
+            Offline(coca, 1m, 4000m, 166m), Offline(sprite, 2m, 4000m, 334m)));
         var conCombo = await EmitirOfflineAsync(ctx, VentaOffline(ctx, 2, 15500m,
             Offline(pancho, 4m, 4000m, 500m, unidades: 1m, ahorro: 800m, idCombo: combo),
             Offline(agua, 1m, 1000m, unidades: 1m, ahorro: 200m, idCombo: combo)));
 
-        Assert.Equal([3750m, 7750m], deFamilia.Items.Select(i => i.Total));
+        Assert.Equal([3834m, 7666m], deFamilia.Items.Select(i => i.Total));
         Assert.Equal([14700m, 800m], conCombo.Items.Select(i => i.Total));
         Assert.All(deFamilia.Items.Concat(conCombo.Items), i => Assert.False(i.PrecioDiscrepante));
         Assert.Empty(await DiscrepanciasAsync(ctx));

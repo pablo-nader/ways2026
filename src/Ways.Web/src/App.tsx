@@ -63,6 +63,7 @@ import { PuertaDePuntoVenta } from './puntoVenta/PuertaDePuntoVenta'
 import { descriptorListasPrecio } from './api/catalogos'
 import { ROL } from './api/tipos'
 import { PREFIJO_ADMIN } from './config/rutasPublicas'
+import { Toaster } from './toasts/Toaster'
 
 export function App() {
   return (
@@ -695,6 +696,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
+      <Toaster />
     </BrowserRouter>
   )
 }

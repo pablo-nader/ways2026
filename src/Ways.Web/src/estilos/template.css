@@ -36,28 +36,19 @@ html {
   margin: 10px auto;
   display: block;
   position: relative;
-  border: 1px solid var(--bs-border-color);
-  border-radius: 0.75rem;
-  background: var(--bs-body-bg);
-  box-shadow: var(--ways-sombra);
+  border: 1px solid var(--ws-line);
+  border-radius: var(--ws-radius-lg);
+  background: var(--ws-surface);
+  box-shadow: var(--ws-shadow-panel);
 }
 
 /* Sin overflow: hidden en la caja, que recortaría las listas de sugerencias absolutas. */
 .box > header {
-  border-radius: calc(0.75rem - 1px) calc(0.75rem - 1px) 0 0;
+  border-radius: calc(var(--ws-radius-lg) - 1px) calc(var(--ws-radius-lg) - 1px) 0 0;
   background: transparent;
-  border-bottom: 1px solid var(--bs-border-color);
+  border-bottom: 1px solid var(--ws-line);
   display: flex;
   align-items: center;
-}
-
-.box > header::before {
-  content: '';
-  align-self: stretch;
-  width: 4px;
-  margin: 10px 0 10px 12px;
-  border-radius: 2px;
-  background: var(--ways-naranja);
 }
 
 .box > header .icons,
@@ -75,9 +66,9 @@ html {
 }
 
 .box > header h5 {
-  padding: 12px;
-  font-weight: bold;
-  font-size: 18px;
+  padding: var(--ws-space-3) var(--ws-space-4);
+  font-weight: 700;
+  font-size: 1.125rem;
 }
 
 .box > header .encabezado {
@@ -86,7 +77,10 @@ html {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  padding: var(--ws-space-3) var(--ws-space-4);
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .box > header .toolbar {
@@ -96,38 +90,31 @@ html {
 }
 
 .box.inverse > header {
-  background: var(--bs-tertiary-bg);
+  background: var(--ws-surface-sunken);
 }
 
 .box.primary > header {
-  background: var(--bs-primary);
-  border-bottom-color: var(--bs-primary);
-  color: #1d1d1f;
+  background: var(--ws-brand-soft);
+  border-bottom-color: var(--ws-brand-soft);
+  color: var(--ws-brand-ink);
 }
 
 .box.success > header {
-  background: var(--bs-success);
-  border-bottom-color: var(--bs-success);
-  color: #fff;
+  background: var(--ws-ok-soft);
+  border-bottom-color: var(--ws-ok-soft);
+  color: var(--ws-ok);
 }
 
 .box.warning > header {
-  background: var(--bs-warning);
-  border-bottom-color: var(--bs-warning);
-  color: #1d1d1f;
+  background: var(--ws-warn-soft);
+  border-bottom-color: var(--ws-warn-soft);
+  color: var(--ws-warn);
 }
 
 .box.danger > header {
-  background: var(--bs-danger);
-  border-bottom-color: var(--bs-danger);
-  color: #fff;
-}
-
-.box.primary > header::before,
-.box.success > header::before,
-.box.warning > header::before,
-.box.danger > header::before {
-  display: none;
+  background: var(--ws-danger-soft);
+  border-bottom-color: var(--ws-danger-soft);
+  color: var(--ws-danger);
 }
 
 /* ----- Login ----- */

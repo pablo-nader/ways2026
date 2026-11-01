@@ -61,7 +61,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago", "redondeo" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cuenta", new[] { "ajuste", "cobro", "comision", "deposito", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro", "transferencia" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "deposito", "pago", "retiro_caja" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "ajuste_manual", "deposito", "pago", "retiro_caja" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "importe", "peso", "unidad" });
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "citext");
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "unaccent");
@@ -770,6 +770,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasAlternateKey("Id", "IdTenant")
                         .HasName("ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant");
 
+                    b.HasAlternateKey("Id", "IdEmpresa", "IdTenant")
+                        .HasName("ak_cuentas_tesoreria_id_cuenta_tesoreria_id_empresa_id_tenant");
+
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_cuentas_tesoreria_tenant");
 
@@ -923,8 +926,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdTurnoCaja", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_turno");
 
-                    b.HasIndex("IdCuentaTesoreria", "IdTenant", "Id")
-                        .HasDatabaseName("ix_movimientos_cuenta_cuenta_id");
+                    b.HasIndex("IdCuentaTesoreria", "IdTenant", "Fecha", "Id")
+                        .HasDatabaseName("ix_movimientos_cuenta_cuenta_fecha_id");
 
                     b.HasIndex("IdTenant", "IdTurnoCaja", "IdMedioPago", "Tipo")
                         .IsUnique()
@@ -3407,6 +3410,143 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_numeraciones_fiscales_rango", "proximo_numero BETWEEN 1 AND 99999999 AND (ultimo_autorizado_arca IS NULL OR ultimo_autorizado_arca BETWEEN 0 AND 99999999)");
 
                             t.HasCheckConstraint("ck_numeraciones_fiscales_sincronizacion", "(ultimo_autorizado_arca IS NULL) = (sincronizado_en IS NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.MercadoPago.ConexionMercadoPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_conexion_mercadopago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<byte[]>("AccessTokenCifrado")
+                        .HasColumnType("bytea")
+                        .HasColumnName("access_token_cifrado");
+
+                    b.Property<DateTimeOffset>("AccessTokenExpiraEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("access_token_expira_en");
+
+                    b.Property<byte[]>("AccessTokenNonce")
+                        .HasColumnType("bytea")
+                        .HasColumnName("access_token_nonce");
+
+                    b.Property<byte[]>("AccessTokenTag")
+                        .HasColumnType("bytea")
+                        .HasColumnName("access_token_tag");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("Estado")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("estado");
+
+                    b.Property<DateTimeOffset>("FechaConexion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_conexion");
+
+                    b.Property<DateTimeOffset?>("FechaDesconexion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_desconexion");
+
+                    b.Property<DateTimeOffset?>("FechaRequiereReconexion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_requiere_reconexion");
+
+                    b.Property<DateTimeOffset?>("FechaUltimaRenovacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_ultima_renovacion");
+
+                    b.Property<DateTimeOffset?>("FechaUltimoIntentoRenovacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_ultimo_intento_renovacion");
+
+                    b.Property<string>("IdClaveMaestra")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("id_clave_maestra");
+
+                    b.Property<int>("IdCuentaTesoreria")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cuenta_tesoreria");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<int>("IdUsuarioConecto")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_usuario_conecto");
+
+                    b.Property<long>("IdUsuarioMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_usuario_mercadopago");
+
+                    b.Property<byte[]>("RefreshTokenCifrado")
+                        .HasColumnType("bytea")
+                        .HasColumnName("refresh_token_cifrado");
+
+                    b.Property<byte[]>("RefreshTokenNonce")
+                        .HasColumnType("bytea")
+                        .HasColumnName("refresh_token_nonce");
+
+                    b.Property<byte[]>("RefreshTokenTag")
+                        .HasColumnType("bytea")
+                        .HasColumnName("refresh_token_tag");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_conexiones_mercadopago");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_conexiones_mercadopago_tenant");
+
+                    b.HasIndex("IdUsuarioConecto")
+                        .HasDatabaseName("ix_conexiones_mercadopago_usuario_conecto");
+
+                    b.HasIndex("IdUsuarioMercadoPago")
+                        .IsUnique()
+                        .HasDatabaseName("ux_conexiones_mercadopago_usuario_activa")
+                        .HasFilter("estado = 'activa'");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_conexiones_mercadopago_empresa");
+
+                    b.HasIndex("IdTenant", "IdEmpresa")
+                        .IsUnique()
+                        .HasDatabaseName("ux_conexiones_mercadopago_empresa_activa")
+                        .HasFilter("estado = 'activa'");
+
+                    b.HasIndex("IdCuentaTesoreria", "IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_conexiones_mercadopago_cuenta");
+
+                    b.ToTable("conexiones_mercadopago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_conexiones_mercadopago_activa", "estado <> 'activa' OR (fecha_desconexion IS NULL AND fecha_requiere_reconexion IS NULL AND access_token_cifrado IS NOT NULL AND octet_length(access_token_cifrado) > 0 AND access_token_nonce IS NOT NULL AND octet_length(access_token_nonce) = 12 AND access_token_tag IS NOT NULL AND octet_length(access_token_tag) = 16 AND refresh_token_cifrado IS NOT NULL AND octet_length(refresh_token_cifrado) > 0 AND refresh_token_nonce IS NOT NULL AND octet_length(refresh_token_nonce) = 12 AND refresh_token_tag IS NOT NULL AND octet_length(refresh_token_tag) = 16)");
+
+                            t.HasCheckConstraint("ck_conexiones_mercadopago_desconectada", "estado <> 'desconectada' OR (fecha_desconexion IS NOT NULL AND access_token_cifrado IS NULL AND access_token_nonce IS NULL AND access_token_tag IS NULL AND refresh_token_cifrado IS NULL AND refresh_token_nonce IS NULL AND refresh_token_tag IS NULL)");
+
+                            t.HasCheckConstraint("ck_conexiones_mercadopago_estado", "estado IN ('activa', 'desconectada', 'requiere_reconexion')");
+
+                            t.HasCheckConstraint("ck_conexiones_mercadopago_requiere_reconexion", "estado <> 'requiere_reconexion' OR (fecha_requiere_reconexion IS NOT NULL AND fecha_desconexion IS NULL AND access_token_cifrado IS NULL AND access_token_nonce IS NULL AND access_token_tag IS NULL AND refresh_token_cifrado IS NULL AND refresh_token_nonce IS NULL AND refresh_token_tag IS NULL)");
                         });
                 });
 
@@ -7327,6 +7467,39 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_numeraciones_fiscales_punto_venta");
+                });
+
+            modelBuilder.Entity("Ways.Domain.MercadoPago.ConexionMercadoPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_conexiones_mercadopago_tenant");
+
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdUsuarioConecto")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_conexiones_mercadopago_usuario_conecto");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_conexiones_mercadopago_empresa");
+
+                    b.HasOne("Ways.Domain.Caja.CuentaTesoreria", null)
+                        .WithMany()
+                        .HasForeignKey("IdCuentaTesoreria", "IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdEmpresa", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_conexiones_mercadopago_cuenta_tesoreria");
                 });
 
             modelBuilder.Entity("Ways.Domain.Ofertas.Oferta", b =>

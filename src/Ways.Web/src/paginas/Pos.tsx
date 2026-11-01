@@ -45,6 +45,7 @@ import { clienteDeClientes } from '../api/clientes'
 import { esSaldoEstimado, nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
 import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
+import { PrecioUnitarioDeLinea } from '../pos/PrecioUnitarioDeLinea'
 import { importeDeEnvioAplicado, importeDeEnvioVigente, mensajeDeRechazoDeEnvio, motivoDeEnvioPendiente } from '../pos/envio'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
@@ -148,6 +149,7 @@ import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { conFiscalSoloSiSeguroSeFactura, ESPERA_DE_LA_FACTURA_MS, ventaSeguroSeFactura } from '../pos/facturacionAlCobrar'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { pluralizar } from '../formato/pluralizar'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -1702,9 +1704,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     function bloquearPorColaLocal(cantidadPendiente: number, cantidadConError: number): boolean {
       if (cantidadPendiente === 0 && cantidadConError === 0) return false
       const partes: string[] = []
-      if (cantidadPendiente > 0) partes.push(`${cantidadPendiente} venta(s) sin sincronizar`)
+      if (cantidadPendiente > 0) partes.push(`hay ${pluralizar(cantidadPendiente, 'venta')} sin sincronizar`)
       if (cantidadConError > 0) partes.push(fraseVentasNecesitanAtencion(cantidadConError))
-      setAvisoCerrarCaja(`No se puede cerrar la caja: hay ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
+      setAvisoCerrarCaja(`No se puede cerrar la caja: ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
       return true
     }
 
@@ -4223,26 +4225,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                               {previa.precioUnitario === null ? (
                                 '—'
                               ) : (
-                                <>
-                                  {tieneDescuento && (
-                                    <div className="text-decoration-line-through text-muted small">
-                                      {formatearMoneda(resultado.precioOriginal as number)}
-                                    </div>
-                                  )}
-                                  <div>
-                                    {formatearMoneda(previa.precioUnitario)}
-                                    {tieneDescuento && resultado.aplicadas.length > 0 && (
-                                      <span
-                                        className="badge bg-success ms-1"
-                                        title={resultado.aplicadas.map((a) => a.nombre).join(', ')}
-                                      >
-                                        {resultado.aplicadas.length === 1
-                                          ? resultado.aplicadas[0].nombre
-                                          : `${resultado.aplicadas[0].nombre} +${resultado.aplicadas.length - 1}`}
-                                      </span>
-                                    )}
-                                  </div>
-                                </>
+                                <PrecioUnitarioDeLinea
+                                  cantidad={l.cantidad}
+                                  resultado={resultado}
+                                  precioUnitario={previa.precioUnitario}
+                                  tieneDescuento={tieneDescuento}
+                                />
                               )}
                             </td>
                             <td>

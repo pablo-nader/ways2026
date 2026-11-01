@@ -1563,7 +1563,7 @@ describe('ofertas solo múltiplos offline', () => {
     expect(totalesDe(lineasDe([COCA, 3]), instantanea)).toEqual([11250])
   })
 
-  it('de familia: los grupos se cuentan sobre el documento y el resto cae en la última línea (1 + 2 → 3750 y 7750)', () => {
+  it('de familia: los grupos se cuentan sobre el documento y se reparten por unidades (1 + 2 → 3834 y 7666)', () => {
     const celda: EscalonDeFamilia = {
       cantidadDeFamiliaDesde: 2,
       cantidadDesde: 1,
@@ -1577,8 +1577,9 @@ describe('ofertas solo múltiplos offline', () => {
     const instantanea = instantaneaFixture({ articulos: [articulo(COCA), articulo(SPRITE)] })
     const lineas = lineasDe([COCA, 1], [SPRITE, 2])
 
-    expect(resolverDocumentoOffline(lineas, instantanea, LISTA).lineas.map((l) => l?.descuentoDeLinea)).toEqual([250, 250])
-    expect(totalesDe(lineas, instantanea)).toEqual([3750, 7750])
+    // Un grupo (500) sobre 3 unidades: 166 a la coca y el resto a la sprite; el documento sigue cobrando 11500.
+    expect(resolverDocumentoOffline(lineas, instantanea, LISTA).lineas.map((l) => l?.descuentoDeLinea)).toEqual([166, 334])
+    expect(totalesDe(lineas, instantanea)).toEqual([3834, 7666])
   })
 
   it('con un combo, la unidad consumida no cuenta para los grupos (los mismos números que la venta del servidor)', () => {

@@ -16,7 +16,7 @@ namespace Ways.Application.Reportes;
 /// Under The Same Gate): <c>GET /api/reportes/stock/existencias</c> — LINQ puro sobre
 /// <c>stock</c> ⋈ <c>articulos</c> para UNA sucursal, cubierto por <c>ix_stock_sucursal</c>.
 /// Sin <c>idArticulo</c> (spec: Existencias Needs No idArticulo, Unlike GET /api/stock) y sin
-/// <c>idEmpresa</c> (mismo criterio que <c>ServicioDeTesoreria</c>: la ruta pide la sucursal o,
+/// <c>idEmpresa</c> (mismo criterio que la tesorería: la ruta pide la sucursal o,
 /// por compatibilidad, un punto de venta que se resuelve a la suya; la empresa se resuelve en
 /// <see cref="ResolverAlcanceAsync"/>). El stock es de la sucursal: dos cajas de una misma
 /// sucursal ven la misma fila, nunca dos.
@@ -108,7 +108,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     {
         // Cláusula bajo prueba (mutation-proof-tests): el filtro por sucursal es lo único que discrimina una
         // sucursal de otra — mezclar dos del mismo tenant en una sola respuesta rompería el significado del
-        // reporte tanto como en ServicioDeTesoreria (design decisión 11, misma familia de bug). Las cajas de una
+        // reporte tanto como en una cadena de tesorería (design decisión 11, misma familia de bug). Las cajas de una
         // misma sucursal ven el mismo stock.
         var crudas = await db.Stock
             .Where(s => s.IdSucursal == alcance.IdSucursal)

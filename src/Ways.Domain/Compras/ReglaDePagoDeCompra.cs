@@ -14,6 +14,14 @@ public static class ReglaDePagoDeCompra
     public static decimal SaldoPendiente(EstadoCompra estado, decimal total, decimal pagado) =>
         estado == EstadoCompra.Confirmada ? Math.Max(0m, total - pagado) : 0m;
 
+    /// <summary>Estado de pago que muestra el listado: <c>null</c> si la compra no está confirmada; saldada cuando no
+    /// queda saldo pendiente (también la de total cero) y pendiente en cualquier otro caso, parcial incluido. Es la
+    /// forma en memoria del filtro <c>estadoPago</c> del listado, que lo aplica en la consulta con la misma resta.</summary>
+    public static EstadoDePagoDeCompra? EstadoDePago(EstadoCompra estado, decimal total, decimal pagado) =>
+        estado != EstadoCompra.Confirmada
+            ? null
+            : SaldoPendiente(estado, total, pagado) <= 0m ? EstadoDePagoDeCompra.Pagada : EstadoDePagoDeCompra.Pendiente;
+
     /// <summary>Concepto del pago cuando el pedido no trae uno: <c>Pago &lt;tipo&gt; &lt;número&gt;</c>,
     /// con el id de la compra si no tiene número externo.</summary>
     public static string ConceptoPorDefecto(string? nombreDelTipo, string? numeroExterno, int idComprobanteCompra)

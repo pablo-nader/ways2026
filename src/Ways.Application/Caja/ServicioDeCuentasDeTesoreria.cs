@@ -174,7 +174,7 @@ public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema re
             e == null ? null : e.NombreFantasia ?? e.RazonSocial,
             db.MovimientosCuenta
                 .Where(m => m.IdCuentaTesoreria == c.Id)
-                .OrderByDescending(m => m.Id)
+                .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
                 .Select(m => (decimal?)m.Final)
                 .FirstOrDefault(),
             db.MovimientosCuenta.Any(m => m.IdCuentaTesoreria == c.Id));
