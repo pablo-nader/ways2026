@@ -51,7 +51,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, HttpClient Admin, int IdArea, int IdAlicuotaIva,
         int IdListaPrecio, int IdCliente, int IdMedioEfectivo, int IdUsuarioAdmin, int IdPuntoVenta2,
-        string MailAdmin, string PasswordAdmin);
+        string MailAdmin, string PasswordAdmin, int IdSucursal, int IdSucursal2);
 
     private async Task<Contexto> PrepararAsync(string nombre, bool conTurnoAbierto = false, bool conLotesHabilitado = false)
     {
@@ -130,10 +130,14 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
             await db.SaveChangesAsync();
         }
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, resultado.IdPuntoVenta);
+
+        var idSucursal2 = await SucursalDePrueba.DeAsync(db, puntoVenta2.Id);
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
             lista.Id, cliente.Id, idMedioEfectivo, resultado.IdUsuarioAdmin, puntoVenta2.Id, mailAdmin,
-            resultado.PasswordTemporal);
+            resultado.PasswordTemporal, idSucursal, idSucursal2);
     }
 
     private async Task<int> SembrarArticuloAsync(
@@ -178,7 +182,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = lote.Id, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = ctx.IdSucursal, IdLote = lote.Id, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
 
@@ -188,7 +192,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
     private async Task SembrarStockAgregadoAsync(Contexto ctx, int idArticulo, decimal cantidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        db.Stock.Add(new Stock { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad });
+        db.Stock.Add(new Stock { IdArticulo = idArticulo, IdSucursal = ctx.IdSucursal, IdTenant = ctx.IdTenant, Cantidad = cantidad });
         await db.SaveChangesAsync();
     }
 
@@ -419,7 +423,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(creado.Id, movimiento.IdRemito);
         Assert.Null(movimiento.IdComprobanteVenta);
 
-        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal);
         Assert.Equal(7m, stock.Cantidad);
     }
 
@@ -676,7 +680,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var inversa = await db.MovimientosStock.SingleAsync(m => m.IdRemito == creado.Id && m.Motivo == MotivoStock.Anulacion);
         Assert.Equal(4m, inversa.Cantidad);
 
-        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal);
         Assert.Equal(20m, stock.Cantidad);
     }
 
@@ -800,7 +804,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var inversa = await dbAssert.MovimientosStock.SingleAsync(m => m.IdRemito == creado.Id && m.Motivo == MotivoStock.Anulacion);
         Assert.Equal(7m, inversa.Cantidad);
 
-        var stock = await dbAssert.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var stock = await dbAssert.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal);
         Assert.Equal(50m, stock.Cantidad);
     }
 
@@ -830,7 +834,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var stockLote = await db.StockLotes.SingleAsync(s => s.IdLote == idLote);
         Assert.Equal(95m, stockLote.Cantidad);
 
-        var stockAgregado = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var stockAgregado = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal);
         Assert.Equal(95m, stockAgregado.Cantidad);
     }
 
@@ -975,11 +979,11 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         await using var transaccionBloqueo = await conexionBloqueo.BeginTransactionAsync(ct);
         await using (var comandoBloqueo = new NpgsqlCommand(
-            "SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_punto_venta = $2 AND id_lote = $3 FOR UPDATE",
+            "SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_sucursal = $2 AND id_lote = $3 FOR UPDATE",
             conexionBloqueo, transaccionBloqueo))
         {
             comandoBloqueo.Parameters.AddWithValue(idArticulo);
-            comandoBloqueo.Parameters.AddWithValue(ctx.IdPuntoVenta);
+            comandoBloqueo.Parameters.AddWithValue(ctx.IdSucursal);
             comandoBloqueo.Parameters.AddWithValue(idLote);
             await comandoBloqueo.ExecuteScalarAsync(ct);
         }
@@ -1050,7 +1054,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var stock = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(9m, stock);
     }
@@ -1152,10 +1156,10 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         // TAMBIÉN es un movimiento, o el propio baseline la rompería por construcción.
         await using (var dbSeed = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
-            dbSeed.Stock.Add(new Stock { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = 30m });
+            dbSeed.Stock.Add(new Stock { IdArticulo = idArticulo, IdSucursal = ctx.IdSucursal, IdTenant = ctx.IdTenant, Cantidad = 30m });
             dbSeed.MovimientosStock.Add(new MovimientoStock
             {
-                IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = 30m,
+                IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdSucursal = ctx.IdSucursal, Cantidad = 30m,
                 Motivo = MotivoStock.Ajuste, IdEmpleado = ctx.IdUsuarioAdmin, CreadoEl = DateTimeOffset.UtcNow
             });
             await dbSeed.SaveChangesAsync();
@@ -1166,7 +1170,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.OK, (await ctx.Admin.PostAsync($"/api/remitos/{creado.Id}/anular", null)).StatusCode);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal);
         var sumaMovimientos = await db.MovimientosStock
             .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == ctx.IdPuntoVenta)
             .SumAsync(m => m.Cantidad);

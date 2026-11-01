@@ -34,7 +34,7 @@ namespace Ways.Application.Organizacion;
 /// fila en el MISMO <c>SaveChangesAsync</c>, así que o se persisten la baja y su rastro, o ninguno
 /// de los dos.
 /// </summary>
-public class ServicioDeOrganizacion(
+public partial class ServicioDeOrganizacion(
     IWaysDbContext db,
     IRelojDelSistema reloj,
     IContextoDeUsuario contexto,
@@ -491,7 +491,12 @@ public class ServicioDeOrganizacion(
                 .Select(e => e.RazonSocial)
                 .FirstOrDefault(),
             p.Modo,
-            p.EnvioPorDefecto);
+            p.EnvioPorDefecto,
+            p.IdSucursal,
+            db.Sucursales
+                .Where(s => s.Id == p.IdSucursal && s.DeletedAt == null)
+                .Select(s => s.Nombre)
+                .FirstOrDefault());
 
     public async Task<IReadOnlyList<PuntoVentaListado>> ListarPuntosVentaAsync(CancellationToken ct = default) =>
         await db.PuntosVenta
@@ -617,11 +622,16 @@ public class ServicioDeOrganizacion(
 
             var empresa = await BuscarEmpresaAsync(idEmpresa, ct);
 
+            var sucursal = datos.IdSucursal is int idSucursalElegida
+                ? await BuscarSucursalDeLaEmpresaAsync(idSucursalElegida, empresa.Id, ct)
+                : null;
+
             var ahora = reloj.Ahora;
             var puntoVenta = new PuntoVenta
             {
                 IdTenant = empresa.IdTenant,
                 IdEmpresa = empresa.Id,
+                IdSucursal = sucursal?.Id ?? 0,
                 Nombre = nombre,
                 Domicilio = domicilio,
                 Horario = horario,
@@ -636,7 +646,8 @@ public class ServicioDeOrganizacion(
             db.PuntosVenta.Add(puntoVenta);
             await db.SaveChangesAsync(ct);
 
-            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AltaDePuntoVenta(empresa.Id, nombre, modo);
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AltaDePuntoVenta(
+                empresa.Id, nombre, modo, puntoVenta.IdSucursal);
             auditoria.Registrar(new RegistroDeAuditoria(
                 puntoVenta.IdTenant, puntoVenta.Id, AccionAuditada.PuntoVentaAlta, puntoVenta.Id,
                 valorAnterior, valorNuevo));
@@ -653,17 +664,30 @@ public class ServicioDeOrganizacion(
     /// <summary>
     /// Baja lógica del punto de venta: mínimo estructural primero
     /// (<c>ultimo_punto_venta_de_la_empresa</c>), después el guard de uso. No tiene hijos
-    /// estructurales, así que no hay cascada — sigue adentro de la transacción y del lock igual,
-    /// porque el mínimo cuenta hermanos y sin el lock dos bajas simultáneas podrían leer dos y
-    /// dejar la empresa en cero. *(BO-R10, TO-R4)*
+    /// estructurales; la única cascada es hacia arriba: si era la última caja viva de su sucursal, la
+    /// sucursal cae con él, y entonces el uso propio de la sucursal (su stock) también bloquea con
+    /// <c>punto_venta_en_uso</c>. Sigue adentro de la transacción y del lock porque el mínimo cuenta
+    /// hermanos y sin el lock dos bajas simultáneas podrían leer dos y dejar la empresa en cero.
+    /// *(BO-R10, TO-R4)*
     /// </summary>
     public async Task EliminarPuntoVentaAsync(int id, CancellationToken ct = default)
     {
-        var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
+        // Solo el tenant antes de los locks: la caja se lee una vez, bajo lock (single-read-under-lock). Una lectura
+        // trackeada acá dejaría en el identity map una sucursal vieja si la caja se mueve en el medio.
+        var idTenant = await db.PuntosVenta
+            .Where(p => p.Id == id)
+            .Select(p => (int?)p.IdTenant)
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {id}.");
+
+        PoliticaDeRoles.ValidarAlcanceDeTenant(Actor, idTenant);
 
         await EnUnaTransaccionDeBajaAsync(async () =>
         {
-            await TomarLockDeBajaAsync(puntoVenta.IdTenant, ct);
+            await TomarLockDeBajaAsync(idTenant, ct);
+            // El mismo lock de fila que toma el movimiento de sucursal y que los escritores de stock toman en modo
+            // compartido al resolver la sucursal: un asiento en vuelo termina antes de que se mire el uso.
+            await TomarLockDePuntoVentaAsync(id, ct);
 
             var bajo = await BuscarPuntoVentaAsync(id, ct);
 
@@ -690,24 +714,43 @@ public class ServicioDeOrganizacion(
                 "el punto de venta",
                 ct);
 
+            // La sucursal sin ningún punto de venta vivo deja de tener sentido y cae con él, en la misma
+            // escritura y con el mismo instante. El lock de baja del tenant serializa esta lectura.
+            var quedanVivos = await db.PuntosVenta
+                .AnyAsync(p => p.IdSucursal == bajo.IdSucursal && p.Id != bajo.Id, ct);
+
+            var sucursal = quedanVivos
+                ? null
+                : await db.Sucursales.FirstOrDefaultAsync(s => s.Id == bajo.IdSucursal, ct);
+
+            if (sucursal is not null)
+            {
+                // Desde sucursales T2 el stock es de la sucursal: si la baja se la llevaría, su uso propio (stock,
+                // stock_lotes, movimientos_stock) bloquea igual que el del punto de venta. Las ramas por
+                // puntos_venta ya las respondió el guard de arriba.
+                await ExigirSinUsoAsync(
+                    typeof(Sucursal),
+                    sucursal.CreatedAt,
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["Id"] = sucursal.Id,
+                        ["IdEmpresa"] = sucursal.IdEmpresa,
+                        ["IdTenant"] = sucursal.IdTenant
+                    },
+                    "punto_venta_en_uso",
+                    "el punto de venta",
+                    ct,
+                    soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta");
+            }
+
             var momento = reloj.Ahora;
 
             Marcar(bajo, momento);
             RegistrarBajaDePuntoVenta(bajo, momento, porCascada: false);
 
-            // La sucursal sin ningún punto de venta vivo deja de tener sentido: baja en la misma
-            // escritura y con el mismo instante. El lock de baja del tenant serializa esta lectura.
-            var quedanVivos = await db.PuntosVenta
-                .AnyAsync(p => p.IdSucursal == bajo.IdSucursal && p.Id != bajo.Id, ct);
-
-            if (!quedanVivos)
+            if (sucursal is not null)
             {
-                var sucursal = await db.Sucursales.FirstOrDefaultAsync(s => s.Id == bajo.IdSucursal, ct);
-
-                if (sucursal is not null)
-                {
-                    Marcar(sucursal, momento);
-                }
+                Marcar(sucursal, momento);
             }
 
             await db.SaveChangesAsync(ct);
@@ -959,7 +1002,9 @@ public class ServicioDeOrganizacion(
         IReadOnlyDictionary<string, object> valoresPorPropiedad,
         string codigo,
         string sujeto,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<RamaDeUso, bool>? soloRamas = null,
+        Func<string, string>? mensajeDeBloqueo = null)
     {
         var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, tipoAncla);
 
@@ -971,7 +1016,7 @@ public class ServicioDeOrganizacion(
                     $"{propiedad}, que alguna rama del inspector necesita."))
             .ToList();
 
-        var ramaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(tipoAncla, valoresDeClave, ancla, ct);
+        var ramaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(tipoAncla, valoresDeClave, ancla, ct, soloRamas);
 
         if (ramaEnUso is null)
         {
@@ -980,7 +1025,11 @@ public class ServicioDeOrganizacion(
 
         var descripcion = EtiquetasDeTablas.DescribirBloqueo(ramaEnUso);
 
-        throw ErrorDominio.Conflicto(codigo, $"No se puede dar de baja {sujeto} porque tiene {descripcion}.");
+        throw ErrorDominio.Conflicto(
+            codigo,
+            mensajeDeBloqueo is null
+                ? $"No se puede dar de baja {sujeto} porque tiene {descripcion}."
+                : mensajeDeBloqueo(descripcion));
     }
 
     /// <summary>

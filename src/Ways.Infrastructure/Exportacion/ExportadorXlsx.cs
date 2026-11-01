@@ -39,7 +39,7 @@ public sealed class ExportadorXlsx : IExportadorDeTabla
 
         hoja.Cell(PrimeraFilaDeEncabezado, 1).Value = $"Empresa: {contexto.Empresa}";
         hoja.Cell(PrimeraFilaDeEncabezado + 1, 1).Value =
-            $"Punto de venta: {contexto.PuntoVenta ?? "Todos"}";
+            $"{contexto.EtiquetaDeAlcance}: {contexto.PuntoVenta ?? "Todos"}";
         hoja.Cell(PrimeraFilaDeEncabezado + 2, 1).Value =
             $"Período: {contexto.Desde:yyyy-MM-dd} a {contexto.Hasta:yyyy-MM-dd}";
         hoja.Cell(PrimeraFilaDeEncabezado + 3, 1).Value = contexto.Cobertura is null

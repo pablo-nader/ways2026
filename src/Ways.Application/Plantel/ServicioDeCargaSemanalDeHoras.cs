@@ -217,7 +217,7 @@ public sealed class ServicioDeCargaSemanalDeHoras(IWaysDbContext db, IRelojDelSi
         if (empresas.Count > 0)
         {
             var filas = await db.Parametros
-                .Where(p => p.Clave == ParametroConocido.ZonaHoraria.Clave && p.IdPuntoVenta == null
+                .Where(p => p.Clave == ParametroConocido.ZonaHoraria.Clave && p.IdPuntoVenta == null && p.IdSucursal == null
                     && empresas.Contains(p.IdEmpresa))
                 .Select(p => new { p.IdEmpresa, p.Valor })
                 .ToListAsync(ct);

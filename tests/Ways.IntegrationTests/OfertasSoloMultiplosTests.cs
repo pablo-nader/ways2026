@@ -228,23 +228,23 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
     }
 
     [Fact]
-    public async Task LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYElRestoCaeEnLaUltimaLinea()
+    public async Task LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYLosRepartePorUnidades()
     {
-        var ctx = await apoyo.PrepararAsync(nameof(LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYElRestoCaeEnLaUltimaLinea), ModoPuntoVenta.Web);
+        var ctx = await apoyo.PrepararAsync(nameof(LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYLosRepartePorUnidades), ModoPuntoVenta.Web);
         var familia = await apoyo.FamiliaAsync(ctx, "Gaseosas");
         var coca = await apoyo.ArticuloAsync(ctx, "coca", 4000m, idFamilia: familia);
         var sprite = await apoyo.ArticuloAsync(ctx, "sprite", 4000m, idFamilia: familia);
         await CrearOfertaAsync(ctx, CuerpoDeOferta(null, true, idFamilia: familia));
 
-        // 1 + 2 = 3 unidades de la familia: un grupo (coca y una sprite), la otra sprite paga lista.
+        // 1 + 2 = 3 unidades de la familia: un grupo (500) repartido por unidades, 166 a la coca y el resto a la sprite.
         var venta = await VenderAsync(ctx, 11500m, (coca, 1m), (sprite, 2m));
 
         Assert.Equal(11500m, venta.Total);
-        Assert.Equal([3750m, 7750m], (await apoyo.ItemsAsync(ctx, venta.Id)).Select(i => i.Total));
+        Assert.Equal([3834m, 7666m], (await apoyo.ItemsAsync(ctx, venta.Id)).Select(i => i.Total));
 
         var resolucion = await ResolverAsync(ctx, "/api/ofertas/resolver", (coca, 1m), (sprite, 2m));
         Assert.Equal(
-            [250m, 250m],
+            [166m, 334m],
             resolucion.EnumerateArray().Select(l => l.GetProperty("descuentoDeLinea").GetDecimal()));
     }
 
@@ -413,7 +413,7 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
     }
 
     /// <summary>Familia y combos offline, como los cobra el servidor online: los grupos de familia se cuentan sobre el
-    /// documento con el resto en la última línea, y la unidad que consumió un combo no cuenta para los grupos.</summary>
+    /// documento y se reparten por unidades, y la unidad que consumió un combo no cuenta para los grupos.</summary>
     [Fact]
     public async Task LaVentaOfflineDeFamiliaYConComboCobraComoElServidorYNoSeAudita()
     {
@@ -429,12 +429,12 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
         var combo = await apoyo.ComboAsync(ctx, 4000m, [Art(pancho), Art(agua)]);
 
         var deFamilia = await EmitirOfflineAsync(ctx, VentaOffline(ctx, 1, 11500m,
-            Offline(coca, 1m, 4000m, 250m), Offline(sprite, 2m, 4000m, 250m)));
+            Offline(coca, 1m, 4000m, 166m), Offline(sprite, 2m, 4000m, 334m)));
         var conCombo = await EmitirOfflineAsync(ctx, VentaOffline(ctx, 2, 15500m,
             Offline(pancho, 4m, 4000m, 500m, unidades: 1m, ahorro: 800m, idCombo: combo),
             Offline(agua, 1m, 1000m, unidades: 1m, ahorro: 200m, idCombo: combo)));
 
-        Assert.Equal([3750m, 7750m], deFamilia.Items.Select(i => i.Total));
+        Assert.Equal([3834m, 7666m], deFamilia.Items.Select(i => i.Total));
         Assert.Equal([14700m, 800m], conCombo.Items.Select(i => i.Total));
         Assert.All(deFamilia.Items.Concat(conCombo.Items), i => Assert.False(i.PrecioDiscrepante));
         Assert.Empty(await DiscrepanciasAsync(ctx));

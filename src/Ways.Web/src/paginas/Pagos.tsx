@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import {
   advertenciasDePagoDeAdministracion,
   aSolicitudDePagoDeAdministracion,
@@ -20,6 +20,8 @@ import { clienteDeCompras, filtrosDeComprasVacios } from '../api/compras'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeProveedores } from '../api/proveedores'
 import { ErrorApi } from '../api/cliente'
+import { esResultadoIncierto } from '../api/cuentasTesoreria'
+import { COPIA_RESULTADO_INCIERTO } from '../api/bajas'
 import { toast } from '../toasts/toasts'
 import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
@@ -45,6 +47,7 @@ import { ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { formatearImporte } from '../formato/importes'
 import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
 import { ModalDeAltaDePago } from './pagos/ModalDeAltaDePago'
+import { ModalDeReasignacionDePago } from './pagos/ModalDeReasignacionDePago'
 import { areaPorDefecto } from './utilidadesPagosDelTurno'
 import { errorDeLineasDePago, textoDeMediosDelPago } from '../api/lineasDePago'
 import { CampoFecha } from '../componentes/CampoFecha'
@@ -55,6 +58,13 @@ const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
+}
+
+/** Identificador del pago de `?id=N`, o `null` si falta o no es un entero positivo. */
+function idDePagoDeLaUrl(valor: string | null): number | null {
+  if (valor === null || !/^\d+$/.test(valor)) return null
+  const id = Number(valor)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
 }
 
 function formatearFecha(iso: string): string {
@@ -97,6 +107,10 @@ function mediosValidosParaPagoDeAdministracion(medios: MedioPagoListado[]): Medi
  */
 export function Pagos() {
   const navigate = useNavigate()
+  const [parametros, setParametros] = useSearchParams()
+  const idDeLaUrl = idDePagoDeLaUrl(parametros.get('id'))
+  const [errorDelEnlace, setErrorDelEnlace] = useState('')
+  const [avisoIncierto, setAvisoIncierto] = useState('')
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
@@ -131,6 +145,9 @@ export function Pagos() {
   const [eliminando, setEliminando] = useState(false)
   const [errorBaja, setErrorBaja] = useState('')
   const escribiendoRef = useRef(false)
+  const [reasignacion, setReasignacion] = useState<PagoDeAdministracionListado | null>(null)
+  const [reasignando, setReasignando] = useState(false)
+  const [errorReasignacion, setErrorReasignacion] = useState('')
 
   // ---- stage-gasto-a-compra (PR4): picker "Vincular a compra" para un pago sin compra ligada --
   const [pickerPagoId, setPickerPagoId] = useState<number | null>(null)
@@ -347,6 +364,52 @@ export function Pagos() {
     setMostrarFormulario(false)
   }
 
+  const quitarIdDeLaUrl = useCallback(() => {
+    setParametros(
+      (previos) => {
+        const siguientes = new URLSearchParams(previos)
+        siguientes.delete('id')
+        return siguientes
+      },
+      { replace: true },
+    )
+  }, [setParametros])
+
+  const catalogosListos = medios !== null
+
+  // Enlace profundo `?id=N` (libro de tesorería): espera a los catálogos que el modal necesita y abre la edición de ese pago.
+  useEffect(() => {
+    if (idDeLaUrl === null || !catalogosListos) return
+
+    let vigente = true
+    setErrorDelEnlace('')
+
+    clienteDePagosDeAdministracion
+      .obtener(idDeLaUrl)
+      .then((pago) => {
+        if (!vigente) return
+        if (esPagoOriginadoEnPersonal(pago)) {
+          setErrorDelEnlace(MOTIVO_PAGO_ORIGINADO_EN_PERSONAL)
+          quitarIdDeLaUrl()
+        } else if (escribiendoRef.current || guardandoRef.current || vinculandoRef.current) {
+          setErrorDelEnlace('Hay una operación en curso: volvé a abrir el pago cuando termine.')
+          quitarIdDeLaUrl()
+        } else {
+          setErrorEdicion('')
+          setEdicion(pago)
+        }
+      })
+      .catch((e) => {
+        if (!vigente) return
+        setErrorDelEnlace(e instanceof ErrorApi ? e.message : 'No se pudo cargar el pago.')
+        quitarIdDeLaUrl()
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idDeLaUrl, catalogosListos, quitarIdDeLaUrl])
+
   function ocupadoEscribiendo() {
     return escribiendoRef.current || guardandoRef.current || vinculandoRef.current
   }
@@ -361,6 +424,7 @@ export function Pagos() {
     if (escribiendoRef.current) return
     setEdicion(null)
     setErrorEdicion('')
+    quitarIdDeLaUrl()
   }
 
   async function guardarEdicion(solicitud: SolicitudDeEdicionDePagoConLineas) {
@@ -383,6 +447,7 @@ export function Pagos() {
       }
 
       setEdicion(null)
+      quitarIdDeLaUrl()
       toast.exito('Pago actualizado.')
       // regla 6: el refresco está aislado de la escritura; si falla, `error` lo dice aparte y el
       // toast de éxito se mantiene.
@@ -391,6 +456,49 @@ export function Pagos() {
       // Sin gate de token a propósito: la guarda de ref impide otra escritura en vuelo.
       escribiendoRef.current = false
       setGuardandoEdicion(false)
+    }
+  }
+
+  function abrirReasignacion(pago: PagoDeAdministracionListado) {
+    if (ocupadoEscribiendo()) return
+    setErrorReasignacion('')
+    setReasignacion(pago)
+  }
+
+  function cancelarReasignacion() {
+    if (escribiendoRef.current) return
+    setReasignacion(null)
+    setErrorReasignacion('')
+  }
+
+  async function confirmarReasignacion(idPersonal: number) {
+    if (!reasignacion || ocupadoEscribiendo()) return
+
+    const idPago = reasignacion.id
+    escribiendoRef.current = true
+    setReasignando(true)
+    setErrorReasignacion('')
+
+    // regla 3: un refresco del listado anterior a esta escritura queda obsoleto.
+    generacionRef.current += 1
+
+    try {
+      try {
+        const respuesta = await clienteDePagosDeAdministracion.reasignarPersonal(idPago, idPersonal)
+        toast.exito(`Pago reasignado: ${respuesta.concepto}.`)
+      } catch (e) {
+        if (!esResultadoIncierto(e)) {
+          setErrorReasignacion(e instanceof ErrorApi && e.message.trim() ? e.message : 'No se pudo reasignar el pago.')
+          return
+        }
+        setAvisoIncierto(COPIA_RESULTADO_INCIERTO)
+      }
+
+      setReasignacion(null)
+      await cargar()
+    } finally {
+      escribiendoRef.current = false
+      setReasignando(false)
     }
   }
 
@@ -458,6 +566,8 @@ export function Pagos() {
     vinculando ||
     pickerPagoId !== null ||
     guardandoEdicion ||
+    reasignando ||
+    reasignacion !== null ||
     eliminando ||
     edicion !== null ||
     baja !== null ||
@@ -484,6 +594,15 @@ export function Pagos() {
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Pagos" variante="inverse" herramientas={herramientas}>
         {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
+        {avisoIncierto && (
+          <div className="alert alert-warning py-2 px-3 small d-flex justify-content-between align-items-center">
+            <span>{avisoIncierto}</span>
+            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setAvisoIncierto('')}>
+              Ya lo revisé
+            </button>
+          </div>
+        )}
+        {errorDelEnlace && <div className="alert alert-danger">{errorDelEnlace}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -670,13 +789,21 @@ export function Pagos() {
                           <Link to={`/compras/${g.idComprobanteCompra}`}>
                             Compra #{g.idComprobanteCompra}
                           </Link>
+                        ) : esPagoOriginadoEnPersonal(g) ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-primary"
+                            disabled={filasBloqueadas}
+                            onClick={() => abrirReasignacion(g)}
+                          >
+                            Reasignar
+                          </button>
                         ) : (
                           <div className="d-flex gap-1">
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-primary"
-                              disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
-                              title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
+                              disabled={filasBloqueadas}
                               onClick={() => abrirPicker(g)}
                             >
                               Vincular a compra
@@ -684,8 +811,7 @@ export function Pagos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-secondary"
-                              disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
-                              title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
+                              disabled={filasBloqueadas}
                               onClick={() => navigate(`/compras/nueva?desdePago=${g.id}`)}
                             >
                               Crear compra
@@ -804,6 +930,17 @@ export function Pagos() {
           </div>
         )}
       </Box>
+
+      {reasignacion && (
+        <ModalDeReasignacionDePago
+          key={reasignacion.id}
+          pago={reasignacion}
+          guardando={reasignando}
+          error={errorReasignacion}
+          onConfirmar={(idPersonal) => void confirmarReasignacion(idPersonal)}
+          onCancelar={cancelarReasignacion}
+        />
+      )}
 
       {edicion && (
         <ModalDeEdicionDePago

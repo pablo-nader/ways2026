@@ -32,6 +32,15 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
+// La sección de Mercado Pago tiene sus propias pruebas (organizacion/SeccionMercadoPago.test.tsx): acá solo se prueba su cableado.
+vi.mock('./organizacion/SeccionMercadoPago', () => ({
+  SeccionMercadoPago: ({ empresas, retorno }: { empresas: readonly { id: number }[]; retorno: unknown }) => (
+    <div data-testid="seccion-mercadopago" data-retorno={JSON.stringify(retorno ?? null)}>
+      {empresas.map((e) => e.id).join(',')}
+    </div>
+  ),
+}))
+
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
   return {
     id: 9,
@@ -1070,3 +1079,70 @@ describe('Empresas — filtros por columna y orden', () => {
     expect(screen.getByLabelText('Filtrar por cuit')).toBeDisabled()
   })
 })
+
+describe('Empresas — sección de Mercado Pago', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  it('un Admin de tenant ve la sección con las empresas cargadas', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([empresaSur, empresaAnexo])
+
+    expect(await screen.findByTestId('seccion-mercadopago')).toHaveTextContent('10,11')
+  })
+
+  it('un usuario que no es Admin no deja el code de Mercado Pago en la URL aunque la sección no se monte', async () => {
+    window.history.replaceState(null, '', '/organizacion/empresas#mercadopago=completar&empresa=10&code=TG-1&state=s')
+    usuarioActual = usuarioFixture({ id: 5, usuario: 'sup', rolId: ROL.Supervisor, rol: 'Supervisor', idTenant: 2 })
+    montar([empresaSur])
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    expect(window.location.hash).toBe('')
+    expect(screen.queryByTestId('seccion-mercadopago')).not.toBeInTheDocument()
+  })
+
+  it('un Admin con el retorno válido: el fragmento se borra al llegar y la sección recibe el retorno', async () => {
+    window.history.replaceState(null, '', '/organizacion/empresas#mercadopago=completar&empresa=10&code=TG-1&state=s')
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([empresaSur])
+    const seccion = await screen.findByTestId('seccion-mercadopago')
+
+    expect(window.location.hash).toBe('')
+    expect(JSON.parse(seccion.getAttribute('data-retorno') ?? 'null')).toEqual({
+      tipo: 'completar',
+      idEmpresa: 10,
+      code: 'TG-1',
+      state: 's',
+    })
+  })
+
+  it('un Admin con un retorno incompleto: el fragmento se borra y la sección no recibe nada que canjear', async () => {
+    window.history.replaceState(null, '', '/organizacion/empresas#mercadopago=completar&empresa=10&code=solo-el-code')
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([empresaSur])
+    const seccion = await screen.findByTestId('seccion-mercadopago')
+
+    expect(window.location.hash).toBe('')
+    expect(seccion.getAttribute('data-retorno')).toBe('null')
+  })
+
+  it('un Admin cuya carga de empresas falla: el fragmento se borra igual, sin esperar a la sección', async () => {
+    window.history.replaceState(null, '', '/organizacion/empresas#mercadopago=completar&empresa=10&code=TG-1&state=s')
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    apiGetMock.mockImplementation(() => Promise.reject(new Error('sin red')))
+    render(<Empresas />)
+
+    expect(await screen.findByText('No se pudieron cargar las empresas.')).toBeInTheDocument()
+    expect(window.location.hash).toBe('')
+  })
+
+  it('Root no ve la sección: los endpoints de Mercado Pago necesitan un tenant en la sesión', async () => {
+    montar([empresaSur])
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    expect(screen.queryByTestId('seccion-mercadopago')).not.toBeInTheDocument()
+  })
+})
+

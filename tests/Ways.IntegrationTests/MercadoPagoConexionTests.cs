@@ -14,16 +14,13 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// Conexión de una empresa con Mercado Pago por OAuth punta a punta contra Postgres real: inicio (solo Admin, 404 antes que nada,
-/// PKCE y state), callback anónimo (tokens cifrados, redirecciones, usuario que deniega, cuenta ya usada), lectura que nunca
+/// PKCE y state), callback anónimo que solo redirige con el fragmento, completar autenticado (tokens cifrados, state ajeno, cuenta ya usada), lectura que nunca
 /// expone tokens y desconexión que borra los blobs. El endpoint de tokens de Mercado Pago es un manejador falso.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private readonly ApoyoDeMercadoPago _apoyo = new(fixture);
-
-    private static string Retorno(int idEmpresa, string resultado, string origen = "http://localhost") =>
-        $"{origen}/organizacion/empresas?mercadopago={resultado}&empresa={idEmpresa}";
 
     // ---- Inicio -----------------------------------------------------------------------------------------------------
 
@@ -139,9 +136,8 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
     public async Task ConUnaConexionActivaElInicioResponde409YDesconectarPermiteVolverAConectar()
     {
         var ctx = await _apoyo.PrepararAsync("mp-inicio-ya-conectada");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimo, estado)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
 
         var repetido = await ctx.Admin.PostAsJsonAsync($"{ctx.Ruta}/inicio", new SolicitudDeInicioDeConexion(ctx.IdCuenta));
         Assert.Equal(HttpStatusCode.Conflict, repetido.StatusCode);
@@ -151,24 +147,91 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         ctx.MercadoPago.Responder = _ => Exitoso("APP_USR-segundo-acceso", "TG-segundo-refresco", NuevoIdUsuario());
         var (_, nuevoEstado) = await IniciarAsync(ctx);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimo, nuevoEstado)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, nuevoEstado)).StatusCode);
         var filas = await _apoyo.FilasAsync(ctx.IdEmpresa);
         Assert.Equal(["desconectada", "activa"], filas.Select(f => f.Estado));
     }
 
-    // ---- Callback ---------------------------------------------------------------------------------------------------
+    // ---- Callback (solo redirige) -----------------------------------------------------------------------------------
 
     [Fact]
-    public async Task ElCallbackCanjeaElCodigoConElVerificadorGuardaLosTokensCifradosYRedirigeConectado()
+    public async Task ElCallbackSoloRedirigeConElCodeYElStateEnElFragmentoSinCanjearNiGuardarNada()
     {
         var ctx = await _apoyo.PrepararAsync("mp-callback");
         using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
+
+        var respuesta = await LlamarAlCallbackAsync(anonimo, estado, codigo: "TG-codigo+especial/1");
+
+        var destino = Ubicacion(respuesta);
+        Assert.StartsWith($"http://localhost/organizacion/empresas#mercadopago=completar&empresa={ctx.IdEmpresa}&", destino);
+        Assert.DoesNotContain('?', destino);
+        var fragmento = Fragmento(destino);
+        Assert.Equal("TG-codigo+especial/1", fragmento["code"]);
+        Assert.Equal(estado, fragmento["state"]);
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+        Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
+    }
+
+    [Fact]
+    public async Task SiElUsuarioDeniegaElAccesoElCallbackVuelveCanceladoSinLlamarAMercadoPagoNiGuardarNada()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-denegado");
+        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
+        var (_, estado) = await IniciarAsync(ctx);
+
+        var respuesta = await LlamarAlCallbackAsync(anonimo, estado, codigo: null, error: "access_denied");
+
+        Assert.Equal($"http://localhost/organizacion/empresas#mercadopago=cancelado&empresa={ctx.IdEmpresa}", Ubicacion(respuesta));
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+        Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
+    }
+
+    [Fact]
+    public async Task ElCallbackConUnStateInvalidoAlteradoOVencidoOSinCodeNiErrorDa400SinLlamarAMercadoPago()
+    {
+        var reloj = new RelojControlable(DateTimeOffset.UtcNow);
+        var ctx = await _apoyo.PrepararAsync("mp-state-invalido", reloj: reloj);
+        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
+        var (_, estado) = await IniciarAsync(ctx);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await LlamarAlCallbackAsync(anonimo, "basura")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await LlamarAlCallbackAsync(anonimo, Alterar(estado))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await anonimo.GetAsync(RutaCallback)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await LlamarAlCallbackAsync(anonimo, estado, codigo: null)).StatusCode);
+
+        reloj.Ahora = reloj.Ahora.AddMinutes(11);
+        Assert.Equal(HttpStatusCode.BadRequest, (await LlamarAlCallbackAsync(anonimo, estado)).StatusCode);
+
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+        Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
+    }
+
+    private static string Alterar(string estado)
+    {
+        var medio = estado.Length / 2;
+        return estado[..medio] + (estado[medio] == 'A' ? 'B' : 'A') + estado[(medio + 1)..];
+    }
+
+    // ---- Completar (dentro de la sesión) ----------------------------------------------------------------------------
+
+    [Fact]
+    public async Task CompletarCanjeaElCodigoConElVerificadorGuardaLosTokensCifradosYDevuelveLaConexion()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-completar");
+        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
+        var (_, estado) = await IniciarAsync(ctx);
         var verificador = ctx.Host.Services.GetRequiredService<IProtectorDeEstadoOAuth>().Desproteger(estado)!.CodeVerifier;
 
-        var respuesta = await LlamarAlCallbackAsync(anonimo, estado, codigo: "TG-codigo-especial");
+        // El recorrido completo: el callback arma el fragmento y la web postea lo que lee de él.
+        var fragmento = Fragmento(Ubicacion(await LlamarAlCallbackAsync(anonimo, estado, codigo: "TG-codigo-especial")));
+        var respuesta = await CompletarAsync(ctx, fragmento["state"]!, fragmento["code"]!);
 
-        Assert.Equal(Retorno(ctx.IdEmpresa, "conectado"), Ubicacion(respuesta));
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var conexion = (await respuesta.Content.ReadFromJsonAsync<EstadoDeConexionMercadoPago>())!;
+        Assert.True(conexion.Conectada);
+        Assert.Equal("activa", conexion.Estado);
+        Assert.Equal(ctx.IdCuenta, conexion.IdCuentaTesoreria);
 
         var pedido = Assert.Single(ctx.MercadoPago.Cuerpos);
         Assert.StartsWith("POST https://api.mp.test/oauth/token ", pedido);
@@ -218,109 +281,205 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
     }
 
     [Fact]
-    public async Task SiElUsuarioDeniegaElAccesoVuelveCanceladoSinLlamarAMercadoPagoNiGuardarNada()
+    public async Task UnStateIniciadoPorOtroUsuarioDelMismoTenantDa403SinLlamarAMercadoPagoNiGuardarNada()
     {
-        var ctx = await _apoyo.PrepararAsync("mp-denegado");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
-        var (_, estado) = await IniciarAsync(ctx);
+        var ctx = await _apoyo.PrepararAsync("mp-completar-otro-usuario");
+        // Un Admin de tenant no puede dar de alta a otro Admin: el state lo arma el protector con el mismo tenant y la misma
+        // empresa de la sesión, pero con el id de otro usuario (el que inició el flujo y le pasó el enlace a este Admin).
+        var estado = ctx.Host.Services.GetRequiredService<IProtectorDeEstadoOAuth>().Proteger(new EstadoOAuth(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, ctx.IdUsuarioAdmin + 1, "verificador", "http://localhost"));
 
-        var respuesta = await LlamarAlCallbackAsync(anonimo, estado, codigo: null, error: "access_denied");
+        var respuesta = await CompletarAsync(ctx, estado);
 
-        Assert.Equal(Retorno(ctx.IdEmpresa, "cancelado"), Ubicacion(respuesta));
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+        Assert.Equal("mercadopago_estado_ajeno", await CodigoAsync(respuesta));
         Assert.Empty(ctx.MercadoPago.Cuerpos);
         Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
     }
 
     [Fact]
-    public async Task UnStateInvalidoAlteradoOVencidoDa400SinLlamarAMercadoPago()
+    public async Task UnStateDeOtroTenantDa403ParaLaEmpresaPropiaY404ParaLaAjenaSinLlamarAMercadoPago()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-completar-tenant-a");
+        var otro = await _apoyo.PrepararAsync("mp-completar-tenant-b");
+        var (_, estadoAjeno) = await IniciarAsync(otro);
+
+        var propia = await CompletarAsync(ctx, estadoAjeno);
+        Assert.Equal(HttpStatusCode.Forbidden, propia.StatusCode);
+        Assert.Equal("mercadopago_estado_ajeno", await CodigoAsync(propia));
+
+        var rutaAjena = await ctx.Admin.PostAsJsonAsync(
+            $"{otro.Ruta}/completar", new SolicitudDeCompletarConexion("TG-codigo", estadoAjeno));
+        Assert.Equal(HttpStatusCode.NotFound, rutaAjena.StatusCode);
+
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+        Assert.Empty(otro.MercadoPago.Cuerpos);
+        Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        Assert.Empty(await _apoyo.FilasAsync(otro.IdEmpresa));
+    }
+
+    [Fact]
+    public async Task UnStateDeOtraEmpresaDelMismoTenantDa403SinLlamarAMercadoPago()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-completar-otra-empresa");
+        var (idOtraEmpresa, _) = await _apoyo.CrearOtraEmpresaConCuentaAsync(ctx, "Otra empresa");
+        var (_, estado) = await IniciarAsync(ctx);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/empresas/{idOtraEmpresa}/mercadopago/conexion/completar",
+            new SolicitudDeCompletarConexion("TG-codigo", estado));
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+        Assert.Equal("mercadopago_estado_ajeno", await CodigoAsync(respuesta));
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+        Assert.Empty(await _apoyo.FilasAsync(idOtraEmpresa));
+    }
+
+    [Fact]
+    public async Task CompletarConUnStateAlteradoOVencidoDa400SinLlamarAMercadoPago()
     {
         var reloj = new RelojControlable(DateTimeOffset.UtcNow);
-        var ctx = await _apoyo.PrepararAsync("mp-state-invalido", reloj: reloj);
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
+        var ctx = await _apoyo.PrepararAsync("mp-completar-invalido", reloj: reloj);
         var (_, estado) = await IniciarAsync(ctx);
-        var medio = estado.Length / 2;
-        var alterado = estado[..medio] + (estado[medio] == 'A' ? 'B' : 'A') + estado[(medio + 1)..];
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await LlamarAlCallbackAsync(anonimo, "basura")).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await LlamarAlCallbackAsync(anonimo, alterado)).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await anonimo.GetAsync(RutaCallback)).StatusCode);
+        foreach (var invalido in new[] { "basura", Alterar(estado) })
+        {
+            var respuesta = await CompletarAsync(ctx, invalido);
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            Assert.Equal("mercadopago_estado_invalido", await CodigoAsync(respuesta));
+        }
 
         reloj.Ahora = reloj.Ahora.AddMinutes(11);
-        Assert.Equal(HttpStatusCode.BadRequest, (await LlamarAlCallbackAsync(anonimo, estado)).StatusCode);
+        var vencido = await CompletarAsync(ctx, estado);
+        Assert.Equal(HttpStatusCode.BadRequest, vencido.StatusCode);
+        Assert.Equal("mercadopago_estado_invalido", await CodigoAsync(vencido));
 
         Assert.Empty(ctx.MercadoPago.Cuerpos);
         Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
     }
 
     [Fact]
-    public async Task SiMercadoPagoRechazaElCanjeVuelveConErrorYNoGuardaNada()
+    public async Task CompletarExigeCodeYStateNoVaciosYAcotadosPeroUnaEmpresaInexistenteDa404Primero()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-completar-cuerpo");
+        var (_, estado) = await IniciarAsync(ctx);
+
+        foreach (var cuerpo in new[]
+        {
+            new SolicitudDeCompletarConexion("", estado),
+            new SolicitudDeCompletarConexion("  ", estado),
+            new SolicitudDeCompletarConexion("TG-codigo", ""),
+            new SolicitudDeCompletarConexion(new string('a', 513), estado),
+            new SolicitudDeCompletarConexion("TG-codigo", new string('a', 2049))
+        })
+        {
+            var respuesta = await ctx.Admin.PostAsJsonAsync($"{ctx.Ruta}/completar", cuerpo);
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            Assert.Equal("solicitud_invalida", await CodigoAsync(respuesta));
+        }
+
+        var sinCampos = await ctx.Admin.PostAsJsonAsync($"{ctx.Ruta}/completar", new { });
+        Assert.Equal(HttpStatusCode.BadRequest, sinCampos.StatusCode);
+
+        var inexistente = await ctx.Admin.PostAsJsonAsync(
+            "/api/empresas/987654/mercadopago/conexion/completar", new SolicitudDeCompletarConexion("", ""));
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+    }
+
+    [Fact]
+    public async Task CompletarEsSoloDeAdminYExigeSesion()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-completar-roles");
+        var (_, estado) = await IniciarAsync(ctx);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await CompletarAsync(ctx, estado, cliente: ctx.Supervisor)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await CompletarAsync(ctx, estado, cliente: ctx.Vendedor)).StatusCode);
+        using var anonimo = ctx.Host.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await CompletarAsync(ctx, estado, cliente: anonimo)).StatusCode);
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+    }
+
+    [Fact]
+    public async Task SinCredencialesConfiguradasCompletarResponde503SinLlamarAMercadoPago()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-completar-sin-config", configurado: false);
+        var estado = ctx.Host.Services.GetRequiredService<IProtectorDeEstadoOAuth>().Proteger(
+            new EstadoOAuth(ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, ctx.IdUsuarioAdmin, "verificador", "http://localhost"));
+
+        var respuesta = await CompletarAsync(ctx, estado);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
+        Assert.Equal("mercadopago_no_configurado", await CodigoAsync(respuesta));
+        Assert.Empty(ctx.MercadoPago.Cuerpos);
+    }
+
+    [Fact]
+    public async Task SiMercadoPagoRechazaElCanjeCompletarResponde502YNoGuardaNada()
     {
         var ctx = await _apoyo.PrepararAsync("mp-canje-falla");
         ctx.MercadoPago.Responder = _ => new HttpResponseMessage(HttpStatusCode.BadRequest)
         {
             Content = new StringContent($$"""{"message":"invalid_grant","detalle":"{{ClientSecret}}"}""")
         };
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
 
-        var respuesta = await LlamarAlCallbackAsync(anonimo, estado);
+        var respuesta = await CompletarAsync(ctx, estado);
 
-        var destino = Ubicacion(respuesta);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "error"), destino);
-        Assert.DoesNotContain(ClientSecret, destino);
+        Assert.Equal(HttpStatusCode.BadGateway, respuesta.StatusCode);
+        Assert.Equal("mercadopago_intercambio_fallido", await CodigoAsync(respuesta));
+        Assert.DoesNotContain(ClientSecret, await respuesta.Content.ReadAsStringAsync());
         Assert.Empty(await _apoyo.FilasAsync(ctx.IdEmpresa));
     }
 
     [Fact]
-    public async Task UnaCuentaDeMercadoPagoYaConectadaEnOtroTenantVuelveCuentaEnUsoSinSegundaFila()
+    public async Task UnaCuentaDeMercadoPagoYaConectadaEnOtroTenantDa409CuentaEnUsoSinSegundaFila()
     {
         var uno = await _apoyo.PrepararAsync("mp-en-uso-uno");
         var dos = await _apoyo.PrepararAsync("mp-en-uso-dos");
-        using var anonimoUno = ClienteAnonimoSinRedirecciones(uno.Host);
-        using var anonimoDos = ClienteAnonimoSinRedirecciones(dos.Host);
 
         var (_, estadoUno) = await IniciarAsync(uno);
-        Assert.Equal(Retorno(uno.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimoUno, estadoUno)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(uno, estadoUno)).StatusCode);
 
         dos.MercadoPago.Responder = _ => Exitoso(AccessToken, RefreshToken, uno.MercadoPago.IdUsuario);
         var (_, estadoDos) = await IniciarAsync(dos);
-        var respuesta = await LlamarAlCallbackAsync(anonimoDos, estadoDos);
+        var respuesta = await CompletarAsync(dos, estadoDos);
 
-        Assert.Equal(Retorno(dos.IdEmpresa, "cuenta_en_uso"), Ubicacion(respuesta));
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("mercadopago_cuenta_en_uso", await CodigoAsync(respuesta));
         Assert.Empty(await _apoyo.FilasAsync(dos.IdEmpresa));
         Assert.Single(await _apoyo.FilasAsync(uno.IdEmpresa));
     }
 
     [Fact]
-    public async Task SiLaEmpresaYaTieneConexionActivaElCallbackVuelveYaConectadaSinQuemarElCodigo()
+    public async Task SiLaEmpresaYaTieneConexionActivaCompletarDa409YaConectadaSinQuemarElCodigo()
     {
-        var ctx = await _apoyo.PrepararAsync("mp-ya-conectada-callback");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
+        var ctx = await _apoyo.PrepararAsync("mp-ya-conectada-completar");
         var (_, primero) = await IniciarAsync(ctx);
         var (_, segundo) = await IniciarAsync(ctx);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimo, primero)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, primero)).StatusCode);
         var pedidosAntes = ctx.MercadoPago.Cuerpos.Count;
 
-        var respuesta = await LlamarAlCallbackAsync(anonimo, segundo);
+        var respuesta = await CompletarAsync(ctx, segundo);
 
-        Assert.Equal(Retorno(ctx.IdEmpresa, "ya_conectada"), Ubicacion(respuesta));
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("mercadopago_ya_conectada", await CodigoAsync(respuesta));
         Assert.Equal(pedidosAntes, ctx.MercadoPago.Cuerpos.Count);
         Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
     }
 
     [Fact]
-    public async Task SiLaCuentaDeTesoreriaSeDesactivaAntesDelRetornoVuelveConErrorSinCanjear()
+    public async Task SiLaCuentaDeTesoreriaSeDesactivaAntesDeCompletarResponde502SinCanjear()
     {
         var ctx = await _apoyo.PrepararAsync("mp-cuenta-desactivada");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
         var desactivar = await ctx.Admin.PutAsJsonAsync(
             $"/api/cuentas-tesoreria/{ctx.IdCuenta}", new Ways.Application.Caja.EdicionDeCuentaTesoreria("Mercado Pago", 0m, false));
         Assert.Equal(HttpStatusCode.OK, desactivar.StatusCode);
 
-        var respuesta = await LlamarAlCallbackAsync(anonimo, estado);
+        var respuesta = await CompletarAsync(ctx, estado);
 
-        Assert.Equal(Retorno(ctx.IdEmpresa, "error"), Ubicacion(respuesta));
+        Assert.Equal(HttpStatusCode.BadGateway, respuesta.StatusCode);
         Assert.Empty(ctx.MercadoPago.Cuerpos);
     }
 
@@ -340,9 +499,8 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
     public async Task LaLecturaDeUnaConexionActivaMuestraCuentaYVencimientoPeroNuncaTokens()
     {
         var ctx = await _apoyo.PrepararAsync("mp-lectura");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimo, estado)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
         var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
 
         var respuesta = await ctx.Admin.GetAsync(ctx.Ruta);
@@ -386,10 +544,9 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
     {
         var ctx = await _apoyo.PrepararAsync("mp-aislamiento-a");
         var otro = await _apoyo.PrepararAsync("mp-aislamiento-b");
-        using var anonimo = ClienteAnonimoSinRedirecciones(otro.Host);
         otro.MercadoPago.Responder = _ => Exitoso("APP_USR-ajeno", "TG-ajeno", NuevoIdUsuario());
         var (_, estado) = await IniciarAsync(otro);
-        Assert.Equal(Retorno(otro.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimo, estado)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(otro, estado)).StatusCode);
 
         var ruta = $"/api/empresas/{otro.IdEmpresa}/mercadopago/conexion";
         Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.GetAsync(ruta)).StatusCode);
@@ -403,9 +560,8 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
     public async Task DesconectarBorraLosBlobsMarcaLaFechaYUnaSegundaVezDa404()
     {
         var ctx = await _apoyo.PrepararAsync("mp-desconexion");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimo, estado)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
 
         var respuesta = await ctx.Admin.DeleteAsync(ctx.Ruta);
 
@@ -423,13 +579,73 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(fila.FechaDesconexion, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).FechaDesconexion);
     }
 
+
+    [Fact]
+    public async Task DesconectarRegistraQuienLoHizo()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-desconexion-quien");
+        var (_, estado) = await IniciarAsync(ctx);
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
+        Assert.Null(Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).IdUsuarioDesconecto);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+
+        var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        Assert.Equal(ctx.IdUsuarioAdmin, fila.IdUsuarioDesconecto);
+        Assert.Equal(ctx.IdUsuarioAdmin, fila.IdUsuarioConecto);
+    }
+
+    [Fact]
+    public async Task UnaConexionQueRequiereReconexionSePuedeDesconectarYQuedaConQuienYCuando()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-desconexion-requiere");
+        var marcada = DateTimeOffset.UtcNow.AddHours(-3);
+        await _apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, NuevoIdUsuario(), ctx.IdUsuarioAdmin,
+            estado: "requiere_reconexion", sinMaterial: true, fechaRequiereReconexion: marcada);
+
+        var respuesta = await ctx.Admin.DeleteAsync(ctx.Ruta);
+
+        Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
+        var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        Assert.Equal("desconectada", fila.Estado);
+        Assert.NotNull(fila.FechaDesconexion);
+        Assert.Equal(ctx.IdUsuarioAdmin, fila.IdUsuarioDesconecto);
+        Assert.Equal(marcada.ToUnixTimeMilliseconds(), fila.FechaRequiereReconexion!.Value.ToUnixTimeMilliseconds());
+        Assert.False((await ctx.Admin.GetFromJsonAsync<EstadoDeConexionMercadoPago>(ctx.Ruta))!.Conectada);
+        Assert.Null((await ctx.Admin.GetFromJsonAsync<EstadoDeConexionMercadoPago>(ctx.Ruta))!.Estado);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+    }
+
+    [Fact]
+    public async Task UnaConexionYaDesconectadaNoCambiaNiPierdeQuienLaDesconecto()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-desconexion-ya");
+        var (_, estado) = await IniciarAsync(ctx);
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+        var antes = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+
+        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+
+        Assert.Equal(antes, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)), new IgualdadDeFilas());
+    }
+
+    private sealed class IgualdadDeFilas : IEqualityComparer<FilaDeConexion>
+    {
+        public bool Equals(FilaDeConexion? x, FilaDeConexion? y) =>
+            x is not null && y is not null && x.Estado == y.Estado && x.FechaDesconexion == y.FechaDesconexion
+            && x.IdUsuarioDesconecto == y.IdUsuarioDesconecto;
+
+        public int GetHashCode(FilaDeConexion obj) => obj.Id;
+    }
     [Fact]
     public async Task LaCuentaDeTesoreriaConUnaConexionNoSeDaDeBajaNiActivaNiDesconectada()
     {
         var ctx = await _apoyo.PrepararAsync("mp-baja-cuenta");
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
-        Assert.Equal(Retorno(ctx.IdEmpresa, "conectado"), Ubicacion(await LlamarAlCallbackAsync(anonimo, estado)));
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
 
         var activa = await ctx.Admin.DeleteAsync($"/api/cuentas-tesoreria/{ctx.IdCuenta}");
         Assert.Equal(HttpStatusCode.Conflict, activa.StatusCode);

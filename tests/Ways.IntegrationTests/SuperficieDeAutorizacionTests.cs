@@ -44,6 +44,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // llama en cada cambio del carrito). El positivo por rol real es
         // CombosPrevisualizacionTests.UnVendedorPrevisualizaElCarritoConCombos.
         ("POST", "/api/ofertas/resolver-con-combos"),
+        // Marca de ofertas del POS: lectura pura por POST (lote de ids), mismo grupo y mismo criterio exacto que
+        // "/api/ofertas/resolver" (el Vendedor la llama en cada búsqueda). El positivo por rol real es
+        // OfertasVigentesTests.UnVendedorConsultaLasOfertasVigentes.
+        ("POST", "/api/ofertas/vigentes"),
         // Slice 4 (task 4.6): MapGroup("/api/ventas").MapPost("/", ...) — el RoutePattern.RawText
         // real lleva la barra final (mismo shape que "/api/plataforma/tenants/"/"/api/usuarios/"
         // más abajo), a diferencia del literal sin barra que este allowlist traía adelantado
@@ -206,6 +210,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // MISMA GestionDeOrganizacion que el PUT/DELETE de arriba; también declarada por ruta, no
         // por grupo, mismo motivo. Ver RutasSinPolicyDeGrupo más abajo.
         ("POST", "/api/puntos-venta/{id:int}/modo"),
+        // Sucursales (T4): mover la caja de sucursal y el ABM de sucursales; mismo grupo sin policy, policy por ruta.
+        ("POST", "/api/puntos-venta/{id:int}/sucursal"),
+        ("POST", "/api/sucursales/"),
+        ("PUT", "/api/sucursales/{id:int}"),
+        ("DELETE", "/api/sucursales/{id:int}"),
+        // Sucursales (T5): fusionar una sucursal en otra; mismo grupo sin policy, policy por ruta.
+        ("POST", "/api/sucursales/{id:int}/fusionar"),
 
         // ABM de usuarios — GestionDeUsuarios (Root + Admin, sin Vendedor).
         ("POST", "/api/usuarios/"),
@@ -297,6 +308,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-desktop-pos (DB CHANGE GATE aprobado): mismo punto ciego que el PUT/DELETE de
         // arriba — el flip de modo vive en el mismo grupo sin policy y declara la suya por ruta.
         ("POST", "/api/puntos-venta/{id:int}/modo", Politicas.GestionDeOrganizacion),
+        ("POST", "/api/puntos-venta/{id:int}/sucursal", Politicas.GestionDeOrganizacion),
+        ("POST", "/api/sucursales/", Politicas.GestionDeOrganizacion),
+        ("PUT", "/api/sucursales/{id:int}", Politicas.GestionDeOrganizacion),
+        ("DELETE", "/api/sucursales/{id:int}", Politicas.GestionDeOrganizacion),
+        ("POST", "/api/sucursales/{id:int}/fusionar", Politicas.GestionDeOrganizacion),
         // Alta de punto de venta: mismo punto ciego, la policy se declara por ruta.
         ("POST", "/api/puntos-venta/", Politicas.GestionDeOrganizacion)
     ];

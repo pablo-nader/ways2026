@@ -22,6 +22,7 @@ import {
 import { redondearImporte } from '../formato/importes'
 import type {
   CompraDetalle,
+  CompraListada,
   CompraDuplicada,
   EstadoCompra,
   OrigenCompra,
@@ -77,16 +78,39 @@ export type FiltrosDeCompras = {
    * compra — usado por el picker "Vincular a compra" de Pagos para no ofrecer compras de otra
    * empresa que la del pago. */
   idEmpresa: number | null
+  /** Contiene, sin distinguir mayúsculas, sobre el número externo; vacío = sin filtro. */
+  numero: string
+  idTipoComprobante: number | null
+  estadoPago: FiltroDeEstadoPagoDeCompras | null
+  /** `yyyy-MM-dd` inclusivos sobre la fecha del comprobante (fecha de calendario, sin offset). */
+  fechaComprobanteDesde: string
+  fechaComprobanteHasta: string
   pagina: number
   tamanio: number
 }
 
+export type FiltroDeEstadoPagoDeCompras = 'pagada' | 'pendiente'
+
 export function filtrosDeComprasVacios(): FiltrosDeCompras {
-  return { idProveedor: null, estado: null, origen: null, desde: '', hasta: '', idEmpresa: null, pagina: 1, tamanio: 25 }
+  return {
+    idProveedor: null,
+    estado: null,
+    origen: null,
+    desde: '',
+    hasta: '',
+    idEmpresa: null,
+    numero: '',
+    idTipoComprobante: null,
+    estadoPago: null,
+    fechaComprobanteDesde: '',
+    fechaComprobanteHasta: '',
+    pagina: 1,
+    tamanio: 25,
+  }
 }
 
-/** Claves de `orden` que acepta `GET /api/compras`: una por cada columna de datos de la grilla salvo "Estado de pago",
- * que la pantalla deriva de otra consulta y solo muestra con un proveedor filtrado. */
+/** Claves de `orden` que acepta `GET /api/compras`: una por cada columna de datos de la grilla salvo "Estado de pago"
+ * y "Fecha del comprobante", que el servidor no ordena. */
 export const COLUMNAS_ORDENABLES_DE_COMPRAS = [
   'numero',
   'proveedor',
@@ -105,8 +129,8 @@ export function esColumnaOrdenableDeCompras(columna: string): columna is Columna
 }
 
 /** Arma el query string de `GET /api/compras` — `desde`/`hasta` filtran por `fecha_recepcion`
- * (`ServicioDeCompras.ListarAsync`), nunca por `fecha_comprobante`, así que llevan el mismo
- * offset horario explícito que el resto de la web. */
+ * (`ServicioDeCompras.ListarAsync`) y llevan el mismo offset horario explícito que el resto de la web;
+ * `fechaComprobanteDesde`/`Hasta` son fechas de calendario y viajan tal cual. */
 export function construirQueryDeCompras(filtros: FiltrosDeCompras, orden: OrdenDeCompras = null): string {
   const parametros = new URLSearchParams()
   agregarOrdenAlQuery(parametros, orden)
@@ -116,6 +140,12 @@ export function construirQueryDeCompras(filtros: FiltrosDeCompras, orden: OrdenD
   if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
   if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   if (filtros.idEmpresa !== null) parametros.set('idEmpresa', String(filtros.idEmpresa))
+  const numero = filtros.numero.trim()
+  if (numero) parametros.set('numero', numero)
+  if (filtros.idTipoComprobante !== null) parametros.set('idTipoComprobante', String(filtros.idTipoComprobante))
+  if (filtros.estadoPago !== null) parametros.set('estadoPago', filtros.estadoPago)
+  if (filtros.fechaComprobanteDesde) parametros.set('fechaComprobanteDesde', filtros.fechaComprobanteDesde)
+  if (filtros.fechaComprobanteHasta) parametros.set('fechaComprobanteHasta', filtros.fechaComprobanteHasta)
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
@@ -164,8 +194,7 @@ export const clienteDeCompras = {
   pagar: (id: number, solicitud: SolicitudDePagoDeCompra) =>
     api.post<ResultadoDePagoDeCompra>(`/pagos/de-compra/${id}`, solicitud),
   /** `GET /api/proveedores/{id}/saldo` — top-level, no dentro de `/api/proveedores` (design: API
-   * Surface). Usado acá solo para la columna de estado de pago cuando el listado está filtrado
-   * por un proveedor puntual; el panel completo lo construye `Proveedores.tsx` en la Slice 6. */
+   * Surface). Alimenta el resumen de saldo de `Compras.tsx` (listado filtrado por un proveedor) y el panel de `Proveedores.tsx`. */
   obtenerSaldoDeProveedor: (idProveedor: number) => api.get<SaldoDeProveedor>(`/proveedores/${idProveedor}/saldo`),
 }
 
@@ -185,8 +214,7 @@ export function etiquetaDeEstadoCompra(estado: EstadoCompra): string {
   }
 }
 
-/** Espejo de `EstadoPago` (`ServicioDeSaldoDeProveedor`) — compartido por `Compras.tsx` (columna
- * de estado de pago) y el panel de saldo de `Proveedores.tsx` (Slice 6). */
+/** Espejo de `EstadoPago` (`ServicioDeSaldoDeProveedor`) — usado por el panel de saldo de `Proveedores.tsx`. */
 export function etiquetaDeEstadoPago(estado: EstadoPago): string {
   switch (estado) {
     case 'Pagada':
@@ -641,4 +669,21 @@ export function prepararPagoDeCompra(
       ...(formulario.cerrarEnCero ? { cerrarEnCero: true } : {}),
     },
   }
+}
+
+/** Chip de la columna "Estado de pago" de la lista de compras: la API manda `Pagada`/`Pendiente`, la pantalla dice
+ * `Pagado`/`Pendiente`. `null` (compra no confirmada) no tiene chip. */
+export function etiquetaDeEstadoPagoDeLista(estado: CompraListada['estadoPago']): string | null {
+  switch (estado) {
+    case 'Pagada':
+      return 'Pagado'
+    case 'Pendiente':
+      return 'Pendiente'
+    default:
+      return null
+  }
+}
+
+export function claseDeBadgeDeEstadoPagoDeLista(estado: CompraListada['estadoPago']): string {
+  return estado === 'Pagada' ? 'text-bg-success' : 'text-bg-warning'
 }

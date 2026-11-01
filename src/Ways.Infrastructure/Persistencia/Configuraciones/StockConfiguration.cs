@@ -17,10 +17,10 @@ public class StockConfiguration : IEntityTypeConfiguration<Stock>
     {
         builder.ToTable("stock");
 
-        builder.HasKey(s => new { s.IdArticulo, s.IdPuntoVenta }).HasName("pk_stock");
+        builder.HasKey(s => new { s.IdArticulo, s.IdSucursal }).HasName("pk_stock");
 
         builder.Property(s => s.IdArticulo).HasColumnName("id_articulo").ValueGeneratedNever();
-        builder.Property(s => s.IdPuntoVenta).HasColumnName("id_punto_venta").ValueGeneratedNever();
+        builder.Property(s => s.IdSucursal).HasColumnName("id_sucursal").ValueGeneratedNever();
 
         builder.Property(s => s.IdTenant)
             .HasColumnName("id_tenant")
@@ -39,8 +39,8 @@ public class StockConfiguration : IEntityTypeConfiguration<Stock>
 
         // Nombre explícito (mismo fix documentado en ArticuloEmpresaConfiguration/
         // NumeracionComprobanteConfiguration): sin esto, EF nombra el índice de soporte de
-        // fk_stock_punto_venta con su convención propia (PascalCase).
-        builder.HasIndex(s => new { s.IdPuntoVenta, s.IdTenant }).HasDatabaseName("ix_stock_punto_venta");
+        // fk_stock_sucursal con su convención propia (PascalCase).
+        builder.HasIndex(s => new { s.IdSucursal, s.IdTenant }).HasDatabaseName("ix_stock_sucursal");
         builder.HasIndex(s => new { s.IdArticulo, s.IdTenant }).HasDatabaseName("ix_stock_articulo");
 
         builder.HasOne<Tenant>()
@@ -56,11 +56,11 @@ public class StockConfiguration : IEntityTypeConfiguration<Stock>
             .HasConstraintName("fk_stock_articulo")
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne<PuntoVenta>()
+        builder.HasOne<Sucursal>()
             .WithMany()
-            .HasForeignKey(s => new { s.IdPuntoVenta, s.IdTenant })
+            .HasForeignKey(s => new { s.IdSucursal, s.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
-            .HasConstraintName("fk_stock_punto_venta")
+            .HasConstraintName("fk_stock_sucursal")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

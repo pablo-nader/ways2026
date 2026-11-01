@@ -797,14 +797,13 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
             Assert.Equal(filas[i - 1].Final, filas[i].Inicio);
         }
 
-        var desde = Uri.EscapeDataString(ahora.AddMinutes(30).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture));
-        var libro = await ctx.Admin.GetFromJsonAsync<LibroDeCuenta>(
-            $"/api/reportes/tesoreria/cuentas/{cuenta}/libro?desde={desde}", OpcionesJson);
-        Assert.Equal(3, libro!.Items.Count);
-        Assert.Equal(50m, libro.SaldoDeApertura);
-        Assert.Equal(libro.SaldoDeApertura + libro.Totales.Neto, libro.SaldoAlCierre);
-        Assert.Equal(filas[^1].Final, libro.SaldoAlCierre);
-        Assert.Equal(libro.Items[0].Final - libro.Items[0].Ingreso + libro.Items[0].Egreso, libro.SaldoDeApertura);
+        var desde = ahora.AddMinutes(30);
+        var delRango = filas.Where(f => f.Fecha >= desde).ToList();
+        var apertura = filas.Last(f => f.Fecha < desde).Final;
+        Assert.Equal(3, delRango.Count);
+        Assert.Equal(50m, apertura);
+        Assert.Equal(filas[^1].Final, apertura + delRango.Sum(f => f.Ingreso - f.Egreso));
+        Assert.Equal(delRango[0].Final - delRango[0].Ingreso + delRango[0].Egreso, apertura);
     }
 
     private async Task InsertarFilaCrudaAsync(

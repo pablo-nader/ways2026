@@ -83,7 +83,7 @@ function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTu
   return {
     idTurnoCaja: 501,
     idMedioAncla: 1,
-    medios: [{ idMedioPago: 1, importeEsperado: 640 }],
+    medios: [{ idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' }],
     cantidadTickets: 0,
     primerTicket: null,
     ultimoTicket: null,
@@ -282,7 +282,7 @@ describe('Caja — movimientos', () => {
       if (ruta === '/caja/turnos/501/resumen') {
         llamadasResumen += 1
         if (llamadasResumen === 1) return resumenLentoPromise
-        return Promise.resolve<ResumenDeTurno>(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 700 }] }))
+        return Promise.resolve<ResumenDeTurno>(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 700, nombre: 'Medio 1' }] }))
       }
       return undefined
     })
@@ -308,7 +308,7 @@ describe('Caja — movimientos', () => {
     // viejos (distintos del fondo inicial del turno, $ 500,00, para no confundir el assert con el
     // encabezado) — no puede pisar los $ 700,00 ya mostrados por el refetch posterior al movimiento.
     await act(async () => {
-      resolverResumenLento(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 640 }] }))
+      resolverResumenLento(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' }] }))
       await Promise.resolve()
     })
     expect(screen.getByText('$ 700,00')).toBeInTheDocument()
@@ -412,7 +412,7 @@ describe('Caja — movimientos', () => {
       if (ruta === '/caja/turnos/501/resumen') {
         llamadasResumen += 1
         if (llamadasResumen === 1) return resumenInicialPromise
-        return Promise.resolve<ResumenDeTurno>(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 850 }] }))
+        return Promise.resolve<ResumenDeTurno>(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 850, nombre: 'Medio 1' }] }))
       }
       return undefined
     })
@@ -445,7 +445,7 @@ describe('Caja — movimientos', () => {
 
     // la respuesta huérfana de la carga inicial, si llega tarde, no debe pisar nada.
     await act(async () => {
-      resolverResumenInicial(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 111 }] }))
+      resolverResumenInicial(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 111, nombre: 'Medio 1' }] }))
       await Promise.resolve()
     })
     expect(screen.getByText('$ 850,00')).toBeInTheDocument()
@@ -492,10 +492,10 @@ describe('Caja — turno nuevo no hereda el estado del anterior (react-async-sta
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=8') return Promise.resolve<TurnoResumen | null>(turnoNorte)
       if (ruta === '/caja/turnos/501/resumen') {
-        return Promise.resolve<ResumenDeTurno>(resumenFixture({ idTurnoCaja: 501, medios: [{ idMedioPago: 1, importeEsperado: 640 }] }))
+        return Promise.resolve<ResumenDeTurno>(resumenFixture({ idTurnoCaja: 501, medios: [{ idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' }] }))
       }
       if (ruta === '/caja/turnos/900/resumen') {
-        return Promise.resolve<ResumenDeTurno>(resumenFixture({ idTurnoCaja: 900, medios: [{ idMedioPago: 1, importeEsperado: 999 }] }))
+        return Promise.resolve<ResumenDeTurno>(resumenFixture({ idTurnoCaja: 900, medios: [{ idMedioPago: 1, importeEsperado: 999, nombre: 'Medio 1' }] }))
       }
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
@@ -646,9 +646,9 @@ describe('Caja — orden de las tablas del resumen parcial', () => {
     const [medios] = await montarConResumen(
       resumenFixture({
         medios: [
-          { idMedioPago: 1, importeEsperado: 640 },
-          { idMedioPago: 2, importeEsperado: 5000 },
-          { idMedioPago: 3, importeEsperado: 70 },
+          { idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' },
+          { idMedioPago: 2, importeEsperado: 5000, nombre: 'Medio 2' },
+          { idMedioPago: 3, importeEsperado: 70, nombre: 'Medio 3' },
         ],
       }),
     )

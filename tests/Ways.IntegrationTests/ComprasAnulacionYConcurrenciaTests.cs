@@ -132,15 +132,16 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var idEmpleado = await db.Usuarios.Select(u => u.Id).FirstAsync();
         var ahora = DateTimeOffset.UtcNow;
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
 
         db.MovimientosStock.Add(new MovimientoStock
         {
-            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = -cantidad,
-            Motivo = MotivoStock.Venta, IdEmpleado = idEmpleado, CreadoEl = ahora
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdSucursal = idSucursal,
+            Cantidad = -cantidad, Motivo = MotivoStock.Venta, IdEmpleado = idEmpleado, CreadoEl = ahora
         });
         await db.SaveChangesAsync();
 
-        var stock = await db.Stock.FirstAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var stock = await db.Stock.FirstAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal);
         stock.Cantidad -= cantidad;
         await db.SaveChangesAsync();
     }
@@ -197,8 +198,9 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         Assert.Equal(0, resultado.PagosLigados);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(0m, cantidad);
 
@@ -225,8 +227,10 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         Assert.Equal(EstadoCompra.Confirmada, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Anulacion));
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(10m, cantidad);
     }
@@ -377,8 +381,10 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         Assert.Equal(EstadoCompra.Confirmada, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Anulacion));
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(20m, cantidad);
     }
@@ -503,8 +509,9 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         // Cualquiera sea el resultado, el invariante de stock sigue en pie: la cantidad en caché
         // coincide con la suma de sus movimientos (nunca una escritura a medias).
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstOrDefaultAsync();
         var sumaDeMovimientos = await db.MovimientosStock
             .Where(m => m.IdArticulo == ctx.IdArticulo && m.IdPuntoVenta == ctx.IdPuntoVenta)

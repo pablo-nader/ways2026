@@ -590,11 +590,12 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
-        // Etapa 13 nunca vio una OC — el shape (IdPuntoVenta/Hoy/DiasDeRotacion/ZonaHoraria/Filas)
+        // Etapa 13 nunca vio una OC — el shape (IdSucursal/NombreSucursal/Hoy/DiasDeRotacion/ZonaHoraria/Filas)
         // es el mismo antes y después de esta etapa: solo lectura, cero mutación de este endpoint
         // (ordenes-de-compra/spec.md: "Etapa 13 stays a read-only source").
         var reposicion = JsonSerializer.Deserialize<Reposicion>(cuerpo, OpcionesJson)!;
-        Assert.Equal(ctx.IdPuntoVenta, reposicion.IdPuntoVenta);
+        Assert.True(reposicion.IdSucursal > 0);
+        Assert.False(string.IsNullOrEmpty(reposicion.NombreSucursal));
         Assert.Equal("America/Argentina/Buenos_Aires", reposicion.ZonaHoraria);
         Assert.Equal(new DateOnly(2026, 8, 19), reposicion.Hoy);
         Assert.NotNull(reposicion.Filas);

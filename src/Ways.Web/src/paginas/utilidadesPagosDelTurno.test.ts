@@ -223,16 +223,16 @@ describe('efectivoDisponibleEnCaja', () => {
     const resumen = resumenFixture({
       idMedioAncla: 2,
       medios: [
-        { idMedioPago: 1, importeEsperado: 9999 },
-        { idMedioPago: 2, importeEsperado: 1250.5 },
-        { idMedioPago: 3, importeEsperado: 7 },
+        { idMedioPago: 1, importeEsperado: 9999, nombre: 'Medio 1' },
+        { idMedioPago: 2, importeEsperado: 1250.5, nombre: 'Medio 2' },
+        { idMedioPago: 3, importeEsperado: 7, nombre: 'Medio 3' },
       ],
     })
     expect(efectivoDisponibleEnCaja(resumen)).toBe(1250.5)
   })
 
   it('sin línea para el medio ancla, el disponible es 0', () => {
-    expect(efectivoDisponibleEnCaja(resumenFixture({ idMedioAncla: 2, medios: [{ idMedioPago: 1, importeEsperado: 300 }] }))).toBe(0)
+    expect(efectivoDisponibleEnCaja(resumenFixture({ idMedioAncla: 2, medios: [{ idMedioPago: 1, importeEsperado: 300, nombre: 'Medio 1' }] }))).toBe(0)
   })
 })
 

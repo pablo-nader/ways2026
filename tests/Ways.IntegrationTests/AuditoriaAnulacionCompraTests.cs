@@ -184,8 +184,9 @@ public class AuditoriaAnulacionCompraTests(WaysApiFixture fixture) : IClassFixtu
             0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Anulacion));
         Assert.Equal(0, await db.Auditoria.CountAsync(a => a.IdEntidad == creada.Id && a.Accion == "compra.anulacion"));
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(20m, cantidad);
 

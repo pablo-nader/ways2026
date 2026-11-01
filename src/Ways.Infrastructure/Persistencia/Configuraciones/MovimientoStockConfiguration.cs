@@ -35,6 +35,7 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
             .IsRequired();
 
         builder.Property(m => m.IdArticulo).HasColumnName("id_articulo").IsRequired();
+        builder.Property(m => m.IdSucursal).HasColumnName("id_sucursal").IsRequired();
         builder.Property(m => m.IdPuntoVenta).HasColumnName("id_punto_venta").IsRequired();
 
         builder.Property(m => m.Cantidad).HasColumnName("cantidad").HasColumnType("numeric(12,3)").IsRequired();
@@ -51,6 +52,7 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
         builder.Property(m => m.IdComprobanteCompra).HasColumnName("id_comprobante_compra");
 
         builder.Property(m => m.IdPuntoVentaDestino).HasColumnName("id_punto_venta_destino");
+        builder.Property(m => m.IdSucursalDestino).HasColumnName("id_sucursal_destino");
 
         // Etapa 12 (proposal decisión 5, gate §C): columna creada acá, escrita recién desde
         // slice 4.
@@ -67,19 +69,19 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
 
         builder.HasIndex(m => m.IdTenant).HasDatabaseName("ix_movimientos_stock_tenant");
 
-        // Índice de negocio (reconstruir/consultar el saldo de un par articulo+punto_venta,
-        // design: Table Shapes — write path B).
-        builder.HasIndex(m => new { m.IdArticulo, m.IdPuntoVenta, m.IdTenant })
-            .HasDatabaseName("ix_movimientos_stock_articulo_punto_venta");
+        // Índice de negocio: reconstruir/consultar el saldo de un par articulo+sucursal, la clave de stock.
+        builder.HasIndex(m => new { m.IdArticulo, m.IdSucursal, m.IdTenant })
+            .HasDatabaseName("ix_movimientos_stock_articulo_sucursal");
 
         builder.HasIndex(m => new { m.IdComprobanteVenta, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_comprobante_venta");
         builder.HasIndex(m => new { m.IdComprobanteCompra, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_comprobante_compra");
 
         // Índices de soporte de FK compuesta (evitan el índice implícito PascalCase de EF): la
-        // columna líder de cada uno no coincide con la de ix_movimientos_stock_articulo_punto_venta
-        // (esa empieza por id_articulo con id_punto_venta en el medio), así que hacen falta
-        // aparte.
+        // columna líder de cada uno no coincide con la de ix_movimientos_stock_articulo_sucursal
+        // (esa empieza por id_articulo con id_sucursal en el medio), así que hacen falta aparte.
         builder.HasIndex(m => new { m.IdArticulo, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_articulo");
+        builder.HasIndex(m => new { m.IdSucursal, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_sucursal");
+        builder.HasIndex(m => new { m.IdSucursalDestino, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_sucursal_destino");
         builder.HasIndex(m => new { m.IdPuntoVenta, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_punto_venta");
         builder.HasIndex(m => new { m.IdPuntoVentaDestino, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_punto_venta_destino");
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_stock_empleado");
@@ -112,8 +114,21 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
             .HasConstraintName("fk_movimientos_stock_punto_venta")
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Transferencias entre locales (columna creada, nunca escrita en esta etapa) — misma
-        // FK compuesta que fk_movimientos_stock_punto_venta, apunta al mismo principal.
+        builder.HasOne<Sucursal>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdSucursal, m.IdTenant })
+            .HasPrincipalKey(s => new { s.Id, s.IdTenant })
+            .HasConstraintName("fk_movimientos_stock_sucursal")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Sucursal>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdSucursalDestino, m.IdTenant })
+            .HasPrincipalKey(s => new { s.Id, s.IdTenant })
+            .HasConstraintName("fk_movimientos_stock_sucursal_destino")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Transferencias: la caja de destino, misma FK compuesta que fk_movimientos_stock_punto_venta.
         builder.HasOne<PuntoVenta>()
             .WithMany()
             .HasForeignKey(m => new { m.IdPuntoVentaDestino, m.IdTenant })

@@ -71,16 +71,41 @@ describe('coberturaDeOfertas — paridad con CoberturaDeOfertasTests', () => {
     expect(tieneSoloMultiplos([estricta()])).toBe(true)
   })
 
-  it('la familia cuenta los grupos sobre el documento y el resto cae en las últimas líneas', () => {
+  it('la familia cuenta los grupos sobre el documento y los reparte por unidades', () => {
     const aplicadas = [{ ...estricta(), porFamilia: true }]
-    // 2 + 2 + 1 = 5 unidades de la familia: dos grupos (4 unidades), la última línea queda sin descuento.
-    expect(descuentosDeLinea([2, 2, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([500, 500, 0])
+    // 2 + 2 + 1 = 5 unidades de la familia: dos grupos (4 unidades, 1000 de descuento), 200 por unidad de línea.
+    expect(descuentosDeLinea([2, 2, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([400, 400, 200])
   })
 
-  it('la familia arma grupos con unidades de líneas distintas', () => {
+  it('la familia reparte pesos enteros y el resto va a la última línea', () => {
     const aplicadas = [{ ...estricta(), porFamilia: true }]
-    // 1 + 1 + 1 = 3: un grupo con las dos primeras líneas, la tercera paga el precio original.
-    expect(descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([250, 250, 0])
+    // 1 + 1 + 1 = 3: un grupo, 500 de descuento; 166 a cada línea y el resto a la última: el documento cobra 11500.
+    const descuentos = descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))
+    expect(descuentos).toEqual([166, 166, 168])
+    const totales = descuentos.map(
+      (descuentoDeLinea) => calcularTotalesDeLinea({ cantidad: 1, precioOriginal: PRECIO, descuentoUnitario: 250, porcentaje: null, descuentoDeLinea }).total,
+    )
+    expect(totales.reduce((a, b) => a + b, 0)).toBe(11500)
+  })
+
+  it('ninguna línea de familia queda debajo de la común a la que le ganó (166,67 por unidad contra 150)', () => {
+    const aplicadas = [{ ...estricta(), porFamilia: true }]
+    const descuentos = descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))
+    for (const descuento of descuentos) expect(descuento).toBeGreaterThan(150)
+    expect(descuentos.reduce((a, b) => a + b, 0)).toBe(500)
+  })
+
+  it('el resto no cubre más unidades de las que tiene la línea: 50 centavos en grupos de 2, 1 + 1 + 1', () => {
+    const aplicadas = [{ ...estricta(0.5), porFamilia: true }]
+    expect(descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([0, 0.5, 0.5])
+  })
+
+  it('con la parte de familia fraccionaria el tope sigue siendo por unidad', () => {
+    // 3000 de familia en grupos de 2 más una acumulable de 2000 a 4000: 2/3 de unidad a 4000 (tope) y 1/3 a 2000.
+    const aplicadas = [{ ...estricta(3000), porFamilia: true }, comun(2000)]
+    expect(descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([
+      3333.333333, 3333.333333, 3333.333333,
+    ])
   })
 
   it('una oferta solo múltiplos de artículo cuenta sus grupos por línea', () => {

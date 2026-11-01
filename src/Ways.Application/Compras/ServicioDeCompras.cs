@@ -34,11 +34,8 @@ namespace Ways.Application.Compras;
 /// <see cref="AnularAsync"/> son el único punto de escritura de <c>movimientos_stock</c>
 /// (<c>motivo = compra/anulacion</c>) y de <c>articulos.costo_nominal</c> de esta etapa.
 ///
-/// <see cref="ServicioDeStock"/>/<see cref="Ways.Application.Ventas.ServicioDeVentas"/> NO se
-/// tocan (Slice 2 non-negotiable) — los statements crudos de stock de acá son propios de esta
-/// clase (sibling raw SQL), duplicados a propósito del shape de
-/// <c>ServicioDeStock.InsertarMovimientoStockAsync</c>/<c>UpsertStockAsync</c> en vez de
-/// compartir un helper: <c>ServicioDeStock</c> gana esos parámetros recién en Slice 3.
+/// El stock (movimiento, agregado y lote) se escribe con <see cref="EscritorDeStock"/>, el único escritor del sistema,
+/// sobre la sucursal de la caja de recepción.
 ///
 /// stage-12-lotes-vencimientos, Slice 5 (design: Write site 2 — recepción): <see
 /// cref="ServicioDeLotes"/> se consume por su API pública ESTÁTICA
@@ -887,21 +884,21 @@ public partial class ServicioDeCompras(
         // (design decisión 8/9; Transactions — lock order discipline). El upsert agregado corre
         // SIEMPRE, lot-effective o no (byte-idéntico al camino previo a esta etapa cuando no lo
         // es); el upsert de stock_lotes solo cuando el item resolvió un lote.
-        foreach (var item in items.OrderBy(i => i.IdArticulo).ThenBy(i => i.IdLote))
+        // La mercadería entra al stock de la sucursal de la caja de recepción, resuelta acá, dentro de la transacción.
+        if (items.Count > 0)
         {
-            var idArticuloDelItem = item.IdArticulo!.Value;
+            var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, encabezado.IdPuntoVenta, ct);
 
-            await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, idArticuloDelItem, encabezado.IdPuntoVenta, item.Cantidad,
-                MotivoStock.Compra, id, idEmpleado, momento, item.IdLote, ct);
-
-            await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticuloDelItem, encabezado.IdPuntoVenta, item.Cantidad, ct);
-
-            if (item.IdLote is { } idLote)
-            {
-                await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, idTenant, idArticuloDelItem, encabezado.IdPuntoVenta, idLote, item.Cantidad, ct);
-            }
+            await EscritorDeStock.AsentarAsync(
+                conexion, transaccionCruda,
+                items.Select(item => new AsientoDeStock(
+                    idTenant, idSucursal, encabezado.IdPuntoVenta, item.IdArticulo!.Value, item.Cantidad, MotivoStock.Compra,
+                    idEmpleado, momento)
+                {
+                    IdLote = item.IdLote,
+                    IdComprobanteCompra = id
+                }),
+                ct);
         }
 
         // 4. costo_nominal — solo las líneas que CalculadorDeCompra.ActualizaElCosto admite (actualiza_costo,
@@ -1066,56 +1063,54 @@ public partial class ServicioDeCompras(
         // id_lote) — etapa 12, slice 6, mismo criterio de lock que el confirmar (decisión 8/9).
         var movimientosOriginales = (await db.MovimientosStock
                 .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
-                .Select(m => new { m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad })
+                .Select(m => new { m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad })
                 .ToListAsync(ct))
-            .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad))
+            .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad))
             .ToList();
+        var sucursalDeReversa = await EscritorDeStock.ResolverSucursalesDeReversaAsync(
+            conexion, transaccionCruda, movimientosOriginales.Select(m => m.IdPuntoVenta),
+            movimientosOriginales.Select(m => m.IdSucursal), ct);
+        movimientosOriginales = [.. movimientosOriginales.Select(m => m with { IdSucursal = sucursalDeReversa[m.IdSucursal] })];
 
         // E6: una compra editada tiene en su libro, además del movimiento de la confirmación, los de cada edición (con
-        // signo). La reversa es la NETA por (artículo, punto de venta, lote): revertir cada asiento por separado
+        // signo). La reversa es la NETA por (artículo, sucursal, punto de venta, lote): revertir cada asiento por separado
         // rechazaría con un falso stock negativo una compra cuyo libro tiene +10 y después −4 de la misma clave. La
-        // clave que ya netea a cero no se revierte. Orden ascendente, el de los locks de stock.
-        foreach (var original in CalculadorDeEdicionDeCompra.DiferenciasDeStock(movimientosOriginales, []))
+        // clave que ya netea a cero no se revierte. La sucursal es la guardada en cada movimiento original, o la que la
+        // absorbió si se fusionó, nunca la que el punto de venta tenga hoy. Reversa EXACTA por lote: el movimiento original ya trae su propio id_lote y la
+        // reversa lo copia estructuralmente (design: "Exactness is structural, not derived").
+        var reversas = await EscritorDeStock.AsentarAsync(
+            conexion, transaccionCruda,
+            CalculadorDeEdicionDeCompra.DiferenciasDeStock(movimientosOriginales, [])
+                .Select(original => new AsientoDeStock(
+                    idTenant, original.IdSucursal, original.IdPuntoVenta, original.IdArticulo, original.Delta,
+                    MotivoStock.Anulacion, idEmpleado, momento)
+                {
+                    IdLote = original.IdLote,
+                    IdComprobanteCompra = id
+                }),
+            ct);
+
+        // Chequeo por lote además del agregado (spec comprobantes-compra: "the negative-balance refusal MUST also apply
+        // at the lot level... even if the articulo's aggregate stock.cantidad would stay non-negative") — un agregado
+        // suficiente puede esconder un lote específico ya vendido por debajo de la cantidad que esta anulación intenta
+        // devolverle.
+        foreach (var reversa in reversas)
         {
-            var inversa = original.Delta;
-
-            // Reversa EXACTA por lote (etapa 12, slice 6, reemplaza el guard interino de slice 5
-            // FIX 4): el movimiento original ya trae su propio id_lote — la reversa lo copia
-            // estructuralmente, sin re-derivar nada (design: "Exactness is structural, not
-            // derived").
-            await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
-                MotivoStock.Anulacion, id, idEmpleado, momento, original.IdLote, ct);
-
-            var nueva = await UpsertStockAsync(
-                conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
-
-            if (nueva < 0m)
+            if (reversa.CantidadAgregada < 0m)
             {
                 throw new ErrorDominio(
                     "compra_anulacion_stock_negativo",
-                    $"El artículo {original.IdArticulo} quedaría con stock negativo al anular esta compra.",
+                    $"El artículo {reversa.Asiento.IdArticulo} quedaría con stock negativo al anular esta compra.",
                     409);
             }
 
-            // Chequeo por lote (spec comprobantes-compra: "the negative-balance refusal MUST also
-            // apply at the lot level... even if the articulo's aggregate stock.cantidad would stay
-            // non-negative") — un agregado suficiente puede esconder un lote específico ya vendido
-            // por debajo de la cantidad que esta anulación intenta devolverle.
-            if (original.IdLote is { } idLoteReversa)
+            if (reversa.CantidadDelLote < 0m)
             {
-                var nuevaDelLote = await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, idLoteReversa,
-                    inversa, ct);
-
-                if (nuevaDelLote < 0m)
-                {
-                    throw new ErrorDominio(
-                        "compra_anulacion_stock_negativo",
-                        $"El lote {idLoteReversa} del artículo {original.IdArticulo} quedaría con stock " +
-                        "negativo al anular esta compra.",
-                        409);
-                }
+                throw new ErrorDominio(
+                    "compra_anulacion_stock_negativo",
+                    $"El lote {reversa.Asiento.IdLote} del artículo {reversa.Asiento.IdArticulo} quedaría con stock " +
+                    "negativo al anular esta compra.",
+                    409);
             }
         }
 
@@ -1471,95 +1466,6 @@ public partial class ServicioDeCompras(
         ParametrosDeComando.Agregar(comando, creadoEl);
 
         await comando.ExecuteNonQueryAsync(ct);
-    }
-
-    private static Task InsertarMovimientoStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
-        int? idLote, CancellationToken ct) =>
-        InsertarMovimientoStockAsync(
-            conexion, transaccion, idTenant, idArticulo, idPuntoVenta, cantidad, motivo, idComprobanteCompra, idEmpleado,
-            creadoEl, idLote, observaciones: null, ct);
-
-    private static async Task InsertarMovimientoStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
-        int? idLote, string? observaciones, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el, id_lote, " +
-            "observaciones) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
-
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, cantidad);
-        ParametrosDeComando.Agregar(comando, motivo);
-        ParametrosDeComando.Agregar(comando, idComprobanteCompra);
-        ParametrosDeComando.Agregar(comando, idEmpleado);
-        ParametrosDeComando.Agregar(comando, creadoEl);
-        ParametrosDeComando.AgregarNulo(comando, idLote);
-        ParametrosDeComando.AgregarNulo(comando, observaciones);
-
-        await comando.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task<decimal> UpsertStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4) " +
-            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
-            "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El upsert de stock no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
-    }
-
-    /// <summary>Etapa 12, slice 5 (design: Write site 2 — "UpsertStockLoteAsync: la MISMA forma
-    /// que UpsertStockAsync, una clave más") — sibling raw SQL propio de esta clase, mismo shape
-    /// que <c>ServicioDeVentas.UpsertStockLoteAsync</c> (Slice 8) y
-    /// <c>ServicioDeLotes.ResolverOCrearAsync</c> (Slice 3): <c>INSERT ... ON CONFLICT DO UPDATE
-    /// ... RETURNING</c>, nunca <c>DO NOTHING</c>.</summary>
-    private static async Task<decimal> UpsertStockLoteAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        int idLote, decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4, $5) " +
-            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
-            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idLote);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
     }
 
     /// <summary>La familia de cada artículo de <paramref name="idsArticulo"/> que ES miembro (id de artículo →
@@ -1973,12 +1879,8 @@ public partial class ServicioDeCompras(
     /// Fuera del presupuesto de comandos del checkout — esta clase no lo comparte.</summary>
     private async Task<bool> ResolverLotesHabilitadoAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        var candidatos = await db.Parametros
-            .Where(p => p.Clave == ParametroConocido.LotesHabilitado.Clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
-            .ToListAsync(ct);
-
-        var valorJson = ResolucionDeParametros.Resolver(ParametroConocido.LotesHabilitado.Clave, candidatos, idPuntoVenta);
+        var valorJson = await ConsultaDeParametros.ResolverDePuntoVentaAsync(
+            db, ParametroConocido.LotesHabilitado.Clave, idEmpresa, idPuntoVenta, ct);
         return JsonSerializer.Deserialize<bool>(valorJson);
     }
 

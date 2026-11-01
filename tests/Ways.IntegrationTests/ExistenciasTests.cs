@@ -127,9 +127,10 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         decimal? minimo = null, decimal? reposicion = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdTenant = ctx.IdTenant, IdPuntoVenta = idPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            IdTenant = ctx.IdTenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = cantidad,
             Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();
@@ -169,7 +170,7 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests):
-    /// <c>Where(s => s.IdPuntoVenta == idPuntoVenta)</c> en
+    /// <c>Where(s => s.IdSucursal == idSucursal)</c> (la sucursal del punto de venta) en
     /// <c>ServicioDeReportesDeStock.ObtenerExistenciasAsync</c>. Mismo tenant con dos puntos de
     /// venta — las existencias de uno NUNCA pueden traer filas del otro. Mutación aplicada
     /// (reemplazar el <c>Where</c> por un no-op que deja pasar todas las filas del tenant): esta

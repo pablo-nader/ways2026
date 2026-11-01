@@ -6,6 +6,7 @@ import {
   aSolicitudDeConteoPorLote,
   aSolicitudDeMinimos,
   aSolicitudDeTransferencia,
+  aSolicitudDeTransferenciaPorSucursal,
   articulosRepetidosEnTransferencia,
   contadaValida,
   lineaDeConteoDeLoteVacia,
@@ -355,5 +356,22 @@ describe('reposicionMenorQueMinimo', () => {
   it('compara igual con coma que con punto', () => {
     expect(reposicionMenorQueMinimo('2,5', '1,5')).toBe(true)
     expect(reposicionMenorQueMinimo('2,5', '2.5')).toBe(false)
+  })
+})
+
+describe('aSolicitudDeTransferenciaPorSucursal', () => {
+  it('manda solo las dos sucursales —nunca puntos de venta— y recorta las observaciones', () => {
+    const solicitud = aSolicitudDeTransferenciaPorSucursal(3, 4, '  Reposición  ', [
+      { clave: 1, idArticulo: 10, descripcion: 'Fideos', cantidad: '8', idLote: '', codigoLote: '', controlaLote: false },
+    ])
+
+    expect(solicitud).toEqual({
+      idSucursalOrigen: 3,
+      idSucursalDestino: 4,
+      observaciones: 'Reposición',
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
+    })
+    expect(solicitud).not.toHaveProperty('idPuntoVentaOrigen')
+    expect(solicitud).not.toHaveProperty('idPuntoVentaDestino')
   })
 })

@@ -191,16 +191,38 @@ public class PuntosDeQuiebreSoloMultiplosTests
         Assert.Equal([], EscalonesDeCantidad.DescubrirPuntosDeQuiebre(Linea(), candidatas));
     }
 
-    /// <summary>Con el mismo descuento unitario y un id menor, la "solo múltiplos" gana justo en cada múltiplo y pierde
-    /// en el medio, para siempre; 250 contra 249 alterna hasta 1000 unidades. Las dos pasan el tope.</summary>
-    [Theory]
-    [InlineData(3750)]
-    [InlineData(3751)]
-    public void UnaCompetenciaQueNoTerminaOPasaElTopeNoTienePuntosDeQuiebre(decimal precioDeLaComun)
+    /// <summary>250 contra 249 alterna hasta 1000 unidades: pasa el tope.</summary>
+    [Fact]
+    public void UnaCompetenciaQuePasaElTopeNoTienePuntosDeQuiebre()
     {
-        var candidatas = new[] { Estricta(1, 3750m, 2m), Comun(2, precioDeLaComun) };
+        var candidatas = new[] { Estricta(1, 3750m, 2m), Comun(2, 3751m) };
 
         Assert.Null(EscalonesDeCantidad.DescubrirPuntosDeQuiebre(Linea(), candidatas));
+    }
+
+    /// <summary>Cláusula: el desempate entre una "solo múltiplos" y una común con el mismo descuento de línea y unitario
+    /// (solo pasa en los múltiplos): gana la común aunque la "solo múltiplos" tenga menor id, así que la base no cambia
+    /// con la cantidad, la curva no tiene puntos de quiebre y el dispositivo cobra, cantidad por cantidad, lo mismo que
+    /// el servidor (antes caía en el recurso y cobraba el precio de lista).</summary>
+    [Fact]
+    public void ConElMismoDescuentoYLaSoloMultiplosDeMenorIdElDispositivoCobraComoElServidor()
+    {
+        var candidatas = new[] { Estricta(1, 3750m, 2m), Comun(2, 3750m) };
+        var linea = Linea(0.001m);
+
+        Assert.Equal([], EscalonesDeCantidad.DescubrirPuntosDeQuiebre(linea, candidatas));
+
+        var curva = EscalonesDeCantidad.Construir(linea, candidatas);
+        for (var q = 0.001m; q <= 12m; q += EscalonesDeCantidad.PasoDeCantidad)
+        {
+            var delServidor = ResolvedorDeOfertas.Resolver(ConCantidad(linea, q), candidatas);
+            var delDispositivo = Elegir(curva, q);
+            if (Resumen(delServidor) != Resumen(delDispositivo) ||
+                TotalDeLinea(delServidor, q) != TotalDeLinea(delDispositivo, q))
+            {
+                Assert.Fail($"a {q} el servidor resuelve {Resumen(delServidor)} y el dispositivo {Resumen(delDispositivo)}");
+            }
+        }
     }
 
     /// <summary>Cláusula: el recurso pasado el tope. Sin puntos de quiebre, la curva saca las no acumulables de la

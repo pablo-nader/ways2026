@@ -127,9 +127,10 @@ public sealed record RamaDeUso(
 /// <see cref="Ways.Domain.Organizacion.Sucursal"/> (tenant → empresa → sucursal → punto de venta;
 /// ambas suben por el punto de venta, que referencia a las dos): el inventario
 /// ejecutable del ancla <see cref="Ways.Domain.Organizacion.PuntoVenta"/>, PUENTEADO por
-/// <c>puntos_venta</c>. El uso sube por la jerarquía estructural, y ninguna tabla operativa lleva
-/// <c>id_empresa</c>: ventas, pagos, stock, caja y tesorería se cuelgan todas del punto de
-/// venta.</item>
+/// <c>puntos_venta</c>; y para la empresa, además, el inventario directo de la
+/// <see cref="Ways.Domain.Organizacion.Sucursal"/> PUENTEADO por <c>sucursales</c>. El uso sube por la jerarquía
+/// estructural, y ninguna tabla operativa lleva <c>id_empresa</c>: ventas, pagos, caja y tesorería se cuelgan del
+/// punto de venta, y el stock (desde sucursales T2) de la sucursal.</item>
 /// </list>
 ///
 /// Una tabla que una etapa futura agregue entra sola por cualquiera de los tres caminos.
@@ -213,7 +214,19 @@ public static class InventarioDeDependientes
             .ToList();
 
         AgregarRamasDeAlcanceDeTenant(ancla, tipoAncla, ramas);
-        AgregarRamasPuenteadasPorPuntoDeVenta(ancla, tipoAncla, ramas);
+        // La jerarquía estructural es tenant → empresa → sucursal → punto de venta. El punto de venta
+        // lleva la FK hacia la empresa Y hacia la sucursal, así que ambas anclas suben por él; y desde
+        // sucursales T2 el stock cuelga de la sucursal, que pasa a ser el segundo puente de la empresa.
+        if (tipoAncla == typeof(Ways.Domain.Organizacion.Empresa)
+            || tipoAncla == typeof(Ways.Domain.Organizacion.Sucursal))
+        {
+            AgregarRamasPuenteadas(ancla, tipoAncla, typeof(Ways.Domain.Organizacion.PuntoVenta), ramas);
+        }
+
+        if (tipoAncla == typeof(Ways.Domain.Organizacion.Empresa))
+        {
+            AgregarRamasPuenteadas(ancla, tipoAncla, typeof(Ways.Domain.Organizacion.Sucursal), ramas);
+        }
 
         ramas.Sort(static (a, b) =>
         {
@@ -345,25 +358,19 @@ public static class InventarioDeDependientes
     /// El ancla <see cref="Ways.Domain.Organizacion.Tenant"/> NO lo necesita: toda tabla del
     /// modelo lleva <c>id_tenant</c>, y la segunda fuente ya la trae. <c>PuntoVenta</c> y
     /// <c>Usuario</c> son hojas de la jerarquía: no tienen hijos estructurales.
+    ///
+    /// Sucursales T2: la empresa tiene un SEGUNDO puente, <c>sucursales</c>, porque <c>stock</c>,
+    /// <c>stock_lotes</c> y <c>movimientos_stock</c> se clavan en <c>id_sucursal</c>. Por ese puente se
+    /// reemiten las ramas directas de la sucursal salvo <c>puntos_venta</c>, que la empresa ya
+    /// referencia directamente.
     /// </summary>
-    private static void AgregarRamasPuenteadasPorPuntoDeVenta(
-        IEntityType ancla, Type tipoAncla, List<RamaDeUso> ramas)
+    private static void AgregarRamasPuenteadas(
+        IEntityType ancla, Type tipoAncla, Type tipoPuente, List<RamaDeUso> ramas)
     {
-        // La jerarquía estructural es tenant → empresa → sucursal → punto de venta, y el punto de
-        // venta lleva la FK hacia la empresa Y hacia la sucursal: ambas anclas suben por él. Cuando
-        // una etapa cuelgue tablas operativas directamente de la sucursal, la sucursal pasa a ser
-        // un segundo puente de la empresa.
-        if (tipoAncla != typeof(Ways.Domain.Organizacion.Empresa)
-            && tipoAncla != typeof(Ways.Domain.Organizacion.Sucursal))
-        {
-            return;
-        }
-
-        var puente = ancla.Model.FindEntityType(typeof(Ways.Domain.Organizacion.PuntoVenta))
+        var puente = ancla.Model.FindEntityType(tipoPuente)
             ?? throw new InvalidOperationException(
-                $"El ancla {tipoAncla.FullName} necesita el puente " +
-                $"{typeof(Ways.Domain.Organizacion.PuntoVenta).FullName}, que no está mapeado en " +
-                "el modelo.");
+                $"El ancla {tipoAncla.FullName} necesita el puente {tipoPuente.FullName}, que no está " +
+                "mapeado en el modelo.");
 
         var tablaDelPuente = puente.GetTableName()
             ?? throw new InvalidOperationException(
@@ -409,9 +416,16 @@ public static class InventarioDeDependientes
         var esquemaDelPuente = puente.GetSchema() ?? EsquemaPorDefecto(ancla.Model);
         var yaCubiertas = ramas.Select(ClaveDeRama).ToHashSet(StringComparer.Ordinal);
 
+        // Un puente no se reemite como hoja de otro puente: puntos_venta, vista desde la sucursal, ya
+        // la pregunta la rama directa de la empresa, y sus propios dependientes, el puente por punto de venta.
+        var tablaDeOtroPuente = tipoPuente == typeof(Ways.Domain.Organizacion.Sucursal)
+            ? ancla.Model.FindEntityType(typeof(Ways.Domain.Organizacion.PuntoVenta))?.GetTableName()
+            : null;
+
         foreach (var hoja in InventarioCompleto(ancla.Model, puente.ClrType)
             .Where(rama => rama.Clasificacion is not ClasificacionDeDependiente.Excluido
-                && rama.Puente is null))
+                && rama.Puente is null
+                && rama.Tabla != tablaDeOtroPuente))
         {
             var columnasDeUnion = hoja.PropiedadesDelPrincipal
                 .Select(propiedad => columnaPorPropiedadDelPuente.TryGetValue(propiedad, out var columna)

@@ -10,17 +10,13 @@ import {
   validarAjuste,
   type ErrorDeAjuste,
   type FormularioDeAjuste,
-  type ModoDeAjuste,
   type ResultadoDeAjusteDeCuenta,
 } from '../api/cuentasTesoreria'
-import { clienteDeReportes } from '../api/reportes'
-import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
+import { formatearImporte } from '../formato/importes'
 import { CampoImporte } from './CampoImporte'
 import { Modal } from './Modal'
 
 type Props = {
-  /** Empresa de la cuenta: con ella se relee el saldo por la lectura barata de cuentas, sin recorrer el libro. */
-  idEmpresa: number
   cuenta: { id: number; nombre: string; saldoActual: number }
   onCerrar: () => void
   /** Se llama una sola vez con el ajuste ya registrado; quien abrió el modal lo cierra y refresca. */
@@ -30,21 +26,21 @@ type Props = {
 }
 
 /**
- * Ajuste manual del saldo de una cuenta de tesorería (solo Admin). Dos modos: "Tengo el saldo real" (el servidor calcula la
- * diferencia contra el saldo que tenga la cuenta al escribir; la que se muestra acá es una vista previa) y "Sumar o restar un
- * importe". El concepto es obligatorio.
+ * Ajuste manual del saldo de una cuenta de tesorería (solo Admin). Solo ofrece el importe con signo: el saldo de la tarjeta del
+ * libro se calcula por fuentes y no coincide con la cadena de la cuenta, así que nunca se envía `saldoObjetivo`. El concepto es
+ * obligatorio y el saldo resultante que se muestra es una estimación.
  *
  * `react-async-state`: guarda de reentrancia de primera línea (ref, cubre el doble clic del mismo tick) más ventana completa
  * deshabilitada y cierre bloqueado mientras `ajustando`; por eso la respuesta propia de la escritura no lleva generación: nada
  * puede reemplazar ni reabrir lo que escribe. El ajuste no lleva clave de idempotencia, así que nunca se reintenta solo y un
  * resultado incierto (red cortada, 5xx) no deja el formulario abierto para reenviar a ciegas: se avisa al llamador.
  */
-export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado, onIncierto }: Props) {
-  const [formulario, setFormulario] = useState<FormularioDeAjuste>(formularioDeAjusteVacio)
+export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto }: Props) {
+  const [formulario, setFormulario] = useState<FormularioDeAjuste>(() => ({
+    ...formularioDeAjusteVacio(),
+    modo: 'importe',
+  }))
   const [error, setError] = useState<ErrorDeAjuste | null>(null)
-  // El saldo que llega por props sale de un listado que pudo quedar viejo: se relee al abrir y la vista previa parte de ese.
-  const [saldoActual, setSaldoActual] = useState(cuenta.saldoActual)
-  const [saldoDesactualizado, setSaldoDesactualizado] = useState(false)
   const [ajustando, setAjustando] = useState(false)
   const ajustandoRef = useRef(false)
   const vigenteRef = useRef(true)
@@ -55,30 +51,6 @@ export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado,
       vigenteRef.current = false
     }
   }, [])
-
-  useEffect(() => {
-    let vigente = true
-    clienteDeReportes
-      .cuentasDeTesoreria(idEmpresa)
-      .then((datos) => {
-        if (!vigente) return
-        const fresca = datos.cuentas.find((c) => c.id === cuenta.id)
-        if (fresca) {
-          setSaldoActual(fresca.saldoActual)
-          setSaldoDesactualizado(false)
-        } else {
-          setSaldoDesactualizado(true)
-        }
-      })
-      .catch(() => {
-        // Sin lectura fresca la estimación sigue con el saldo conocido, marcado como posiblemente viejo; el servidor decide igual.
-        if (vigente) setSaldoDesactualizado(true)
-      })
-
-    return () => {
-      vigente = false
-    }
-  }, [cuenta.id, idEmpresa])
 
   function cambiar(cambios: Partial<FormularioDeAjuste>) {
     setFormulario((previo) => ({ ...previo, ...cambios }))
@@ -115,8 +87,8 @@ export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado,
     }
   }
 
-  const importe = importeDeVistaPrevia(formulario, saldoActual)
-  const saldoResultante = importe === null ? null : saldoResultanteDeVistaPrevia(saldoActual, importe)
+  const importe = importeDeVistaPrevia(formulario, cuenta.saldoActual)
+  const saldoResultante = importe === null ? null : saldoResultanteDeVistaPrevia(cuenta.saldoActual, importe)
 
   const errorDe = (campo: ErrorDeAjuste['campo']) => (error?.campo === campo ? error.mensaje : null)
 
@@ -136,77 +108,29 @@ export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado,
       {errorDe('general') && <div className="alert alert-danger py-2 px-3 small">{errorDe('general')}</div>}
 
       <div className="small text-muted mb-3">
-        Saldo actual de la cuenta: <strong>{formatearImporte(saldoActual, { simbolo: true })}</strong>
-        {saldoDesactualizado && <span className="text-warning ms-1">(posiblemente desactualizado: no se pudo releer)</span>}
+        Saldo actual de la cuenta: <strong>{formatearImporte(cuenta.saldoActual, { simbolo: true })}</strong>
       </div>
 
       <fieldset disabled={ajustando} className="border-0 p-0 m-0">
         <div className="mb-3">
-          {(
-            [
-              ['saldoObjetivo', 'Tengo el saldo real'],
-              ['importe', 'Sumar o restar un importe'],
-            ] as [ModoDeAjuste, string][]
-          ).map(([modo, etiqueta]) => (
-            <div className="form-check" key={modo}>
-              <input
-                className="form-check-input"
-                type="radio"
-                name="modo-de-ajuste"
-                id={`ajuste-modo-${modo}`}
-                checked={formulario.modo === modo}
-                onChange={() => cambiar({ modo })}
-              />
-              <label className="form-check-label" htmlFor={`ajuste-modo-${modo}`}>
-                {etiqueta}
-              </label>
+          <label className="form-label" htmlFor="ajuste-importe">
+            Importe (positivo suma, negativo resta)
+          </label>
+          <CampoImporte
+            id="ajuste-importe"
+            className="form-control"
+            admiteNegativos
+            valor={formulario.importe}
+            onChange={(valor) => cambiar({ importe: valor })}
+          />
+          {errorDe('importe') && <div className="text-danger small mt-1">{errorDe('importe')}</div>}
+          {saldoResultante !== null && importe !== null && importe !== 0 && (
+            <div className="small mt-2">
+              Saldo resultante (estimación): <strong>{formatearImporte(saldoResultante, { simbolo: true })}</strong>
+              <div className="text-muted">Estimación: el sistema recalcula el saldo al guardar.</div>
             </div>
-          ))}
+          )}
         </div>
-
-        {formulario.modo === 'saldoObjetivo' ? (
-          <div className="mb-3">
-            <label className="form-label" htmlFor="ajuste-saldo-objetivo">
-              Saldo real de la plataforma
-            </label>
-            <CampoImporte
-              id="ajuste-saldo-objetivo"
-              className="form-control"
-              admiteNegativos
-              valor={formulario.saldoObjetivo}
-              onChange={(valor) => cambiar({ saldoObjetivo: valor })}
-            />
-            {errorDe('saldoObjetivo') && <div className="text-danger small mt-1">{errorDe('saldoObjetivo')}</div>}
-            {importe !== null && (
-              <div className="small mt-2">
-                Diferencia (estimación): <strong>{formatearImporteConSigno(importe, { simbolo: true })}</strong>
-                <div className="text-muted">
-                  Estimación: el sistema recalcula la diferencia al guardar, con el saldo vigente de la cuenta.
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="mb-3">
-            <label className="form-label" htmlFor="ajuste-importe">
-              Importe (positivo suma, negativo resta)
-            </label>
-            <CampoImporte
-              id="ajuste-importe"
-              className="form-control"
-              admiteNegativos
-              valor={formulario.importe}
-              onChange={(valor) => cambiar({ importe: valor })}
-            />
-            {errorDe('importe') && <div className="text-danger small mt-1">{errorDe('importe')}</div>}
-            {saldoResultante !== null && importe !== null && importe !== 0 && (
-              <div className="small mt-2">
-                Saldo resultante (estimación): <strong>{formatearImporte(saldoResultante, { simbolo: true })}</strong>
-                <div className="text-muted">Estimación: el sistema recalcula el saldo al guardar.</div>
-              </div>
-            )}
-          </div>
-        )}
 
         <div className="mb-1">
           <label className="form-label" htmlFor="ajuste-concepto">

@@ -222,8 +222,9 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
     private async Task<decimal?> LeerStockAsync(int idTenant, int idArticulo, int idPuntoVenta)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         return await db.Stock.AsNoTracking()
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => (decimal?)s.Cantidad)
             .FirstOrDefaultAsync();
     }

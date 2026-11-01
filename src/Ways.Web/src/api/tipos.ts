@@ -298,8 +298,16 @@ export type TipoComprobanteListado = {
 
 // --- Parámetros operativos (ADR-13) ---
 
-export type ParametroListado = { id: number; clave: string; valor: string; idPuntoVenta: number | null }
-export type ParametroAlta = { clave: string; valor: string; idPuntoVenta: number | null }
+export type ParametroListado = {
+  id: number
+  clave: string
+  valor: string
+  idPuntoVenta: number | null
+  idSucursal: number | null
+}
+/** Una clave de alcance caja lleva `idPuntoVenta` (o ninguno: default de la empresa); una de alcance sucursal, `idSucursal`
+ * (o ninguno). Mandar los dos, o el que no corresponde a la clave, es 400. */
+export type ParametroAlta = { clave: string; valor: string; idPuntoVenta: number | null; idSucursal: number | null }
 export type ParametroResuelto = { clave: string; valor: string }
 
 /** Espejo de `ParametroConocido` (Ways.Domain.Catalogos): clave, tipo declarado y default
@@ -308,42 +316,63 @@ export type ParametroResuelto = { clave: string; valor: string }
  * `'booleano'` (stage-12-lotes-vencimientos, Slice 15) es el primer tipo `bool` del registro —
  * `lotes_habilitado`, viaja como `true`/`false` JSON crudo, sin comillas (mismo criterio de
  * `JsonSerializer.Deserialize<bool>` que el resto de los lectores tipados del backend). */
+export type AlcanceDeParametro = 'caja' | 'sucursal'
+
 export const PARAMETROS_CONOCIDOS: {
   clave: string
   etiqueta: string
   tipo: 'entero' | 'decimal' | 'texto' | 'booleano'
+  /** Espejo de `ParametroConocido.Alcance`: una clave de sucursal se configura por sucursal y la comparten todas sus
+   * cajas; una de caja, por punto de venta. */
+  alcance: AlcanceDeParametro
   porDefecto: string
 }[] = [
-  { clave: 'tolerancia_pago', etiqueta: 'Tolerancia de pago ($)', tipo: 'decimal', porDefecto: '10' },
+  { clave: 'tolerancia_pago', etiqueta: 'Tolerancia de pago ($)', tipo: 'decimal', alcance: 'caja', porDefecto: '10' },
   {
     clave: 'importe_adicional_recarga',
     etiqueta: 'Adicional por operación de recarga ($)',
     tipo: 'decimal',
+    alcance: 'caja',
     porDefecto: '5',
   },
-  { clave: 'importe_envio', etiqueta: 'Importe del envío ($)', tipo: 'decimal', porDefecto: '0' },
-  { clave: 'slots_tickets_espera', etiqueta: 'Tickets en espera (cantidad)', tipo: 'entero', porDefecto: '10' },
+  { clave: 'importe_envio', etiqueta: 'Importe del envío ($)', tipo: 'decimal', alcance: 'caja', porDefecto: '0' },
+  {
+    clave: 'slots_tickets_espera',
+    etiqueta: 'Tickets en espera (cantidad)',
+    tipo: 'entero',
+    alcance: 'caja',
+    porDefecto: '10',
+  },
   {
     clave: 'zona_horaria',
     etiqueta: 'Zona horaria',
     tipo: 'texto',
+    alcance: 'sucursal',
     porDefecto: 'America/Argentina/Buenos_Aires',
   },
-  { clave: 'comision_porcentaje', etiqueta: 'Comisión (%)', tipo: 'decimal', porDefecto: '0' },
+  { clave: 'comision_porcentaje', etiqueta: 'Comisión (%)', tipo: 'decimal', alcance: 'caja', porDefecto: '0' },
   // stage-12-lotes-vencimientos (Slice 15, espejo de `ParametroConocido.LotesHabilitado`/
-  // `.DiasAlertaVencimiento`): interruptor del módulo de lotes a nivel empresa + horizonte de
-  // alerta del reporte de vencimientos.
-  { clave: 'lotes_habilitado', etiqueta: 'Control de lotes habilitado', tipo: 'booleano', porDefecto: 'false' },
+  // `.DiasAlertaVencimiento`): interruptor del módulo de lotes + horizonte de alerta del reporte de vencimientos,
+  // los dos de la sucursal.
+  {
+    clave: 'lotes_habilitado',
+    etiqueta: 'Control de lotes habilitado',
+    tipo: 'booleano',
+    alcance: 'sucursal',
+    porDefecto: 'false',
+  },
   {
     clave: 'dias_alerta_vencimiento',
     etiqueta: 'Días de alerta de vencimiento',
     tipo: 'entero',
+    alcance: 'sucursal',
     porDefecto: '30',
   },
   {
     clave: 'redondeo_sugerencia_precio',
     etiqueta: 'Redondeo de la sugerencia de precio (múltiplo, $)',
     tipo: 'decimal',
+    alcance: 'caja',
     porDefecto: '100',
   },
   // E4 de pagos y aplicaciones (espejo de `ParametroConocido.ToleranciaRedondeoPagoProveedor`): hasta cuánto se perdona o
@@ -352,6 +381,7 @@ export const PARAMETROS_CONOCIDOS: {
     clave: 'tolerancia_redondeo_pago_proveedor',
     etiqueta: 'Tolerancia de redondeo en pagos a proveedores ($)',
     tipo: 'decimal',
+    alcance: 'caja',
     porDefecto: '500',
   },
 ]
@@ -533,6 +563,10 @@ export type PuntoVentaListado = {
   /** Las ventas nuevas del POS arrancan con "Con envío" tildado. El servidor siempre lo envía;
    * es opcional en el tipo solo para no obligar a cada fixture de pruebas a declararlo. */
   envioPorDefecto?: boolean
+  /** La sucursal de la caja (tenant → empresa → sucursal → punto de venta). El servidor siempre la envía; es
+   * opcional en el tipo por el mismo motivo que `envioPorDefecto`. */
+  idSucursal?: number
+  nombreSucursal?: string | null
 }
 
 /** `idEmpresa` no es editable acá: es estructural, no descriptivo (misma razón que en el
@@ -564,11 +598,36 @@ export type PuntoVentaAlta = {
   instagram: string | null
   facebook: string | null
   web: string | null
+  /** Opcional: con valor, la caja nace en esa sucursal (viva y de su misma empresa); sin valor, nace con una
+   * sucursal propia que lleva su nombre. */
+  idSucursal?: number | null
 }
 
 /** Cuerpo de `POST /api/puntos-venta/{id}/modo` — espejo de
  * `Ways.Application.Organizacion.PuntoVentaModoEdicion`. */
 export type PuntoVentaModoEdicion = { modo: ModoPuntoVenta }
+
+/** Fila de `GET /api/sucursales` — espejo de `Ways.Application.Organizacion.SucursalListado`. */
+export type SucursalListado = {
+  id: number
+  idTenant: number
+  idEmpresa: number
+  nombre: string
+  razonSocialEmpresa: string | null
+  cantidadPuntosVenta: number
+}
+
+/** Cuerpo de `POST /api/sucursales` — espejo de `SucursalAlta`. */
+export type SucursalAlta = { idEmpresa: number; nombre: string }
+
+/** Cuerpo de `PUT /api/sucursales/{id}` — espejo de `SucursalEdicion`: el nombre es lo único editable. */
+export type SucursalEdicion = { nombre: string }
+
+/** Cuerpo de `POST /api/sucursales/{id}/fusionar` — espejo de `SucursalFusion`: la sucursal que absorbe a la del id. */
+export type SucursalFusion = { idSucursalDestino: number }
+
+/** Cuerpo de `POST /api/puntos-venta/{id}/sucursal` — espejo de `PuntoVentaSucursalEdicion`. */
+export type PuntoVentaSucursalEdicion = { idSucursal: number }
 
 // --- Clientes (stage-2-clientes-proveedores, ADR-8) ---
 // Entidad dedicada, no la máquina genérica de catálogos (design decision 1): `numero` lo
@@ -1522,7 +1581,7 @@ export type MovimientoRegistrado = {
   creadoEl: string
 }
 
-export type LineaDeResumen = { idMedioPago: number; importeEsperado: number }
+export type LineaDeResumen = { idMedioPago: number; importeEsperado: number; nombre: string }
 
 /** Un ticket límite del turno (legacy doc 01 D6: "primer y último ticket") — `codigo` es el tipo
  * de comprobante (`TX`, `RC`, …): cada tipo numera su propia serie independiente, así que el
@@ -1707,24 +1766,19 @@ export type FilaDeHistoricoDeCajas = {
   egresos: EgresosDeTurno
   fechaRecalculo: string | null
   idEmpleadoRecalculo: number | null
+  /** Lo facturado del turno (ventas y notas de crédito, sin recibos), prorrateado por cubo. */
+  digitales: number
+  efectivo: number
+  cuentaCorriente: number
+  totalFacturado: number
 }
 
 /** Página de `GET /api/reportes/cajas` — espejo de `PaginaDeHistoricoDeCajas`. */
 export type PaginaDeHistoricoDeCajas = { items: FilaDeHistoricoDeCajas[]; total: number; pagina: number; tamanio: number }
 
-/** Un ticket del turno dentro de `DetalleDeTurno.tickets` — espejo reducido de
- * `Ways.Application.Ventas.ComprobanteListado` (los mismos campos que `GET /api/ventas` lista,
- * anulados excluidos por `LectorDeLineasDelTurno`). */
-export type TicketDeTurno = {
-  id: number
-  numero: number
-  numeroVisible: string
-  estado: EstadoComprobante
-  fecha: string
-  idPuntoVenta: number
-  idCliente: number
-  total: number
-}
+/** Un ticket del turno dentro de `DetalleDeTurno.tickets` — la misma fila que la pantalla "Ventas del
+ * turno" del POS (`VentaDeTurnoListado`), anuladas incluidas con su estado. */
+export type TicketDeTurno = VentaDeTurnoListado
 
 /** Monto neto cobrado por UN medio de pago dentro de una `VentaDeTurnoListado` — espejo de
  * `MedioDeVentaNeto`. `importe` ya es neto de vuelto (`Σ importe − Σ vuelto` agrupado por medio),
@@ -1733,8 +1787,8 @@ export type MedioDeVentaNeto = { idMedioPago: number; nombre: string; importe: n
 
 /** Fila de `GET /api/ventas/por-turno/{idTurno}` — espejo de
  * `Ways.Application.Ventas.VentaDeTurnoListado` (pantalla "Ventas del turno" del POS de
- * escritorio). A diferencia de `TicketDeTurno`, SÍ incluye anuladas y trae `nombreCliente`/
- * `mediosDePago` — ver el doc-comment del record del lado del servidor. */
+ * escritorio, y tickets del detalle de un turno cerrado). Incluye anuladas con su estado y trae
+ * `nombreCliente`/`mediosDePago` — ver el doc-comment del record del lado del servidor. */
 export type VentaDeTurnoListado = {
   id: number
   numero: number
@@ -1962,50 +2016,6 @@ export type PaginaDePagosDeAdministracion = {
   tamanio: number
 }
 
-// --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de
-// `Ways.Application.Caja.Contratos`. `inicio`/`final` ya vienen calculados y persistidos al
-// cierre (design decisión 6 de stage-6-turnos-caja); este contrato solo los transporta.
-
-/** Espejo del enum `TipoMovimientoTesoreria` (Ways.Domain.Caja) — viaja como texto. */
-export type TipoMovimientoTesoreria = 'RetiroCaja' | 'Deposito' | 'Gasto' | 'Ajuste'
-
-/** Fila de `GET /api/reportes/tesoreria` — espejo de `MovimientoTesoreriaListado`, SIN
- * `idTenant` (nunca expuesto en una respuesta, doc 09). `idPuntoVenta` es `number | null` porque
- * el DTO de C# ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal
- * tipado desde antes de este PR — un pago de origen Tesoreria puede originar una fila con
- * `idPuntoVenta` presente hoy, pero el esquema siempre lo permitió nulo).
- *
- * stage-tesoreria-por-empresa (PR5): agrega `idEmpresa` (la cadena es por empresa),
- * `nombrePuntoVenta` (dangling-fk-read-models: `null` sin punto de venta o con uno dado de baja
- * lógica, mismo criterio que `nombreProveedor`/`nombreArea` de `PagoDeAdministracionListado`) y,
- * para una fila `tipo: 'Gasto'`, `gastoCategoria`/`gastoConcepto` resueltos del pago de origen. */
-export type MovimientoTesoreriaListado = {
-  id: number
-  idEmpresa: number
-  idPuntoVenta: number | null
-  nombrePuntoVenta: string | null
-  fecha: string
-  tipo: TipoMovimientoTesoreria
-  idTurnoCaja: number | null
-  idGasto: number | null
-  gastoCategoria: CategoriaPago | null
-  gastoConcepto: string | null
-  concepto: string
-  inicio: number
-  ingreso: number
-  egreso: number
-  final: number
-  idEmpleado: number
-}
-
-/** Página de `GET /api/reportes/tesoreria` — espejo de `PaginaDeMovimientosTesoreria`. */
-export type PaginaDeMovimientosTesoreria = {
-  items: MovimientoTesoreriaListado[]
-  total: number
-  pagina: number
-  tamanio: number
-}
-
 // --- Cuentas de tesorería (lectura) — espejo de `Ways.Application.Caja.ContratosDeCuentasTesoreria`.
 
 /** Espejo del enum `TipoMovimientoCuenta` (Ways.Domain.Caja) — viaja como texto PascalCase. */
@@ -2020,26 +2030,7 @@ export type TipoMovimientoCuenta =
   | 'Deposito'
   | 'Retiro'
 
-/** Cuenta de `GET /api/reportes/tesoreria/cuentas`. `fechaUltimoMovimiento` es `null` sin movimientos. */
-export type CuentaConSaldo = {
-  id: number
-  nombre: string
-  activo: boolean
-  saldoInicial: number
-  saldoActual: number
-  fechaUltimoMovimiento: string | null
-}
-
-/** Medio electrónico y activo cuyo cobro no entra a ninguna cuenta de la empresa. */
-export type MedioElectronicoSinCuenta = { id: number; nombre: string }
-
-export type CuentasDeLaEmpresa = {
-  idEmpresa: number
-  cuentas: CuentaConSaldo[]
-  mediosSinCuenta: MedioElectronicoSinCuenta[]
-}
-
-/** Fila del libro de una cuenta. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
+/** Movimiento de una cuenta tal como lo devuelve el ajuste manual. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
  * usuario dados de baja: el id distingue los dos casos. */
 export type MovimientoDeCuentaListado = {
   id: number
@@ -2058,30 +2049,71 @@ export type MovimientoDeCuentaListado = {
   porcentajeAplicado: number | null
 }
 
-/** Totales de TODO el rango (no de la página). Los descuentos son positivos cuando restan. */
-export type TotalesDeCuentaEnElRango = {
-  cobrado: number
+// --- Libro de tesorería (`GET /api/reportes/libro-tesoreria`) — espejo de `ContratosDeLibroDeTesoreria`. -----
+
+export type TipoDeFilaDelLibro = 'Caja' | 'Pago' | 'AjusteEfectivo' | 'AjusteCuenta'
+
+export type CuentaDelLibro = { idCuentaTesoreria: number; nombre: string; activo: boolean }
+
+export type ImporteDeCuenta = { idCuentaTesoreria: number; importe: number }
+
+export type SaldosDelLibro = { efectivo: number; porCuenta: ImporteDeCuenta[] }
+
+export type DesgloseDeMedioDelLibro = {
+  idMedioPago: number | null
+  medio: string | null
+  importe: number
   comision: number
-  retencionIibb: number
-  retencionIva: number
-  retencionGanancias: number
-  ajustes: number
-  otros: number
+  retenciones: number
   neto: number
 }
 
-export type LibroDeCuenta = {
-  idCuenta: number
-  nombre: string
-  activo: boolean
-  saldoActual: number
-  saldoDeApertura: number
-  saldoAlCierre: number
-  totales: TotalesDeCuentaEnElRango
-  items: MovimientoDeCuentaListado[]
-  total: number
-  pagina: number
-  tamanio: number
+export type DesgloseDeCuentaDelLibro = { idCuentaTesoreria: number; neto: number; medios: DesgloseDeMedioDelLibro[] }
+
+/** `numero` es el id del turno; `diferenciaArqueo` es declarado menos esperado y viene `null` si es cero o está dentro de la tolerancia. */
+export type DatosDeCajaDelLibro = {
+  idTurnoCaja: number
+  numero: number
+  fechaApertura: string
+  fechaCierre: string
+  idPuntoVenta: number
+  puntoVenta: string | null
+  diferenciaArqueo: number | null
+  desglose: DesgloseDeCuentaDelLibro[]
+}
+
+export type DatosDePagoDelLibro = {
+  idPago: number
+  detalle: string
+  categoria: CategoriaPago
+  origenFondos: OrigenFondosPago
+  idTurnoCaja: number | null
+}
+
+export type DatosDeAjusteDelLibro = { concepto: string }
+
+/** Exactamente uno de `caja`, `pago` y `ajuste` viene poblado, según `tipo`. `efectivo` y `sinCuenta` son `null` si la fila no los toca. */
+export type FilaDelLibro = {
+  fecha: string
+  tipo: TipoDeFilaDelLibro
+  efectivo: number | null
+  cuentas: ImporteDeCuenta[]
+  sinCuenta: number | null
+  caja: DatosDeCajaDelLibro | null
+  pago: DatosDePagoDelLibro | null
+  ajuste: DatosDeAjusteDelLibro | null
+}
+
+export type LibroDeTesoreria = {
+  idEmpresa: number
+  desde: string
+  hasta: string
+  cuentas: CuentaDelLibro[]
+  saldoAnterior: SaldosDelLibro
+  saldoActual: SaldosDelLibro
+  filas: FilaDelLibro[]
+  /** Marca de conciliación vigente de la empresa (instante ISO), sin importar el rango pedido; `null` si nunca se concilió. */
+  conciliadoHasta: string | null
 }
 
 // --- Existencias (stage-11-exportacion-reportes, Slice 9 — droppable a Etapa 13) — espejo de
@@ -2108,7 +2140,8 @@ export type FilaExistencia = {
 
 /** Respuesta de `GET /api/reportes/stock/existencias` — espejo de `Existencias`. */
 export type Existencias = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   filas: FilaExistencia[]
 }
 
@@ -2745,8 +2778,11 @@ export type CompraListada = {
   total: number
   saldoPendiente: number
   origen: OrigenCompra
-  /** Razón social que resuelve el servidor; `null` si el proveedor fue dado de baja. */
-  nombreProveedor?: string | null
+  /** Nombre de fantasía del proveedor (razón social si no tiene); `null` para un rol sin acceso al dato o si el proveedor fue dado de baja. */
+  nombreProveedor: string | null
+  fechaComprobante: string | null
+  /** `null` si la compra no está confirmada; una parcial cuenta como `Pendiente`. */
+  estadoPago: 'Pagada' | 'Pendiente' | null
 }
 
 /** Fila de `GET /api/compras/duplicados` (espejo de `CompraDuplicada`): una compra no anulada del mismo
@@ -2960,10 +2996,14 @@ export type ConteoDeLote = { idLote: number; contada: number }
 export type LineaDeTransferencia = { idArticulo: number; cantidad: number; idLote?: number | null }
 
 /** Cuerpo de `POST /api/stock/transferencias` (espejo de `SolicitudDeTransferencia`).
- * `observaciones` es obligatoria, mismo criterio que el ajuste manual. */
+ * `observaciones` es obligatoria, mismo criterio que el ajuste manual. El origen y el destino van de UNA de dos
+ * formas, nunca mezcladas: los dos puntos de venta (el POS empaquetado) o las dos sucursales (la web de back
+ * office); el servidor responde 400 `transferencia_origen_destino_invalido` en cualquier otra combinación. */
 export type SolicitudDeTransferencia = {
-  idPuntoVentaOrigen: number
-  idPuntoVentaDestino: number
+  idPuntoVentaOrigen?: number
+  idPuntoVentaDestino?: number
+  idSucursalOrigen?: number
+  idSucursalDestino?: number
   observaciones: string
   lineas: LineaDeTransferencia[]
 }
@@ -2978,6 +3018,8 @@ export type LineaTransferida = { idArticulo: number; idLote: number | null; cant
 export type ResultadoTransferencia = {
   idPuntoVentaOrigen: number
   idPuntoVentaDestino: number
+  idSucursalOrigen?: number
+  idSucursalDestino?: number
   lineas: LineaTransferida[]
 }
 
@@ -3040,9 +3082,10 @@ export type FilaDeVencimiento = {
  * `zonaHoraria` son la fecha y la zona efectivamente resueltas para clasificar cada fila — "hoy"
  * se calcula en la zona horaria del punto de venta, NUNCA en UTC. `diasDeAlerta` es el horizonte
  * efectivamente aplicado: el parámetro `dias` de la query si vino, si no el
- * `dias_alerta_vencimiento` resuelto (PV → empresa → default). */
+ * `dias_alerta_vencimiento` resuelto (sucursal → empresa → default). */
 export type Vencimientos = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   hoy: string
   diasDeAlerta: number
   zonaHoraria: string
@@ -3052,7 +3095,7 @@ export type Vencimientos = {
 /** Respuesta de `GET /api/reportes/stock/vencimientos/resumen` (espejo de
  * `ResumenDeVencimientos`) — el tile de Tablero. Mismos tres conteos que `Vencimientos.filas`
  * agrupados por `FilaDeVencimiento.estado` — nunca una query de agregación separada. */
-export type ResumenDeVencimientos = { idPuntoVenta: number; vencidos: number; porVencer: number; sinFecha: number }
+export type ResumenDeVencimientos = { idSucursal: number; nombreSucursal: string; vencidos: number; porVencer: number; sinFecha: number }
 
 // --- Reposición de stock (stage-13-stock-inteligente, Slices 4/5) ----------------------------
 // Espejo de `Ways.Application.Reportes.Contratos` — alerta y sugerencia de compra
@@ -3084,7 +3127,8 @@ export type FilaDeReposicion = {
  * que `Vencimientos.hoy`/`Vencimientos.zonaHoraria`); `diasDeRotacion` es el horizonte efectivo —
  * el parámetro `dias` de la query si vino, si no `dias_rotacion` (default 30). */
 export type Reposicion = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   hoy: string
   diasDeRotacion: number
   zonaHoraria: string
@@ -3097,7 +3141,7 @@ export type Reposicion = {
  * `sinProveedor` cuenta el grupo "Sin proveedor" (`idProveedor` nulo en `FilaDeReposicion`) — NUNCA
  * conflado con "sin sugerido" (`sugerido` nulo, `reposicion` sin configurar): orchestrator decision
  * 5 (tasks.md) corrigió este nombre sobre la `sinSugerencia` vieja de design.md. */
-export type ResumenDeReposicion = { idPuntoVenta: number; bajoMinimo: number; sinStock: number; sinProveedor: number }
+export type ResumenDeReposicion = { idSucursal: number; nombreSucursal: string; bajoMinimo: number; sinStock: number; sinProveedor: number }
 
 /** Fila de `GET /api/reportes/stock/rotacion` — espejo de `FilaDeRotacion`. Solo existe porque el
  * artículo tuvo AL MENOS UN movimiento calificado (venta o su anulación, nunca la anulación de
@@ -3115,7 +3159,8 @@ export type FilaDeRotacion = {
  * es el horizonte de cobertura efectivamente resuelto que multiplica `minimoSugerido` — mismo
  * criterio de echo obligatorio que `diasDeRotacion`. */
 export type Rotacion = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   hoy: string
   diasDeRotacion: number
   diasCoberturaObjetivo: number
@@ -3424,7 +3469,7 @@ export type PaginaDeAuditoria = { items: FilaDeAuditoria[]; total: number; pagin
 /** Subconjunto de los pares `(accion, entidad)` de `AccionAuditada` (`Ways.Domain.Auditoria`) que
  * ofrece el `<select>` de acción de `Auditoria.tsx`: las 15 de la primera pasada más las cinco de
  * pagos y compras de la etapa 6 (`compra.edicion`, `compra.redondeo`, `pago.aplicacion`,
- * `pago.desaplicacion`, `pago.redondeo`) y las dos de cobros (`cobro.aplicacion`, `cobro.desaplicacion`). El catálogo del back tiene más entradas que esta lista;
+ * `pago.desaplicacion`, `pago.redondeo`), la reasignación de un pago de sueldo (`pago.reasignacion`) y las dos de cobros (`cobro.aplicacion`, `cobro.desaplicacion`). El catálogo del back tiene más entradas que esta lista;
  * las que faltan se siguen leyendo con el código crudo. El conteo lo congela `Auditoria.test.tsx`:
  * sin una entrada, la pantalla renderizaba el código crudo y el filtro no la podía seleccionar.
  * Etiquetas en español; el VALOR que viaja al backend es siempre el `accion` crudo
@@ -3441,6 +3486,7 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'pago.aplicacion', etiqueta: 'Aplicación de pago a compras' },
   { valor: 'pago.desaplicacion', etiqueta: 'Desaplicación de pago de una compra' },
   { valor: 'pago.redondeo', etiqueta: 'Ajuste de redondeo de pago' },
+  { valor: 'pago.reasignacion', etiqueta: 'Reasignación de pago de sueldo' },
   { valor: 'cobro.aplicacion', etiqueta: 'Aplicación de cobro a ventas' },
   { valor: 'cobro.desaplicacion', etiqueta: 'Desaplicación de cobro de una venta' },
   { valor: 'stock.ajuste', etiqueta: 'Ajuste de stock' },
