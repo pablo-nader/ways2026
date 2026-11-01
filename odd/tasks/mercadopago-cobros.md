@@ -328,3 +328,14 @@ Done on `pnader/mercadopago-e3-t3b`, commit `feat(mercadopago): un cobro apartad
 - Verification: `dotnet build` 0 errors, `has-pending-model-changes` clean, Domain 2452, Application 1654, integration filter 352 (17 m 24 s), web `tsc -b`, oxlint (no new findings), vitest `src/pos src/paginas/Pos.test.tsx` green, `npm run build` OK.
 - Mutation evidence (one per run, each killed): no `FOR UPDATE` (lock test), pending not cancelled (3 tests), `aprobado` not moved to `sin_venta` (6 tests), list without empresa / without estado filter (list test), `sin_venta` paying a sale (integration and domain), `sin_venta` live (number-release test); POS: server call forced off (4 tests), offline guard removed, `reponerBloque` recheck removed, cycle without `sincronizarApartados`, 404 not definitive, MP not blocked while pending, shift close ignoring pending (Pos test). Survives by design: skipping the in-service `IdComprobanteVenta` check alone (the CHECK `ck_cobros_mercadopago_sin_venta` produces the same 409 code as a second layer).
 - Deviations / open: `CierreDeCaja.tsx` (the web route that re-reads the outbox) was NOT touched (outside the allowed surfaces): the gate lives in `irACerrarCaja`, the choke point every desktop close passes through, and a pending apartado can only be created by the POS screen; a 404 from the server on a retry (charge of another PV) is treated as definitive so a device never stays locked; the web screen for the list (E6) is not built; `Down` of the migration fails if `sin_venta` rows exist (like any enum narrowing).
+
+## Judgment-day E3-T3b verdict
+
+- 2026-11-01: **APPROVED** after one fix round. Both judges confirmed one WARNING: any 404 from `POST /apartar` was taken as
+  definitive, so a routing/old-server 404 (POS bundle ahead of the API) could mark a still-approved charge as synced and hide it
+  from the `sin_venta` list. Fixed in 47b4b217: the charge 404 carries `cobro_mercadopago_inexistente` and the POS accepts only
+  that code; also (both suggested) the migration Down converts `sin_venta` rows back to `aprobado` before restoring the old CHECK.
+  Mutation: accepting any 404 again fails both new non-definitive cases. Scoped re-judgment: both clean. RDD is off.
+- Open (one judge each, not fixed): `reponerBloque`'s recheck runs after the server already reserved the new block (narrow
+  window, server keeps an orphan block); the web `CierreDeCaja` route is not gated on pending apartados (the POS close is); the
+  `cobros-sin-venta` list has no paging; apartar holds the row lock across the Mercado Pago calls.
