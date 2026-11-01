@@ -5,6 +5,7 @@ import { PuntosVenta } from './PuntosVenta'
 import { ErrorApi } from '../api/cliente'
 import { ETIQUETA_SIN_DUENIO } from '../api/organizacion'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type { PuntoVentaListado, SucursalListado, UsuarioAutenticado } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
@@ -142,7 +143,7 @@ function montar(items: PuntoVentaListado[] = [pvSurCentro, pvSurAnexo, pvEste]) 
     return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
   })
 
-  return render(<PuntosVenta />)
+  return render(<><PuntosVenta /><Toaster /></>)
 }
 
 /** Columnas (root): ID · Tenant · Empresa · Nombre · Domicilio · Modo · Acciones. */
@@ -325,7 +326,7 @@ describe('PuntosVenta (stage-20, slice 2 — nombres de dueño y dos filtros)', 
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.selectOptions(screen.getByLabelText('Tenant'), '2')
@@ -375,8 +376,9 @@ describe('PuntosVenta (stage-20, slice 5 — baja lógica)', () => {
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/puntos-venta/100'))
     await waitFor(() =>
-      expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".')).toBeInTheDocument(),
+      expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".').closest('[role="status"]')).not.toBeNull(),
     )
+    expect(document.body.querySelector('.alert-success')).toBeNull()
   })
 
   it('cancelar cierra la puerta y no llama nunca a la API', async () => {
@@ -414,7 +416,7 @@ describe('PuntosVenta (stage-20, slice 5 — baja lógica)', () => {
         }),
     )
 
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(botonDeBajaDe('PV Centro'))
@@ -435,7 +437,7 @@ describe('PuntosVenta (stage-20, slice 5 — baja lógica)', () => {
     })
 
     await waitFor(() =>
-      expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".')).toBeInTheDocument(),
+      expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".').closest('[role="status"]')).not.toBeNull(),
     )
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
 
@@ -477,7 +479,7 @@ describe('PuntosVenta (stage-20, slice 5 — baja lógica)', () => {
       return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
 
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(botonDeBajaDe('PV Centro'))
@@ -485,11 +487,13 @@ describe('PuntosVenta (stage-20, slice 5 — baja lógica)', () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText(
-          'Se dio de baja el punto de venta "PV Centro". Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-        ),
-      ).toBeInTheDocument(),
+        screen
+          .getByText('Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+          .closest('[role="status"]'),
+      ).not.toBeNull(),
     )
+    expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     // La sesión se recarga recién DESPUÉS de un refresco exitoso: con el refresco caído, nada.
     expect(estadoDePuntoVenta.recargar).not.toHaveBeenCalled()
   })
@@ -640,13 +644,13 @@ describe('PuntosVenta (slice 5, ronda 1 — la puerta es modal y el token se acu
     await act(async () => {
       fireEvent.submit(form)
     })
-    await waitFor(() => expect(screen.getByText('Se actualizó "PV Centro".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Se actualizó "PV Centro".').closest('[role="status"]')).not.toBeNull())
     expect(apiPutMock).toHaveBeenCalledTimes(1)
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await waitFor(() =>
-      expect(screen.getByText('Se dio de baja el punto de venta "PV Este".')).toBeInTheDocument(),
+      expect(screen.getByText('Se dio de baja el punto de venta "PV Este".').closest('[role="status"]')).not.toBeNull(),
     )
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
@@ -703,7 +707,7 @@ describe('PuntosVenta — propagación al punto de venta de sesión', () => {
       })
     })
 
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Editar' }))
@@ -731,7 +735,7 @@ describe('PuntosVenta — propagación al punto de venta de sesión', () => {
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await waitFor(() =>
-      expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".')).toBeInTheDocument(),
+      expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".').closest('[role="status"]')).not.toBeNull(),
     )
     await waitFor(() => expect(estadoDePuntoVenta.recargar).toHaveBeenCalledTimes(1))
   })
@@ -800,7 +804,7 @@ describe('PuntosVenta — flip de modo', () => {
       expect(apiPostMock).toHaveBeenCalledWith('/puntos-venta/100/modo', { modo: 'Escritorio' }),
     )
     await waitFor(() =>
-      expect(screen.getByText('Se cambió el modo de "PV Centro" a Escritorio.')).toBeInTheDocument(),
+      expect(screen.getByText('Se cambió el modo de "PV Centro" a Escritorio.').closest('[role="status"]')).not.toBeNull(),
     )
     expect(screen.queryByLabelText('Modo')).not.toBeInTheDocument()
   })
@@ -883,7 +887,7 @@ describe('PuntosVenta — mover la caja de sucursal', () => {
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    return render(<PuntosVenta />)
+    return render(<><PuntosVenta /><Toaster /></>)
   }
 
   /** Abre el modal y espera al DATO (las sucursales), no al elemento: el select existe antes de que lleguen. */
@@ -970,7 +974,7 @@ describe('PuntosVenta — mover la caja de sucursal', () => {
 
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(botonDeSucursal())
@@ -1026,7 +1030,7 @@ describe('PuntosVenta — alta', () => {
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    return render(<PuntosVenta />)
+    return render(<><PuntosVenta /><Toaster /></>)
   }
 
   /** Abre el formulario y espera al DATO (las empresas), no al elemento: el select se renderiza
@@ -1135,7 +1139,7 @@ describe('PuntosVenta — alta', () => {
 
       return Promise.resolve(listados === 1 ? [pvSurCentro] : [pvSurCentro, creado])
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await abrirAlta(usuario)
 
     await usuario.selectOptions(screen.getByLabelText('Empresa destino'), '30')
@@ -1159,7 +1163,7 @@ describe('PuntosVenta — alta', () => {
         web: null,
       }),
     )
-    await waitFor(() => expect(screen.getByText('Se creó el punto de venta "PV Norte".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Se creó el punto de venta "PV Norte".').closest('[role="status"]')).not.toBeNull())
     await waitFor(() => expect(screen.getByText('PV Norte')).toBeInTheDocument())
     expect(screen.queryByLabelText('Empresa destino')).not.toBeInTheDocument()
     await waitFor(() => expect(estadoDePuntoVenta.recargar).toHaveBeenCalledTimes(1))
@@ -1177,7 +1181,7 @@ describe('PuntosVenta — alta', () => {
 
       return Promise.resolve(listados === 1 ? [pvSurCentro, pvEste] : [pvSurCentro, pvEste, creado])
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Este')).toBeInTheDocument())
 
     await usuario.selectOptions(screen.getByLabelText('Tenant'), '3')
@@ -1206,7 +1210,7 @@ describe('PuntosVenta — alta', () => {
 
       return Promise.resolve(listados === 1 ? [pvSurCentro, pvEste] : [pvSurCentro, pvEste, creado])
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Este')).toBeInTheDocument())
 
     await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'Centro')
@@ -1295,16 +1299,18 @@ describe('PuntosVenta — alta', () => {
 
       return listados === 1 ? Promise.resolve([pvSurCentro]) : Promise.reject(new Error('sin red'))
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await abrirAlta(usuario)
     await completarAlta(usuario)
     await usuario.click(screen.getByRole('button', { name: 'Crear' }))
 
     expect(
-      await screen.findByText(
-        'Se creó el punto de venta "PV Norte". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+      (await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')).closest(
+        '[role="status"]',
       ),
-    ).toBeInTheDocument()
+    ).not.toBeNull()
+    expect(screen.getByText('Se creó el punto de venta "PV Norte".').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     expect(screen.queryByText('No se pudo crear el punto de venta.')).not.toBeInTheDocument()
   })
 
@@ -1316,7 +1322,7 @@ describe('PuntosVenta — alta', () => {
 
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
@@ -1338,7 +1344,7 @@ describe('PuntosVenta — alta', () => {
         pendientes.push(resolver)
       })
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
@@ -1413,7 +1419,7 @@ describe('PuntosVenta — lectura en vuelo al crear', () => {
 
       return pedidos.listados === 1 && inicial ? inicial : Promise.resolve([pvSurCentro])
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
 
     return pedidos
   }
@@ -1465,7 +1471,7 @@ describe('PuntosVenta — lectura en vuelo al crear', () => {
 
       return Promise.resolve([pvSurCentro])
     })
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
 
     return pedidos
   }
@@ -1584,7 +1590,7 @@ describe('PuntosVenta — envío por defecto', () => {
   it('el checkbox parte del valor del listado y el PUT lleva lo que se tildó', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([pvFixture({ envioPorDefecto: false })])
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Editar' }))
@@ -1604,7 +1610,7 @@ describe('PuntosVenta — envío por defecto', () => {
   it('un punto de venta con el envío activo abre el formulario tildado', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([pvFixture({ envioPorDefecto: true })])
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Editar' }))
@@ -1641,7 +1647,7 @@ describe('PuntosVenta — formularios en modal', () => {
   })
 
   async function montarYEsperar() {
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await screen.findByText('PV Centro')
   }
 
@@ -1677,7 +1683,7 @@ describe('PuntosVenta — formularios en modal', () => {
       await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-      await screen.findByText('Se creó el punto de venta "PV Norte".')
+      expect((await screen.findByText('Se creó el punto de venta "PV Norte".')).closest('[role="status"]')).not.toBeNull()
       expect(apiPostMock).toHaveBeenCalledTimes(1)
       expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toHaveFocus()
     })
@@ -1775,7 +1781,7 @@ describe('PuntosVenta — formularios en modal', () => {
       expect(apiPutMock).toHaveBeenCalledTimes(1)
       expect(apiPutMock.mock.calls[0][0]).toBe('/puntos-venta/100')
       expect(apiPutMock.mock.calls[0][1]).toMatchObject({ nombre: 'PV Centro 2' })
-      expect(await screen.findByText('Se actualizó "PV Centro 2".')).toBeInTheDocument()
+      expect((await screen.findByText('Se actualizó "PV Centro 2".')).closest('[role="status"]')).not.toBeNull()
     })
 
     it('un rechazo del servidor deja el modal abierto con el error adentro y lo escrito', async () => {
@@ -1843,7 +1849,7 @@ describe('PuntosVenta — formularios en modal', () => {
       await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-      await screen.findByText('Se actualizó "PV Centro".')
+      expect((await screen.findByText('Se actualizó "PV Centro".')).closest('[role="status"]')).not.toBeNull()
       expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toHaveFocus()
     })
   })
@@ -1882,7 +1888,7 @@ describe('PuntosVenta — formularios en modal', () => {
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       expect(apiPostMock).toHaveBeenCalledWith('/puntos-venta/100/modo', { modo: 'Escritorio' })
-      expect(await screen.findByText('Se cambió el modo de "PV Centro" a Escritorio.')).toBeInTheDocument()
+      expect((await screen.findByText('Se cambió el modo de "PV Centro" a Escritorio.')).closest('[role="status"]')).not.toBeNull()
     })
 
     it('un rechazo del servidor deja el modal abierto con el error adentro y lo elegido', async () => {
@@ -1954,7 +1960,7 @@ describe('PuntosVenta — formularios en modal', () => {
       await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-      await screen.findByText('Se cambió el modo de "PV Centro" a Escritorio.')
+      expect((await screen.findByText('Se cambió el modo de "PV Centro" a Escritorio.')).closest('[role="status"]')).not.toBeNull()
       expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toHaveFocus()
     })
   })
@@ -2171,7 +2177,7 @@ describe('PuntosVenta — filtros por columna y orden', () => {
       })
     })
     apiPutMock.mockResolvedValue(pvNorte)
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await esperarFilas()
 
     const filtro = screen.getByLabelText('Filtrar por nombre')
@@ -2179,7 +2185,7 @@ describe('PuntosVenta — filtros por columna y orden', () => {
     await usuario.click(within(screen.getByRole('row', { name: /Zona Norte/ })).getByRole('button', { name: 'Editar' }))
     await usuario.click(screen.getByRole('button', { name: /Guardar/ }))
 
-    await waitFor(() => expect(screen.getByText('Se actualizó "Zona Norte".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Se actualizó "Zona Norte".').closest('[role="status"]')).not.toBeNull())
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
     expect(filtro.isConnected).toBe(true)
@@ -2207,7 +2213,7 @@ describe('PuntosVenta — filtros por columna y orden', () => {
           resolverPut = resolver
         }),
     )
-    render(<PuntosVenta />)
+    render(<><PuntosVenta /><Toaster /></>)
     await esperarFilas()
 
     await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zon')

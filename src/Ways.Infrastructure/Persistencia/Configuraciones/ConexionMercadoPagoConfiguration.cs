@@ -77,6 +77,7 @@ public class ConexionMercadoPagoConfiguration : IEntityTypeConfiguration<Conexio
         builder.Property(c => c.IdUsuarioConecto).HasColumnName("id_usuario_conecto").IsRequired();
         builder.Property(c => c.FechaConexion).HasColumnName("fecha_conexion").IsRequired();
         builder.Property(c => c.FechaDesconexion).HasColumnName("fecha_desconexion");
+        builder.Property(c => c.IdUsuarioDesconecto).HasColumnName("id_usuario_desconecto");
         builder.Property(c => c.FechaUltimaRenovacion).HasColumnName("fecha_ultima_renovacion");
         builder.Property(c => c.FechaUltimoIntentoRenovacion).HasColumnName("fecha_ultimo_intento_renovacion");
         builder.Property(c => c.FechaRequiereReconexion).HasColumnName("fecha_requiere_reconexion");
@@ -92,6 +93,7 @@ public class ConexionMercadoPagoConfiguration : IEntityTypeConfiguration<Conexio
         builder.HasIndex(c => new { c.IdCuentaTesoreria, c.IdEmpresa, c.IdTenant })
             .HasDatabaseName("ix_conexiones_mercadopago_cuenta");
         builder.HasIndex(c => c.IdUsuarioConecto).HasDatabaseName("ix_conexiones_mercadopago_usuario_conecto");
+        builder.HasIndex(c => c.IdUsuarioDesconecto).HasDatabaseName("ix_conexiones_mercadopago_usuario_desconecto");
 
         // Una conexión activa por empresa.
         builder.HasIndex(c => new { c.IdTenant, c.IdEmpresa })
@@ -131,6 +133,12 @@ public class ConexionMercadoPagoConfiguration : IEntityTypeConfiguration<Conexio
             .WithMany()
             .HasForeignKey(c => c.IdUsuarioConecto)
             .HasConstraintName("fk_conexiones_mercadopago_usuario_conecto")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Usuario>()
+            .WithMany()
+            .HasForeignKey(c => c.IdUsuarioDesconecto)
+            .HasConstraintName("fk_conexiones_mercadopago_usuario_desconecto")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

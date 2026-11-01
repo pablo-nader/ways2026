@@ -4,10 +4,11 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { Proveedores } from './Proveedores'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type { PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
 
 function renderProveedores() {
-  return render(<Proveedores />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<><Proveedores /><Toaster /></>, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
 const apiGetMock = vi.fn()
@@ -183,7 +184,8 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
     )
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
-    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(apiDeleteMock).toHaveBeenCalledWith('/proveedores/1')
   })
 
@@ -266,7 +268,7 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
       await Promise.resolve()
     })
 
-    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Proveedor "Proveedor Uno SA" dado de baja.')
     // La tabla no se desmonta durante el refresco (sus filtros conservan el foco): las filas de antes quedan atenuadas
     // y sus acciones siguen inertes hasta que el refresco aterrice.
     expect(screen.getAllByRole('rowgroup')[1]).toHaveStyle({ opacity: '0.6' })
@@ -306,9 +308,10 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
     await usuario.click(bajaDe('Proveedor Uno SA'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText(
-      'Proveedor "Proveedor Uno SA" dado de baja. Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-    )
+    const aviso = await screen.findByText('Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(aviso.closest('[role="status"]')).not.toBeNull()
+    expect(screen.getByText('Proveedor "Proveedor Uno SA" dado de baja.').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 
   /** Cláusula bajo prueba: la elección de copia por `codigo` vía `copiaDeFalloDeBaja`, con el
@@ -362,7 +365,7 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
     await usuario.click(bajaDe('Proveedor Uno SA'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Proveedor "Proveedor Uno SA" dado de baja.')
     expect(screen.queryByRole('dialog', { name: 'Editar proveedor' })).not.toBeInTheDocument()
   })
 
@@ -380,7 +383,7 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
     await usuario.click(bajaDe('Proveedor Uno SA'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Proveedor "Proveedor Uno SA" dado de baja.')
     expect(screen.queryByText('Saldo de Proveedor Uno SA')).not.toBeInTheDocument()
   })
 })
@@ -454,7 +457,7 @@ describe('Proveedores — alta y edición en una modal', () => {
     expect(apiPutMock).not.toHaveBeenCalled()
   })
 
-  it('un guardado exitoso cierra la modal, deja el aviso en la pantalla y recarga el listado', async () => {
+  it('un guardado exitoso cierra la modal, avisa con un toast y recarga el listado', async () => {
     let cargas = 0
     mockearRutasBase((ruta) => {
       if (ruta === '/proveedores') {
@@ -475,7 +478,7 @@ describe('Proveedores — alta y edición en una modal', () => {
     await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Proveedor "Nuevo SA" creado.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Proveedor "Nuevo SA" creado.')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('cell', { name: 'Nuevo SA' })).toBeInTheDocument()
@@ -530,7 +533,7 @@ describe('Proveedores — alta y edición en una modal', () => {
     expect(screen.queryByText('Ya existe un proveedor con ese CUIT.')).not.toBeInTheDocument()
   })
 
-  it('un guardado ya hecho cuyo refresco falla cierra la modal y avisa en la pantalla', async () => {
+  it('un guardado ya hecho cuyo refresco falla cierra la modal y avisa con un toast', async () => {
     let cargas = 0
     mockearRutasBase((ruta) => {
       if (ruta === '/proveedores') {
@@ -551,7 +554,10 @@ describe('Proveedores — alta y edición en una modal', () => {
     await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Proveedor "Nuevo SA" creado. Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    const aviso = await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(aviso.closest('[role="status"]')).not.toBeNull()
+    expect(screen.getByText('Proveedor "Nuevo SA" creado.').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -692,7 +698,7 @@ describe('Proveedores — error y foco de la modal', () => {
     await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Proveedor "Nuevo SA" creado.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Proveedor "Nuevo SA" creado.')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(document.activeElement).not.toBe(document.body)

@@ -41,6 +41,7 @@ import {
   type FormularioDePuntoVenta,
   type FormularioDeSucursalDePuntoVenta,
 } from './organizacion/puntoVentaFormulario'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -112,7 +113,6 @@ export function PuntosVenta() {
   /** Solo la primera lectura reemplaza la tabla por "Cargando…": los refrescos la dejan montada para que los filtros conserven lo escrito y el foco. */
   const [cargada, setCargada] = useState(false)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<FormularioDePuntoVenta | null>(null)
   /** Formulario del flip de modo — separado del de edición descriptiva: precondición y rastro de
    * auditoría propios (ver `organizacion.ts`, `actualizarModoPuntoVenta`). */
@@ -204,11 +204,11 @@ export function PuntosVenta() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
 
       return
     }
@@ -228,7 +228,6 @@ export function PuntosVenta() {
     setOcupado(datos.id)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       // La respuesta de la escritura no se compara con la generación: el modal queda inerte hasta
       // que el refresco aterriza y nada puede acuñar otro token ni reabrir el formulario mientras tanto.
@@ -268,7 +267,6 @@ export function PuntosVenta() {
     setErrorEmpresas('')
     setErrorFormulario('')
     setError('')
-    setAviso('')
     void cargarSucursales()
     try {
       const filas = await clienteDeOrganizacion.listarEmpresas()
@@ -321,7 +319,6 @@ export function PuntosVenta() {
     setOcupado(0)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       // Sin comparar con la generación (ver `guardar`): el modal está inerte durante toda la escritura.
       try {
@@ -367,7 +364,6 @@ export function PuntosVenta() {
     setOcupado(datos.id)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       // Sin comparar con la generación (ver `guardar`): el modal está inerte durante toda la escritura.
       try {
@@ -397,7 +393,6 @@ export function PuntosVenta() {
     setOcupado(datos.id)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       // Sin comparar con la generación (ver `guardar`): el modal está inerte durante toda la escritura.
       try {
@@ -446,11 +441,10 @@ export function PuntosVenta() {
     setDisparadorDeLaPuerta(disparador)
     setBaja(puntoVenta)
     setError('')
-    setAviso('')
   }
 
   /** Cancelar no supersede nada: solo cierra la puerta. Por eso no acuña generación —hacerlo
-   * descartaba una lectura en vuelo y clavaba la pantalla en "Cargando…"— y limpia los dos avisos,
+   * descartaba una lectura en vuelo y clavaba la pantalla en "Cargando…"— y limpia el error,
    * en simetría con la apertura. */
   function cancelarBaja() {
     if (ocupadoRef.current) return
@@ -458,7 +452,6 @@ export function PuntosVenta() {
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -471,7 +464,6 @@ export function PuntosVenta() {
     ocupadoRef.current = true
     setOcupado(fila.id)
     setError('')
-    setAviso('')
     try {
       try {
         await clienteDeOrganizacion.eliminarPuntoVenta(fila.id)
@@ -540,7 +532,6 @@ export function PuntosVenta() {
     <div className="container-fluid py-4">
       <Box titulo="Puntos de venta" variante="inverse">
         {error && !baja && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja

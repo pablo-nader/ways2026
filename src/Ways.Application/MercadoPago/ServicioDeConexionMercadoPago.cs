@@ -244,8 +244,9 @@ public class ServicioDeConexionMercadoPago(
     }
 
     /// <summary>
-    /// Un solo <c>UPDATE</c> guardado por estado: pasa a desconectada y borra los blobs en el mismo statement, así que no
-    /// hay lectura previa que pueda quedar vieja. No se llama a Mercado Pago para revocar el token: la API de OAuth no
+    /// Un solo <c>UPDATE</c> guardado por estado: la conexión activa o la que quedó en <c>requiere_reconexion</c> pasa a desconectada
+    /// y borra los blobs en el mismo statement, así que no hay lectura previa que pueda quedar vieja. Una ya desconectada no se toca:
+    /// responde 404 y conserva quién y cuándo la desconectó. No se llama a Mercado Pago para revocar el token: la API de OAuth no
     /// documenta una revocación, la conexión se invalida del lado de Ways.
     /// </summary>
     public async Task DesconectarAsync(int idEmpresa, CancellationToken ct = default)
@@ -253,12 +254,15 @@ public class ServicioDeConexionMercadoPago(
         await ExigirEmpresaAsync(idEmpresa, ct);
 
         var ahora = reloj.Ahora;
+        var idUsuario = contexto.UsuarioId;
         var filas = await db.ConexionesMercadoPago
-            .Where(c => c.IdEmpresa == idEmpresa && c.Estado == EstadoConexionMercadoPago.Activa)
+            .Where(c => c.IdEmpresa == idEmpresa
+                && (c.Estado == EstadoConexionMercadoPago.Activa || c.Estado == EstadoConexionMercadoPago.RequiereReconexion))
             .ExecuteUpdateAsync(
                 s => s
                     .SetProperty(c => c.Estado, EstadoConexionMercadoPago.Desconectada)
                     .SetProperty(c => c.FechaDesconexion, ahora)
+                    .SetProperty(c => c.IdUsuarioDesconecto, (int?)idUsuario)
                     .SetProperty(c => c.UpdatedAt, ahora)
                     .SetProperty(c => c.AccessTokenCifrado, (byte[]?)null)
                     .SetProperty(c => c.AccessTokenNonce, (byte[]?)null)
@@ -270,7 +274,7 @@ public class ServicioDeConexionMercadoPago(
 
         if (filas == 0)
         {
-            throw ErrorDominio.NoEncontrado($"La empresa {idEmpresa} no tiene una conexión activa con Mercado Pago.");
+            throw ErrorDominio.NoEncontrado($"La empresa {idEmpresa} no tiene una conexión activa ni pendiente de reconexión con Mercado Pago.");
         }
     }
 

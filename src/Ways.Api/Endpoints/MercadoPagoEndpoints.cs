@@ -51,7 +51,7 @@ public static class MercadoPagoEndpoints
             await servicio.DesconectarAsync(idEmpresa, ct);
             return Results.NoContent();
         })
-        .WithSummary("Desconecta la empresa de Mercado Pago y borra sus tokens cifrados.");
+        .WithSummary("Desconecta la empresa de Mercado Pago (conexión activa o pendiente de reconexión), borra sus tokens cifrados y registra quién lo hizo. 404 si no tiene ninguna.");
 
         admin.MapPost("/completar", async (
             ServicioDeConexionMercadoPago servicio,
@@ -65,9 +65,9 @@ public static class MercadoPagoEndpoints
             {
                 resultado = await servicio.CompletarEnSesionAsync(idEmpresa, solicitud, ct);
             }
-            catch (DbUpdateException perdedora) when (ResultadoDeCarrera(perdedora, log) is not null)
+            catch (DbUpdateException perdedora) when (ResultadoDeCarrera(perdedora, log) is { } carrera)
             {
-                resultado = ResultadoDeCarrera(perdedora, log)!.Value;
+                resultado = carrera;
             }
             catch (Exception e) when (e is not (OperationCanceledException or ErrorDominio))
             {
@@ -133,8 +133,11 @@ public static class MercadoPagoEndpoints
             }
             : null;
 
-    /// <summary>Todo viaja en el fragmento, no en la consulta: el navegador no lo manda al servidor ni en el Referer, así que el
-    /// código no queda en logs. Con <paramref name="codigo"/> nulo es la vuelta de un usuario que denegó el acceso.</summary>
+    /// <summary>La URL de destino lleva el código y el state en el fragmento, no en la consulta: el navegador no manda el fragmento
+    /// al servidor ni en el Referer, así que no quedan en los logs del destino. No es una garantía sobre todo el recorrido: la URL
+    /// del propio callback (<see cref="RutaDelCallback"/>) sí los trae en la consulta y puede quedar en los logs de Ways y de sus
+    /// proxies, y el encabezado <c>Location</c> de esta redirección los lleva en el fragmento. Con <paramref name="codigo"/> nulo es
+    /// la vuelta de un usuario que denegó el acceso.</summary>
     internal static string UrlDeRetorno(EstadoOAuth estado, string? codigo, string? state) =>
         codigo is null
             ? $"{estado.Origen}{RutaDeRetorno}#mercadopago=cancelado&empresa={estado.IdEmpresa}"

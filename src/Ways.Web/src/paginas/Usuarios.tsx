@@ -38,6 +38,7 @@ import { BotonIcono } from '../componentes/BotonIcono'
 import { fechaHoraATexto } from '../formato/fechas'
 import { ModalDeUsuario } from './usuarios/ModalDeUsuario'
 import { FORMULARIO_VACIO, type Formulario } from './usuarios/usuarioFormulario'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -70,10 +71,6 @@ export function Usuarios() {
   /** Hasta la primera respuesta la pantalla es un "Cargando…"; después la tabla y sus filtros no se desmontan. */
   const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
-  /** Slot PROPIO del fallo de la segunda escritura del alta/edición (el POST de contraseña). No
-   * puede viajar en `aviso` —el PUT sí commiteó, pero esto es un fallo y va en rojo— ni en `error`
-   * —el refresco post-escritura lo limpia al terminar bien. */
-  const [errorPassword, setErrorPassword] = useState('')
   /** Slot PROPIO del rechazo LOCAL del alta sin universo de tenants. En el slot compartido `error`
    * lo borraba el `setError('')` de cualquier carga posterior (misma clase que R2-1): es un aviso
    * del FORMULARIO, no de la tabla, y comparte dueño con él — un slot, un dueño. */
@@ -81,7 +78,6 @@ export function Usuarios() {
   /** Rechazo del servidor al guardar: se rinde DENTRO del modal, porque un alert de la pantalla
    * quedaría detrás del fondo. Slot propio, igual que `errorAlta`. */
   const [errorFormulario, setErrorFormulario] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState(false)
   /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
@@ -160,18 +156,14 @@ export function Usuarios() {
 
   function buscar(termino: string) {
     if (ocupadoRef.current) return
-    // `errorPassword` reporta el fallo parcial de una escritura YA TERMINADA: una búsqueda nueva
-    // es una tabla nueva y arrastrarlo era ruido de la pantalla anterior. `errorAlta` NO se apaga
-    // acá a propósito — reporta una precondición VIVA del formulario abierto (falta el universo de
-    // tenants), que la búsqueda no cambia; apagarlo escondería algo que sigue siendo cierto.
-    setErrorPassword('')
+    // `errorAlta` NO se apaga acá a propósito — reporta una precondición VIVA del formulario
+    // abierto (falta el universo de tenants), que la búsqueda no cambia; apagarlo escondería algo
+    // que sigue siendo cierto.
     padron.cambiarFiltros({ busqueda: termino }, true)
   }
 
   // Se vuelve a pedir el listado cada vez que cambia la consulta aplicada (filtros, orden, página o tamaño).
-  // `errorPassword` es de una escritura ya terminada: otra consulta (filtro, orden, página o tamaño) es una tabla nueva.
   useEffect(() => {
-    setErrorPassword('')
     void cargar(++generacion.current, padron.consulta)
   }, [cargar, padron.consulta])
 
@@ -244,10 +236,8 @@ export function Usuarios() {
     ocupadoRef.current = true
     setOcupado(true)
     setError('')
-    setErrorPassword('')
     setErrorAlta('')
     setErrorFormulario('')
-    setAviso('')
 
     try {
       let mensajeOk: string
@@ -287,15 +277,15 @@ export function Usuarios() {
       // El cambio de contraseña es una SEGUNDA escritura y lleva su propio try: el PUT de arriba ya
       // commiteó, así que un fallo acá no puede reportarse como "no se pudo guardar"
       // (`react-async-state` regla 6). Las dos mitades se rinden POR SEPARADO y a la vez: la
-      // confirmación del PUT commiteado en el aviso verde, el fallo de la contraseña en rojo. Meter
-      // el fallo en el aviso verde lo anunciaba como parte de un éxito.
+      // confirmación del PUT commiteado como toast de éxito, el fallo de la contraseña como toast de
+      // error. Meter el fallo en el mensaje de éxito lo anunciaba como parte de un éxito.
       if (datos.id !== null && datos.password) {
         try {
           await api.post(`/usuarios/${datos.id}/password`, { passwordNueva: datos.password })
         } catch (e) {
           if (generacion.current !== token) return
           const detalle = e instanceof ErrorApi ? e.message : 'Reintentá el cambio de contraseña.'
-          setErrorPassword(`Se guardó el perfil, pero no se pudo cambiar la contraseña. ${detalle}`)
+          toast.error(`Se guardó el perfil, pero no se pudo cambiar la contraseña. ${detalle}`)
         }
       }
 
@@ -318,11 +308,11 @@ export function Usuarios() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, padron.consultaRef.current, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -338,16 +328,14 @@ export function Usuarios() {
     ocupadoRef.current = true
     setOcupado(true)
     setError('')
-    setErrorPassword('')
     setErrorAlta('')
-    setAviso('')
     try {
       try {
         await construirPromesa()
       } catch (e) {
         if (generacion.current === token) {
-          setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
-          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current, false, true)
+          toast.error(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current)
         }
 
         return
@@ -374,14 +362,12 @@ export function Usuarios() {
     setDisparadorDeLaPuerta(disparador)
     setBaja(u)
     setError('')
-    setErrorPassword('')
-    setAviso('')
   }
 
   /** Cancelar no supersede nada: solo cierra la puerta. Acá el `++generacion.current` era además el
    * único camino ALCANZABLE que clavaba la pantalla: con una búsqueda en vuelo, descartarla dejaba
    * sin ejecutar el `finally` gateado de `cargar` y "Cargando…" quedaba para siempre. Limpia los
-   * avisos en simetría con la apertura, para no dejar un 409 en rojo sin puerta al lado. `errorAlta`
+   * error en simetría con la apertura, para no dejar un 409 en rojo sin puerta al lado. `errorAlta`
    * queda fuera de esa simetría por la misma razón que en `pedirBaja`: es del formulario, no de la
    * puerta, y sigue siendo cierto después de cancelarla. */
   function cancelarBaja() {
@@ -390,8 +376,6 @@ export function Usuarios() {
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setErrorPassword('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -406,9 +390,7 @@ export function Usuarios() {
     ocupadoRef.current = true
     setOcupado(true)
     setError('')
-    setErrorPassword('')
     setErrorAlta('')
-    setAviso('')
     try {
       try {
         await api.delete(`/usuarios/${fila.id}`)
@@ -522,9 +504,7 @@ export function Usuarios() {
         className="text-nowrap"
         onClick={() => {
           setFormulario({ ...FORMULARIO_VACIO })
-          setAviso('')
           setError('')
-          setErrorPassword('')
           setErrorAlta('')
           setErrorFormulario('')
           // Reintento del universo de tenants: abrir el alta es el único momento en que hace falta.
@@ -549,8 +529,6 @@ export function Usuarios() {
         {esPlataforma && tenantsDePlataformaFallo && (
           <div className="alert alert-danger">{ERROR_TENANTS}</div>
         )}
-        {errorPassword && <div className="alert alert-danger">{errorPassword}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -580,7 +558,6 @@ export function Usuarios() {
             onGuardar={guardar}
             onCancelar={() => {
               setFormulario(null)
-              setErrorPassword('')
               setErrorAlta('')
               setErrorFormulario('')
             }}
@@ -669,9 +646,7 @@ export function Usuarios() {
                                 password: '',
                                 idTenant: u.idTenant,
                               })
-                              setAviso('')
                               setError('')
-                              setErrorPassword('')
                               setErrorAlta('')
                               setErrorFormulario('')
                             }}

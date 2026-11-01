@@ -144,6 +144,29 @@ public class ClienteOAuthMercadoPagoTests
         Assert.Equal("mercadopago_intercambio_fallido", error.Codigo);
     }
 
+    [Theory]
+    [InlineData("text/html", "<html>Bad Gateway</html>")]
+    [InlineData("application/json; charset=charset-inexistente", "no es json")]
+    [InlineData("application/json; charset=charset-inexistente", "")]
+    public async Task UnaRespuestaExitosaQueNoSePuedeLeerComoJsonEsIntercambioFallidoYNoUnaExcepcionSinTipar(string tipo, string cuerpo)
+    {
+        var (cliente, _, logs) = Crear((_, _) =>
+        {
+            var contenido = new ByteArrayContent(Encoding.UTF8.GetBytes(cuerpo));
+            contenido.Headers.TryAddWithoutValidation("Content-Type", tipo);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = contenido };
+        });
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => cliente.CanjearCodigoAsync("TG-codigo", "el-verificador", CancellationToken.None));
+        var errorDeRenovacion = await Assert.ThrowsAsync<ErrorDominio>(
+            () => cliente.RenovarAsync("TG-renovacion", CancellationToken.None));
+
+        Assert.Equal("mercadopago_intercambio_fallido", error.Codigo);
+        Assert.Equal("mercadopago_intercambio_fallido", errorDeRenovacion.Codigo);
+        Assert.All(logs.Mensajes, m => Assert.DoesNotContain("APP_USR-acceso", m));
+    }
+
     [Fact]
     public async Task UnaFallaDeRedSeTrataComoIntercambioFallido()
     {

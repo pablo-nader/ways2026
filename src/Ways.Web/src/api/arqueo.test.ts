@@ -36,8 +36,8 @@ describe('conteoValido', () => {
 
 describe('conteosCompletos', () => {
   const medios: LineaDeResumen[] = [
-    { idMedioPago: 1, importeEsperado: 640 },
-    { idMedioPago: 2, importeEsperado: 300 },
+    { idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' },
+    { idMedioPago: 2, importeEsperado: 300, nombre: 'Medio 2' },
   ]
 
   it('true sin ningún medio arqueable (turno sin actividad: legítimo, el servidor acepta conteos: []; "todavía no cargó el resumen" lo distingue el caller con resumen !== null, no esta función)', () => {
@@ -59,8 +59,8 @@ describe('conteosCompletos', () => {
 
 describe('aSolicitudDeCierre', () => {
   const medios: LineaDeResumen[] = [
-    { idMedioPago: 1, importeEsperado: 640 },
-    { idMedioPago: 2, importeEsperado: 300 },
+    { idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' },
+    { idMedioPago: 2, importeEsperado: 300, nombre: 'Medio 2' },
   ]
 
   it('arma exactamente un conteo por medio arqueable, en el mismo orden', () => {

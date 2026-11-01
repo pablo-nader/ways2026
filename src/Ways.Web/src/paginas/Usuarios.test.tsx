@@ -5,6 +5,7 @@ import { Usuarios } from './Usuarios'
 import { ErrorApi } from '../api/cliente'
 import { ETIQUETA_OPCION_PLATAFORMA, ETIQUETA_PLATAFORMA, ETIQUETA_SIN_DUENIO } from '../api/organizacion'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type { PaginaDe, RolListado, TenantListado, UsuarioAutenticado, UsuarioListado } from '../api/tipos'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.12 y 2.13).
@@ -149,7 +150,7 @@ function montar(
     return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
   })
 
-  return render(<Usuarios />)
+  return render(<><Usuarios /><Toaster /></>)
 }
 
 /** Columnas: ID · Usuario · Mail · Tenant · Rol · Estado · Última conexión · Acciones. */
@@ -357,7 +358,7 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'sur')
@@ -561,7 +562,7 @@ describe('Usuarios (stage-20, tarea 2.17 — selector de tenant en el alta)', ()
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
     await abrirAlta(usuario)
 
@@ -667,7 +668,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
     expect(intentos).toBe(1)
 
@@ -703,7 +704,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
 
@@ -731,7 +732,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
 
@@ -881,7 +882,7 @@ describe('Usuarios (slice 2, ronda 2 — slots de aviso separados y reintento de
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
 
     await act(async () => {
       rechazarTenants(new ErrorApi(503, 'no_disponible', 'Se cayó el servicio.'))
@@ -915,19 +916,19 @@ describe('Usuarios (slice 2, ronda 2 — slots de aviso separados y reintento de
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
 
     await waitFor(() => expect(screen.getByText('Se cayó el listado de usuarios.')).toBeInTheDocument())
     expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument()
   })
 
   /**
-   * Cláusula bajo prueba (R2-2): el fallo del POST de contraseña va al slot ROJO y la confirmación
-   * del PUT ya commiteado se queda en el verde. Los dos se ven, y la aserción es sobre la VARIANTE
-   * del alert, no solo sobre el texto: anunciar un fallo dentro de `alert-success` es exactamente
-   * el defecto, y el texto solo no lo distingue.
+   * Cláusula bajo prueba (R2-2): el fallo del POST de contraseña es un toast de error y la
+   * confirmación del PUT ya commiteado un toast de éxito. Los dos se ven, y la aserción es sobre el
+   * ROL de cada toast, no solo sobre el texto: anunciar un fallo como éxito es exactamente el
+   * defecto, y el texto solo no lo distingue.
    */
-  it('el fallo de la contraseña va en rojo y la confirmación del perfil se queda en verde', async () => {
+  it('el fallo de la contraseña es un toast de error y la confirmación del perfil uno de éxito', async () => {
     const usuario = userEvent.setup()
     montar([cuentaDeTenant])
     apiPostMock.mockRejectedValue(new ErrorApi(400, 'password_debil', 'La contraseña es muy corta.'))
@@ -940,12 +941,14 @@ describe('Usuarios (slice 2, ronda 2 — slots de aviso separados y reintento de
     await waitFor(() => expect(screen.getByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument())
 
     const fallo = screen.getByText(/no se pudo cambiar la contraseña/)
-    expect(fallo).toHaveClass('alert-danger')
-    expect(fallo).not.toHaveClass('alert-success')
+    expect(fallo.closest('[role="alert"]')).not.toBeNull()
+    expect(fallo.closest('[role="status"]')).toBeNull()
 
     const confirmacion = screen.getByText('Usuario "vendedor.sur" actualizado.')
-    expect(confirmacion).toHaveClass('alert-success')
+    expect(confirmacion.closest('[role="status"]')).not.toBeNull()
+    expect(confirmacion.closest('[role="alert"]')).toBeNull()
     expect(confirmacion).not.toHaveTextContent(/contraseña/)
+    expect(document.body.querySelector('.alert-success, .alert-danger')).toBeNull()
 
     // El perfil commiteó: el formulario se cierra igual.
     expect(screen.queryByLabelText('Mail')).not.toBeInTheDocument()
@@ -977,7 +980,7 @@ describe('Usuarios (slice 2, ronda 2 — slots de aviso separados y reintento de
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
     expect(intentos).toBe(1)
 
@@ -1036,7 +1039,7 @@ describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirm
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/usuarios/50'))
-    await waitFor(() => expect(screen.getByText('Usuario "vendedor.sur" dado de baja.')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Usuario "vendedor.sur" dado de baja.').closest('[role="status"]')).not.toBeNull())
   })
 
   it('cancelar cierra la puerta y no llama nunca a la API', async () => {
@@ -1084,7 +1087,7 @@ describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirm
         }),
     )
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     await usuario.click(botonDeBajaDe('vendedor\\.sur'))
@@ -1107,7 +1110,7 @@ describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirm
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(screen.getByText('Usuario "vendedor.sur" dado de baja.')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Usuario "vendedor.sur" dado de baja.').closest('[role="status"]')).not.toBeNull())
 
     await act(async () => {
       resolverRefresco({ items: [], total: 0, pagina: 1, tamanio: 20 })
@@ -1157,7 +1160,7 @@ describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirm
       return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     await usuario.click(botonDeBajaDe('vendedor\\.sur'))
@@ -1165,11 +1168,13 @@ describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirm
 
     await waitFor(() =>
       expect(
-        screen.getByText(
-          'Usuario "vendedor.sur" dado de baja. Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-        ),
-      ).toBeInTheDocument(),
+        screen
+          .getByText('Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+          .closest('[role="status"]'),
+      ).not.toBeNull(),
     )
+    expect(screen.getByText('Usuario "vendedor.sur" dado de baja.').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 
   /**
@@ -1277,7 +1282,7 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1326,7 +1331,7 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1346,44 +1351,6 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('No se puede crear el usuario: todavía falta la lista de tenants.')).toBeInTheDocument()
     expect(apiDeleteMock).not.toHaveBeenCalled()
-  })
-
-  /**
-   * Cláusula bajo prueba (entrada 4): los `setErrorPassword('')` de Cancelar y de Buscar. El fallo
-   * del cambio de contraseña quedaba prendido sobre una pantalla que el operador ya cerró o
-   * reemplazó por otra búsqueda.
-   */
-  it('el fallo del cambio de contraseña se apaga al cancelar el formulario', async () => {
-    const usuario = userEvent.setup()
-    montar([cuentaDeTenant])
-    apiPostMock.mockRejectedValue(new ErrorApi(400, 'password_debil', 'La contraseña es muy corta.'))
-    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
-
-    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
-    await usuario.type(screen.getByLabelText('Contraseña'), 'corta')
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
-    await waitFor(() => expect(screen.getByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument())
-
-    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
-    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
-
-    expect(screen.queryByText(/no se pudo cambiar la contraseña/)).not.toBeInTheDocument()
-  })
-
-  it('el fallo del cambio de contraseña se apaga al buscar de nuevo', async () => {
-    const usuario = userEvent.setup()
-    montar([cuentaDeTenant])
-    apiPostMock.mockRejectedValue(new ErrorApi(400, 'password_debil', 'La contraseña es muy corta.'))
-    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
-
-    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
-    await usuario.type(screen.getByLabelText('Contraseña'), 'corta')
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
-    await waitFor(() => expect(screen.getByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument())
-
-    await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
-
-    await waitFor(() => expect(screen.queryByText(/no se pudo cambiar la contraseña/)).not.toBeInTheDocument())
   })
 
   /**
@@ -1409,12 +1376,12 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
 
     cleanup()
     usuarioActual = autenticadoFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     expect(screen.queryByText(/No se pudo cargar la lista de tenants/)).not.toBeInTheDocument()
@@ -1513,7 +1480,7 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await waitFor(() =>
-      expect(screen.getByText('Usuario "vendedor.sur" dado de baja.')).toBeInTheDocument(),
+      expect(screen.getByText('Usuario "vendedor.sur" dado de baja.').closest('[role="status"]')).not.toBeNull(),
     )
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
@@ -1549,7 +1516,7 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
       })
     })
 
-    render(<Usuarios />)
+    render(<><Usuarios /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'sur')
@@ -1646,7 +1613,7 @@ describe('Usuarios — alta y edición en un modal', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(apiPostMock).toHaveBeenCalledTimes(1)
-    expect(await screen.findByText('Usuario "nuevo.admin" creado.')).toBeInTheDocument()
+    expect((await screen.findByText('Usuario "nuevo.admin" creado.')).closest('[role="status"]')).not.toBeNull()
     expect(rutasDeUsuarios()).toHaveLength(antes + 1)
   })
 
@@ -1718,7 +1685,7 @@ describe('Usuarios — alta y edición en un modal', () => {
     await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    await screen.findByText('Usuario "nuevo.admin" creado.')
+    expect((await screen.findByText('Usuario "nuevo.admin" creado.')).closest('[role="status"]')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
   })
 
@@ -1732,7 +1699,7 @@ describe('Usuarios — alta y edición en un modal', () => {
     await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    await screen.findByText('Usuario "vendedor.sur" actualizado.')
+    expect((await screen.findByText('Usuario "vendedor.sur" actualizado.')).closest('[role="status"]')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
   })
 
@@ -1797,7 +1764,7 @@ describe('Usuarios — lectura en vuelo al guardar', () => {
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
-    return render(<Usuarios />)
+    return render(<><Usuarios /><Toaster /></>)
   }
 
   async function completarYGuardar(usuario: ReturnType<typeof userEvent.setup>) {

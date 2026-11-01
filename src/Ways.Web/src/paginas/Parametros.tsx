@@ -14,6 +14,7 @@ import type {
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { atributosDeCampoDecimal, atributosDeCampoEntero, parsearNumeroDecimal } from '../formato/numeros'
+import { toast } from '../toasts/toasts'
 
 /**
  * Editor de `parametros` (ADR-13). Cada clave es de un alcance: las de sucursal (zona horaria, lotes, días de alerta) se
@@ -30,7 +31,6 @@ export function Parametros() {
   const [items, setItems] = useState<ParametroListado[]>([])
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
 
   const [clave, setClave] = useState(PARAMETROS_CONOCIDOS[0].clave)
   const [valorTexto, setValorTexto] = useState('')
@@ -148,7 +148,6 @@ export function Parametros() {
     const numeroDelValor = parsearNumeroDecimal(valorTexto, { permitirNegativo: true })
     const esNumerico = conocidoSeleccionado?.tipo !== 'texto' && conocidoSeleccionado?.tipo !== 'booleano'
     setError('')
-    setAviso('')
     if (esNumerico && numeroDelValor === null) {
       setError('El valor tiene que ser un número (el separador decimal puede ser "." o ",").')
       return
@@ -177,7 +176,7 @@ export function Parametros() {
 
       await api.put(`/parametros?idEmpresa=${idEmpresa}`, datos)
       guardado = true
-      setAviso(`Se guardó "${clave}".`)
+      toast.exito(`Se guardó "${clave}".`)
       setValorTexto(
         conocidoSeleccionado?.tipo === 'texto'
           ? ZONAS_HORARIAS_OFRECIDAS[0].id
@@ -186,7 +185,7 @@ export function Parametros() {
             : '',
       )
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el parámetro.')
+      toast.error(e instanceof ErrorApi ? e.message : 'No se pudo guardar el parámetro.')
     }
 
     // La escritura ya está confirmada: un fallo al refrescar el listado no la reporta como fallida.
@@ -248,7 +247,6 @@ export function Parametros() {
         </p>
 
         {error && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {empresas === null ? (
           <Cargando />

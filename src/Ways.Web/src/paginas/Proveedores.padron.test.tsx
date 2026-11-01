@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Proveedores } from './Proveedores'
+import { Toaster } from '../toasts/Toaster'
 import type { PaginaDe, ProveedorListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -88,7 +89,7 @@ function rutasDelListado() {
 }
 
 function renderProveedores() {
-  return render(<Proveedores />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<><Proveedores /><Toaster /></>, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
 beforeEach(() => {
@@ -451,7 +452,7 @@ describe('Proveedores — los controles del padrón durante una escritura o una 
 
     await act(async () => terminarBaja())
 
-    expect(await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Proveedor "Proveedor Uno SA" dado de baja.')
     await waitFor(() => expect(rutasDelListado().slice(antes)).toEqual(['/proveedores', '/proveedores?razonSocial=zz']))
   })
 })

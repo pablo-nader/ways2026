@@ -6,6 +6,13 @@ import {
   aAlta,
   aSolicitudDeAjuste,
   aEdicion,
+  claveDeReconstruccion,
+  clienteDeReconstruccion,
+  descuentosDeAcreditacion,
+  errorAlReconstruir,
+  rangoDeReconstruccionPorDefecto,
+  validarRangoDeReconstruccion,
+  type AcreditacionDeReconstruccion,
   aFormulario,
   clienteDeCuentasTesoreria,
   conSaldoInicialBloqueado,
@@ -479,5 +486,78 @@ describe('ajuste manual del saldo — reglas puras', () => {
     expect(esResultadoIncierto(new Error('red'))).toBe(true)
     expect(esResultadoIncierto(new ErrorApi(400, 'importe_invalido', ''))).toBe(false)
     expect(esResultadoIncierto(new ErrorApi(409, 'ajuste_sin_diferencia', ''))).toBe(false)
+  })
+})
+
+describe('reconstrucción histórica', () => {
+  const solicitud = { idEmpresa: 3, desde: '2026-10-01', hasta: '2026-10-31' }
+
+  it('la vista previa y la aplicación postean la solicitud tal cual a su ruta y devuelven el plan', async () => {
+    const plan = { idEmpresa: 3, desde: '2026-10-01', hasta: '2026-10-31', turnos: 0, filas: 0, acreditaciones: [], cuentas: [] }
+    apiPostMock.mockResolvedValue(plan)
+
+    await expect(clienteDeReconstruccion.vistaPrevia(solicitud)).resolves.toBe(plan)
+    expect(apiPostMock).toHaveBeenLastCalledWith('/cuentas-tesoreria/reconstruccion/vista-previa', solicitud)
+
+    await expect(clienteDeReconstruccion.aplicar(solicitud)).resolves.toBe(plan)
+    expect(apiPostMock).toHaveBeenLastCalledWith('/cuentas-tesoreria/reconstruccion', solicitud)
+  })
+
+  it('el rango por defecto va del primer día del mes a hoy', () => {
+    expect(rangoDeReconstruccionPorDefecto(new Date(2026, 9, 31))).toEqual({ desde: '2026-10-01', hasta: '2026-10-31' })
+    expect(rangoDeReconstruccionPorDefecto(new Date(2026, 0, 5))).toEqual({ desde: '2026-01-01', hasta: '2026-01-05' })
+  })
+
+  it('valida empresa, fechas, orden y tope de 366 días', () => {
+    expect(validarRangoDeReconstruccion('', '2026-10-01', '2026-10-31')).toBe('Elegí la empresa.')
+    expect(validarRangoDeReconstruccion('3', '', '2026-10-31')).toBe('Indicá las fechas desde y hasta.')
+    expect(validarRangoDeReconstruccion('3', '2026-11-01', '2026-10-31')).toBe('La fecha "desde" no puede ser posterior a "hasta".')
+    expect(validarRangoDeReconstruccion('3', '2026-10-01', '2026-10-01')).toBeNull()
+    expect(validarRangoDeReconstruccion('3', '2025-10-01', '2026-10-02')).toBeNull()
+    expect(validarRangoDeReconstruccion('3', '2025-10-01', '2026-10-03')).toBe('El rango no puede superar los 366 días.')
+  })
+
+  it('la clave cambia con cualquiera de los tres campos', () => {
+    const base = claveDeReconstruccion('3', '2026-10-01', '2026-10-31')
+    expect(claveDeReconstruccion('4', '2026-10-01', '2026-10-31')).not.toBe(base)
+    expect(claveDeReconstruccion('3', '2026-10-02', '2026-10-31')).not.toBe(base)
+    expect(claveDeReconstruccion('3', '2026-10-01', '2026-10-30')).not.toBe(base)
+  })
+
+  it('separa comisión y retenciones de los componentes de la acreditación', () => {
+    const acreditacion: AcreditacionDeReconstruccion = {
+      idTurnoCaja: 1,
+      fechaCierre: '2026-10-05T20:00:00Z',
+      idMedioPago: 2,
+      nombreMedio: 'Mercado Pago',
+      idCuentaTesoreria: 3,
+      nombreCuenta: 'MP',
+      baseBruta: 1000,
+      neto: 940.1,
+      componentes: [
+        { tipo: 'Cobro', ingreso: 1000, egreso: 0, porcentajeAplicado: null },
+        { tipo: 'Comision', ingreso: 0, egreso: 40.1, porcentajeAplicado: 4.01 },
+        { tipo: 'RetencionIibb', ingreso: 0, egreso: 10.2, porcentajeAplicado: 1 },
+        { tipo: 'RetencionIva', ingreso: 0, egreso: 9.7, porcentajeAplicado: 1 },
+      ],
+    }
+
+    expect(descuentosDeAcreditacion(acreditacion)).toEqual({ comision: 40.1, retenciones: 19.9 })
+  })
+
+  it('traduce los códigos del servidor y distingue lectura de escritura ante un fallo incierto', () => {
+    expect(errorAlReconstruir(new ErrorApi(400, 'rango_invalido', ''), false)).toBe('La fecha "desde" no puede ser posterior a "hasta".')
+    expect(errorAlReconstruir(new ErrorApi(400, 'rango_demasiado_amplio', ''), false)).toBe('El rango no puede superar los 366 días.')
+    expect(errorAlReconstruir(new ErrorApi(409, 'reconstruccion_concurrente', ''), true)).toBe(
+      'Otra reconstrucción está en curso. Esperá unos segundos y generá la vista previa de nuevo.',
+    )
+    expect(errorAlReconstruir(new ErrorApi(400, 'solicitud_invalida', 'Indicá la empresa.'), false)).toBe('Indicá la empresa.')
+    expect(errorAlReconstruir(new ErrorApi(404, 'no_encontrado', ''), false)).toBe('La empresa ya no existe. Actualizá la pantalla.')
+    expect(errorAlReconstruir(new ErrorApi(403, 'prohibido', ''), true)).toBe(
+      'Solo un administrador puede reconstruir el historial de las cuentas.',
+    )
+    expect(errorAlReconstruir(new ErrorApi(500, 'x', ''), true)).toBe(`No se pudo reconstruir el historial. ${COPIA_RESULTADO_INCIERTO}`)
+    expect(errorAlReconstruir(new ErrorApi(500, 'x', ''), false)).toBe('No se pudo generar la vista previa.')
+    expect(errorAlReconstruir(new Error('red'), true)).toBe(`No se pudo reconstruir el historial. ${COPIA_RESULTADO_INCIERTO}`)
   })
 })
