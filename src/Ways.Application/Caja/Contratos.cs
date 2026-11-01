@@ -66,8 +66,10 @@ public sealed record SolicitudDeCierre(
 
 /// <summary>Una línea de <see cref="ResumenDeTurno"/> — proyección de
 /// <see cref="Ways.Domain.Caja.LineaDeArqueo"/>, la misma derivación que el cierre va a
-/// persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre).</summary>
-public sealed record LineaDeResumen(int IdMedioPago, decimal ImporteEsperado);
+/// persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre). <see cref="Nombre"/> es el del medio del
+/// catálogo vigente: las líneas salen de los medios vigentes, así que <c>"?"</c> solo aparece si el medio se da de baja
+/// entre las dos lecturas.</summary>
+public sealed record LineaDeResumen(int IdMedioPago, decimal ImporteEsperado, string Nombre);
 
 /// <summary>Un ticket límite del turno (legacy D6: "primer y último ticket") — número visible,
 /// fecha de emisión y el código del tipo de comprobante (<c>TX</c>, <c>RC</c>, …) del
@@ -181,12 +183,12 @@ public sealed record PaginaDeHistoricoDeCajas(
 /// <summary>Respuesta de <c>GET /api/caja/turnos/{id}/detalle</c> (spec: G2 Detail Reuses
 /// ResumenDeTurno Plus Ticket And Pago Listings) — el MISMO <see cref="ResumenDeTurno"/> que
 /// <c>/resumen</c> devuelve, sin tocarlo, más las dos listas que <see cref="LectorDeLineasDelTurno"/>
-/// lee: los tickets del turno (<see cref="Ways.Application.Ventas.ComprobanteListado"/>, anulados
-/// excluidos) y sus pagos (<see cref="Ways.Application.Pagos.PagoListado"/>), más la marca del
+/// lee: los tickets del turno (<see cref="Ways.Application.Ventas.VentaDeTurnoListado"/>, la misma
+/// fila que la pantalla "Ventas del turno" del POS, anulados incluidos con su estado) y sus pagos (<see cref="Ways.Application.Pagos.PagoListado"/>), más la marca del
 /// último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).</summary>
 public sealed record DetalleDeTurno(
     ResumenDeTurno Resumen,
-    IReadOnlyList<Ways.Application.Ventas.ComprobanteListado> Tickets,
+    IReadOnlyList<Ways.Application.Ventas.VentaDeTurnoListado> Tickets,
     [property: JsonPropertyName("gastos")] IReadOnlyList<Ways.Application.Pagos.PagoListado> Pagos,
     DateTimeOffset? FechaRecalculo,
     int? IdEmpleadoRecalculo);

@@ -67,9 +67,6 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Caja/LectorDeContenidoDeResumen.cs",
                 "db.ComprobantesVenta,")] =
                 (1, PorTurno),
-            [("Ways.Application/Caja/LectorDeLineasDelTurno.cs",
-                "var crudos = await db.ComprobantesVenta")] =
-                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
                 "var pagosDelTurno = db.Cobros")] =
                 (1, PorTurno),

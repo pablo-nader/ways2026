@@ -153,7 +153,7 @@ public static class ExportacionDeCaja
             filas.Add(
             [
                 Celda.Texto("Medios de pago"),
-                Celda.Texto($"Medio {medio.IdMedioPago}"),
+                Celda.Texto(medio.Nombre),
                 Celda.FechaHora(null, zona),
                 Celda.Moneda(medio.ImporteEsperado)
             ]);
@@ -189,7 +189,7 @@ public static class ExportacionDeCaja
             Celda.Moneda(respuesta.Resumen.Egresos.Retiros)
         ]);
 
-        foreach (var ticket in respuesta.Tickets)
+        foreach (var ticket in respuesta.Tickets.OrderBy(t => t.Fecha).ThenBy(t => t.Id))
         {
             filas.Add(
             [
