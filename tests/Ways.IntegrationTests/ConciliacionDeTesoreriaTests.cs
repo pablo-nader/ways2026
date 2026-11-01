@@ -45,7 +45,7 @@ namespace Ways.IntegrationTests;
 /// efectivo y de cuenta: <see cref="UnAjusteManualDeEfectivoConUnaMarcaPuestaEnLaVentanaDelAjusteSeRechazaYNoEscribeNada"/> y
 /// <see cref="UnAjusteManualDeCuentaConUnaMarcaPuestaEnLaVentanaDelAjusteSeRechazaYNoEscribeNada"/>; (16) <c>FechaApertura &lt;= hasta</c> cambiado a
 /// <c>&lt;</c> en <c>ServicioDeConciliacionDeTesoreria</c> hace fallar <see cref="UnTurnoAbiertoQueEmpezoEnOAntesDelInstanteImpideConciliarYUnoPosteriorNo"/>
-/// (el instante exacto sale de la apertura leída de la base). Las doce mutaciones se aplicaron juntas, cada una falló al menos su prueba y se revirtieron.
+/// (el instante exacto sale de la apertura leída de la base). Las mutaciones (5) a (16) se aplicaron juntas, cada una falló al menos su prueba y se revirtieron.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ConciliacionDeTesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
