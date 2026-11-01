@@ -1106,6 +1106,7 @@ export type OfertaListado = {
   horaHasta: string | null
   diasSemana: number[]
   cantidadMinima: number | null
+  soloMultiplos: boolean
   precioUnitario: number | null
   porcentaje: number | null
   importeFijo: number | null
@@ -1133,6 +1134,7 @@ export type AltaOferta = {
   horaHasta: string | null
   diasSemana: number[] | null
   cantidadMinima: number | null
+  soloMultiplos: boolean
   precioUnitario: number | null
   porcentaje: number | null
   importeFijo: number | null
@@ -2743,8 +2745,11 @@ export type CompraListada = {
   total: number
   saldoPendiente: number
   origen: OrigenCompra
-  /** Razón social que resuelve el servidor; `null` si el proveedor fue dado de baja. */
-  nombreProveedor?: string | null
+  /** Nombre de fantasía del proveedor (razón social si no tiene); `null` para un rol sin acceso al dato o si el proveedor fue dado de baja. */
+  nombreProveedor: string | null
+  fechaComprobante: string | null
+  /** `null` si la compra no está confirmada; una parcial cuenta como `Pendiente`. */
+  estadoPago: 'Pagada' | 'Pendiente' | null
 }
 
 /** Fila de `GET /api/compras/duplicados` (espejo de `CompraDuplicada`): una compra no anulada del mismo

@@ -165,8 +165,9 @@ public sealed record CompraDetalle(
     decimal ImpuestosInternos = 0m);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
-/// <c>ComprobanteListado</c>/<c>PagoListado</c>. <see cref="EstadoPago"/> lo resuelve
-/// <c>ServicioDeSaldoDeProveedor</c> (Slice 4) — <c>null</c> en esta slice. <see cref="SaldoPendiente"/>
+/// <c>ComprobanteListado</c>/<c>PagoListado</c>. <see cref="EstadoPago"/> es <c>Pagada</c> o <c>Pendiente</c>
+/// (la parcial cuenta como pendiente) y <c>null</c> si la compra no está confirmada; <see cref="NombreProveedor"/>
+/// es el nombre de fantasía o, si no hay, la razón social. <see cref="SaldoPendiente"/>
 /// es lo que falta pagar de la compra (cero si no está confirmada): el selector de "vincular pago
 /// a compra" lo muestra para no ofrecer una compra ya saldada como si debiera algo.</summary>
 public sealed record CompraListada(
@@ -179,7 +180,25 @@ public sealed record CompraListada(
     decimal Total,
     decimal SaldoPendiente,
     OrigenCompra Origen,
-    string? NombreProveedor = null);
+    string? NombreProveedor = null,
+    DateOnly? FechaComprobante = null,
+    string? EstadoPago = null);
+
+/// <summary>Filtros de <c>GET /api/compras</c> y de su export. <see cref="Desde"/>/<see cref="Hasta"/> acotan
+/// la fecha de carga (<c>FechaRecepcion</c>); <see cref="FechaComprobanteDesde"/>/<see cref="FechaComprobanteHasta"/>,
+/// la del comprobante, ambos inclusivos. <see cref="EstadoPago"/> es <c>pagada</c> o <c>pendiente</c>.</summary>
+public sealed record FiltrosDeListadoDeCompras(
+    int? IdProveedor = null,
+    EstadoCompra? Estado = null,
+    DateTimeOffset? Desde = null,
+    DateTimeOffset? Hasta = null,
+    int? IdEmpresa = null,
+    OrigenCompra? Origen = null,
+    string? Numero = null,
+    int? IdTipoComprobante = null,
+    string? EstadoPago = null,
+    DateOnly? FechaComprobanteDesde = null,
+    DateOnly? FechaComprobanteHasta = null);
 
 /// <summary>Una compra que ya tiene el número que se está por cargar (<c>GET /api/compras/duplicados</c>).
 /// <see cref="NumeroExterno"/> es el texto guardado, que puede estar en otro formato que el buscado.</summary>

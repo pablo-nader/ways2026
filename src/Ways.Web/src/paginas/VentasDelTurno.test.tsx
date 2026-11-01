@@ -253,7 +253,7 @@ describe('VentasDelTurno — listado', () => {
     // Totales arriba de la tabla: solo cuenta la no anulada (regla bajo prueba de mutation-proof-tests).
     expect(screen.getByText('Efectivo: $ 100,00')).toBeInTheDocument()
     expect(screen.getByText('Total general: $ 100,00')).toBeInTheDocument()
-    expect(screen.getByText('1 venta(s)')).toBeInTheDocument()
+    expect(screen.getByText('1 venta')).toBeInTheDocument()
   })
 
   it('marca con "Desc. manual" y/o "Recargo" las ventas con el precio cambiado a mano, y deja sin marca a las demás', async () => {
@@ -322,7 +322,7 @@ describe('VentasDelTurno — totales por medio arriba de la tabla', () => {
     expect(screen.getByText('Efectivo: $ 100,00')).toBeInTheDocument()
     expect(screen.getByText('Tarjeta: $ 50,00')).toBeInTheDocument()
     expect(screen.getByText('Total general: $ 150,00')).toBeInTheDocument()
-    expect(screen.getByText('1 venta(s)')).toBeInTheDocument()
+    expect(screen.getByText('1 venta')).toBeInTheDocument()
   })
 
   it('los totales siguen a los filtros — al filtrar por medio, el total general baja con la fila', async () => {
@@ -537,7 +537,7 @@ describe('VentasDelTurno — anulación', () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ventas/3/anulacion'))
     await waitFor(() => expect(screen.getByText('Anulada', { selector: 'span' })).toBeInTheDocument())
     expect(screen.getByText('Total general: $ 0,00')).toBeInTheDocument()
-    expect(screen.getByText('0 venta(s)')).toBeInTheDocument()
+    expect(screen.getByText('0 ventas')).toBeInTheDocument()
   })
 
   it('muestra el error dentro del modal cuando la anulación falla', async () => {

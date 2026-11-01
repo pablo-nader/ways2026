@@ -63,6 +63,9 @@ public class ExportacionDeListadosTests
         Assert.Equal([0m, 7.25m, 0m], tabla.Filas.Select(f => f[7].Valor).ToList());
     }
 
+    private static int IndiceDeColumna(TablaExportable tabla, string encabezado) =>
+        tabla.Columnas.Select((c, i) => (c, i)).Single(x => x.c.Titulo == encabezado).i;
+
     // ---- Compras -------------------------------------------------------------------------------
 
     [Fact]
@@ -93,7 +96,7 @@ public class ExportacionDeListadosTests
 
         var tabla = ExportacionDeListados.De([fila], Contexto, ZonaBuenosAires);
 
-        Assert.Equal(new DateTime(2026, 8, 1, 9, 0, 0), tabla.Filas[0][2].Valor);
+        Assert.Equal(new DateTime(2026, 8, 1, 9, 0, 0), tabla.Filas[0][IndiceDeColumna(tabla, "Fecha de carga")].Valor);
     }
 
     [Fact]
@@ -103,7 +106,7 @@ public class ExportacionDeListadosTests
 
         var tabla = ExportacionDeListados.De([fila], Contexto, ZonaBuenosAires);
 
-        Assert.Null(tabla.Filas[0][2].Valor);
+        Assert.Null(tabla.Filas[0][IndiceDeColumna(tabla, "Fecha de carga")].Valor);
     }
 
     // ---- Estado de cuenta -----------------------------------------------------------------------

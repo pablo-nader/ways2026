@@ -463,15 +463,15 @@ describe('Usuarios — paginación en el servidor', () => {
     renderUsuarios()
     await screen.findByText('vendedor.sur')
 
-    expect(screen.getByText('Página 1 de 3 — 60 usuario(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 1 de 3 — 60 usuarios')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/usuarios?pagina=2'))
-    expect(await screen.findByText('Página 2 de 3 — 60 usuario(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 3 — 60 usuarios')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
-    expect(await screen.findByText('Página 3 de 3 — 60 usuario(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 3 de 3 — 60 usuarios')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Anterior' }))
@@ -489,7 +489,7 @@ describe('Usuarios — paginación en el servidor', () => {
     await usuario.selectOptions(screen.getByLabelText('Filas por página'), '50')
 
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/usuarios?tamanio=50'))
-    expect(await screen.findByText('Página 1 de 2 — 60 usuario(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 1 de 2 — 60 usuarios')).toBeInTheDocument()
   })
 
   it('con una página fuera de rango pide la última válida en vez de mostrar una página vacía', async () => {
@@ -504,9 +504,9 @@ describe('Usuarios — paginación en el servidor', () => {
 
     renderUsuarios()
 
-    expect(await screen.findByText('Página 2 de 2 — 50 usuario(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 2 — 50 usuarios')).toBeInTheDocument()
     expect(rutasDelListado()).toEqual(['/usuarios', '/usuarios?pagina=2'])
-    expect(screen.queryByText('Página 3 de 2 — 50 usuario(s)')).toBeNull()
+    expect(screen.queryByText('Página 3 de 2 — 50 usuarios')).toBeNull()
   })
 })
 

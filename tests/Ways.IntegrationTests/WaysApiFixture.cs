@@ -201,7 +201,9 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
         {
             config.AddInMemoryCollection(
             [
-                new("ConnectionStrings:Ways", AppConnectionString)
+                new("ConnectionStrings:Ways", AppConnectionString),
+                // Los tests de Mercado Pago manejan la renovación a mano; el job de fondo no corre.
+                new("Ways:MercadoPago:RenovacionAutomatica", "false")
             ]);
         });
 

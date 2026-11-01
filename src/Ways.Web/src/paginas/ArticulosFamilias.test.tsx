@@ -328,8 +328,8 @@ function diferida<T>() {
 async function abrirAlta() {
   renderArticulos()
   await screen.findByText('Articulo Uno')
-  await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-  await screen.findByText('Nuevo artículo')
+  await userEvent.click(screen.getByRole('button', { name: 'Nuevo artículo' }))
+  await screen.findByRole('dialog', { name: 'Nuevo artículo' })
 }
 
 /** Elige una familia en el selector. El selector está desde el primer render con solo "Sin familia": esperar al elemento no
@@ -358,7 +358,7 @@ async function abrirEdicion(id = 31, codigo = 'A0031') {
 /** El "Agregar" de la pantalla, el de la grilla: dentro del formulario de un artículo hay otro "Agregar" (el
  * de los códigos de barra), así que se lo busca en la cabecera de la caja. */
 function botonNuevo() {
-  return within(screen.getByRole('banner')).getByRole('button', { name: 'Agregar' })
+  return within(screen.getByRole('banner')).getByRole('button', { name: 'Nuevo artículo' })
 }
 
 function unaFamiliaPidioSuDetalle() {
@@ -556,7 +556,7 @@ describe('Articulos — alta: elegir una familia', () => {
   it('los campos propios del artículo siguen editables', async () => {
     await abrirAltaEnLaFamilia()
 
-    for (const etiqueta of ['Código interno', 'Nombre', 'Descripción', 'Marca', 'Activo', 'Disponible para todas las empresas del tenant']) {
+    for (const etiqueta of ['Código interno', 'Nombre', 'Descripción', 'Marca', 'Activo', 'Disponible para todas las empresas']) {
       expect(screen.getByLabelText(etiqueta), etiqueta).toBeEnabled()
     }
   })
@@ -730,9 +730,9 @@ describe('Articulos — alta: elegir una familia', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
     await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).getByRole('button', { name: 'Descartar cambios' }))
-    await waitFor(() => expect(screen.queryByText('Nuevo artículo')).not.toBeInTheDocument())
-    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-    await screen.findByText('Nuevo artículo')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Nuevo artículo' })).not.toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo artículo' }))
+    await screen.findByRole('dialog', { name: 'Nuevo artículo' })
 
     await act(async () => {
       lectura.resolver(detalleSabores())
@@ -2008,7 +2008,7 @@ describe('Articulos — las familias que se ofrecen en un alta se mantienen al d
     await userEvent.click(within(screen.getByRole('dialog', { name: /^Editando artículo/ })).getByRole('button', { name: 'Cancelar' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Editando artículo/ })).not.toBeInTheDocument())
     await userEvent.click(botonNuevo())
-    await screen.findByText('Nuevo artículo')
+    await screen.findByRole('dialog', { name: 'Nuevo artículo' })
   }
 
   function opcionesDelSelector() {
@@ -2494,7 +2494,7 @@ describe('Articulos — alta: "+" para crear una familia nueva', () => {
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Ya existe una familia con ese nombre')
       expect(screen.getByRole('alert')).toHaveTextContent('El artículo no se creó.')
-      expect(screen.getByText('Nuevo artículo')).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
       expect(screen.getByLabelText('Nombre')).toHaveValue('Camisa')
       expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('77,00')
       expect(screen.getByText('Familia nueva: Talles')).toBeInTheDocument()

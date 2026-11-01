@@ -14,10 +14,11 @@ import { siguienteOrden } from '../../componentes/grilla/ordenamiento'
 import { formatearImporte } from '../../formato/importes'
 import { etiquetaDeProveedor } from './helpers'
 import { BotonIcono, EnlaceIcono } from '../../componentes/BotonIcono'
+import { pluralizar } from '../../formato/pluralizar'
 
 const DEMORA_DEBOUNCE_MS = 300
 const TAMANIOS_DE_PAGINA = [25, 50, 100]
-const AVISO_SIN_LISTA_DE_PRECIO = 'El tenant no tiene una lista de precio por defecto configurada.'
+const AVISO_SIN_LISTA_DE_PRECIO = 'La cuenta no tiene una lista de precio por defecto configurada.'
 
 type BorradorDeTexto = Pick<FiltrosDeGrillaDeArticulos, 'codigo' | 'nombre' | 'precioDesde' | 'precioHasta'>
 
@@ -181,6 +182,14 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
   const precioDeshabilitado = pagina !== null && nombreListaPrecio === null
   const tituloColumnaPrecio = nombreListaPrecio ? `Precio (${nombreListaPrecio})` : 'Precio'
   const totalPaginas = pagina ? Math.max(1, Math.ceil(pagina.total / pagina.tamanio)) : 1
+  const hayFiltros =
+    filtros.codigo !== '' ||
+    filtros.nombre !== '' ||
+    filtros.precioDesde !== null ||
+    filtros.precioHasta !== null ||
+    filtros.idProveedor !== null ||
+    filtros.sinProveedor ||
+    filtros.activo !== null
   const valorSelectProveedor = filtros.sinProveedor ? 'sin-proveedor' : (filtros.idProveedor?.toString() ?? '')
 
   return (
@@ -233,6 +242,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       type="search"
                       className="form-control form-control-sm"
                       aria-label="Filtrar por código"
+                      placeholder="Código"
                       value={borrador.codigo}
                       onChange={(e) => programarCambioDeTexto({ codigo: e.target.value })}
                     />
@@ -242,6 +252,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       type="search"
                       className="form-control form-control-sm"
                       aria-label="Filtrar por nombre"
+                      placeholder="Nombre"
                       value={borrador.nombre}
                       onChange={(e) => programarCambioDeTexto({ nombre: e.target.value })}
                     />
@@ -251,6 +262,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     <div className="d-flex gap-1">
                       <CampoImporte
                         aria-label="Precio desde"
+                        placeholder="Desde"
                         className="form-control form-control-sm"
                         valor={borrador.precioDesde}
                         onChange={(valor) => programarCambioDeTexto({ precioDesde: valor })}
@@ -259,6 +271,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       />
                       <CampoImporte
                         aria-label="Precio hasta"
+                        placeholder="Hasta"
                         className="form-control form-control-sm"
                         valor={borrador.precioHasta}
                         onChange={(valor) => programarCambioDeTexto({ precioHasta: valor })}
@@ -279,7 +292,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                         else cambiarFiltroInmediato({ idProveedor: Number(valor), sinProveedor: false })
                       }}
                     >
-                      <option value="">Todos</option>
+                      <option value="">Todos los proveedores</option>
                       <option value="sin-proveedor">Sin proveedor</option>
                       {proveedores.map((p) => (
                         <option key={p.id} value={p.id}>
@@ -299,7 +312,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                         cambiarFiltroInmediato({ activo: valor === '' ? null : valor === 'true' })
                       }}
                     >
-                      <option value="">Todos</option>
+                      <option value="">Todos los estados</option>
                       <option value="true">Activos</option>
                       <option value="false">Inactivos</option>
                     </select>
@@ -314,15 +327,15 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
               <tbody style={cargando ? { opacity: 0.6 } : undefined}>
                 {pagina?.items.map((a) => (
                   <tr key={a.id}>
-                    <td>{a.codigoInterno}</td>
-                    <td>{a.nombre}</td>
+                    <td className="text-body-secondary small">{a.codigoInterno}</td>
+                    <td className="fw-semibold">{a.nombre}</td>
                     <td>{formatearPrecio(a.costoNominal)}</td>
                     <td>{formatearPrecio(a.precio)}</td>
                     <td>{a.proveedor ?? '—'}</td>
                     <td className="text-nowrap">
                       {!a.disponibleVenta && <span className="badge text-bg-warning me-1">No se vende</span>}
                       {a.disponibleOnline && a.disponibleVenta && a.activo && <span className="badge text-bg-primary me-1">Online</span>}
-                      {a.tieneImagen && <span className="badge text-bg-light border">Con imagen</span>}
+                      {a.tieneImagen && <span className="badge text-bg-secondary">Con imagen</span>}
                     </td>
                     <td>
                       <span className={`badge ${a.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
@@ -352,7 +365,16 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                 {pagina !== null && pagina.items.length === 0 && (
                   <tr>
                     <td colSpan={8} className="text-center text-muted py-4">
-                      No hay artículos que coincidan con los filtros.
+                      {hayFiltros ? (
+                        <>
+                          <p className="mb-2">No hay artículos que coincidan con los filtros.</p>
+                          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={limpiarFiltros}>
+                            Limpiar filtros
+                          </button>
+                        </>
+                      ) : (
+                        'Todavía no hay artículos.'
+                      )}
                     </td>
                   </tr>
                 )}
@@ -363,7 +385,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
           {pagina && (
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} artículo(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'artículo')}
               </span>
               <div className="d-flex gap-2 align-items-center">
                 <select

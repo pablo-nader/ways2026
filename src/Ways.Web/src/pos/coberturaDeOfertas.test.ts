@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { calcularTotalesDeLinea } from '../api/ajusteManual'
-import type { OfertaAplicada } from '../api/tipos'
+import type { EscalonDeCantidad, OfertaAplicada, PrecioDeListaDeInstantanea } from '../api/tipos'
 import { descuentosDeLinea, descuentoUnitarioDeAplicadas, tieneSoloMultiplos } from './coberturaDeOfertas'
+import { preciosVigentesOffline } from './instantaneaOffline'
 
 // Tabla de paridad servidor/web: los mismos casos y números que
 // `tests/Ways.Domain.Tests/Ofertas/CoberturaDeOfertasTests.cs` (`CoberturaDeOfertas` más `CalculadorDeTotales`). Las
@@ -70,16 +71,41 @@ describe('coberturaDeOfertas — paridad con CoberturaDeOfertasTests', () => {
     expect(tieneSoloMultiplos([estricta()])).toBe(true)
   })
 
-  it('la familia cuenta los grupos sobre el documento y el resto cae en las últimas líneas', () => {
+  it('la familia cuenta los grupos sobre el documento y los reparte por unidades', () => {
     const aplicadas = [{ ...estricta(), porFamilia: true }]
-    // 2 + 2 + 1 = 5 unidades de la familia: dos grupos (4 unidades), la última línea queda sin descuento.
-    expect(descuentosDeLinea([2, 2, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([500, 500, 0])
+    // 2 + 2 + 1 = 5 unidades de la familia: dos grupos (4 unidades, 1000 de descuento), 200 por unidad de línea.
+    expect(descuentosDeLinea([2, 2, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([400, 400, 200])
   })
 
-  it('la familia arma grupos con unidades de líneas distintas', () => {
+  it('la familia reparte pesos enteros y el resto va a la última línea', () => {
     const aplicadas = [{ ...estricta(), porFamilia: true }]
-    // 1 + 1 + 1 = 3: un grupo con las dos primeras líneas, la tercera paga el precio original.
-    expect(descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([250, 250, 0])
+    // 1 + 1 + 1 = 3: un grupo, 500 de descuento; 166 a cada línea y el resto a la última: el documento cobra 11500.
+    const descuentos = descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))
+    expect(descuentos).toEqual([166, 166, 168])
+    const totales = descuentos.map(
+      (descuentoDeLinea) => calcularTotalesDeLinea({ cantidad: 1, precioOriginal: PRECIO, descuentoUnitario: 250, porcentaje: null, descuentoDeLinea }).total,
+    )
+    expect(totales.reduce((a, b) => a + b, 0)).toBe(11500)
+  })
+
+  it('ninguna línea de familia queda debajo de la común a la que le ganó (166,67 por unidad contra 150)', () => {
+    const aplicadas = [{ ...estricta(), porFamilia: true }]
+    const descuentos = descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))
+    for (const descuento of descuentos) expect(descuento).toBeGreaterThan(150)
+    expect(descuentos.reduce((a, b) => a + b, 0)).toBe(500)
+  })
+
+  it('el resto no cubre más unidades de las que tiene la línea: 50 centavos en grupos de 2, 1 + 1 + 1', () => {
+    const aplicadas = [{ ...estricta(0.5), porFamilia: true }]
+    expect(descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([0, 0.5, 0.5])
+  })
+
+  it('con la parte de familia fraccionaria el tope sigue siendo por unidad', () => {
+    // 3000 de familia en grupos de 2 más una acumulable de 2000 a 4000: 2/3 de unidad a 4000 (tope) y 1/3 a 2000.
+    const aplicadas = [{ ...estricta(3000), porFamilia: true }, comun(2000)]
+    expect(descuentosDeLinea([1, 1, 1].map((unidades) => ({ unidades, precioOriginal: PRECIO, aplicadas })))).toEqual([
+      3333.333333, 3333.333333, 3333.333333,
+    ])
   })
 
   it('una oferta solo múltiplos de artículo cuenta sus grupos por línea', () => {
@@ -102,5 +128,73 @@ describe('coberturaDeOfertas — aritmética del POS', () => {
     expect(descuentoUnitarioDeAplicadas(100, [estricta(60), comun(70)])).toBe(100)
     expect(descuentoUnitarioDeAplicadas(4000, [estricta(0.1), comun(0.2)])).toBe(0.3)
     expect(descuentoUnitarioDeAplicadas(4000, [])).toBe(0)
+  })
+})
+
+// Paridad de la curva con una "solo múltiplos" y una común en competencia: los escalones son los que arma el servidor
+// (`EscalonesDeCantidad.Construir`, ver `LaCurvaAlternaEntreLaSoloMultiplosYLaComunHastaQueLaSoloMultiplosGanaSiempre` y
+// `LaCurvaConUnaComunEnCompetenciaPasaALaComunDondeEstaDaMasDescuentoDeLinea`) y los totales, los de
+// `LosTotalesDelDispositivoConLaCurvaDelEjemploSonLosDelServidor` en `PuntosDeQuiebreSoloMultiplosTests.cs`. Un cambio de
+// un número en una de las tablas exige el mismo cambio en la otra.
+describe('coberturaDeOfertas — curva con una solo múltiplos y una común en competencia', () => {
+  const laComun = comun(200, 2)
+  const conLaEstricta = (cantidadDesde: number): EscalonDeCantidad => ({
+    cantidadDesde,
+    precioFinal: PRECIO,
+    descuentoUnitario: 0,
+    aplicadas: [],
+    aplicadasCompletas: [estricta()],
+  })
+  const conLaComun = (cantidadDesde: number): EscalonDeCantidad => ({
+    cantidadDesde,
+    precioFinal: 3800,
+    descuentoUnitario: 200,
+    aplicadas: [laComun],
+  })
+  const precio: PrecioDeListaDeInstantanea = {
+    idListaPrecio: 1,
+    precioOriginal: PRECIO,
+    precioFinal: 3800,
+    descuentoUnitario: 200,
+    aplicadas: [laComun],
+    escalones: [conLaEstricta(2), conLaComun(2.501), conLaEstricta(4), conLaComun(5.001), conLaEstricta(6), conLaComun(7.501), conLaEstricta(8)],
+  }
+
+  function totalOffline(cantidad: number): number {
+    const vigente = preciosVigentesOffline(precio, cantidad)
+    const [descuentoDeLinea] = descuentosDeLinea([{ unidades: cantidad, precioOriginal: PRECIO, aplicadas: vigente.aplicadas }])
+    return calcularTotalesDeLinea({
+      cantidad,
+      precioOriginal: PRECIO,
+      descuentoUnitario: vigente.descuentoUnitario,
+      porcentaje: null,
+      descuentoDeLinea,
+    }).total
+  }
+
+  it.each([
+    [1, 3800],
+    [2, 7500],
+    [2.5, 9500],
+    [2.501, 9504],
+    [3, 11400],
+    [4, 15000],
+    [5, 19000],
+    [5.001, 19004],
+    [7, 26500],
+    [7.5, 28500],
+    [7.501, 28504],
+    [9, 34000],
+    [11, 41500],
+  ])('a %s unidades el POS cobra lo mismo que el servidor: %s', (cantidad, total) => {
+    expect(totalOffline(cantidad)).toBe(total)
+  })
+
+  it('un POS anterior a aplicadasCompletas nunca cobra menos que el servidor', () => {
+    // Usa los campos de siempre del escalón vigente: cantidad × precioFinal, sin cobertura.
+    for (const [cantidad, total] of [[2, 7500], [3, 11400], [4, 15000], [8, 30000], [11, 41500]] as const) {
+      const vigente = [...(precio.escalones ?? [])].reverse().find((e) => e.cantidadDesde <= cantidad) ?? precio
+      expect(cantidad * vigente.precioFinal).toBeGreaterThanOrEqual(total)
+    }
   })
 })

@@ -49,17 +49,33 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
   theme script in admin.html/pos.html so a light user sees no dark flash; `DESIGN.md`; a Vitest
   test that reads `tema.css` as text and asserts every token exists in both themes and the
   contrast pairs of the system (4.5:1 text, 3:1 control borders and focus).
-- [ ] **T2 Global component skin** (route: delegated writer). Tables (no stripes or vertical
+- [x] **T2 Global component skin** (route: delegated writer). Tables (no stripes or vertical
   borders, sunken header, hover, tabular numbers), buttons (`btn-success` → brand, secondary
   with `line-control` border), form controls, badges as pills with `-soft` tones, alerts with
   `-soft` tones, `.box` header without the accent bar, navbar active item underline, modal
   radius and shadow.
 
+- [x] **T3 Shared components** (route: delegated writer). `TituloDeSeccion` heading component
+  replacing the 16 `<strong className="text-muted small text-uppercase">` section headers
+  (keeps id/ref/tabIndex for SeccionDeDisponibilidad focus); `pluralizar` helper and real plurals
+  in every "x(s)" UI string (~15 inline pagers, `PaginadorDePadron`, ~10 messages); "tenant"
+  removed from merchant-facing copy (platform-admin pages Tenants/Empresas/PuntosVenta/Dominios
+  keep it).
+- [x] **T4 Artículos screen** (route: delegated writer). Header action as a text+icon
+  "Nuevo artículo" primary button; visible placeholders on the filter row (structure and
+  aria-labels unchanged); name column emphasized, code muted; empty state that distinguishes
+  "no articles yet" from "no match" and offers "Limpiar filtros"; baja confirmation with the
+  consequence and a "Dar de baja" button.
+
+Note: the Artículos grid is already sortable end to end (EncabezadoOrdenable + `orden`/`direccion`
+in the API); the critique's "no sorting" finding was stale.
+
 ## Follow-ups (not in this feature)
 
-- Shared components: section headings as real headings, FilterBar with visible labels, sortable
-  table headers, real plurals in pagers.
-- Screen-by-screen polish starting with Artículos (critique findings).
+- Grid filters, sort and page in the URL (Artículos first): needs a rewrite of the fetch effect,
+  debounce drafts and generation gating.
+- Visible labels in the shared `FilaDeFiltros` (ripples through ~15 pages and their tests).
+- Shared empty-state and pager components replacing the inline copies.
 - Desktop POS release (bump Ways.Desktop + tag `pos-v*`) so the cash registers get the new look.
 
 ## Acceptance criteria
@@ -70,7 +86,16 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
 
 ## Progress
 
+- 2026-10-31: #553 (T1) mergeado; #554 (T2) reapuntado a main con auto-merge. #556 (T3, base t2) y #559 (T4, base t3) abiertos con Auto-fix; al mergear cada base, reapuntar el siguiente a main y recién ahí habilitar auto-merge. Judgment-day APPROVED en T3 (fixes ccf31135) y T4 (fix 35e949bb: la nota de baja aclara la sincronización del POS).
+
+- 2026-10-31: PRs abiertos. #553 (T1, base main, auto-merge) y #554 (T2, base `pnader/ds-mostrador-t1`; reapuntar a main cuando #553 se mergee y recién ahí habilitar auto-merge). Judgment-day APPROVED en ambos; advertencias corregidas en b53c6521 (borde de controles, gitignore del POS) y ae347b95 (impresión en negro de estados, guard de nombres de color).
+
 - 2026-10-31: worktree `ds-mostrador`, branch `pnader/ds-mostrador-t1`; styling surface mapped.
 - 2026-10-31: T1 hecha en `7bfbeb51`. RED: `tema.test.ts` 58 de 59 fallaban contra el `tema.css` anterior; GREEN: 59/59. Mutación (ink-muted claro a `#b0aea8`) mató 4 casos y se revirtió.
   `npm test` 282 archivos / 8916 tests OK; `npm run build` OK (5 woff2 emitidos como archivos, sin `data:`); `npm run lint` sin errores (solo warnings previos).
   Pre-paint: archivo externo `public/tema-inicial.js` porque la CSP de Tauri es `script-src 'self'`. Familia de fontsource = "… Variable": `publico.css` pide 'Bricolage Grotesque' a secas, se resuelve con `:root .publico { --pub-fuente-titulo }` en `tema.css` sin tocar `publico.css`.
+- 2026-10-31: T2 hecha en `1bc03677`. `componentes.css` nuevo, importado tras `tema.css` en las 4 entradas; `.box` en `template.css`; las reglas contextuales de tabla (solo oscuro) pasaron a tokens para ambos temas. RED: `componentes.test.ts` fallaba por falta del archivo; GREEN 6/6; mutacion (hex y token inexistente anadidos) mato 3 casos y se revirtio.
+  `npm test` 283 archivos / 8922 tests OK (una corrida previa fallo `Pos.test` autofocus; pasa solo y en la repeticion: flaky por carga); `npm run build` OK; `npm run lint` sin errores.
+- 2026-10-31: T3 hecha en `4aa658a9` (TituloDeSeccion, 16 encabezados), `0e3b5dbf` (pluralizar en `formato/pluralizar.ts`, paginadores, PaginadorDePadron y mensajes) y `e9d9af5a` ("tenant" fuera del texto del comercio; ademas Descargar.tsx). RED: pluralizar.test.ts sin modulo, PaginadorDePadron 3 fallas y 11 fallas en los mensajes antes del codigo; GREEN despues. Ojo: los tests con regex `/x(s)/` negativos pasaban en vacio, se pasaron a `/xs? .../`.
+  `npm test` 285 archivos / 8942 tests OK; `npm run build` OK; `npm run lint` sin errores. Queda un "Historial" en mayusculas en EditorDePrecios.tsx (clases en otro orden, fuera de los 16).
+- 2026-10-31: T4 hecha en `9c571d3c` (boton 'Nuevo artículo' con icono, placeholders, nombre/codigo, estado vacio en dos casos con 'Limpiar filtros', baja con consecuencia y boton 'Dar de baja'). RED: 4 tests nuevos de la grilla y los de 'Nuevo artículo'/'Dar de baja' fallaban antes del codigo; GREEN: Articulos/Familias/articulos 779 tests, suite completa 8945, build y lint sin errores. Consecuencia verificada: baja logica por DeletedAt con filtro global BajaLogica, items de venta con Descripcion propia.
