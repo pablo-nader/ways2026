@@ -184,6 +184,16 @@ Each slice passes judgment-day before its PR.
   the row on screen went stale. The retiro-de-cierre reason wins over the conciliado one.
 - Not done: no export, no row detail; POS release is not involved (back office only).
 
+## Judgment-day T5/T6 (round 1 fixes)
+
+- JD-T56-1 (fixed, 8195314a): `desde`/`hasta` of the ventas and retiros administration queries now travel as local-offset day bounds
+  (`00:00:00` / `23:59:59.999`) through the shared `api/fechas.ts#fechaIsoConOffset` (extracted from `reportes.ts`, behavior unchanged).
+  Tests assert the bounds with the same helper plus a timezone-independent regex. Mutation: reverting the builders to the bare date failed
+  10 tests.
+- JD-T56-2 (fixed, 1c00c92b): the focus-restore effect waits for `!bloqueado && !cargando` before consuming the pending flag, and the
+  fallback is Limpiar when enabled, otherwise the table (`tabIndex=-1`). Retiros delete now also restores focus. Tests: focus after save
+  (ventas, retiros) and after delete with no filters. Mutation: dropping the `cargando` guard failed the two save tests.
+
 ## Next step
 
 Judgment-day over the T1-T6 slices, then the stacked PRs (stacked-to-main).
