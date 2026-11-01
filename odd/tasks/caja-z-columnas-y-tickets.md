@@ -88,6 +88,8 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
   depende de resumen-de-cierre para el encabezado; detalle viejo visible al cambiar de turno; medios caídos sin aviso;
   test de reimpresión web no fija el número del ticket; espacio de más en un import de VentasDelTurno.
 
+- S3 (rama pnader/caja-z-reimpresion-s3, commit 248567a3): la reimpresión de un ticket en Caja Z lleva como cajero el del turno (resumen.vendedor) en web y escritorio, y se descarta si mientras tanto se cargó otro turno (generacionDelDetalle). Vitest CajaZ 33 OK, tsc OK; mutaciones: quitar la guarda mata 1 test, quitar el cajero mata 2. Judgment-day: A y B sin CRITICAL → JUDGMENT: APPROVED. Info: un clic en la lista vieja mientras carga el turno nuevo se descarta sin aviso; la guarda del camino web no tiene test propio.
+
 ## Next step
 
 PR de S2 apilado sobre S1; seguimiento: guarda de generación y cajero del turno en la reimpresión.
