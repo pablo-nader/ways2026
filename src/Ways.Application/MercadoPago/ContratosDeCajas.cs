@@ -14,7 +14,7 @@ public static class EstadosDeCajaMercadoPago
 
     public const string Registrada = "registrada";
 
-    /// <summary>Registrada, pero el punto de venta se editó o cambió de sucursal después de la última sincronización.</summary>
+    /// <summary>Registrada, pero el punto de venta se editó o cambió de sucursal después de la última sincronización, o el local de su sucursal se volvió a registrar con otro id de Mercado Pago.</summary>
     public const string Desactualizada = "desactualizada";
 }
 
@@ -32,24 +32,33 @@ public sealed record EstadoDeCajaMercadoPago(
     DateTimeOffset? FechaSincronizacion);
 
 /// <summary>
-/// Cuerpo de <c>POST /pos</c> y <c>PUT /pos/{id}</c> de Mercado Pago. Los nombres salen en snake_case. Forma tomada de la referencia
-/// de la API y todavía no ejercitada contra la API real. <c>fixed_amount</c> es siempre <c>false</c>: el importe lo fija cada orden.
+/// Cuerpo de <c>POST /v2/pos</c> y <c>PATCH /v2/pos/{id}</c> de Mercado Pago. Los nombres salen en snake_case. <c>store_id</c> viaja
+/// como cadena de dígitos, como lo documenta la referencia. No lleva <c>fixed_amount</c>: la API no lo admite; el importe lo fija cada orden.
 /// </summary>
-public sealed record SolicitudDeCajaMercadoPago(string Name, string ExternalId, long StoreId, bool FixedAmount);
+public sealed record SolicitudDeCajaMercadoPago(string Name, string ExternalId, string StoreId, ConfiguracionDeCajaMercadoPago Config);
 
-/// <summary>El QR de una caja tal como lo devuelve Mercado Pago; solo se guarda la imagen.</summary>
+/// <summary><c>config</c> de la caja: solo el QR.</summary>
+public sealed record ConfiguracionDeCajaMercadoPago(ConfiguracionDeQrMercadoPago Qr)
+{
+    /// <summary>QR dinámico por orden (<c>pdv</c>), el modo que usa el cobro con QR de Ways.</summary>
+    public static ConfiguracionDeCajaMercadoPago ModoPdv { get; } = new(new ConfiguracionDeQrMercadoPago(ModoOperativoPdv));
+
+    public const string ModoOperativoPdv = "pdv";
+}
+
+public sealed record ConfiguracionDeQrMercadoPago(string OperatingMode);
+
+/// <summary>El QR de una caja tal como lo devuelve Mercado Pago (<c>qr_response</c>); solo se guarda la imagen.</summary>
 public sealed record QrDeCajaMercadoPago(string? Image);
 
 /// <summary>
 /// Una caja de Mercado Pago tal como la devuelven el alta, la actualización y la búsqueda; los campos que Ways no usa se ignoran. El QR
-/// puede venir como <c>qr</c> o como <c>qr_response</c> (la referencia usa los dos nombres): se acepta cualquiera.
+/// viene en <c>qr_response.image</c>.
 /// </summary>
-public sealed record CajaDeMercadoPago(long Id, string? ExternalId, long? StoreId, QrDeCajaMercadoPago? Qr, QrDeCajaMercadoPago? QrResponse)
+public sealed record CajaDeMercadoPago(long Id, string? ExternalId, long? StoreId, QrDeCajaMercadoPago? QrResponse)
 {
-    public string? ImagenDelQr => Normalizar(Qr?.Image) ?? Normalizar(QrResponse?.Image);
-
-    private static string? Normalizar(string? imagen) => string.IsNullOrWhiteSpace(imagen) ? null : imagen.Trim();
+    public string? ImagenDelQr => string.IsNullOrWhiteSpace(QrResponse?.Image) ? null : QrResponse.Image.Trim();
 }
 
-/// <summary><c>GET /pos?external_id=</c>: <c>{paging, results:[...]}</c>.</summary>
-public sealed record BusquedaDeCajasMercadoPago(IReadOnlyList<CajaDeMercadoPago>? Results);
+/// <summary><c>GET /v2/pos?external_id=</c>: <c>{paging, data:[...]}</c>.</summary>
+public sealed record BusquedaDeCajasMercadoPago(IReadOnlyList<CajaDeMercadoPago>? Data);

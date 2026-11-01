@@ -95,7 +95,9 @@ public class MercadoPagoLocalesTests(WaysApiFixture fixture) : IClassFixture<Way
 
             if (pedido.Metodo == HttpMethod.Get && pedido.Uri.AbsolutePath.EndsWith("/stores/search", StringComparison.Ordinal))
             {
-                return Json(HttpStatusCode.OK, busqueda);
+                return busqueda == BusquedaVacia
+                    ? Json(HttpStatusCode.NotFound, """{"error": "store_not_found", "message": "store not found"}""")
+                    : Json(HttpStatusCode.OK, busqueda);
             }
 
             if (pedido.Metodo == HttpMethod.Post)
@@ -111,7 +113,10 @@ public class MercadoPagoLocalesTests(WaysApiFixture fixture) : IClassFixture<Way
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         };
 
-    private const string BusquedaVacia = """{"paging": {"total": 0, "offset": 0, "limit": 30}, "results": []}""";
+    /// <summary>"Sin coincidencias": Mercado Pago contesta 404 <c>store_not_found</c>, no una lista vacía (<see cref="Guionar"/> lo traduce).</summary>
+    private const string BusquedaVacia = "sin-coincidencias";
+
+    private const string BusquedaConListaVacia = """{"paging": {"total": 0, "offset": 0, "limit": 30}, "results": []}""";
 
     private async Task<List<FilaDeLocal>> FilasAsync(int idSucursal)
     {
@@ -233,6 +238,32 @@ public class MercadoPagoLocalesTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     // ---- Alta, adopción y actualización ----------------------------------------------------------------------------------
+
+    // Clausula: un 404 de la busqueda es "no hay local con ese external_id" y se crea; una lista vacia se tolera igual.
+    [Fact]
+    public async Task UnaBusquedaSinCoincidenciasQueContesta404CreaElLocal()
+    {
+        var r = await PrepararRegistrableAsync("mp-loc-busqueda-404");
+        Guionar(r.Ctx, BusquedaVacia, idStore: 555_150);
+
+        var estado = await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null));
+
+        Assert.Equal(555_150, estado.IdStoreMercadoPago);
+        Assert.Equal(["GET", "POST"], Llamadas(r.Ctx).Select(l => l.Metodo.Method));
+        Assert.Contains("\"operacion\": \"alta\"", (await AuditoriaAsync(r.IdSucursal)).Valor);
+    }
+
+    [Fact]
+    public async Task UnaBusquedaConUnaListaVaciaTambienCreaElLocal()
+    {
+        var r = await PrepararRegistrableAsync("mp-loc-busqueda-lista-vacia");
+        Guionar(r.Ctx, BusquedaConListaVacia, idStore: 555_151);
+
+        var estado = await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null));
+
+        Assert.Equal(555_151, estado.IdStoreMercadoPago);
+        Assert.Equal(["GET", "POST"], Llamadas(r.Ctx).Select(l => l.Metodo.Method));
+    }
 
     [Fact]
     public async Task UnaSucursalCompletaSeBuscaPorExternalIdYSeCreaConElTextoLimpioYUnaClaveDeIdempotencia()

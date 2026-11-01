@@ -32,7 +32,7 @@ namespace Ways.Application.MercadoPago;
 /// igual antes de relanzar el error: de lo contrario el rollback desharía esa marca.
 ///
 /// Los campos de Mercado Pago (<c>id</c>, <c>external_id</c>, la forma de la búsqueda) vienen de la referencia de la API y no se
-/// ejercitaron en vivo; los DTO ignoran lo que no usan.
+/// ejercitaron en vivo; los DTO ignoran lo que no usan. La búsqueda sin coincidencias contesta 404 <c>store_not_found</c>.
 /// </summary>
 public class ServicioDeLocalesMercadoPago(
     IWaysDbContext db,
@@ -239,8 +239,17 @@ public class ServicioDeLocalesMercadoPago(
     /// mismo <c>external_id</c>.</summary>
     private async Task<long?> BuscarPorExternalIdAsync(int idEmpresa, string ruta, string externalId, CancellationToken ct)
     {
-        var busqueda = await api.EnviarAsync<BusquedaDeLocalesMercadoPago>(
-            idEmpresa, HttpMethod.Get, $"{ruta}/search?external_id={Uri.EscapeDataString(externalId)}", ct: ct);
+        BusquedaDeLocalesMercadoPago busqueda;
+        try
+        {
+            busqueda = await api.EnviarAsync<BusquedaDeLocalesMercadoPago>(
+                idEmpresa, HttpMethod.Get, $"{ruta}/search?external_id={Uri.EscapeDataString(externalId)}", ct: ct);
+        }
+        catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404)
+        {
+            // Mercado Pago contesta 404 store_not_found, no una lista vacía, cuando ningún local tiene ese external_id.
+            return null;
+        }
 
         var coincidencia = busqueda.Results?.FirstOrDefault(
             r => r.Id > 0 && string.Equals(r.ExternalId, externalId, StringComparison.OrdinalIgnoreCase));

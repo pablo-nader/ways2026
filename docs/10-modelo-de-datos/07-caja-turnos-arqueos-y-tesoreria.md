@@ -451,15 +451,15 @@ locales_mercadopago (         -- [operativa por empresa: id_tenant + id_empresa 
 > 404 de la sucursal (inexistente, ajena o dada de baja), 400 `direccion_incompleta_para_mercadopago` (nombra lo que falta), 409
 > `mercadopago_no_conectada` o `mercadopago_requiere_reconexion`. Bajo un `pg_advisory_xact_lock` por sucursal que se mantiene durante las
 > llamadas a Mercado Pago: con vínculo para la cuenta actual, `PUT /users/{user_id}/stores/{id}` con los datos actuales; sin vínculo,
-> primero `GET /users/{user_id}/stores/search?external_id=` y, si hay un local con ese `external_id` (un alta cuyo guardado se perdió), se
+> primero `GET /users/{user_id}/stores/search?external_id=` (sin coincidencias Mercado Pago contesta 404 `store_not_found`, no una lista vacía: el 404 se trata como "no hay") y, si hay un local con ese `external_id` (un alta cuyo guardado se perdió), se
 > adopta y se actualiza; si no, `POST /users/{user_id}/stores`. Toda llamada que no es GET lleva `X-Idempotency-Key`. Después se guarda o
 > actualiza la fila y se registra `sucursal.mercadopago` (operación `alta`, `adopcion` o `actualizacion`, ids de Mercado Pago, nunca un
 > token). El texto que viaja a Mercado Pago se limpia (sin acentos; solo letras ASCII, dígitos, espacio y `. , -`) y se corta a su largo; un
 > campo que queda vacío cuenta como faltante. El rechazo de Mercado Pago sale como 502 `mercadopago_solicitud_rechazada` con su mensaje
 > saneado, un 401 deja la conexión en `requiere_reconexion` (409) y la caída o el tiempo agotado son 503 `mercadopago_no_disponible`.
-> **Sin verificar contra la API real:** la forma del cuerpo y de la respuesta (`id`, `external_id`, `{paging, results}` de la búsqueda),
-> qué caracteres acepta cada campo, el nombre de provincia que espera Mercado Pago para la Ciudad Autónoma de Buenos Aires y qué responde
-> un `PUT` a un local borrado en Mercado Pago.
+> Verificado contra la referencia (2026-11-01), no en vivo: la búsqueda `{paging, results}` y su 404 sin coincidencias, y que la actualización es `PUT`.
+> **Sin verificar contra la API real:** qué caracteres acepta cada campo, el nombre de provincia que espera Mercado Pago para la Ciudad Autónoma de
+> Buenos Aires y qué responde un `PUT` a un local borrado en Mercado Pago.
 
 ### Cajas de Mercado Pago (puntos de venta)
 
@@ -468,10 +468,11 @@ cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa 
     id_caja_mercadopago, id_tenant, id_empresa,
     id_punto_venta,                          -- FK compuesta (id_punto_venta, id_tenant) sobre la clave alterna de puntos_venta; la empresa la fija el servicio al leer el punto de venta
     id_local_mercadopago,                    -- FK compuesta (id_local_mercadopago, id_empresa, id_tenant) a locales_mercadopago: el local del que cuelga la caja
+    id_store_mercadopago bigint,             -- id del local (store) de Mercado Pago bajo el que se registró la caja; si el local de la sucursal cambia de id la fila queda desactualizada
     id_usuario_mercadopago bigint,           -- user_id del vendedor dueño de la caja; NO es FK (la conexión puede desconectarse y la fila queda de historia)
     id_pos_mercadopago bigint,               -- id numérico que Mercado Pago asignó a la caja (POS)
     external_id varchar(40),                 -- 'WAYSPV' + id_punto_venta: letras y dígitos, estable, único por vendedor
-    url_qr varchar(500) NULL,                -- imagen del QR estático (qr.image o qr_response.image), si Mercado Pago la devolvió
+    url_qr varchar(500) NULL,                -- imagen del QR (qr_response.image), si Mercado Pago la devolvió
     fecha_registro, fecha_sincronizacion,    -- esta última es la de la LECTURA del punto de venta, no la del fin de la llamada
     created_at, updated_at, deleted_at
 )
@@ -493,19 +494,16 @@ cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa 
 > **Endpoints (solo Admin).** `GET /api/puntos-venta/{id}/mercadopago` devuelve `{ estado, idPosMercadoPago, idStoreMercadoPago, externalId,
 > urlQr, fechaRegistro, fechaSincronizacion }` con `estado` en `sin_conexion`, `local_no_registrado` (la sucursal actual del punto de venta
 > todavía no es un local de la cuenta), `no_registrada`, `registrada` o `desactualizada` (el punto de venta se editó o cambió de sucursal
-> después de `fecha_sincronizacion`, o su sucursal ya tiene otro local que el de la fila). `POST` del mismo recurso la registra. Orden: 404 del
+> después de `fecha_sincronizacion`, o el local de su sucursal es otro que el de la fila o se volvió a registrar con otro `id` de Mercado Pago). `POST` del mismo recurso la registra. Orden: 404 del
 > punto de venta, 400 `nombre_invalido_para_mercadopago` (el nombre no tiene ningún carácter admitido), 409 `mercadopago_no_conectada` o
-> `mercadopago_requiere_reconexion`, 409 `mercadopago_local_no_registrado`. Bajo un `pg_advisory_xact_lock` por punto de venta que se mantiene
-> durante las llamadas a Mercado Pago: con vínculo para la cuenta actual, `PUT /pos/{id}` con el nombre actual y el `store_id` del local de la
+> `mercadopago_requiere_reconexion`, 409 `mercadopago_local_no_registrado`. Bajo dos `pg_advisory_xact_lock` que se mantienen
+> durante las llamadas a Mercado Pago, en orden fijo sucursal → punto de venta (el de la sucursal es el mismo de la registración del local, que toma solo ese: así el local no cambia de `id` a mitad de la llamada; si el punto de venta cambió de sucursal entre la lectura que elige el lock y la de después, 409 `mercadopago_punto_venta_movido`): con vínculo para la cuenta actual, `PATCH /v2/pos/{id}` con el nombre actual y el `store_id` del local de la
 > sucursal actual (así se reapunta una caja movida); si Mercado Pago contesta 404 (la caja se borró), se busca por `external_id` y se adopta o se
-> crea de nuevo. Sin vínculo, primero `GET /pos?external_id=` y, si hay una caja con ese `external_id` (un alta cuyo guardado se perdió), se
-> adopta y se actualiza; si no, `POST /pos` con `{name, external_id, store_id, fixed_amount: false}`. Toda llamada que no es GET lleva
+> crea de nuevo. Sin vínculo, primero `GET /v2/pos?external_id=` (`{paging, data}`) y, si hay una caja con ese `external_id` (un alta cuyo guardado se perdió), se
+> adopta y se actualiza; si no, `POST /v2/pos` con `{name, external_id, store_id (cadena de dígitos), config: {qr: {operating_mode: "pdv"}}}` (sin `fixed_amount`, que la API no admite; si contesta 409 `pos_already_exists` se busca por `external_id` y se adopta). Toda llamada que no es GET lleva
 > `X-Idempotency-Key` (≤ 64): la del alta lleva la huella del cuerpo; la de la actualización, la caja de destino, la huella del cuerpo y el
 > `updated_at` del punto de venta, así que reintentar el mismo intento repite la clave y A → B → A no. Después se guarda o actualiza la fila y se
-> registra `pv.mercadopago` (operación `alta`, `adopcion` o `actualizacion`, ids de Mercado Pago, nunca un token). El nombre se limpia como el de
-> los locales y se corta a 45. El rechazo de Mercado Pago sale como 502 `mercadopago_solicitud_rechazada`, un 401 deja la conexión en
+> registra `pv.mercadopago` (operación `alta`, `adopcion` o `actualizacion`, ids de Mercado Pago, nunca un token). El nombre se limpia a letras ASCII, dígitos, espacio, guion y guion bajo (el punto y la coma pasan a espacio) y se corta a 45. El rechazo de Mercado Pago sale como 502 `mercadopago_solicitud_rechazada`, un 401 deja la conexión en
 > `requiere_reconexion` (409) y la caída o el tiempo agotado son 503 `mercadopago_no_disponible`.
-> **Sin verificar contra la API real** (forma tomada de la referencia): la ruta `/pos` (la ficha de hechos del programa habla de `/v2/pos`), la
-> forma del cuerpo y de la respuesta (`id`, `external_id`, `store_id`, `qr.image` o `qr_response.image`, `{paging, results}` de la búsqueda), qué
-> caracteres acepta `name`, qué responde un `PUT` a una caja borrada y si un alta con un `external_id` repetido responde 409 `pos_already_exists`
-> (hoy sale como 502: la búsqueda previa lo evita salvo carrera con otra instancia).
+> Verificado contra la referencia (2026-11-01), no en vivo: `POST /v2/pos`, `PATCH /v2/pos/{id}` (el `store_id` puede cambiar), `GET /v2/pos?external_id=` con la clave `data`,
+> la imagen del QR en `qr_response.image` y el 409 `pos_already_exists`. **Sin verificar contra la API real:** qué responde un `PATCH` a una caja borrada (se asume 404 `pos_not_found`).

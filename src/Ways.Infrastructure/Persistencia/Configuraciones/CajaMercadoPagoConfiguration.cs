@@ -29,6 +29,7 @@ public class CajaMercadoPagoConfiguration : IEntityTypeConfiguration<CajaMercado
         builder.Property(c => c.IdEmpresa).HasColumnName("id_empresa").IsRequired();
         builder.Property(c => c.IdPuntoVenta).HasColumnName("id_punto_venta").IsRequired();
         builder.Property(c => c.IdLocalMercadoPago).HasColumnName("id_local_mercadopago").IsRequired();
+        builder.Property(c => c.IdStoreMercadoPago).HasColumnName("id_store_mercadopago").IsRequired();
         builder.Property(c => c.IdUsuarioMercadoPago).HasColumnName("id_usuario_mercadopago").IsRequired();
         builder.Property(c => c.IdPosMercadoPago).HasColumnName("id_pos_mercadopago").IsRequired();
         builder.Property(c => c.ExternalId).HasColumnName("external_id").HasMaxLength(40).IsRequired();

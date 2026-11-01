@@ -15,6 +15,7 @@ public static class CajaParaMercadoPago
     /// <summary>Letras y dígitos solamente, estable y único por vendedor: <c>WAYSPV</c> + el id del punto de venta.</summary>
     public static string ExternalIdDe(int idPuntoVenta) => $"WAYSPV{idPuntoVenta}";
 
-    /// <summary>El nombre del punto de venta como lo acepta Mercado Pago, o vacío si no queda nada admitido.</summary>
-    public static string NombreDe(string nombre) => TextoParaMercadoPago.Sanear(nombre, LargoMaximoNombre);
+    /// <summary>El nombre del punto de venta como lo acepta Mercado Pago (letras, dígitos, espacio, guion y guion bajo), o vacío si no
+    /// queda nada admitido.</summary>
+    public static string NombreDe(string nombre) => TextoParaMercadoPago.SanearNombreDeCaja(nombre, LargoMaximoNombre);
 }

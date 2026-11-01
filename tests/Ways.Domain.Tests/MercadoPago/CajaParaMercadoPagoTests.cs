@@ -23,9 +23,11 @@ public class CajaParaMercadoPagoTests
     [Theory]
     [InlineData("Caja 1", "Caja 1")]
     [InlineData("Caja Ñandú #1 (centro)", "Caja Nandu 1 centro")]
+    [InlineData("Caja. 1, Centro", "Caja 1 Centro")]
+    [InlineData("Caja_1 - Centro", "Caja_1 - Centro")]
     [InlineData("###", "")]
     [InlineData("   ", "")]
-    public void ElNombreSeLimpiaComoElDeLosLocales(string entrada, string esperado) =>
+    public void ElNombreSoloConservaLetrasDigitosEspacioGuionYGuionBajo(string entrada, string esperado) =>
         Assert.Equal(esperado, CajaParaMercadoPago.NombreDe(entrada));
 
     [Fact]

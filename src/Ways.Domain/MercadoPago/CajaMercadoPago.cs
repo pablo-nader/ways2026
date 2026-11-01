@@ -19,6 +19,10 @@ public class CajaMercadoPago : EntidadTenant
     /// última sincronización. Si el punto de venta se mueve a otra sucursal, registrarlo de nuevo lo reapunta.</summary>
     public int IdLocalMercadoPago { get; set; }
 
+    /// <summary><c>id</c> del local (<i>store</i>) de Mercado Pago bajo el que se registró la caja. Si el local de la sucursal se vuelve a
+    /// registrar con otro <c>id</c> (por ejemplo tras un 404), la fila queda desactualizada hasta registrar la caja de nuevo.</summary>
+    public long IdStoreMercadoPago { get; set; }
+
     /// <summary><c>user_id</c> del vendedor dueño de la caja.</summary>
     public long IdUsuarioMercadoPago { get; set; }
 

@@ -3526,6 +3526,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_punto_venta");
 
+                    b.Property<long>("IdStoreMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_store_mercadopago");
+
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");

@@ -27,7 +27,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     private sealed record FilaDeCaja(
         int Id, int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdLocal, long IdUsuarioMercadoPago, long IdPos, string ExternalId,
-        string? UrlQr, DateTimeOffset FechaRegistro, DateTimeOffset FechaSincronizacion);
+        string? UrlQr, DateTimeOffset FechaRegistro, DateTimeOffset FechaSincronizacion, long IdStore);
 
     private static HttpResponseMessage Json(HttpStatusCode estado, string json) =>
         new(estado) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
@@ -38,7 +38,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         !pedido.Uri.AbsolutePath.EndsWith("/oauth/token", StringComparison.Ordinal);
 
     private static bool EsDeCajas(PedidoRegistrado pedido) =>
-        EsDeLaApi(pedido) && pedido.Uri.AbsolutePath.StartsWith("/pos", StringComparison.Ordinal);
+        EsDeLaApi(pedido) && pedido.Uri.AbsolutePath.StartsWith("/v2/pos", StringComparison.Ordinal);
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ManejadorDeMercadoPago, System.Runtime.CompilerServices.StrongBox<int>> Marcas = [];
 
@@ -101,7 +101,10 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
     private static Task<HttpResponseMessage> MoverAsync(Contexto ctx, int idPuntoVenta, int idSucursal) =>
         ctx.Admin.PostAsJsonAsync($"/api/puntos-venta/{idPuntoVenta}/sucursal", new PuntoVentaSucursalEdicion(idSucursal));
 
-    private const string BusquedaVacia = """{"paging": {"total": 0, "offset": 0, "limit": 30}, "results": []}""";
+    private const string BusquedaVacia = """{"paging": {"total": 0, "offset": 0, "limit": 30}, "data": []}""";
+
+    /// <summary>La búsqueda de locales sin coincidencia contesta 404, no una lista vacía.</summary>
+    private const string LocalNoEncontrado = """{"error": "store_not_found", "message": "store not found"}""";
 
     /// <summary>Guion del manejador: la búsqueda de cajas responde <paramref name="busqueda"/>, el alta de caja <paramref name="idPos"/> con
     /// un QR, las actualizaciones un 200 y los locales se crean con ids nuevos. <paramref name="antes"/> puede responder primero.</summary>
@@ -124,7 +127,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
             {
                 if (pedido.Metodo == HttpMethod.Get)
                 {
-                    return Json(HttpStatusCode.OK, BusquedaVacia);
+                    return Json(HttpStatusCode.NotFound, LocalNoEncontrado);
                 }
 
                 return pedido.Metodo == HttpMethod.Post
@@ -132,19 +135,19 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
                     : Json(HttpStatusCode.OK, """{"id": 1}""");
             }
 
-            if (pedido.Metodo == HttpMethod.Get && ruta == "/pos")
+            if (pedido.Metodo == HttpMethod.Get && ruta == "/v2/pos")
             {
                 return Json(HttpStatusCode.OK, busqueda);
             }
 
-            if (pedido.Metodo == HttpMethod.Post && ruta == "/pos")
+            if (pedido.Metodo == HttpMethod.Post && ruta == "/v2/pos")
             {
                 return Json(
                     HttpStatusCode.Created,
-                    $$"""{"id": {{idPos}}, "name": "x", "qr": {"image": "https://qr.test/{{idPos}}.png", "template_document": "d"}, "otro": [1]}""");
+                    $$"""{"id": {{idPos}}, "name": "x", "qr_response": {"image": "https://qr.test/{{idPos}}.png", "template_document": "d"}, "otro": [1]}""");
             }
 
-            if (pedido.Metodo == HttpMethod.Put)
+            if (pedido.Metodo == HttpMethod.Patch)
             {
                 return Json(HttpStatusCode.OK, """{"id": 1}""");
             }
@@ -176,7 +179,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await using var comando = conexion.CreateCommand();
         comando.CommandText =
             "SELECT id_caja_mercadopago, id_tenant, id_empresa, id_punto_venta, id_local_mercadopago, id_usuario_mercadopago, " +
-            "id_pos_mercadopago, external_id, url_qr, fecha_registro, fecha_sincronizacion FROM cajas_mercadopago " +
+            "id_pos_mercadopago, external_id, url_qr, fecha_registro, fecha_sincronizacion, id_store_mercadopago FROM cajas_mercadopago " +
             "WHERE id_punto_venta = $1 ORDER BY 1";
         comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta });
 
@@ -186,7 +189,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
             filas.Add(new FilaDeCaja(
                 lector.GetInt32(0), lector.GetInt32(1), lector.GetInt32(2), lector.GetInt32(3), lector.GetInt32(4), lector.GetInt64(5),
                 lector.GetInt64(6), lector.GetString(7), lector.IsDBNull(8) ? null : lector.GetString(8),
-                lector.GetFieldValue<DateTimeOffset>(9), lector.GetFieldValue<DateTimeOffset>(10)));
+                lector.GetFieldValue<DateTimeOffset>(9), lector.GetFieldValue<DateTimeOffset>(10), lector.GetInt64(11)));
         }
 
         return filas;
@@ -209,8 +212,8 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await using var comando = conexion.CreateCommand();
         comando.CommandText =
             "INSERT INTO cajas_mercadopago (id_tenant, id_empresa, id_punto_venta, id_local_mercadopago, id_usuario_mercadopago, " +
-            "id_pos_mercadopago, external_id, fecha_registro, fecha_sincronizacion, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now(), now(), now())";
+            "id_store_mercadopago, id_pos_mercadopago, external_id, fecha_registro, fecha_sincronizacion, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4, $5, 1, $6, $7, now(), now(), now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = r.Ctx.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = idEmpresa ?? r.Ctx.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta ?? r.IdPuntoVenta });
@@ -331,13 +334,13 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var busqueda = llamadas[0];
         Assert.Equal(HttpMethod.Get, busqueda.Metodo);
-        Assert.Equal("/pos", busqueda.Uri.AbsolutePath);
+        Assert.Equal("/v2/pos", busqueda.Uri.AbsolutePath);
         Assert.Equal($"?external_id={r.ExternalId}", busqueda.Uri.Query);
         Assert.StartsWith("Bearer ", busqueda.Autorizacion);
 
         var alta = llamadas[1];
         Assert.Equal(HttpMethod.Post, alta.Metodo);
-        Assert.Equal("/pos", alta.Uri.AbsolutePath);
+        Assert.Equal("/v2/pos", alta.Uri.AbsolutePath);
         Assert.False(string.IsNullOrWhiteSpace(alta.ClaveDeIdempotencia));
         Assert.True(alta.ClaveDeIdempotencia!.Length <= 64);
 
@@ -346,9 +349,10 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.True(nombre.Length <= 45);
         Assert.StartsWith("Caja Nandu 1 centro con un nombre", nombre);
         Assert.Equal(r.ExternalId, cuerpo.GetProperty("external_id").GetString());
-        Assert.Equal(JsonValueKind.Number, cuerpo.GetProperty("store_id").ValueKind);
-        Assert.Equal(r.IdStore, cuerpo.GetProperty("store_id").GetInt64());
-        Assert.False(cuerpo.GetProperty("fixed_amount").GetBoolean());
+        Assert.Equal(JsonValueKind.String, cuerpo.GetProperty("store_id").ValueKind);
+        Assert.Equal(r.IdStore.ToString(), cuerpo.GetProperty("store_id").GetString());
+        Assert.False(cuerpo.TryGetProperty("fixed_amount", out _));
+        Assert.Equal("pdv", cuerpo.GetProperty("config").GetProperty("qr").GetProperty("operating_mode").GetString());
 
         var fila = Assert.Single(await FilasAsync(r.IdPuntoVenta));
         Assert.Equal(r.Ctx.IdTenant, fila.IdTenant);
@@ -372,26 +376,75 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnaCajaQueYaExisteConElMismoExternalIdSeAdoptaEnVezDeCrearOtra()
     {
         var r = await PrepararRegistrableAsync("mp-caja-adopcion");
-        Guionar(r.Ctx, $$"""{"paging": {"total": 2}, "results": [{"id": 111, "external_id": "OTRO"}, {"id": 777001, "external_id": "{{r.ExternalId}}", "store_id": 5}]}""");
+        Guionar(r.Ctx, $$"""{"paging": {"total": 2}, "data": [{"id": 111, "external_id": "OTRO"}, {"id": 777001, "external_id": "{{r.ExternalId}}", "store_id": 5}]}""");
 
         var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
 
         Assert.Equal(777_001, estado.IdPosMercadoPago);
         var llamadas = LlamadasDeCajas(r.Ctx);
         Assert.DoesNotContain(llamadas, l => l.Metodo == HttpMethod.Post);
-        var actualizacion = Assert.Single(llamadas, l => l.Metodo == HttpMethod.Put);
-        Assert.Equal("/pos/777001", actualizacion.Uri.AbsolutePath);
-        Assert.Equal(r.IdStore, JsonDocument.Parse(actualizacion.Cuerpo).RootElement.GetProperty("store_id").GetInt64());
+        var actualizacion = Assert.Single(llamadas, l => l.Metodo == HttpMethod.Patch);
+        Assert.Equal("/v2/pos/777001", actualizacion.Uri.AbsolutePath);
+        Assert.Equal(r.IdStore.ToString(), JsonDocument.Parse(actualizacion.Cuerpo).RootElement.GetProperty("store_id").GetString());
         Assert.False(string.IsNullOrWhiteSpace(actualizacion.ClaveDeIdempotencia));
         Assert.Equal(777_001, Assert.Single(await FilasAsync(r.IdPuntoVenta)).IdPos);
         Assert.Contains("\"operacion\": \"adopcion\"", (await AuditoriaAsync(r.IdPuntoVenta)).Valor);
+    }
+
+    // Clausula: un alta que contesta 409 pos_already_exists (otra instancia la creo despues de la busqueda) busca por external_id y adopta.
+    [Fact]
+    public async Task UnAltaQueContesta409PosAlreadyExistsBuscaPorExternalIdYLaAdopta()
+    {
+        var r = await PrepararRegistrableAsync("mp-caja-409-adopta");
+        var busquedas = 0;
+        Guionar(
+            r.Ctx,
+            antes: p =>
+            {
+                if (p.Metodo == HttpMethod.Get && p.Uri.AbsolutePath == "/v2/pos")
+                {
+                    return Interlocked.Increment(ref busquedas) == 1
+                        ? Json(HttpStatusCode.OK, BusquedaVacia)
+                        : Json(HttpStatusCode.OK, $$"""{"data": [{"id": 770001, "external_id": "{{r.ExternalId}}"}]}""");
+                }
+
+                return p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos"
+                    ? Json(HttpStatusCode.Conflict, """{"error": "pos_already_exists", "message": "pos already exists"}""")
+                    : null;
+            });
+
+        var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
+
+        Assert.Equal(770_001, estado.IdPosMercadoPago);
+        var llamadas = LlamadasDeCajas(r.Ctx);
+        Assert.Equal(["GET", "POST", "GET", "PATCH"], llamadas.Select(l => l.Metodo.Method));
+        Assert.EndsWith("/770001", llamadas[3].Uri.AbsolutePath);
+        Assert.Equal(770_001, Assert.Single(await FilasAsync(r.IdPuntoVenta)).IdPos);
+        Assert.Contains("\"operacion\": \"adopcion\"", (await AuditoriaAsync(r.IdPuntoVenta)).Valor);
+    }
+
+    [Fact]
+    public async Task UnAltaQueContesta409SinCajaConEseExternalIdSigueSiendo502()
+    {
+        var r = await PrepararRegistrableAsync("mp-caja-409-sin-caja");
+        Guionar(
+            r.Ctx,
+            antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos"
+                ? Json(HttpStatusCode.Conflict, """{"error": "pos_already_exists"}""")
+                : null);
+
+        await AssertCodigoAsync(
+            await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null), HttpStatusCode.BadGateway,
+            CodigosDeErrorDeMercadoPago.SolicitudRechazada);
+        Assert.Equal(["GET", "POST", "GET"], LlamadasDeCajas(r.Ctx).Select(l => l.Metodo.Method));
+        Assert.Empty(await FilasAsync(r.IdPuntoVenta));
     }
 
     [Fact]
     public async Task UnResultadoDeLaBusquedaConOtroExternalIdNoSeAdopta()
     {
         var r = await PrepararRegistrableAsync("mp-caja-otro-external");
-        Guionar(r.Ctx, """{"results": [{"id": 111, "external_id": "WAYSPV999999"}]}""", idPos: 880_002);
+        Guionar(r.Ctx, """{"data": [{"id": 111, "external_id": "WAYSPV999999"}]}""", idPos: 880_002);
 
         var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
 
@@ -400,18 +453,18 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
     }
 
     [Fact]
-    public async Task ElQrPuedeVenirComoQrResponseYSiFaltaLaCajaSeGuardaSinUrl()
+    public async Task ElQrVieneEnQrResponseYSiFaltaLaCajaSeGuardaSinUrl()
     {
         var r = await PrepararRegistrableAsync("mp-caja-qr");
         Guionar(
-            r.Ctx, antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/pos"
+            r.Ctx, antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos"
                 ? Json(HttpStatusCode.Created, """{"id": 880100, "qr_response": {"image": "https://qr.test/otro.png"}}""")
                 : null);
         var primera = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
         Assert.Equal("https://qr.test/otro.png", primera.UrlQr);
 
         var sinQr = await PrepararRegistrableAsync("mp-caja-sin-qr");
-        Guionar(sinQr.Ctx, antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/pos" ? Json(HttpStatusCode.Created, """{"id": 880101}""") : null);
+        Guionar(sinQr.Ctx, antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos" ? Json(HttpStatusCode.Created, """{"id": 880101}""") : null);
         var segunda = await LeerAsync<EstadoDeCajaMercadoPago>(await sinQr.Ctx.Admin.PostAsync(RutaDeCajas(sinQr.IdPuntoVenta), null));
         Assert.Null(segunda.UrlQr);
         Assert.Null(Assert.Single(await FilasAsync(sinQr.IdPuntoVenta)).UrlQr);
@@ -434,8 +487,8 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var segunda = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
 
         var actualizacion = Assert.Single(Llamadas(r.Ctx).Skip(previas));
-        Assert.Equal(HttpMethod.Put, actualizacion.Metodo);
-        Assert.Equal("/pos/880300", actualizacion.Uri.AbsolutePath);
+        Assert.Equal(HttpMethod.Patch, actualizacion.Metodo);
+        Assert.Equal("/v2/pos/880300", actualizacion.Uri.AbsolutePath);
         Assert.Equal("Caja Uno Nueva", JsonDocument.Parse(actualizacion.Cuerpo).RootElement.GetProperty("name").GetString());
 
         Assert.Equal(EstadosDeCajaMercadoPago.Registrada, segunda.Estado);
@@ -450,7 +503,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     // ---- Mudanza de sucursal (re-homing) -------------------------------------------------------------------------------
 
-    // Clausula: el PUT lleva el store_id del local de la sucursal ACTUAL del punto de venta, y el vinculo guarda el local nuevo.
+    // Clausula: el PATCH lleva el store_id del local de la sucursal ACTUAL del punto de venta, y el vinculo guarda el local nuevo.
     [Fact]
     public async Task UnPuntoDeVentaMovidoAOtraSucursalRegistradaSeReapuntaConElStoreIdDelLocalNuevo()
     {
@@ -472,9 +525,9 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var nuevas = LlamadasDeCajas(r.Ctx).Skip(previas).ToList();
         var actualizacion = Assert.Single(nuevas);
-        Assert.Equal(HttpMethod.Put, actualizacion.Metodo);
-        Assert.Equal("/pos/880400", actualizacion.Uri.AbsolutePath);
-        Assert.Equal(idStoreB, JsonDocument.Parse(actualizacion.Cuerpo).RootElement.GetProperty("store_id").GetInt64());
+        Assert.Equal(HttpMethod.Patch, actualizacion.Metodo);
+        Assert.Equal("/v2/pos/880400", actualizacion.Uri.AbsolutePath);
+        Assert.Equal(idStoreB.ToString(), JsonDocument.Parse(actualizacion.Cuerpo).RootElement.GetProperty("store_id").GetString());
 
         Assert.Equal(EstadosDeCajaMercadoPago.Registrada, registrada.Estado);
         Assert.Equal(idStoreB, registrada.IdStoreMercadoPago);
@@ -484,6 +537,79 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var despues = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.GetAsync(RutaDeCajas(r.IdPuntoVenta)));
         Assert.Equal(EstadosDeCajaMercadoPago.Registrada, despues.Estado);
+    }
+
+    // Clausula: la caja guarda el store con el que se registro; si el local se registra de nuevo con otro id queda desactualizada.
+    [Fact]
+    public async Task SiElLocalSeRegistraDeNuevoConOtroStoreIdLaCajaQuedaDesactualizadaYRegistrarlaLaReapunta()
+    {
+        var r = await PrepararRegistrableAsync("mp-caja-store-nuevo");
+        Guionar(r.Ctx, idPos: 881_100);
+        await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
+
+        Guionar(
+            r.Ctx, antes: p => p.Metodo == HttpMethod.Put && p.Uri.AbsolutePath.Contains("/stores/", StringComparison.Ordinal)
+                ? Json(HttpStatusCode.NotFound, LocalNoEncontrado)
+                : null);
+        var local = await LeerAsync<EstadoDeLocalMercadoPago>(
+            await r.Ctx.Admin.PostAsync($"/api/sucursales/{r.IdSucursal}/mercadopago", null));
+        var idStoreNuevo = local.IdStoreMercadoPago!.Value;
+        Assert.NotEqual(r.IdStore, idStoreNuevo);
+
+        var desactualizada = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.GetAsync(RutaDeCajas(r.IdPuntoVenta)));
+        Assert.Equal(EstadosDeCajaMercadoPago.Desactualizada, desactualizada.Estado);
+        Assert.Equal(r.IdStore, desactualizada.IdStoreMercadoPago);
+
+        Guionar(r.Ctx, idPos: 881_100);
+        Marcar(r.Ctx);
+        var registrada = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
+
+        var actualizacion = Assert.Single(LlamadasDeCajas(r.Ctx));
+        Assert.Equal(HttpMethod.Patch, actualizacion.Metodo);
+        Assert.Equal(idStoreNuevo.ToString(), JsonDocument.Parse(actualizacion.Cuerpo).RootElement.GetProperty("store_id").GetString());
+        Assert.Equal(EstadosDeCajaMercadoPago.Registrada, registrada.Estado);
+        Assert.Equal(idStoreNuevo, registrada.IdStoreMercadoPago);
+        Assert.Equal(idStoreNuevo, Assert.Single(await FilasAsync(r.IdPuntoVenta)).IdStore);
+        Assert.Equal(
+            EstadosDeCajaMercadoPago.Registrada,
+            (await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.GetAsync(RutaDeCajas(r.IdPuntoVenta)))).Estado);
+    }
+
+    // Clausula: orden de locks sucursal -> punto de venta; una registracion del local de la sucursal excluye a la de sus cajas.
+    [Fact]
+    public async Task UnaRegistracionDelLocalDeLaSucursalExcluyeLaRegistracionDeSusCajas()
+    {
+        var r = await PrepararRegistrableAsync("mp-caja-lock-sucursal");
+        Guionar(r.Ctx, idPos: 881_200);
+
+        var detenido = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var primera = 0;
+        r.Ctx.MercadoPago.AntesDeResponder = async () =>
+        {
+            if (Interlocked.Increment(ref primera) == 1)
+            {
+                detenido.TrySetResult();
+                await liberar.Task;
+            }
+        };
+
+        var local = r.Ctx.Admin.PostAsync($"/api/sucursales/{r.IdSucursal}/mercadopago", null);
+        await detenido.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var caja = r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null);
+
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        Assert.Single(Llamadas(r.Ctx));
+        Assert.False(caja.IsCompleted);
+
+        liberar.SetResult();
+        foreach (var respuesta in await Task.WhenAll(local, caja))
+        {
+            Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        }
+
+        Assert.Equal(1, LlamadasDeCajas(r.Ctx).Count(l => l.Metodo == HttpMethod.Post));
+        Assert.Single(await FilasAsync(r.IdPuntoVenta));
     }
 
     // El vinculo no bloquea mover la caja ni siquiera cuando es la ultima de una sucursal registrada como local.
@@ -548,7 +674,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await RegistrarTrasMoverAAsync(r.IdSucursal);
         await RegistrarTrasMoverAAsync(idSucursalB);
 
-        var claves = LlamadasDeCajas(r.Ctx).Where(l => l.Metodo == HttpMethod.Put).Select(l => l.ClaveDeIdempotencia).ToList();
+        var claves = LlamadasDeCajas(r.Ctx).Where(l => l.Metodo == HttpMethod.Patch).Select(l => l.ClaveDeIdempotencia).ToList();
         Assert.Equal(3, claves.Count);
         Assert.Equal(3, claves.Distinct().Count());
         Assert.All(claves, c => Assert.True(c!.Length <= 64));
@@ -561,7 +687,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var r = await PrepararRegistrableAsync("mp-caja-clave-alta");
         Guionar(
             r.Ctx, idPos: 880_700,
-            antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/pos"
+            antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos"
                 ? Json(HttpStatusCode.BadRequest, """{"error": "INVALID_NAME", "message": "no"}""")
                 : null);
         var ruta = RutaDeCajas(r.IdPuntoVenta);
@@ -579,7 +705,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.NotEqual(altas[1].ClaveDeIdempotencia, altas[2].ClaveDeIdempotencia);
     }
 
-    // Clausula: un 404 del PUT (la caja se borro en Mercado Pago) busca por external_id y adopta, con otra clave que la del PUT fallido.
+    // Clausula: un 404 del PATCH (la caja se borro en Mercado Pago) busca por external_id y adopta, con otra clave que la del PATCH fallido.
     [Fact]
     public async Task SiLaCajaSeBorroEnMercadoPagoElRegistroLaAdoptaPorExternalIdYActualizaElVinculo()
     {
@@ -588,8 +714,8 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
 
         Guionar(
-            r.Ctx, $$"""{"results": [{"id": 990001, "external_id": "{{r.ExternalId}}"}]}""",
-            antes: p => p.Metodo == HttpMethod.Put && p.Uri.AbsolutePath == "/pos/880720"
+            r.Ctx, $$"""{"data": [{"id": 990001, "external_id": "{{r.ExternalId}}"}]}""",
+            antes: p => p.Metodo == HttpMethod.Patch && p.Uri.AbsolutePath == "/v2/pos/880720"
                 ? Json(HttpStatusCode.NotFound, """{"error": "not_found", "message": "pos not found"}""")
                 : null);
         var previas = LlamadasDeCajas(r.Ctx).Count;
@@ -598,14 +724,14 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Equal(990_001, estado.IdPosMercadoPago);
         var nuevas = LlamadasDeCajas(r.Ctx).Skip(previas).ToList();
-        Assert.Equal(["PUT", "GET", "PUT"], nuevas.Select(l => l.Metodo.Method));
+        Assert.Equal(["PATCH", "GET", "PATCH"], nuevas.Select(l => l.Metodo.Method));
         Assert.EndsWith("/990001", nuevas[2].Uri.AbsolutePath);
         Assert.NotEqual(nuevas[0].ClaveDeIdempotencia, nuevas[2].ClaveDeIdempotencia);
         Assert.Equal(990_001, Assert.Single(await FilasAsync(r.IdPuntoVenta)).IdPos);
         Assert.Contains("\"operacion\": \"adopcion\"", (await AuditoriaAsync(r.IdPuntoVenta)).Valor);
     }
 
-    // Clausula: un 404 del PUT sin caja con ese external_id la vuelve a crear.
+    // Clausula: un 404 del PATCH sin caja con ese external_id la vuelve a crear.
     [Fact]
     public async Task SiLaCajaSeBorroEnMercadoPagoYNoHayOtraElRegistroLaCreaDeNuevoYActualizaElVinculo()
     {
@@ -615,18 +741,18 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Guionar(
             r.Ctx, idPos: 990_731,
-            antes: p => p.Metodo == HttpMethod.Put && p.Uri.AbsolutePath == "/pos/880730" ? Json(HttpStatusCode.NotFound, """{"error": "not_found"}""") : null);
+            antes: p => p.Metodo == HttpMethod.Patch && p.Uri.AbsolutePath == "/v2/pos/880730" ? Json(HttpStatusCode.NotFound, """{"error": "not_found"}""") : null);
         var previas = LlamadasDeCajas(r.Ctx).Count;
 
         var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
 
         Assert.Equal(990_731, estado.IdPosMercadoPago);
-        Assert.Equal(["PUT", "GET", "POST"], LlamadasDeCajas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
+        Assert.Equal(["PATCH", "GET", "POST"], LlamadasDeCajas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
         Assert.Equal(990_731, Assert.Single(await FilasAsync(r.IdPuntoVenta)).IdPos);
         Assert.Contains("\"operacion\": \"alta\"", (await AuditoriaAsync(r.IdPuntoVenta)).Valor);
     }
 
-    // Clausula: solo el 404 dispara la recuperacion; otro 4xx del PUT sigue siendo un 502.
+    // Clausula: solo el 404 dispara la recuperacion; otro 4xx del PATCH sigue siendo un 502.
     [Fact]
     public async Task UnRechazoDelPutQueNoEs404SigueSiendo502SinBuscarNiCrear()
     {
@@ -634,13 +760,13 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Guionar(r.Ctx, idPos: 880_740);
         await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
 
-        Guionar(r.Ctx, antes: p => p.Metodo == HttpMethod.Put ? Json(HttpStatusCode.BadRequest, """{"error": "INVALID_NAME"}""") : null);
+        Guionar(r.Ctx, antes: p => p.Metodo == HttpMethod.Patch ? Json(HttpStatusCode.BadRequest, """{"error": "INVALID_NAME"}""") : null);
         var previas = LlamadasDeCajas(r.Ctx).Count;
 
         await AssertCodigoAsync(
             await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null), HttpStatusCode.BadGateway,
             CodigosDeErrorDeMercadoPago.SolicitudRechazada);
-        Assert.Equal(["PUT"], LlamadasDeCajas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
+        Assert.Equal(["PATCH"], LlamadasDeCajas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
         Assert.Equal(880_740, Assert.Single(await FilasAsync(r.IdPuntoVenta)).IdPos);
     }
 
@@ -701,7 +827,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var r = await PrepararRegistrableAsync("mp-caja-rechazo");
         Guionar(
             r.Ctx,
-            antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/pos"
+            antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos"
                 ? Json(HttpStatusCode.BadRequest, """{"error": "INVALID_NAME", "message": "invalid name\u0007 for pos"}""")
                 : null);
 
@@ -720,7 +846,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnAltaSinIdentificadorValidoEs502DeRespuestaInvalidaYNoGuardaNada(string respuestaDelAlta)
     {
         var r = await PrepararRegistrableAsync("mp-caja-sin-id");
-        Guionar(r.Ctx, antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/pos" ? Json(HttpStatusCode.Created, respuestaDelAlta) : null);
+        Guionar(r.Ctx, antes: p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos" ? Json(HttpStatusCode.Created, respuestaDelAlta) : null);
 
         var respuesta = await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null);
 
@@ -732,7 +858,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task MercadoPagoCaidoEs503YNoGuardaNada()
     {
         var r = await PrepararRegistrableAsync("mp-caja-caido");
-        Guionar(r.Ctx, antes: p => p.Metodo == HttpMethod.Get && p.Uri.AbsolutePath == "/pos" ? new HttpResponseMessage(HttpStatusCode.BadGateway) : null);
+        Guionar(r.Ctx, antes: p => p.Metodo == HttpMethod.Get && p.Uri.AbsolutePath == "/v2/pos" ? new HttpResponseMessage(HttpStatusCode.BadGateway) : null);
 
         await AssertCodigoAsync(
             await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null), HttpStatusCode.ServiceUnavailable,
@@ -795,7 +921,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var llamadas = LlamadasDeCajas(r.Ctx);
         Assert.Single(llamadas, l => l.Metodo == HttpMethod.Post);
-        Assert.Single(llamadas, l => l.Metodo == HttpMethod.Put);
+        Assert.Single(llamadas, l => l.Metodo == HttpMethod.Patch);
         Assert.Single(await FilasAsync(r.IdPuntoVenta));
         Assert.Equal(2, (await AuditoriaAsync(r.IdPuntoVenta)).Cantidad);
     }
@@ -809,7 +935,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
             r.Ctx, idPos: 880_950,
             antes: p =>
             {
-                if (p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/pos" && Interlocked.Increment(ref competidora) == 1)
+                if (p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v2/pos" && Interlocked.Increment(ref competidora) == 1)
                 {
                     InsertarFilaAsync(r, r.Ctx.MercadoPago.IdUsuario, 999_001).GetAwaiter().GetResult();
                 }
@@ -909,8 +1035,8 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await using var insercion = conexionB.CreateCommand();
         insercion.CommandText =
             "INSERT INTO cajas_mercadopago (id_tenant, id_empresa, id_punto_venta, id_local_mercadopago, id_usuario_mercadopago, " +
-            "id_pos_mercadopago, external_id, fecha_registro, fecha_sincronizacion, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, 7, 7, 'X', now(), now(), now(), now())";
+            "id_store_mercadopago, id_pos_mercadopago, external_id, fecha_registro, fecha_sincronizacion, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4, 7, 1, 7, 'X', now(), now(), now(), now())";
         insercion.Parameters.Add(new NpgsqlParameter { Value = a.Ctx.IdTenant });
         insercion.Parameters.Add(new NpgsqlParameter { Value = a.Ctx.IdEmpresa });
         insercion.Parameters.Add(new NpgsqlParameter { Value = a.IdPuntoVenta });

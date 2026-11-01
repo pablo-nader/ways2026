@@ -27,6 +27,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     id_empresa = table.Column<int>(type: "integer", nullable: false),
                     id_punto_venta = table.Column<int>(type: "integer", nullable: false),
                     id_local_mercadopago = table.Column<int>(type: "integer", nullable: false),
+                    id_store_mercadopago = table.Column<long>(type: "bigint", nullable: false),
                     id_usuario_mercadopago = table.Column<long>(type: "bigint", nullable: false),
                     id_pos_mercadopago = table.Column<long>(type: "bigint", nullable: false),
                     external_id = table.Column<string>(type: "character varying(40)", maxLength: 40, nullable: false),

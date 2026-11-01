@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -19,24 +20,29 @@ namespace Ways.Application.MercadoPago;
 /// <c>mercadopago_local_no_registrado</c> si su sucursal todavía no es un local de la cuenta.
 ///
 /// <b>Mudanza de sucursal.</b> Registrar de nuevo un punto de venta que cambió de sucursal manda el <c>store_id</c> del local de la
-/// sucursal actual en el <c>PUT /pos/{id}</c>: así Mercado Pago reapunta la caja y el vínculo guarda el local nuevo. Mover el punto de
-/// venta no toca este vínculo ni lo bloquea; solo lo deja <c>desactualizada</c>.
+/// sucursal actual en el <c>PATCH /v2/pos/{id}</c>: así Mercado Pago reapunta la caja y el vínculo guarda el local nuevo. Mover el punto
+/// de venta no toca este vínculo ni lo bloquea; solo lo deja <c>desactualizada</c>. También queda <c>desactualizada</c> si el local de
+/// la sucursal se volvió a registrar con otro <c>id</c> de Mercado Pago (el vínculo guarda el <c>id_store_mercadopago</c> con el que se
+/// registró la caja).
 ///
-/// <b>Lock</b> (<c>single-read-under-lock</c>): un <c>pg_advisory_xact_lock</c> por punto de venta serializa dos clics y se mantiene
+/// <b>Locks</b> (<c>single-read-under-lock</c>): orden fijo sucursal → punto de venta. Primero el <c>pg_advisory_xact_lock</c> de la
+/// sucursal del punto de venta (el mismo de <see cref="ServicioDeLocalesMercadoPago"/>, que toma solo ese), así una nueva registración
+/// del local no cambia su <c>id</c> a mitad de la llamada; después el del punto de venta, que serializa dos clics. Ambos se mantienen
 /// mientras se llama a Mercado Pago, así que el segundo espera el resultado del primero y encuentra el vínculo ya guardado. El punto
-/// de venta, el local y el vínculo se leen UNA vez, después del lock. El lock no cubre la edición ni el movimiento del punto de venta
+/// de venta, el local y el vínculo se leen UNA vez, después de los locks; si el punto de venta cambió de sucursal entre la lectura que
+/// eligió el lock y la de después, responde 409 y no registra nada. Los locks no cubren la edición ni el movimiento del punto de venta
 /// (esos toman otros locks): una edición concurrente deja el vínculo desactualizado porque la fecha de sincronización es la de la
 /// lectura del punto de venta, no la del fin de la llamada.
 ///
 /// <b>Sin reintento</b> (<c>ef-retry-safe-writes</c>, forma (b)): la escritura agrega el vínculo y una fila de auditoría después de
 /// una llamada externa que no se puede repetir a ciegas. Si Mercado Pago creó la caja y el guardado falla, el próximo intento la
-/// encuentra por <c>external_id</c> y la adopta en vez de duplicarla.
+/// encuentra por <c>external_id</c> y la adopta en vez de duplicarla; lo mismo si el alta contesta 409 <c>pos_already_exists</c>.
 ///
 /// Un 401 de Mercado Pago deja la conexión en <c>requiere_reconexion</c> dentro de esta misma transacción, así que se confirma
 /// igual antes de relanzar el error: de lo contrario el rollback desharía esa marca.
 ///
-/// Los campos de Mercado Pago (<c>id</c>, <c>external_id</c>, <c>store_id</c>, <c>qr</c>, la forma de la búsqueda) vienen de la
-/// referencia de la API y no se ejercitaron en vivo; los DTO ignoran lo que no usan.
+/// Los campos de Mercado Pago (<c>id</c>, <c>external_id</c>, <c>store_id</c>, <c>qr_response.image</c>, la búsqueda <c>{paging, data}</c>)
+/// están verificados contra la referencia de la API (2026-11-01) pero no se ejercitaron en vivo; los DTO ignoran lo que no usan.
 /// </summary>
 public class ServicioDeCajasMercadoPago(
     IWaysDbContext db,
@@ -47,7 +53,7 @@ public class ServicioDeCajasMercadoPago(
     /// <summary>Segunda clave del <c>pg_advisory_xact_lock(int, int)</c>; la primera es el id del punto de venta.</summary>
     public const int ClaveDeLockDeCaja = 0x4D504350;
 
-    private const string RutaDeCajas = "/pos";
+    private const string RutaDeCajas = "/v2/pos";
 
     private const int LargoMaximoDeUrlQr = 500;
 
@@ -77,19 +83,13 @@ public class ServicioDeCajasMercadoPago(
             return Estado(EstadosDeCajaMercadoPago.NoRegistrada);
         }
 
-        var idStore = caja.IdLocalMercadoPago == local.Id
-            ? local.IdStoreMercadoPago
-            : await db.LocalesMercadoPago
-                .AsNoTracking()
-                .Where(l => l.Id == caja.IdLocalMercadoPago)
-                .Select(l => (long?)l.IdStoreMercadoPago)
-                .FirstOrDefaultAsync(ct);
-
-        var desactualizada = puntoVenta.UpdatedAt > caja.FechaSincronizacion || caja.IdLocalMercadoPago != local.Id;
+        var desactualizada = puntoVenta.UpdatedAt > caja.FechaSincronizacion
+            || caja.IdLocalMercadoPago != local.Id
+            || caja.IdStoreMercadoPago != local.IdStoreMercadoPago;
 
         return new EstadoDeCajaMercadoPago(
             desactualizada ? EstadosDeCajaMercadoPago.Desactualizada : EstadosDeCajaMercadoPago.Registrada,
-            caja.IdPosMercadoPago, idStore, caja.ExternalId, caja.UrlQr, caja.FechaRegistro, caja.FechaSincronizacion);
+            caja.IdPosMercadoPago, caja.IdStoreMercadoPago, caja.ExternalId, caja.UrlQr, caja.FechaRegistro, caja.FechaSincronizacion);
     }
 
     /// <summary>
@@ -102,14 +102,18 @@ public class ServicioDeCajasMercadoPago(
 
         return await estrategia.ExecuteAsync(async () =>
         {
+            // Lectura previa solo para saber qué lock de sucursal tomar; el punto de venta se lee de nuevo bajo los locks.
+            var idSucursal = (await LeerPuntoVentaAsync(idPuntoVenta, ct)).IdSucursal;
+
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
-            await TomarLockDelPuntoVentaAsync(idPuntoVenta, ct);
+            await TomarLockAsync(idSucursal, ServicioDeLocalesMercadoPago.ClaveDeLockDeLocal, ct);
+            await TomarLockAsync(idPuntoVenta, ClaveDeLockDeCaja, ct);
 
             ErrorDominio? reconexion = null;
             EstadoDeCajaMercadoPago? resultado = null;
             try
             {
-                resultado = await RegistrarBajoLockAsync(idPuntoVenta, ct);
+                resultado = await RegistrarBajoLockAsync(idPuntoVenta, idSucursal, ct);
             }
             catch (ErrorDominio error) when (error.Codigo == CodigosDeErrorDeMercadoPago.RequiereReconexion)
             {
@@ -122,9 +126,15 @@ public class ServicioDeCajasMercadoPago(
         });
     }
 
-    private async Task<EstadoDeCajaMercadoPago> RegistrarBajoLockAsync(int idPuntoVenta, CancellationToken ct)
+    private async Task<EstadoDeCajaMercadoPago> RegistrarBajoLockAsync(int idPuntoVenta, int idSucursalBloqueada, CancellationToken ct)
     {
         var puntoVenta = await LeerPuntoVentaAsync(idPuntoVenta, ct);
+        if (puntoVenta.IdSucursal != idSucursalBloqueada)
+        {
+            throw ErrorDominio.Conflicto(
+                "mercadopago_punto_venta_movido",
+                "El punto de venta cambió de sucursal mientras se registraba: intentalo de nuevo.");
+        }
 
         var nombre = CajaParaMercadoPago.NombreDe(puntoVenta.Nombre);
         if (nombre.Length == 0)
@@ -162,7 +172,8 @@ public class ServicioDeCajasMercadoPago(
         // queda posterior a ella y el vínculo figura desactualizado.
         var sincronizadoEn = reloj.Ahora;
         var externalId = CajaParaMercadoPago.ExternalIdDe(idPuntoVenta);
-        var cuerpo = new SolicitudDeCajaMercadoPago(nombre, externalId, local.IdStoreMercadoPago, FixedAmount: false);
+        var cuerpo = new SolicitudDeCajaMercadoPago(
+            nombre, externalId, local.IdStoreMercadoPago.ToString(CultureInfo.InvariantCulture), ConfiguracionDeCajaMercadoPago.ModoPdv);
         var estadoDelPuntoVenta = puntoVenta.UpdatedAt.UtcTicks;
 
         ResultadoDeEnvio enviado;
@@ -194,6 +205,7 @@ public class ServicioDeCajasMercadoPago(
                 IdEmpresa = puntoVenta.IdEmpresa,
                 IdPuntoVenta = idPuntoVenta,
                 IdLocalMercadoPago = local.Id,
+                IdStoreMercadoPago = local.IdStoreMercadoPago,
                 IdUsuarioMercadoPago = idUsuario,
                 IdPosMercadoPago = enviado.IdPos,
                 ExternalId = externalId,
@@ -208,6 +220,7 @@ public class ServicioDeCajasMercadoPago(
         else
         {
             vinculo.IdLocalMercadoPago = local.Id;
+            vinculo.IdStoreMercadoPago = local.IdStoreMercadoPago;
             vinculo.IdPosMercadoPago = enviado.IdPos;
             vinculo.UrlQr = urlQr;
             vinculo.FechaSincronizacion = sincronizadoEn;
@@ -236,7 +249,20 @@ public class ServicioDeCajasMercadoPago(
             return await ActualizarAsync(idEmpresa, existente, cuerpo, idPuntoVenta, estadoDelPuntoVenta, "adopcion", ct);
         }
 
-        return await CrearAsync(idEmpresa, cuerpo, idPuntoVenta, ct);
+        try
+        {
+            return await CrearAsync(idEmpresa, cuerpo, idPuntoVenta, ct);
+        }
+        catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 409)
+        {
+            // 409 pos_already_exists: otra instancia creó la caja después de la búsqueda; se la adopta.
+            if (await BuscarPorExternalIdAsync(idEmpresa, externalId, ct) is { } yaCreada)
+            {
+                return await ActualizarAsync(idEmpresa, yaCreada, cuerpo, idPuntoVenta, estadoDelPuntoVenta, "adopcion", ct);
+            }
+
+            throw;
+        }
     }
 
     private static string HuellaDe(SolicitudDeCajaMercadoPago cuerpo) => HuellaDeTexto(JsonSerializer.Serialize(cuerpo));
@@ -266,13 +292,13 @@ public class ServicioDeCajasMercadoPago(
     /// <summary>La clave lleva la caja de destino, el contenido (con el <c>store_id</c> del local de la sucursal) y el estado del punto
     /// de venta (su <c>updated_at</c>): reintentar el mismo intento repite la clave, volver a un contenido anterior (A, B, A) después de
     /// una edición o de una mudanza no recibe la respuesta guardada del primero, y la adopción que sigue a un 404 no reusa la clave del
-    /// PUT que falló contra la caja borrada.</summary>
+    /// PATCH que falló contra la caja borrada.</summary>
     private async Task<ResultadoDeEnvio> ActualizarAsync(
         int idEmpresa, long idPos, SolicitudDeCajaMercadoPago cuerpo, int idPuntoVenta, long estadoDelPuntoVenta, string operacion,
         CancellationToken ct)
     {
         var actualizada = await api.EnviarAsync<CajaDeMercadoPago>(
-            idEmpresa, HttpMethod.Put, $"{RutaDeCajas}/{idPos}", cuerpo,
+            idEmpresa, HttpMethod.Patch, $"{RutaDeCajas}/{idPos}", cuerpo,
             $"ways-caja-{idPuntoVenta}-act-{HuellaDeTexto($"{idPos}|{HuellaDe(cuerpo)}|{estadoDelPuntoVenta}")}", ct);
 
         return new ResultadoDeEnvio(idPos, UrlDelQr(actualizada), operacion);
@@ -285,7 +311,7 @@ public class ServicioDeCajasMercadoPago(
         var busqueda = await api.EnviarAsync<BusquedaDeCajasMercadoPago>(
             idEmpresa, HttpMethod.Get, $"{RutaDeCajas}?external_id={Uri.EscapeDataString(externalId)}", ct: ct);
 
-        var coincidencia = busqueda.Results?.FirstOrDefault(
+        var coincidencia = busqueda.Data?.FirstOrDefault(
             r => r.Id > 0 && string.Equals(r.ExternalId, externalId, StringComparison.OrdinalIgnoreCase));
 
         return coincidencia?.Id;
@@ -310,11 +336,11 @@ public class ServicioDeCajasMercadoPago(
             .ThenByDescending(c => c.Id)
             .FirstOrDefaultAsync(ct);
 
-    private async Task TomarLockDelPuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
+    private async Task TomarLockAsync(int primeraClave, int segundaClave, CancellationToken ct)
     {
         var transaccion = db.Database.CurrentTransaction
             ?? throw new InvalidOperationException(
-                "El lock de la caja de Mercado Pago es de alcance de transacción: tomarlo fuera de una no protege nada.");
+                "Los locks de la caja de Mercado Pago son de alcance de transacción: tomarlos fuera de una no protege nada.");
 
         var conexion = db.Database.GetDbConnection();
         if (conexion.State != ConnectionState.Open)
@@ -325,8 +351,8 @@ public class ServicioDeCajasMercadoPago(
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion.GetDbTransaction();
         comando.CommandText = "SELECT pg_advisory_xact_lock($1, $2)";
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, ClaveDeLockDeCaja);
+        ParametrosDeComando.Agregar(comando, primeraClave);
+        ParametrosDeComando.Agregar(comando, segundaClave);
         await comando.ExecuteNonQueryAsync(ct);
     }
 
