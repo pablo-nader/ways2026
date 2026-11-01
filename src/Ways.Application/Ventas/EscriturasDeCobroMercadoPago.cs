@@ -37,9 +37,7 @@ internal static class EscriturasDeCobroMercadoPago
 
             reservados[pedido.IdCobro] = new CobroReservado(
                 pedido.IdCobro,
-                cobro.IdPagoMercadoPago
-                    ?? throw new InvalidOperationException(
-                        $"El cobro {pedido.IdCobro} está aprobado sin id de pago de Mercado Pago: la aprobación lo exige."));
+                cobro.IdPagoMercadoPago!); // ExigirCobroUtilizable ya rechazó (409 sin_pago) un cobro aprobado sin id de pago
         }
 
         return reservados;

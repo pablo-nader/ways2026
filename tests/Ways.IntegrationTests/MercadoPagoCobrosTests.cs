@@ -66,6 +66,9 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         /// <summary>El texto exacto de <c>paid_amount</c> (y de <c>amount</c> si es distinto del total); anula <see cref="Pagado"/>.</summary>
         public string? PagadoCrudo { get; set; }
 
+        /// <summary>El id exacto del pago de la orden <c>processed</c>; nulo usa <c>PAY{orden}</c>.</summary>
+        public string? IdDelPago { get; set; }
+
         /// <summary>Una orden sin <c>type_response</c>.</summary>
         public bool SinQr { get; set; }
     }
@@ -108,7 +111,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var pagado = o.PagadoCrudo ?? (o.Pagado ?? total).ToString("F2", CultureInfo.InvariantCulture);
         var pagos = estado == "processed" && !o.SinPagos
             ? $$"""
-              "transactions": {"payments": [{"id": "PAY{{id}}", "status": "processed", "amount": "{{pagado}}",
+              "transactions": {"payments": [{"id": "{{o.IdDelPago ?? "PAY" + id}}", "status": "processed", "amount": "{{pagado}}",
               "paid_amount": "{{pagado}}", "reference_id": {{(o.ReferenceId ?? "null")}}}]},
               """
             : string.Empty;
@@ -342,8 +345,8 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         comando.CommandText =
             "INSERT INTO cobros_mercadopago (id_tenant, id_empresa, id_punto_venta, id_dispositivo, id_medio_pago, numero_preasignado, " +
             "intento, tipo, importe, external_reference, external_pos_id, clave_idempotencia, id_orden_mercadopago, estado, expira_en, " +
-            "fecha_aprobacion, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', 10, $8, 'WAYSPVCRUDO', $8, $9, $10, now(), now(), now(), now())";
+            "fecha_aprobacion, created_at, updated_at, id_pago_mercadopago) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', 10, $8, 'WAYSPVCRUDO', $8, $9, $10, now(), now(), now(), now(), CASE WHEN $10::text = 'aprobado' THEN 'PAYCRUDO' END)";
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = e.Ctx.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta ?? e.IdPuntoVenta });
@@ -1185,6 +1188,36 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal("aprobado", reintento.Estado);
         Assert.Equal(100m, reintento.ImportePagado);
+    }
+
+    // Clausula: E3T2-1. Un pago sin id legible (vacio o mas largo que id_pago_mercadopago) NO aprueba el cobro: la venta se apoya en ese id.
+    // El cobro sigue pendiente y la proxima consulta lo aprueba cuando el id aparece.
+    [Theory]
+    [InlineData("")]
+    [InlineData("65")]
+    public async Task UnPagoSinIdLegibleNoApruebaElCobroHastaQueElIdAparece(string caso)
+    {
+        var e = await PrepararAsync("mp-cobro-sin-id-pago-" + (caso.Length == 0 ? "vacio" : "largo"));
+        var cobro = await CrearOkAsync(e, caso.Length == 0 ? 5060 : 5061, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.IdDelPago = caso.Length == 0 ? string.Empty : new string('P', 65);
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("pendiente", consultado.Estado);
+        Assert.Null(consultado.ImportePagado);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("pendiente", fila["estado"]);
+        Assert.Null(fila["id_pago_mercadopago"]);
+        Assert.Null(fila["fecha_aprobacion"]);
+
+        e.Ordenes.IdDelPago = null;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        var reintento = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("aprobado", reintento.Estado);
+        var aprobada = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.NotNull(aprobada["id_pago_mercadopago"]);
     }
 
     // Clausula: F1. El importe pagado tiene que ser mayor a 0 y con hasta 2 decimales; si no, no se aprueba.

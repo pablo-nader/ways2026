@@ -15,7 +15,7 @@ public static class CodigosDePagoConMercadoPago
 
     public const string NoAdmitidoEnDevolucion = "cobro_mercadopago_no_admitido_en_devolucion";
 
-    public const string Repetido = "cobro_mercadopago_repetido";
+    public const string MasDeUnCobro = "venta_con_mas_de_un_cobro_mercadopago";
 
     public const string Inexistente = "cobro_mercadopago_inexistente";
 
@@ -26,6 +26,8 @@ public static class CodigosDePagoConMercadoPago
     public const string ImporteDistinto = "cobro_mercadopago_importe_distinto";
 
     public const string YaUsado = "cobro_mercadopago_ya_usado";
+
+    public const string SinPago = "cobro_mercadopago_sin_pago";
 
     /// <summary>Un pago ya cobrado con Mercado Pago no se cambia: el dinero entró por ese medio y su devolución es de la conciliación.</summary>
     public const string NoEditable = "pago_mercadopago_no_editable";
@@ -96,20 +98,21 @@ public static class ReglaDeCobroEnVenta
         }
     }
 
-    /// <summary>Un cobro paga un solo pago de la venta.</summary>
-    public static void ExigirSinCobrosRepetidos(IEnumerable<int> idsDeCobro)
+    /// <summary>Una venta admite a lo sumo UN cobro de Mercado Pago: hay un cobro vivo por número y el cobro ligado a la venta es
+    /// único, así que dos pagos con cobro (iguales o distintos) no tienen forma de ligarse.</summary>
+    public static void ExigirUnSoloCobro(IEnumerable<int> idsDeCobro)
     {
-        if (idsDeCobro.GroupBy(id => id).Any(g => g.Count() > 1))
+        if (idsDeCobro.Count() > 1)
         {
             throw new ErrorDominio(
-                CodigosDePagoConMercadoPago.Repetido,
-                "Un cobro de Mercado Pago solo puede pagar un medio de la venta.",
+                CodigosDePagoConMercadoPago.MasDeUnCobro,
+                "Una venta admite un solo cobro de Mercado Pago.",
                 400);
         }
     }
 
     /// <summary>El cobro, leído bajo su lock, tiene que ser de esta venta (punto de venta, número y medio), estar aprobado, no estar
-    /// ligado a otra venta y haber cobrado exactamente el importe del pago.</summary>
+    /// ligado a otra venta, traer el id del pago de Mercado Pago y haber cobrado exactamente el importe del pago.</summary>
     public static void ExigirCobroUtilizable(
         CobroParaVender cobro, int idPuntoVenta, long numeroPreasignado, int idMedioPago, decimal importe)
     {
@@ -125,6 +128,12 @@ public static class ReglaDeCobroEnVenta
         {
             throw ErrorDominio.Conflicto(
                 CodigosDePagoConMercadoPago.NoAprobado, "El cobro de Mercado Pago todavía no está aprobado.");
+        }
+
+        if (cobro.IdPagoMercadoPago is null)
+        {
+            throw ErrorDominio.Conflicto(
+                CodigosDePagoConMercadoPago.SinPago, "El cobro de Mercado Pago está aprobado pero no trae el id del pago.");
         }
 
         if (cobro.IdComprobanteVenta is not null)

@@ -118,13 +118,24 @@ public class ReglaDeCobroEnVentaTests
     }
 
     [Fact]
-    public void UnMismoCobroEnDosPagosSeRechaza() =>
-        AssertError(() => ReglaDeCobroEnVenta.ExigirSinCobrosRepetidos([5, 6, 5]), CodigosDePagoConMercadoPago.Repetido, 400);
+    public void DosPagosConCobroSeRechazanSeanElMismoCobroODistintos()
+    {
+        AssertError(() => ReglaDeCobroEnVenta.ExigirUnSoloCobro([5, 6]), CodigosDePagoConMercadoPago.MasDeUnCobro, 400);
+        AssertError(() => ReglaDeCobroEnVenta.ExigirUnSoloCobro([5, 5]), CodigosDePagoConMercadoPago.MasDeUnCobro, 400);
+    }
 
     [Fact]
-    public void CobrosDistintosOSinCobrosSeAceptan()
+    public void UnCobroOSinCobrosSeAceptan()
     {
-        ReglaDeCobroEnVenta.ExigirSinCobrosRepetidos([5, 6]);
-        ReglaDeCobroEnVenta.ExigirSinCobrosRepetidos([]);
+        ReglaDeCobroEnVenta.ExigirUnSoloCobro([5]);
+        ReglaDeCobroEnVenta.ExigirUnSoloCobro([]);
+    }
+
+    [Fact]
+    public void UnCobroAprobadoSinIdDePagoEs409()
+    {
+        var cobro = new CobroParaVender(1, 7, 3, EstadosDeCobroMercadoPago.Aprobado, 100m, null, null);
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirCobroUtilizable(cobro, 1, 7, 3, 100m), CodigosDePagoConMercadoPago.SinPago, 409);
     }
 }

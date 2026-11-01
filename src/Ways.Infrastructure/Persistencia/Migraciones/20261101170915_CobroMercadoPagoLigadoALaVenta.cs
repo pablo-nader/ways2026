@@ -10,6 +10,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.AddCheckConstraint(
+                name: "ck_cobros_mercadopago_aprobado_con_pago",
+                table: "cobros_mercadopago",
+                sql: "estado <> 'aprobado' OR id_pago_mercadopago IS NOT NULL");
+
             migrationBuilder.AddColumn<int>(
                 name: "id_comprobante_venta",
                 table: "cobros_mercadopago",
@@ -58,6 +63,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropCheckConstraint(
+                name: "ck_cobros_mercadopago_aprobado_con_pago",
+                table: "cobros_mercadopago");
+
             migrationBuilder.DropForeignKey(
                 name: "fk_cobros_cobro_mercadopago",
                 table: "cobros");

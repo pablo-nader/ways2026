@@ -485,7 +485,7 @@ public class ServicioDeVentas(
                 traeNumeroPreasignado: solicitud.NumeroPreasignado is not null, esDevolucion: tipo.Signo <= 0);
         }
 
-        ReglaDeCobroEnVenta.ExigirSinCobrosRepetidos(
+        ReglaDeCobroEnVenta.ExigirUnSoloCobro(
             pagos.Where(p => p.IdCobroMercadoPago is not null).Select(p => p.IdCobroMercadoPago!.Value));
 
         // La referencia que exige un medio es la que tipea el cajero; el pago con cobro la toma del pago de Mercado Pago, así que el

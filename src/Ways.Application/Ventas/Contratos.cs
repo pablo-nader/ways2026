@@ -168,7 +168,7 @@ public sealed record LineaDeVenta(
 /// Un medio con <c>proveedor</c> lo exige (400 <c>cobro_mercadopago_requerido</c>) y un medio sin proveedor no lo admite (400
 /// <c>cobro_mercadopago_en_medio_sin_proveedor</c>); solo se admite en una venta con <c>NumeroPreasignado</c> (400
 /// <c>cobro_mercadopago_sin_numero_preasignado</c>). <c>EmitirAsync</c> lo valida bajo lock (misma venta, aprobado, mismo importe, sin otra
-/// venta), lo liga a la venta y copia a <see cref="Referencia"/> el id del pago de Mercado Pago. En una nota de crédito el cobro no se admite
+/// venta), lo liga a la venta y copia a <see cref="Referencia"/> el id del pago de Mercado Pago. Una venta admite a lo sumo UN cobro de Mercado Pago (hay un cobro vivo por número y el cobro ligado a la venta es único): dos pagos con cobro, iguales o distintos, son 400 <c>venta_con_mas_de_un_cobro_mercadopago</c>. En una nota de crédito el cobro no se admite
 /// (400 <c>cobro_mercadopago_no_admitido_en_devolucion</c>) y un medio con proveedor es solo el medio de devolución. La facturación de
 /// remitos y el cambio de medios no tienen número preasignado: rechazan un pago con cobro y un medio con proveedor sin cobro con esos
 /// mismos códigos (<c>ReglaDeCobroEnVenta.ExigirFormaDelPago</c>); los recibos no llevan cobro y rechazan un medio con proveedor.</summary>

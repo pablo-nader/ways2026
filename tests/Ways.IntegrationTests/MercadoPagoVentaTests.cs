@@ -505,7 +505,23 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Null(await VentaLigadaAsync(cobro.IdCobro));
     }
 
-    // Clausula: un cobro no paga dos pagos de la misma venta.
+    // Clausula: una venta admite un solo cobro de Mercado Pago, aunque los dos cobros sean distintos.
+    [Fact]
+    public async Task DosCobrosDistintosEnUnaVentaEs400()
+    {
+        var e = await PrepararAsync("mp-venta-dos-cobros");
+        var uno = await CobroAprobadoAsync(e, e.Desde, importe: 50m);
+        var otro = await CobroAprobadoAsync(e, e.Desde + 1, importe: 50m);
+
+        var respuesta = await VenderAsync(
+            e, Venta(e, e.Desde, PagoMp(e, uno.IdCobro, importe: 50m), PagoMp(e, otro.IdCobro, importe: 50m)));
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.BadRequest, "venta_con_mas_de_un_cobro_mercadopago");
+        Assert.Null(await VentaLigadaAsync(uno.IdCobro));
+        Assert.Null(await VentaLigadaAsync(otro.IdCobro));
+    }
+
+    // Clausula: el mismo cobro en dos pagos de la misma venta tambien cuenta como mas de un cobro.
     [Fact]
     public async Task UnMismoCobroEnDosPagosEs400()
     {
@@ -515,7 +531,7 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var respuesta = await VenderAsync(
             e, Venta(e, e.Desde, PagoMp(e, cobro.IdCobro, importe: 50m), PagoMp(e, cobro.IdCobro, importe: 50m)));
 
-        await AssertCodigoAsync(respuesta, HttpStatusCode.BadRequest, "cobro_mercadopago_repetido");
+        await AssertCodigoAsync(respuesta, HttpStatusCode.BadRequest, "venta_con_mas_de_un_cobro_mercadopago");
         Assert.Null(await VentaLigadaAsync(cobro.IdCobro));
     }
 
@@ -739,6 +755,24 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var (estado, codigo) = await ManejarAsync(rechazo);
         Assert.Equal(StatusCodes.Status409Conflict, estado);
         Assert.Equal("cobro_mercadopago_ya_usado", codigo);
+    }
+
+    // Clausula: ck_cobros_mercadopago_aprobado_con_pago: un cobro aprobado sin id de pago lo rechaza la base (23514 -> 409 sin_pago).
+    [Fact]
+    public async Task LaBaseRechazaUnCobroAprobadoSinIdDePago()
+    {
+        var e = await PrepararAsync("mp-venta-sin-pago");
+        var cobro = await CobroAprobadoAsync(e, e.Desde);
+
+        var rechazo = await Assert.ThrowsAsync<PostgresException>(() =>
+            EjecutarAsync("UPDATE cobros_mercadopago SET id_pago_mercadopago = NULL WHERE id_cobro_mercadopago = $1", cobro.IdCobro));
+
+        Assert.Equal("23514", rechazo.SqlState);
+        Assert.Equal("ck_cobros_mercadopago_aprobado_con_pago", rechazo.ConstraintName);
+
+        var (estado, codigo) = await ManejarAsync(rechazo);
+        Assert.Equal(StatusCodes.Status409Conflict, estado);
+        Assert.Equal("cobro_mercadopago_sin_pago", codigo);
     }
 
     // Clausula: los cobros sin venta no chocan entre si en el indice unico (los nulos son distintos).

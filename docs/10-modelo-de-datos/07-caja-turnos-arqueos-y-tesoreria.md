@@ -568,7 +568,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
     clave_idempotencia varchar(64),          -- X-Idempotency-Key de POST /v1/orders: 'ways-cobro-' + huella SHA-256 del cuerpo completo de la orden
     id_orden_mercadopago varchar(64) NULL,   -- id de la orden (ORD…); nulo solo en 'creando' o 'expirado' sin orden (CHECK ck_cobros_mercadopago_orden)
     estado varchar(20),                      -- 'creando' | 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto'
-    id_pago_mercadopago varchar(64) NULL,    -- id del pago dentro de la orden
+    id_pago_mercadopago varchar(64) NULL,    -- id del pago dentro de la orden; obligatorio si el cobro está aprobado (CHECK ck_cobros_mercadopago_aprobado_con_pago)
     referencia_pago_mercadopago bigint NULL, -- reference_id numérico del pago (para /v1/payments y los informes)
     importe_pagado numeric(18,2) NULL,       -- lo que Mercado Pago dice que se pagó; puede diferir de importe
     qr_data text NULL,                       -- contenido EMVCo del QR dinámico; solo se devuelve mientras el cobro está pendiente
@@ -582,7 +582,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
 
 > Constraints: FK `fk_cobros_mercadopago_tenant` (simple), `_empresa` (`(id_empresa, id_tenant)`), `_punto_venta`, `_dispositivo` y `_medio_pago`
 > (todas compuestas con `id_tenant`, RESTRICT, sobre claves alternas existentes). CHECK de respaldo `ck_cobros_mercadopago_tipo`, `_estado`,
-> `_importe` (> 0), `_importe_pagado` (nulo o >= 0), `_intento` (>= 1), `_numero` (> 0), `_aprobacion` (un cobro aprobado tiene `fecha_aprobacion`) y `_orden` (solo un cobro `creando`, o `expirado` por abandono sin orden confirmada, puede no tener `id_orden_mercadopago`).
+> `_importe` (> 0), `_importe_pagado` (nulo o >= 0), `_intento` (>= 1), `_numero` (> 0), `_aprobacion` (un cobro aprobado tiene `fecha_aprobacion`), `_aprobado_con_pago` (un cobro aprobado tiene `id_pago_mercadopago`; 23514 -> 409 `cobro_mercadopago_sin_pago`) y `_orden` (solo un cobro `creando`, o `expirado` por abandono sin orden confirmada, puede no tener `id_orden_mercadopago`).
 > Único parcial `ux_cobros_mercadopago_vivo_numero` `(id_punto_venta, numero_preasignado) WHERE estado IN ('creando', 'pendiente', 'aprobado')`: a lo sumo
 > un cobro vivo por número de venta; y único `ux_cobros_mercadopago_intento` `(id_punto_venta, numero_preasignado, intento)`. Ambos 23505 se
 > traducen a 409 `cobro_mercadopago_en_curso` en `ManejadorDeErrores` (el servicio serializa las creaciones con un lock por punto de venta, así que

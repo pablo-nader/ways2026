@@ -3769,6 +3769,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         {
                             t.HasCheckConstraint("ck_cobros_mercadopago_aprobacion", "estado <> 'aprobado' OR fecha_aprobacion IS NOT NULL");
 
+                            t.HasCheckConstraint("ck_cobros_mercadopago_aprobado_con_pago", "estado <> 'aprobado' OR id_pago_mercadopago IS NOT NULL");
+
                             t.HasCheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto')");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_importe", "importe > 0");

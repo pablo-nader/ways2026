@@ -219,6 +219,11 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_comprobante_venta" } =>
                 (StatusCodes.Status409Conflict, "El cobro de Mercado Pago ya pagó otra venta.", "cobro_mercadopago_ya_usado"),
 
+            // Backstop de la aprobación del cobro de Mercado Pago: `AplicarOrden` solo aprueba con el id del pago y la venta lo rechaza
+            // antes (409 cobro_mercadopago_sin_pago); esto atrapa una escritura cruda de un cobro aprobado sin pago.
+            { SqlState: "23514", ConstraintName: "ck_cobros_mercadopago_aprobado_con_pago" } =>
+                (StatusCodes.Status409Conflict, "El cobro de Mercado Pago aprobado tiene que traer el id del pago.", "cobro_mercadopago_sin_pago"),
+
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
             // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas

@@ -40,7 +40,7 @@ namespace Ways.Application.MercadoPago;
 /// crear una orden nueva y cobrable, y crear, consultar y cancelar responden 409 <c>cobro_mercadopago_en_curso</c>; desde dos
 /// vigencias más 5 minutos (cualquier orden que pudo crear un reenvío ya venció) la fila pasa a <c>expirado</c> sin llamar a Mercado
 /// Pago, y libera el número. Una orden en estado <c>created</c> sin <c>qr_data</c> es una respuesta inválida (502); una en estado
-/// terminal pasa por el mapeo de estados; una <c>processed</c> recuperada sin pago legible queda <c>pendiente</c> sin QR
+/// terminal pasa por el mapeo de estados; una <c>processed</c> recuperada sin pago legible (importe o id) queda <c>pendiente</c> sin QR
 /// (<c>VerificandoPago</c>).
 ///
 /// <b>Locks</b> (<c>single-read-under-lock</c>), siempre en el orden punto de venta → cobro: crear toma el lock del punto de venta y,
@@ -418,7 +418,7 @@ public class ServicioDeCobrosMercadoPago(
 
     /// <summary>
     /// Un estado de la orden que Ways no reconoce (<c>created</c>, <c>at_terminal</c>…) deja el cobro como está. <c>processed</c> solo
-    /// aprueba si trae un pago con importe pagado válido; si no, el cobro sigue como estaba y se avisa en el log.
+    /// aprueba si trae un pago con importe pagado e id válidos (la venta se apoya en ambos); si no, el cobro sigue como estaba y se avisa en el log.
     /// </summary>
     private void AplicarOrden(CobroMercadoPago cobro, OrdenDeMercadoPago orden, DateTimeOffset ahora)
     {
@@ -428,18 +428,19 @@ public class ServicioDeCobrosMercadoPago(
                 var pagos = orden.Transactions?.Payments;
                 var pago = pagos?.FirstOrDefault(p => p.Status == "processed") ?? pagos?.FirstOrDefault();
                 var pagado = pago is null ? null : ImportePagadoValido(pago.PaidAmount ?? pago.Amount);
-                if (pagado is null)
+                var idPago = pago?.Id is { Length: > 0 and <= LargoMaximoDeId } id ? id : null;
+                if (pagado is null || idPago is null)
                 {
                     log.LogWarning(
-                        "La orden {IdOrden} de Mercado Pago figura procesada pero sin un pago con importe legible: el cobro {IdCobro} sigue sin aprobarse.",
+                        "La orden {IdOrden} de Mercado Pago figura procesada pero sin un pago con importe e id legibles: el cobro {IdCobro} sigue sin aprobarse.",
                         cobro.IdOrdenMercadoPago, cobro.Id);
                     break;
                 }
 
                 cobro.Estado = EstadosDeCobroMercadoPago.Aprobado;
                 cobro.FechaAprobacion = ahora;
-                cobro.IdPagoMercadoPago = pago!.Id is { Length: > 0 and <= LargoMaximoDeId } idPago ? idPago : null;
-                cobro.ReferenciaPagoMercadoPago = pago.ReferenciaNumerica;
+                cobro.IdPagoMercadoPago = idPago;
+                cobro.ReferenciaPagoMercadoPago = pago!.ReferenciaNumerica;
                 cobro.ImportePagado = pagado;
                 break;
             case "canceled":
