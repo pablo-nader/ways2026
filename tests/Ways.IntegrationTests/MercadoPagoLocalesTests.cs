@@ -157,7 +157,7 @@ public class MercadoPagoLocalesTests(WaysApiFixture fixture) : IClassFixture<Way
         await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
         await using var comando = conexion.CreateCommand();
         comando.CommandText =
-            "SELECT valor_nuevo::text FROM auditoria WHERE accion = 'sucursal.mercadopago' AND id_entidad = $1 ORDER BY 1 DESC";
+            "SELECT valor_nuevo::text FROM auditoria WHERE accion = 'sucursal.mercadopago' AND id_entidad = $1 ORDER BY id_auditoria DESC";
         comando.Parameters.Add(new NpgsqlParameter { Value = idSucursal });
 
         var valores = new List<string>();
@@ -355,6 +355,121 @@ public class MercadoPagoLocalesTests(WaysApiFixture fixture) : IClassFixture<Way
         var despues = await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.GetAsync(RutaDeLocales(r.IdSucursal)));
         Assert.Equal(EstadosDeLocalMercadoPago.Registrada, despues.Estado);
         Assert.Equal(2, (await AuditoriaAsync(r.IdSucursal)).Cantidad);
+    }
+
+    // Clausula: la clave de idempotencia del alta lleva la huella del cuerpo (Mercado Pago contesta 409 si la misma clave llega con otro cuerpo).
+    [Fact]
+    public async Task UnAltaRechazadaYReintentadaConOtrosDatosUsaOtraClaveDeIdempotencia()
+    {
+        var r = await PrepararRegistrableAsync("mp-loc-clave-alta");
+        Guionar(
+            r.Ctx, BusquedaVacia, idStore: 555_700,
+            antes: p => p.Metodo == HttpMethod.Post && p.Cuerpo.Contains("Sucursal Centro\"", StringComparison.Ordinal)
+                ? Json(HttpStatusCode.BadRequest, """{"error": "INVALID_NAME", "message": "no"}""")
+                : null);
+        var ruta = RutaDeLocales(r.IdSucursal);
+
+        await AssertCodigoAsync(await r.Ctx.Admin.PostAsync(ruta, null), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.SolicitudRechazada);
+        var edicion = new SucursalEdicion("Sucursal Centro Nueva", "Av. Córdoba", "1234 bis", "Rosario", "Santa Fe", "2000", -32.944243m, -60.650539m, null);
+        Assert.Equal(HttpStatusCode.OK, (await r.Ctx.Admin.PutAsJsonAsync($"/api/sucursales/{r.IdSucursal}", edicion)).StatusCode);
+        await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(ruta, null));
+
+        var altas = Llamadas(r.Ctx).Where(l => l.Metodo == HttpMethod.Post).ToList();
+        Assert.Equal(2, altas.Count);
+        Assert.NotEqual(altas[0].ClaveDeIdempotencia, altas[1].ClaveDeIdempotencia);
+    }
+
+    // Clausula: la clave de la actualizacion lleva el estado de la sucursal, asi A -> B -> A no repite la clave de un cuerpo anterior.
+    [Fact]
+    public async Task VolverAUnContenidoAnteriorDespuesDeUnaEdicionNoReusaLaClaveDeLaActualizacion()
+    {
+        var r = await PrepararRegistrableAsync("mp-loc-clave-put");
+        Guionar(r.Ctx, BusquedaVacia, idStore: 555_710);
+        var ruta = RutaDeLocales(r.IdSucursal);
+        var a = new SucursalEdicion("Sucursal Centro", "Av. Córdoba", "1234 bis", "Rosario", "Santa Fe", "2000", -32.944243m, -60.650539m, "Frente a la plaza");
+        var b = a with { Nombre = "Sucursal Otra" };
+
+        async Task RegistrarComoAsync(SucursalEdicion edicion)
+        {
+            Assert.Equal(HttpStatusCode.OK, (await r.Ctx.Admin.PutAsJsonAsync($"/api/sucursales/{r.IdSucursal}", edicion)).StatusCode);
+            await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(ruta, null));
+        }
+
+        await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(ruta, null));
+        await RegistrarComoAsync(b);
+        await RegistrarComoAsync(a);
+        await RegistrarComoAsync(b);
+
+        var claves = Llamadas(r.Ctx).Where(l => l.Metodo == HttpMethod.Put).Select(l => l.ClaveDeIdempotencia).ToList();
+        Assert.Equal(3, claves.Count);
+        Assert.Equal(3, claves.Distinct().Count());
+    }
+
+    // Clausula: un 404 del PUT (el local se borro en Mercado Pago) busca por external_id y adopta.
+    [Fact]
+    public async Task SiElLocalSeBorroEnMercadoPagoElRegistroLoAdoptaPorExternalIdYActualizaElVinculo()
+    {
+        var r = await PrepararRegistrableAsync("mp-loc-borrado-adopta");
+        Guionar(r.Ctx, BusquedaVacia, idStore: 555_720);
+        await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null));
+
+        Guionar(
+            r.Ctx, $$"""{"results": [{"id": 888001, "external_id": "{{r.ExternalId}}"}]}""", idStore: 888_001,
+            antes: p => p.Metodo == HttpMethod.Put && p.Uri.AbsolutePath.EndsWith("/555720", StringComparison.Ordinal)
+                ? Json(HttpStatusCode.NotFound, """{"error": "not_found", "message": "store not found"}""")
+                : null);
+        var previas = Llamadas(r.Ctx).Count;
+
+        var estado = await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null));
+
+        Assert.Equal(888_001, estado.IdStoreMercadoPago);
+        var nuevas = Llamadas(r.Ctx).Skip(previas).ToList();
+        Assert.Equal(["PUT", "GET", "PUT"], nuevas.Select(l => l.Metodo.Method));
+        Assert.EndsWith("/888001", nuevas[2].Uri.AbsolutePath);
+        Assert.DoesNotContain(nuevas, l => l.Metodo == HttpMethod.Post);
+        Assert.Equal(888_001, Assert.Single(await FilasAsync(r.IdSucursal)).IdStore);
+        Assert.Contains("\"operacion\": \"adopcion\"", (await AuditoriaAsync(r.IdSucursal)).Valor);
+    }
+
+    // Clausula: un 404 del PUT sin local con ese external_id lo vuelve a crear.
+    [Fact]
+    public async Task SiElLocalSeBorroEnMercadoPagoYNoHayOtroElRegistroLoCreaDeNuevoYActualizaElVinculo()
+    {
+        var r = await PrepararRegistrableAsync("mp-loc-borrado-crea");
+        Guionar(r.Ctx, BusquedaVacia, idStore: 555_730);
+        await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null));
+
+        Guionar(
+            r.Ctx, BusquedaVacia, idStore: 999_731,
+            antes: p => p.Metodo == HttpMethod.Put ? Json(HttpStatusCode.NotFound, """{"error": "not_found"}""") : null);
+        var previas = Llamadas(r.Ctx).Count;
+
+        var estado = await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null));
+
+        Assert.Equal(999_731, estado.IdStoreMercadoPago);
+        Assert.Equal(["PUT", "GET", "POST"], Llamadas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
+        Assert.Equal(999_731, Assert.Single(await FilasAsync(r.IdSucursal)).IdStore);
+        Assert.Contains("\"operacion\": \"alta\"", (await AuditoriaAsync(r.IdSucursal)).Valor);
+    }
+
+    // Clausula: solo el 404 dispara la recuperacion; otro 4xx del PUT sigue siendo un 502.
+    [Fact]
+    public async Task UnRechazoDelPutQueNoEs404SigueSiendo502SinBuscarNiCrear()
+    {
+        var r = await PrepararRegistrableAsync("mp-loc-put-400");
+        Guionar(r.Ctx, BusquedaVacia, idStore: 555_740);
+        await LeerAsync<EstadoDeLocalMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null));
+
+        Guionar(
+            r.Ctx, BusquedaVacia,
+            antes: p => p.Metodo == HttpMethod.Put ? Json(HttpStatusCode.BadRequest, """{"error": "INVALID_NAME"}""") : null);
+        var previas = Llamadas(r.Ctx).Count;
+
+        await AssertCodigoAsync(
+            await r.Ctx.Admin.PostAsync(RutaDeLocales(r.IdSucursal), null), HttpStatusCode.BadGateway,
+            CodigosDeErrorDeMercadoPago.SolicitudRechazada);
+        Assert.Equal(["PUT"], Llamadas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
+        Assert.Equal(555_740, Assert.Single(await FilasAsync(r.IdSucursal)).IdStore);
     }
 
     [Fact]

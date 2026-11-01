@@ -127,24 +127,28 @@ public class ServicioDeLocalesMercadoPago(
         var cuerpo = Armar(local, externalId);
         var ruta = $"/users/{idUsuario}/stores";
 
+        var estadoDeLaSucursal = sucursal.UpdatedAt.UtcTicks;
         string operacion;
         long idStore;
         if (vinculo is not null)
         {
             idStore = vinculo.IdStoreMercadoPago;
             operacion = "actualizacion";
-            await ActualizarAsync(sucursal.IdEmpresa, ruta, idStore, cuerpo, idSucursal, ct);
-        }
-        else if (await BuscarPorExternalIdAsync(sucursal.IdEmpresa, ruta, externalId, ct) is { } existente)
-        {
-            idStore = existente;
-            operacion = "adopcion";
-            await ActualizarAsync(sucursal.IdEmpresa, ruta, idStore, cuerpo, idSucursal, ct);
+            try
+            {
+                await ActualizarAsync(sucursal.IdEmpresa, ruta, idStore, cuerpo, idSucursal, estadoDeLaSucursal, ct);
+            }
+            catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404)
+            {
+                // El local se borró en Mercado Pago: se lo busca por external_id y, si tampoco está, se lo crea de nuevo.
+                (idStore, operacion) = await AdoptarOCrearAsync(
+                    sucursal.IdEmpresa, ruta, externalId, cuerpo, idSucursal, estadoDeLaSucursal, ct);
+            }
         }
         else
         {
-            operacion = "alta";
-            idStore = await CrearAsync(sucursal.IdEmpresa, ruta, cuerpo, idSucursal, ct);
+            (idStore, operacion) = await AdoptarOCrearAsync(
+                sucursal.IdEmpresa, ruta, externalId, cuerpo, idSucursal, estadoDeLaSucursal, ct);
         }
 
         var ahora = reloj.Ahora;
@@ -167,6 +171,7 @@ public class ServicioDeLocalesMercadoPago(
         }
         else
         {
+            vinculo.IdStoreMercadoPago = idStore;
             vinculo.FechaSincronizacion = sincronizadoEn;
             vinculo.UpdatedAt = ahora;
         }
@@ -186,11 +191,29 @@ public class ServicioDeLocalesMercadoPago(
         new UbicacionDeLocalMercadoPago(
             local.Altura, local.Calle, local.Ciudad, local.Provincia, local.Latitud, local.Longitud, local.Referencia));
 
+    private async Task<(long IdStore, string Operacion)> AdoptarOCrearAsync(
+        int idEmpresa, string ruta, string externalId, SolicitudDeLocalMercadoPago cuerpo, int idSucursal, long estadoDeLaSucursal,
+        CancellationToken ct)
+    {
+        if (await BuscarPorExternalIdAsync(idEmpresa, ruta, externalId, ct) is { } existente)
+        {
+            await ActualizarAsync(idEmpresa, ruta, existente, cuerpo, idSucursal, estadoDeLaSucursal, ct);
+            return (existente, "adopcion");
+        }
+
+        return (await CrearAsync(idEmpresa, ruta, cuerpo, idSucursal, ct), "alta");
+    }
+
+    private static string HuellaDe(SolicitudDeLocalMercadoPago cuerpo) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cuerpo))))[..16];
+
+    /// <summary>La clave cambia con el contenido: Mercado Pago contesta 409 si la misma clave llega con otro cuerpo dentro de las 24 h,
+    /// así que un alta con datos editados no puede reusar la clave del intento anterior.</summary>
     private async Task<long> CrearAsync(
         int idEmpresa, string ruta, SolicitudDeLocalMercadoPago cuerpo, int idSucursal, CancellationToken ct)
     {
         var creado = await api.EnviarAsync<LocalDeMercadoPago>(
-            idEmpresa, HttpMethod.Post, ruta, cuerpo, $"ways-local-{idSucursal}-alta", ct);
+            idEmpresa, HttpMethod.Post, ruta, cuerpo, $"ways-local-{idSucursal}-alta-{HuellaDe(cuerpo)}", ct);
 
         if (creado.Id <= 0)
         {
@@ -201,16 +224,14 @@ public class ServicioDeLocalesMercadoPago(
         return creado.Id;
     }
 
-    /// <summary>La clave cambia con el contenido: repetir el mismo pedido es idempotente y uno distinto no devuelve la respuesta
-    /// guardada de otro.</summary>
+    /// <summary>La clave lleva el contenido y el estado de la sucursal (su <c>updated_at</c>): reintentar el mismo intento repite la
+    /// clave, pero volver a un contenido anterior (A, B, A) después de una edición no recibe la respuesta guardada del primero.</summary>
     private async Task ActualizarAsync(
-        int idEmpresa, string ruta, long idStore, SolicitudDeLocalMercadoPago cuerpo, int idSucursal, CancellationToken ct)
-    {
-        var huella = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cuerpo))))[..16];
-
+        int idEmpresa, string ruta, long idStore, SolicitudDeLocalMercadoPago cuerpo, int idSucursal, long estadoDeLaSucursal,
+        CancellationToken ct) =>
         await api.EnviarAsync<LocalDeMercadoPago>(
-            idEmpresa, HttpMethod.Put, $"{ruta}/{idStore}", cuerpo, $"ways-local-{idSucursal}-{huella}", ct);
-    }
+            idEmpresa, HttpMethod.Put, $"{ruta}/{idStore}", cuerpo,
+            $"ways-local-{idSucursal}-{HuellaDe(cuerpo)}-{estadoDeLaSucursal}", ct);
 
     /// <summary>El local que un intento anterior dejó creado en Mercado Pago sin llegar a guardar el vínculo, si hay uno con el
     /// mismo <c>external_id</c>.</summary>

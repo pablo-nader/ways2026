@@ -16,7 +16,11 @@ public class LocalParaMercadoPagoTests
     [InlineData("Local #1 (centro) & Cía", "Local 1 centro Cia")]
     [InlineData("Sucursal-Centro, norte.", "Sucursal-Centro, norte.")]
     [InlineData("  varios   espacios\t y\ntabs  ", "varios espacios y tabs")]
-    [InlineData("S/N", "SN")]
+    [InlineData("S/N", "S N")]
+    [InlineData("1234 1/2", "1234 1 2")]
+    [InlineData("Mitre/San Martin", "Mitre San Martin")]
+    [InlineData("O'Higgins", "O Higgins")]
+    [InlineData("9º piso 3°", "9 piso 3")]
     [InlineData("日本語 Tienda", "Tienda")]
     public void ElTextoSeLimpiaParaMercadoPago(string entrada, string esperado) =>
         Assert.Equal(esperado, TextoParaMercadoPago.Sanear(entrada, 200));
@@ -110,6 +114,20 @@ public class LocalParaMercadoPagoTests
         Assert.Equal(["calle"], LocalParaMercadoPago.CamposFaltantes("Centro", Completa() with { Calle = "###" }));
         Assert.Equal(["nombre"], LocalParaMercadoPago.CamposFaltantes("(((", Completa()));
     }
+
+    [Theory]
+    [InlineData("S/N")]
+    [InlineData("s/n")]
+    [InlineData("SN")]
+    [InlineData("S N")]
+    public void UnaAlturaSinNumeroCuentaComoFaltanteParaMercadoPago(string altura)
+    {
+        Assert.Equal(["altura"], LocalParaMercadoPago.CamposFaltantes("Centro", Completa() with { Altura = altura }));
+    }
+
+    [Fact]
+    public void UnaAlturaConNumeroYBarraNoEsSinNumero() =>
+        Assert.Empty(LocalParaMercadoPago.CamposFaltantes("Centro", Completa() with { Altura = "1234 1/2" }));
 
     [Fact]
     public void ArmarConUnaDireccionIncompletaLanza400ConLosCamposFaltantes()

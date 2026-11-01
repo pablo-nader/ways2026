@@ -47,7 +47,8 @@ public sealed record LocalParaMercadoPago(
             faltantes.Add("calle");
         }
 
-        if (TextoParaMercadoPago.Sanear(direccion.Altura, LargoMaximoAltura).Length == 0)
+        var altura = TextoParaMercadoPago.Sanear(direccion.Altura, LargoMaximoAltura);
+        if (altura.Length == 0 || EsSinNumero(altura))
         {
             faltantes.Add("altura");
         }
@@ -74,6 +75,11 @@ public sealed record LocalParaMercadoPago(
 
         return faltantes;
     }
+
+    /// <summary>"S/N" (ya saneado: "S N" o "SN") significa sin número, y Mercado Pago exige el número de la calle.</summary>
+    private static bool EsSinNumero(string alturaSaneada) =>
+        alturaSaneada.Equals("S N", StringComparison.OrdinalIgnoreCase)
+        || alturaSaneada.Equals("SN", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>400 <see cref="CodigoDeDireccionIncompleta"/> nombrando lo que falta, o el local listo para enviar.</summary>
     public static LocalParaMercadoPago Armar(string nombre, DireccionDeSucursal direccion)

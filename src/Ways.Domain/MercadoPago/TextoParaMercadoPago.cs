@@ -10,7 +10,7 @@ namespace Ways.Domain.MercadoPago;
 /// </summary>
 public static class TextoParaMercadoPago
 {
-    /// <summary>Quita los acentos, descarta todo lo que no sea letra ASCII, dígito, espacio, punto, coma o guion, junta los espacios
+    /// <summary>Quita los acentos, reemplaza por un espacio todo lo que no sea letra ASCII, dígito, espacio, punto, coma o guion (así <c>S/N</c> no se vuelve <c>SN</c>), junta los espacios
     /// repetidos y corta en <paramref name="largoMaximo"/> sin dejar un espacio al final. Un texto sin nada admitido queda vacío.</summary>
     public static string Sanear(string? texto, int largoMaximo)
     {
@@ -34,6 +34,10 @@ public static class TextoParaMercadoPago
             else if (EsAdmitido(caracter))
             {
                 salida.Append(caracter);
+            }
+            else
+            {
+                AgregarEspacio(salida);
             }
         }
 
