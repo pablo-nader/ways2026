@@ -55,7 +55,7 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
   (the web no longer sends it) and any other date answers 400 `fecha_no_es_hoy`; the test rejects past and future dates and
   fails with the guard disabled (mutation killed, guard restored). F3 offline the employee select stays enabled, only the
   employee options are disabled, so "Sin empleado" remains selectable for a plain Sueldos pago; no auto-reset.
-- [ ] T3 — Edit: convert a plain Sueldos payment into a pago de personal (backend transaction +
+- [x] T3 — Edit: convert a plain Sueldos payment into a pago de personal (backend transaction +
   web picker in the edit modal). Route: delegated writer. Branch `pnader/sueldo-personal-edicion`, stacked on T2 (#606).
   Evidence (writer, uncommitted): no new route and no migration: `idPersonal` is an optional field of the two existing edit
   bodies (`PUT /api/pagos/administracion/{id}` and `PUT /api/pagos/{id}`), so one transaction both edits and converts.
@@ -87,4 +87,6 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
 
 ## Next step
 
-T2.
+Feature complete. T3 commits 6886841a + a71a65d5 (fixes G1 proveedor, G2 tests, G3 comentario); judgment-day
+APPROVED. Follow-ups: POS release (owner decides); hint in the edit modal to clear the provider of a Sueldos pago
+before choosing an employee.
