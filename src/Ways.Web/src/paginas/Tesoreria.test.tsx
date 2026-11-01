@@ -336,7 +336,8 @@ describe('Tesoreria — libro: liquidez y saldo anterior', () => {
 
     const encabezados = within(screen.getByRole('table'))
       .getAllByRole('columnheader')
-      .map((h) => h.textContent)
+      .slice(0, 6)
+      .map((h) => h.textContent?.replace(/[▲▼↕]/g, ''))
     expect(encabezados).toEqual(['Fecha', 'Detalle', 'Efectivo', 'Mercado Pago', 'Banco', 'Ver detalle'])
 
     const primera = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).at(-1) as HTMLElement
@@ -406,11 +407,11 @@ describe('Tesoreria — libro: filas', () => {
     expect(screen.getByRole('link', { name: 'Ver detalle de Caja #151 ($ +1.300)' })).toBeInTheDocument()
 
     const verde = screen.getByText('$ +1.300')
-    expect(verde.style.color).toBe('var(--ws-ok)')
+    expect(verde).toHaveClass('libro-importe--positivo')
     expect(verde).not.toHaveClass('libro-importe--negativo')
     const rojo = screen.getByText('$ -200')
     expect(rojo).toHaveClass('libro-importe--negativo')
-    expect(rojo.style.color).toBe('')
+    expect(rojo).not.toHaveClass('libro-importe--positivo')
   })
 
   it('Caja: el tooltip muestra apertura, cierre y punto de venta con el mouse y con el foco, y se cierra con Escape', async () => {
@@ -558,6 +559,92 @@ describe('Tesoreria — libro: filas', () => {
 
     expect(screen.getByText('Saldo anterior')).toBeInTheDocument()
     expect(screen.getByText('No hay movimientos en el rango elegido.')).toBeInTheDocument()
+  })
+})
+
+describe('Tesoreria — libro: filtros y orden por columna', () => {
+  function detallesVisibles(): string[] {
+    return Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((f) => {
+      const celdas = celdasDeLaFila(f as HTMLElement)
+      return (celdas[1] ?? celdas[0]).textContent ?? ''
+    })
+  }
+
+  it('cada columna tiene su filtro y el encabezado de fecha arranca ordenado de lo nuevo a lo viejo', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    for (const nombre of ['fecha', 'detalle', 'efectivo', 'mercado pago', 'banco']) {
+      expect(screen.getByRole('searchbox', { name: `Filtrar por ${nombre}` })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('columnheader', { name: /^Fecha/ })).toHaveAttribute('aria-sort', 'descending')
+    expect(screen.getByRole('columnheader', { name: /^Detalle/ })).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('filtrar por detalle ignora mayúsculas y acentos, y el saldo anterior nunca se filtra', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por detalle' }), 'COMISION')
+
+    expect(detallesVisibles()).toEqual(['Ajuste: Comisión bancaria', 'Saldo anterior'])
+    expect(screen.getByRole('group', { name: 'Efectivo' })).toHaveTextContent(/8\.500,00/)
+  })
+
+  it('filtrar por una columna de importes usa el texto mostrado y un filtro sin resultados lo avisa', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por efectivo' }), '400')
+    expect(detallesVisibles()).toEqual(['Proveedor: Flete', 'Saldo anterior'])
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por detalle' }), 'zzz')
+    expect(detallesVisibles()).toEqual(['Ninguna fila coincide con los filtros.', 'Saldo anterior'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(detallesVisibles()).toHaveLength(5)
+  })
+
+  it('ordenar por detalle alterna ascendente y descendente con aria-sort y deja el saldo anterior al final', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: /^Detalle/ }))
+    expect(screen.getByRole('columnheader', { name: /^Detalle/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(detallesVisibles()).toEqual(['Ajuste: Comisión bancaria', 'Ajuste: Conteo', 'Caja #137 ($ -1.500)', 'Proveedor: Flete', 'Saldo anterior'])
+
+    await usuario.click(screen.getByRole('button', { name: /^Detalle/ }))
+    expect(screen.getByRole('columnheader', { name: /^Detalle/ })).toHaveAttribute('aria-sort', 'descending')
+    expect(detallesVisibles()).toEqual(['Proveedor: Flete', 'Caja #137 ($ -1.500)', 'Ajuste: Conteo', 'Ajuste: Comisión bancaria', 'Saldo anterior'])
+  })
+
+  it('con la misma fecha, lo más nuevo para el servidor (la última fila) va primero', async () => {
+    const mismaFecha = '2026-10-29T10:00:00Z'
+    const primera = { ...filaDePago, fecha: mismaFecha, pago: { ...filaDePago.pago!, detalle: 'Primero' } }
+    const segunda = { ...filaDePago, fecha: mismaFecha, pago: { ...filaDePago.pago!, detalle: 'Segundo' } }
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [primera, segunda] })) })
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(detallesVisibles()).toEqual(['Segundo', 'Primero', 'Saldo anterior'])
+  })
+
+  it('ordenar por efectivo compara números y manda las filas sin efectivo al final', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: /^Efectivo/ }))
+
+    expect(detallesVisibles()).toEqual(['Proveedor: Flete', 'Ajuste: Conteo', 'Caja #137 ($ -1.500)', 'Ajuste: Comisión bancaria', 'Saldo anterior'])
   })
 })
 

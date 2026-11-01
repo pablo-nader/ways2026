@@ -186,6 +186,11 @@
   color: var(--ws-danger);
 }
 
+/* Sobrante del arqueo en el libro de tesorería: verde de éxito del tema. */
+.libro-importe--positivo {
+  color: var(--ws-ok);
+}
+
 /* Conciliación: la fila congelada usa la superficie hundida del tema (el rojo de importe conserva >= 5,4:1 sobre ella en claro y oscuro). */
 .libro-conciliacion {
   color: var(--ws-ink-muted);

@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { DesgloseDeMedioDelLibro, FilaDelLibro, LibroDeTesoreria } from '../../api/tipos'
 import {
   CLASE_DE_IMPORTE_NEGATIVO,
+  CLASE_DE_IMPORTE_POSITIVO,
   claseDeImporte,
   claseDeDiferencia,
   columnasDeCuentas,
   destinoDelDetalle,
-  estiloDeDiferencia,
-  filasMasRecientesPrimero,
+  entradasDelLibro,
   detalleDeAjuste,
   estaConciliada,
   etiquetaDeCaja,
@@ -159,33 +159,30 @@ describe('estaConciliada', () => {
   })
 })
 
-describe('filasMasRecientesPrimero', () => {
-  it('invierte el orden y conserva la posición original de cada fila', () => {
+describe('entradasDelLibro', () => {
+  it('conserva el orden y numera cada fila con su posición original', () => {
     const a = fila({ fecha: '2026-10-28T10:00:00Z' })
     const b = fila({ fecha: '2026-10-29T10:00:00Z' })
-    expect(filasMasRecientesPrimero([a, b])).toEqual([
-      { fila: b, indice: 1 },
+    expect(entradasDelLibro([a, b])).toEqual([
       { fila: a, indice: 0 },
+      { fila: b, indice: 1 },
     ])
-    expect(filasMasRecientesPrimero([])).toEqual([])
+    expect(entradasDelLibro([])).toEqual([])
   })
 })
 
 describe('color de la diferencia del arqueo', () => {
-  it('el faltante usa la clase roja y no el verde', () => {
+  it('el faltante usa la clase roja', () => {
     expect(claseDeDiferencia(-200)).toBe(CLASE_DE_IMPORTE_NEGATIVO)
-    expect(estiloDeDiferencia(-200)).toBeUndefined()
   })
 
-  it('el sobrante usa el verde del tema y no la clase roja', () => {
-    expect(claseDeDiferencia(1300)).toBe('')
-    expect(estiloDeDiferencia(1300)).toEqual({ color: 'var(--ws-ok)' })
+  it('el sobrante usa la clase verde', () => {
+    expect(claseDeDiferencia(1300)).toBe(CLASE_DE_IMPORTE_POSITIVO)
   })
 
   it('la diferencia cero o que redondea a cero no se pinta', () => {
     expect(claseDeDiferencia(0)).toBe('')
-    expect(estiloDeDiferencia(0)).toBeUndefined()
-    expect(estiloDeDiferencia(0.001)).toBeUndefined()
+    expect(claseDeDiferencia(0.001)).toBe('')
   })
 })
 

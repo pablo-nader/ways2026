@@ -2,6 +2,7 @@ import type { CuentaDelLibro, DesgloseDeMedioDelLibro, FilaDelLibro, LibroDeTeso
 import { formatearImporte, redondearImporte } from '../../formato/importes'
 
 export const CLASE_DE_IMPORTE_NEGATIVO = 'libro-importe--negativo'
+export const CLASE_DE_IMPORTE_POSITIVO = 'libro-importe--positivo'
 
 /** Clase del importe: solo el negativo se pinta (rojo del tema); positivo y cero conservan el color del texto. */
 export function claseDeImporte(valor: number | null | undefined): string {
@@ -62,19 +63,17 @@ export function estaConciliada(fecha: string, conciliadoHasta: string | null): b
   return !Number.isNaN(instante) && !Number.isNaN(marca) && instante <= marca
 }
 
-/** Filas del libro de la más nueva a la más vieja; conservan su posición original para identificar el globo de cada una. */
-export function filasMasRecientesPrimero(filas: readonly FilaDelLibro[]): { fila: FilaDelLibro; indice: number }[] {
-  return filas.map((fila, indice) => ({ fila, indice })).reverse()
+/** Cada fila con su posición original (orden del servidor, de la más vieja a la más nueva), que desempata el orden por fecha. */
+export function entradasDelLibro(filas: readonly FilaDelLibro[]): { fila: FilaDelLibro; indice: number }[] {
+  return filas.map((fila, indice) => ({ fila, indice }))
 }
 
-/** Clase de la diferencia del arqueo: el faltante usa el rojo del tema. */
+/** Clase de la diferencia del arqueo: el faltante usa el rojo del tema y el sobrante el verde. */
 export function claseDeDiferencia(valor: number): string {
-  return redondearImporte(valor) < 0 ? CLASE_DE_IMPORTE_NEGATIVO : ''
-}
+  const redondeado = redondearImporte(valor)
+  if (redondeado < 0) return CLASE_DE_IMPORTE_NEGATIVO
 
-/** Estilo de la diferencia del arqueo: el sobrante usa el verde (`--ws-ok`) del tema. */
-export function estiloDeDiferencia(valor: number): { color: string } | undefined {
-  return redondearImporte(valor) > 0 ? { color: 'var(--ws-ok)' } : undefined
+  return redondeado > 0 ? CLASE_DE_IMPORTE_POSITIVO : ''
 }
 
 /** Destino del ícono de detalle; `null` cuando la fila no tiene a dónde ir (los pagos solo los abre el Admin). */
