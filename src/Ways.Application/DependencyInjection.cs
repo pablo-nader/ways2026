@@ -131,6 +131,7 @@ public static class DependencyInjection
         // ServicioDeTurnos (los dos modos de cierre), igual que los dos lectores de arriba.
         services.AddScoped<LectorDeRendicionDeDispositivos>();
         services.AddScoped<ServicioDeTurnos>();
+        services.AddScoped<ServicioDeRetiros>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<VisibilidadDeTurnos>();
         services.AddScoped<ServicioDePagos>();

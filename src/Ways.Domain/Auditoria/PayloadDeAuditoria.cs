@@ -449,6 +449,32 @@ public static class PayloadDeAuditoria
                 ["id_turno_recalculado"] = idTurnoRecalculado
             });
 
+    /// <summary><c>retiro.edicion</c>: importe y motivo antes y después, y en el valor nuevo el turno cuyo arqueo se recalculó
+    /// (<c>null</c> si el turno seguía abierto).</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        EdicionDeRetiro(
+            decimal importeAnterior, string motivoAnterior, decimal importeNuevo, string motivoNuevo, int? idTurnoRecalculado) => (
+            new Dictionary<string, object?> { ["importe"] = importeAnterior, ["motivo"] = motivoAnterior },
+            new Dictionary<string, object?>
+            {
+                ["importe"] = importeNuevo,
+                ["motivo"] = motivoNuevo,
+                ["id_turno_recalculado"] = idTurnoRecalculado
+            });
+
+    /// <summary><c>retiro.baja</c>: importe y motivo (los mismos en los dos lados, la baja no los cambia), <c>deleted_at</c> antes y
+    /// después y, en el valor nuevo, el turno cuyo arqueo se recalculó.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        BajaDeRetiro(decimal importe, string motivo, DateTimeOffset momento, int? idTurnoRecalculado) => (
+            new Dictionary<string, object?> { ["importe"] = importe, ["motivo"] = motivo, ["deleted_at"] = null },
+            new Dictionary<string, object?>
+            {
+                ["importe"] = importe,
+                ["motivo"] = motivo,
+                ["deleted_at"] = momento,
+                ["id_turno_recalculado"] = idTurnoRecalculado
+            });
+
     private static List<Dictionary<string, object?>> ProyectarCobros(IEnumerable<CobroDeVenta> cobros) =>
         cobros
             .OrderBy(c => c.IdMedioPago).ThenBy(c => c.Importe)

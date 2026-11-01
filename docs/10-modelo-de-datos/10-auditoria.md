@@ -53,5 +53,10 @@ auditoria (                    -- [operativa — id_punto_venta NULL en eventos 
 > `/export` hermano sobre la MISMA query, y la pantalla `Auditoria.tsx` con panel de cambios.
 > La regla fail-closed está probada POR DATOS: un `id_actor` inexistente levanta `23503` sobre
 > `fk_auditoria_actor` DENTRO de la transacción de negocio, que se revierte entera.
+>
+> El catálogo creció después de esa primera pasada (`AccionAuditada.Todas` es la lista vigente).
+> La corrección administrativa de retiros agrega `retiro.edicion` y `retiro.baja` (entidad
+> `movimiento_caja`): importe y motivo antes y después, `deleted_at` en la baja y el turno cuyo
+> arqueo se recalculó.
 
 ---

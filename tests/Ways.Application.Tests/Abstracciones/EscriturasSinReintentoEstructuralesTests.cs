@@ -213,6 +213,11 @@ public class EscriturasSinReintentoEstructuralesTests
         // y escribe ajustes de cuenta y auditoría sin clave de idempotencia; un reintento tras un commit ambiguo los repetiría
         // (o respondería 409 cambio_de_medios_sin_diferencia a un cambio que sí tuvo éxito).
         { "Ways.Application/Ventas/ServicioDeCambioDeMedios.cs", "EjecutarAsync" },
+
+        // Corrección administrativa de un retiro (edición y baja): agrega ajustes de tesorería, filas de arqueo y auditoría sin
+        // clave de idempotencia; un reintento tras un commit ambiguo los repetiría, y el de una baja respondería 404 a una baja
+        // que sí tuvo éxito.
+        { "Ways.Application/Caja/ServicioDeRetiros.cs", "EjecutarAsync" },
     };
 
     /// <summary>

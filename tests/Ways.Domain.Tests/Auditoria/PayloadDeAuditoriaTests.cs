@@ -149,6 +149,33 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void EdicionDeRetiroLlevaImporteYMotivoDeAntesYDeDespues()
+    {
+        var payload = PayloadDeAuditoria.EdicionDeRetiro(100m, "Retiro mal cargado", 130m, "Retiro corregido", idTurnoRecalculado: 4);
+
+        AsumirConstruible(AccionAuditada.RetiroEdicion, payload);
+        Assert.Equal(100m, payload.Anterior!["importe"]);
+        Assert.Equal("Retiro mal cargado", payload.Anterior["motivo"]);
+        Assert.Equal(130m, payload.Nuevo["importe"]);
+        Assert.Equal("Retiro corregido", payload.Nuevo["motivo"]);
+        Assert.Equal(4, payload.Nuevo["id_turno_recalculado"]);
+    }
+
+    [Fact]
+    public void BajaDeRetiroLlevaLoQueTeniaYElInstanteDeLaBaja()
+    {
+        var momento = new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.Zero);
+        var payload = PayloadDeAuditoria.BajaDeRetiro(100m, "Retiro duplicado", momento, idTurnoRecalculado: null);
+
+        AsumirConstruible(AccionAuditada.RetiroBaja, payload);
+        Assert.Equal(100m, payload.Anterior!["importe"]);
+        Assert.Equal("Retiro duplicado", payload.Anterior["motivo"]);
+        Assert.Null(payload.Anterior["deleted_at"]);
+        Assert.Equal(momento, payload.Nuevo["deleted_at"]);
+        Assert.Null(payload.Nuevo["id_turno_recalculado"]);
+    }
+
+    [Fact]
     public void AjusteDeStockEsConstruible() =>
         AsumirConstruible(
             AccionAuditada.StockAjuste,

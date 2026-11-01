@@ -330,3 +330,42 @@ public sealed record ResumenDeCierrePorRetiro(
     [property: JsonPropertyName("gastosEnEfectivo")] decimal PagosEnEfectivo,
     decimal Refuerzos,
     decimal Diferencia);
+
+// ---- Retiros: listado del back office y corrección administrativa --------------------------------------------------
+
+/// <summary>Cuerpo de <c>PUT /api/caja/retiros/{id}</c>: el importe y el motivo nuevos, con las mismas reglas que el alta.</summary>
+public sealed record SolicitudDeEdicionDeRetiro(decimal Importe, string? Motivo);
+
+/// <summary>Filtros de <c>GET /api/caja/retiros</c>, uno por columna. <c>Desde</c>/<c>Hasta</c> filtran la fecha del retiro
+/// (inclusive), <c>Motivo</c> busca sin mayúsculas ni acentos.</summary>
+public sealed record FiltrosDeRetiros(
+    DateTimeOffset? Desde = null,
+    DateTimeOffset? Hasta = null,
+    int? IdPuntoVenta = null,
+    int? IdTurnoCaja = null,
+    int? IdEmpleado = null,
+    decimal? ImporteDesde = null,
+    decimal? ImporteHasta = null,
+    string? Motivo = null,
+    bool? TurnoCerrado = null,
+    bool? Conciliado = null,
+    bool? EsRetiroDeCierre = null);
+
+/// <summary>Una fila de <c>GET /api/caja/retiros</c>. Un punto de venta o un empleado dado de baja llegan con id y nombre
+/// <c>null</c>. <c>Conciliado</c>: el turno está cerrado y su cierre cae en o antes de la marca de conciliación de la empresa, así
+/// que el retiro ya no se puede corregir.</summary>
+public sealed record FilaDeRetiro(
+    int Id,
+    DateTimeOffset Fecha,
+    int IdTurnoCaja,
+    int? IdPuntoVenta,
+    string? PuntoVenta,
+    int? IdEmpleado,
+    string? Empleado,
+    decimal Importe,
+    string Motivo,
+    bool TurnoCerrado,
+    bool Conciliado,
+    bool EsRetiroDeCierre);
+
+public sealed record PaginaDeRetiros(IReadOnlyList<FilaDeRetiro> Items, int Total, int Pagina, int Tamanio);
