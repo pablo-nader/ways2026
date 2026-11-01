@@ -140,3 +140,21 @@ Both judges confirmed the round-1 fix introduced R1-R3. Same unshipped migration
   2 vigencias + margin, then local `expirado`). Final re-judgment: both clean. Applied after it (both suggested): margin 2 -> 5 min.
 - Accepted (judge B, documented): a re-send whose response is lost leaves no order id; that order is not payable by a customer
   because a dynamic QR exists only in the response Ways never showed, and it expires before the give-up instant.
+
+## E3-T2 design (2026-11-01)
+
+Branch `pnader/mercadopago-e3-t2`, stacked on E3-T1. Backend only.
+
+- `PagoDeVenta` gains optional `IdCobroMercadoPago` (dto-contract-honesty: persisted or rejected). The sale's payment row gets
+  a nullable FK to `cobros_mercadopago` (column `id_cobro_mercadopago` on the table that stores sale payments), and
+  `cobros_mercadopago` gets nullable `id_comprobante_venta` (FK, UNIQUE): one charge pays at most one sale.
+- `ServicioDeVentas.EmitirAsync` (inside its existing transaction and locks): a payment whose medio has `proveedor` must carry
+  `IdCobroMercadoPago` (400 `cobro_mercadopago_requerido`; E5 will add the offline "sin verificar" alternative); a payment
+  with `IdCobroMercadoPago` on a medio without proveedor -> 400. The charge, read under `FOR UPDATE`, must be: same tenant and
+  punto de venta as the sale, same `numero_preasignado`, same `id_medio_pago`, `estado = aprobado`, `importe_pagado` equal to
+  the payment's `Importe`, and not linked to another sale (409 codes: `cobro_mercadopago_no_aprobado`,
+  `cobro_mercadopago_de_otra_venta`, `cobro_mercadopago_importe_distinto`, `cobro_mercadopago_ya_usado`). The payment's
+  `Referencia` is set from the charge's Mercado Pago payment id.
+- Idempotent retry of the same sale (same `NumeroPreasignado` and content) succeeds: a charge already linked to THIS sale is
+  fine. Annulling a sale leaves the charge linked (the money was received; refunds are E6).
+- The offline outbox carries `IdCobroMercadoPago` inside `SolicitudDeVenta` unchanged (no POS change in this task).
