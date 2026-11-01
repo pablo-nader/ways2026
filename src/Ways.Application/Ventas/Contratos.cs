@@ -165,6 +165,10 @@ public sealed record LineaDeVenta(
 /// los valida, no los calcula.</summary>
 public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);
 
+/// <summary>Los medios nuevos de una venta ya emitida (<c>ServicioDeCambioDeMedios</c>): reemplazan a todos sus cobros. Cada
+/// campo de cada pago se valida como en la venta (<c>ValidadorDePagos</c>) y se persiste en el cobro nuevo.</summary>
+public sealed record SolicitudDeCambioDeMedios(IReadOnlyList<PagoDeVenta>? Pagos);
+
 /// <summary>Un item ya emitido — snapshot inmutable (spec: Snapshot Immutability of Items).
 /// <see cref="IdLote"/>/<see cref="CodigoLote"/>/<see cref="LoteVencido"/> (stage-12 slice 7) solo
 /// se completan para una línea lote-efectiva: el lote resuelto en la fase de decisión (FEFO

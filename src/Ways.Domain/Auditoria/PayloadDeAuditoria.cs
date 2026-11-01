@@ -471,6 +471,30 @@ public static class PayloadDeAuditoria
                 ["id_comprobante_anulado"] = idComprobanteAnulado
             });
 
+    /// <summary><c>venta.medios</c>: los cobros vivos de la venta antes y después del cambio, en orden de medio, y en el
+    /// valor nuevo el turno cuyo arqueo se recalculó (<c>null</c> si el turno seguía abierto o la venta no tiene turno).</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        CambioDeMediosDeVenta(
+            IReadOnlyCollection<CobroDeVenta> anteriores, IReadOnlyCollection<CobroDeVenta> nuevos, int? idTurnoRecalculado) => (
+            new Dictionary<string, object?> { ["cobros"] = ProyectarCobros(anteriores) },
+            new Dictionary<string, object?>
+            {
+                ["cobros"] = ProyectarCobros(nuevos),
+                ["id_turno_recalculado"] = idTurnoRecalculado
+            });
+
+    private static List<Dictionary<string, object?>> ProyectarCobros(IEnumerable<CobroDeVenta> cobros) =>
+        cobros
+            .OrderBy(c => c.IdMedioPago).ThenBy(c => c.Importe)
+            .Select(c => new Dictionary<string, object?>
+            {
+                ["id_medio_pago"] = c.IdMedioPago,
+                ["importe"] = c.Importe,
+                ["vuelto"] = c.Vuelto,
+                ["referencia"] = c.Referencia
+            })
+            .ToList();
+
     private static Dictionary<string, object?> EstadoDeAplicacionesDeCobro(
         decimal netoCobrado, IReadOnlyCollection<(int IdComprobanteVenta, decimal Importe)> aplicaciones)
     {

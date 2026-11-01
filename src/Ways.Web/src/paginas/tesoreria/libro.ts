@@ -1,4 +1,12 @@
-import type { CuentaDelLibro, DesgloseDeMedioDelLibro, FilaDelLibro, LibroDeTesoreria, SaldosDelLibro } from '../../api/tipos'
+import {
+  CATEGORIAS_PAGO,
+  type CategoriaPago,
+  type CuentaDelLibro,
+  type DesgloseDeMedioDelLibro,
+  type FilaDelLibro,
+  type LibroDeTesoreria,
+  type SaldosDelLibro,
+} from '../../api/tipos'
 import { formatearImporte, redondearImporte } from '../../formato/importes'
 
 export const CLASE_DE_IMPORTE_NEGATIVO = 'libro-importe--negativo'
@@ -30,6 +38,31 @@ export function etiquetaDeCaja(numero: number, diferenciaArqueo: number | null):
 
 export function detalleDeAjuste(concepto: string): string {
   return `Ajuste: ${concepto}`
+}
+
+/** Tono del chip: sufijo de la clase `text-bg-*` del badge del sistema de diseño. */
+export type CategoriaDeFila = { etiqueta: string; tono: 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'secondary' }
+
+const TONO_DE_CATEGORIA_DE_PAGO: Record<CategoriaPago, CategoriaDeFila['tono']> = {
+  Proveedor: 'primary',
+  Sueldos: 'success',
+  Viaticos: 'warning',
+  Impuestos: 'danger',
+  Servicios: 'info',
+  Otros: 'secondary',
+}
+
+/** La categoría que rotula la fila: la del pago, "Caja" para el cierre de un turno y "Ajuste" para los ajustes manuales. */
+export function categoriaDeFila(fila: FilaDelLibro): CategoriaDeFila {
+  if (fila.tipo === 'Caja') return { etiqueta: 'Caja', tono: 'secondary' }
+  if (fila.tipo === 'Pago' && fila.pago) {
+    const { categoria } = fila.pago
+    return {
+      etiqueta: CATEGORIAS_PAGO.find((c) => c.valor === categoria)?.etiqueta ?? categoria,
+      tono: TONO_DE_CATEGORIA_DE_PAGO[categoria] ?? 'secondary',
+    }
+  }
+  return { etiqueta: 'Ajuste', tono: 'secondary' }
 }
 
 export type ColumnaDeCuenta = { id: number; titulo: string }

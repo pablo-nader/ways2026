@@ -164,6 +164,32 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
         });
     }
 
+    /// <summary>Alta desde el POS: el servidor fija Consumidor Final como condición fiscal, la
+    /// lista de precios por defecto del tenant, empresa compartida y sin cuenta corriente.
+    /// Delega en <see cref="CrearAsync"/> para no duplicar la numeración atómica.</summary>
+    public async Task<ClienteListado> CrearRapidoAsync(AltaRapidaDeCliente datos, CancellationToken ct = default)
+    {
+        var idCondicionFiscal = await db.CondicionesFiscales
+            .Where(c => c.Codigo == "CF")
+            .Select(c => (int?)c.Id)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new ErrorDominio(
+                "condicion_fiscal_cf_inexistente", "No existe la condición fiscal Consumidor Final.", 409);
+
+        var idListaPrecio = await db.ListasPrecio
+            .Where(l => l.EsDefault && l.IdEmpresa == null)
+            .Select(l => (int?)l.Id)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new ErrorDominio(
+                "lista_precio_default_inexistente", "El tenant no tiene una lista de precios por defecto.", 409);
+
+        return await CrearAsync(
+            new AltaCliente(
+                datos.Nombre, null, null, null, null, idCondicionFiscal, null, datos.Domicilio,
+                datos.Telefono, null, null, null, idListaPrecio),
+            ct);
+    }
+
     public async Task<ClienteListado> ActualizarAsync(int id, EdicionCliente datos, CancellationToken ct = default)
     {
         var cliente = await BuscarAsync(id, ct);

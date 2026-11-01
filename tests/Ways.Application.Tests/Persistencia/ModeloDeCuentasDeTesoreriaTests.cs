@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Pagos;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -105,6 +106,7 @@ public class ModeloDeCuentasDeTesoreriaTests
         Assert.Equal("movimientos_cuenta", entidad.GetTableName());
         Assert.Equal("id_movimiento_cuenta", Columna(entidad, nameof(MovimientoCuenta.Id)));
         Assert.Equal("id_cuenta_tesoreria", Columna(entidad, nameof(MovimientoCuenta.IdCuentaTesoreria)));
+        Assert.Equal("id_pago", Columna(entidad, nameof(MovimientoCuenta.IdPago)));
         Assert.Equal("tipo_movimiento_cuenta", Tipo(entidad, nameof(MovimientoCuenta.Tipo)));
 
         foreach (var importe in new[]
@@ -122,11 +124,12 @@ public class ModeloDeCuentasDeTesoreriaTests
         Assert.True(entidad.FindProperty(nameof(MovimientoCuenta.PorcentajeAplicado))!.IsNullable);
         Assert.True(entidad.FindProperty(nameof(MovimientoCuenta.IdTurnoCaja))!.IsNullable);
         Assert.True(entidad.FindProperty(nameof(MovimientoCuenta.IdMedioPago))!.IsNullable);
+        Assert.True(entidad.FindProperty(nameof(MovimientoCuenta.IdPago))!.IsNullable);
         Assert.False(entidad.FindProperty(nameof(MovimientoCuenta.IdEmpleado))!.IsNullable);
     }
 
     [Fact]
-    public void MovimientoCuentaDeclaraLasTresCheck()
+    public void MovimientoCuentaDeclaraLasCuatroCheck()
     {
         using var db = CrearContexto();
         var entidad = db.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(MovimientoCuenta))!;
@@ -136,7 +139,8 @@ public class ModeloDeCuentasDeTesoreriaTests
         Assert.Equal("final = inicio + ingreso - egreso", checks["ck_movimientos_cuenta_cadena"]);
         Assert.Equal("ingreso >= 0 AND egreso >= 0", checks["ck_movimientos_cuenta_importes_no_negativos"]);
         Assert.Equal("ingreso = 0 OR egreso = 0", checks["ck_movimientos_cuenta_un_solo_lado"]);
-        Assert.Equal(3, checks.Count);
+        Assert.Equal("(tipo = 'pago') = (id_pago IS NOT NULL)", checks["ck_movimientos_cuenta_pago"]);
+        Assert.Equal(4, checks.Count);
     }
 
     [Fact]
@@ -149,6 +153,8 @@ public class ModeloDeCuentasDeTesoreriaTests
         Assert.Equal(
             ["IdCuentaTesoreria", "IdTenant", "Fecha", "Id"], indices["ix_movimientos_cuenta_cuenta_fecha_id"].Properties.Select(p => p.Name));
         Assert.False(indices["ix_movimientos_cuenta_cuenta_fecha_id"].IsUnique);
+        Assert.Equal(["IdPago", "IdTenant"], indices["ix_movimientos_cuenta_pago"].Properties.Select(p => p.Name));
+        Assert.False(indices["ix_movimientos_cuenta_pago"].IsUnique);
 
         var cierre = indices["ux_movimientos_cuenta_cierre"];
         Assert.True(cierre.IsUnique);
@@ -160,6 +166,7 @@ public class ModeloDeCuentasDeTesoreriaTests
     [InlineData(typeof(CuentaTesoreria), "fk_movimientos_cuenta_cuenta_tesoreria", new[] { "IdCuentaTesoreria", "IdTenant" }, true)]
     [InlineData(typeof(TurnoCaja), "fk_movimientos_cuenta_turno", new[] { "IdTurnoCaja", "IdTenant" }, false)]
     [InlineData(typeof(MedioPago), "fk_movimientos_cuenta_medio_pago", new[] { "IdMedioPago", "IdTenant" }, false)]
+    [InlineData(typeof(Pago), "fk_movimientos_cuenta_pago", new[] { "IdPago", "IdTenant" }, false)]
     public void MovimientoCuentaReferenciaConFkCompuestaConElTenantYRestrict(
         Type principal, string nombre, string[] columnas, bool obligatoria)
     {
@@ -230,15 +237,16 @@ public class ModeloDeCuentasDeTesoreriaTests
     }
 
     [Fact]
-    public void ElEnumDeTipoMovimientoCuentaDeclaraLosNueveLabelsEnSnakeCase()
+    public void ElEnumDeTipoMovimientoCuentaDeclaraLosDiezLabelsEnSnakeCase()
     {
         using var db = CrearContexto();
 
         var enums = db.GetService<IDesignTimeModel>().Model.GetPostgresEnums().Single(e => e.Name == "tipo_movimiento_cuenta");
 
         Assert.Equal(
-            ["ajuste", "cobro", "comision", "deposito", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro", "transferencia"],
+            ["ajuste", "cobro", "comision", "deposito", "pago", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro",
+                "transferencia"],
             enums.Labels.OrderBy(l => l, StringComparer.Ordinal));
-        Assert.Equal(9, Enum.GetValues<TipoMovimientoCuenta>().Length);
+        Assert.Equal(10, Enum.GetValues<TipoMovimientoCuenta>().Length);
     }
 }

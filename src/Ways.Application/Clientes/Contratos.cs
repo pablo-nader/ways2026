@@ -49,6 +49,11 @@ public record AltaCliente(
     int? IdEmpresa = null,
     bool Activo = true);
 
+/// <summary>Alta mínima desde el POS: solo contacto. Condición fiscal, lista de precios,
+/// empresa y crédito los fija el servidor (<see cref="ServicioDeClientes.CrearRapidoAsync"/>);
+/// el crédito se configura solo desde el back office.</summary>
+public record AltaRapidaDeCliente(string Nombre, string? Telefono, string? Domicilio);
+
 /// <summary><see cref="Saldo"/> no aparece: no hay motor de cuenta corriente todavía (etapa
 /// 7, doc 10 §2) — no es un campo editable por el ABM de esta etapa.</summary>
 public record EdicionCliente(

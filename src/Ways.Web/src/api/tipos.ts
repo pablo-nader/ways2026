@@ -2044,6 +2044,7 @@ export type TipoMovimientoCuenta =
   | 'Transferencia'
   | 'Deposito'
   | 'Retiro'
+  | 'Pago'
 
 /** Movimiento de una cuenta tal como lo devuelve el ajuste manual. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
  * usuario dados de baja: el id distingue los dos casos. */
@@ -3333,6 +3334,32 @@ export type VentasPorArticulo = {
   cantidadTotal: number
   total: number
   articulos: ArticuloVendido[]
+}
+
+/** Ticket de `GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets` — espejo de `TicketDeArticulo`. `fecha` es un
+ * instante ISO con offset; `comprobante` ya viene armado para mostrarse; `cliente` es `null` en un consumidor final.
+ * `cantidad`/`total` son de ESE artículo en el ticket y van negativos en una nota de crédito. */
+export type TicketDeArticulo = {
+  idComprobante: number
+  fecha: string
+  puntoVenta: string
+  comprobante: string
+  cliente: string | null
+  cantidad: number
+  total: number
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets` — espejo de `TicketsDeArticulo`. `tickets`
+ * viene del más nuevo al más viejo; `cantidadTotal` y `total` suman esas mismas filas. */
+export type TicketsDeArticulo = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  idArticulo: number
+  descripcion: string
+  cantidadTotal: number
+  total: number
+  tickets: TicketDeArticulo[]
 }
 
 /** Cuántas veces cae un día de la semana (1 = lunes … 7 = domingo) en el rango: es el divisor de sus promedios. */

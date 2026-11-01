@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AlmacenClaveValor } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
 import {
+  conClienteEnInstantanea,
   epocaDeSesionLocalActual,
   esInstantaneaValida,
   guardarInstantaneaLocal,
@@ -54,7 +55,7 @@ import { clienteDeVentas } from '../api/ventas'
 import { clienteDeClientes } from '../api/clientes'
 import { consumoCuentaCorriente, superaLimiteDeCredito } from '../api/pagos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
-import type { ComportamientoMedioPago, ComprobanteEmitido, FiscalDeVenta, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
+import type { ClienteListado, ComportamientoMedioPago, ComprobanteEmitido, FiscalDeVenta, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
 
 /** Tope de espera del ciclo de arranque antes de habilitar la venta: con una red que cuelga, la
  * venta se habilita igual con la instantánea que haya y el ciclo sigue en segundo plano. */
@@ -182,6 +183,8 @@ export type ResultadoDeSincronizacionOffline = {
   /** Drena el outbox, repone el bloque si está bajo (`reponerBloque`, solo con la cola vacía) y rinde la cola — sin
    * descargar la instantánea. Devuelve lo que queda pendiente según el almacén. */
   drenarAhora: () => Promise<EstadoDeColaLocal>
+  /** Ver `registrarClienteEnLaCopiaLocal`. */
+  registrarClienteEnLaCopiaLocal: (cliente: ClienteListado) => Promise<void>
   /** Pide al servidor procesar las facturaciones pendientes del punto de venta, sin esperar ni propagar
    * fallos (ver `crearDisparadorDeLote`). El drenado lo pide solo al terminar (siempre en un ciclo; tras una venta, si quedó algo por facturar); esto es
    * para una venta que salió sin pasar por el outbox, así que se llama después de que el servidor
@@ -526,6 +529,17 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     setInstantanea(local.instantanea)
     setVerificadaEn(local.verificadaEn)
     await guardarInstantaneaLocal(almacenRef.current, local)
+  }
+
+  /** Suma un cliente recién dado de alta (o actualizado) a la copia local, en memoria y persistida, para poder venderle
+   * si se corta la red. Sin copia local no hace nada: no hay dónde sumarlo. */
+  async function registrarClienteEnLaCopiaLocal(cliente: ClienteListado): Promise<void> {
+    const local = instantaneaLocalRef.current
+    if (!montadoRef.current || local === null) return
+    const actualizada: InstantaneaLocal = { ...local, instantanea: conClienteEnInstantanea(local.instantanea, cliente) }
+    instantaneaLocalRef.current = actualizada
+    setInstantanea(actualizada.instantanea)
+    await guardarInstantaneaLocal(almacenRef.current, actualizada)
   }
 
   /** `true` si el servidor respondió (hay señal), haya o no contenido nuevo. Con la etiqueta de la
@@ -1050,6 +1064,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizacionInicialPendiente,
     sincronizarAhora,
     drenarAhora,
+    registrarClienteEnLaCopiaLocal,
     procesarFacturaciones: (fiscal) => {
       if (ventaNecesitaElLote(fiscal)) dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: true })
     },

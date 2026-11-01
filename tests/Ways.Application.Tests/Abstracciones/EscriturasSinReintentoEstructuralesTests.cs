@@ -208,6 +208,11 @@ public class EscriturasSinReintentoEstructuralesTests
         // clave de idempotencia; un reintento tras un commit ambiguo las asentaría dos veces (o respondería 409 a una
         // edición que sí tuvo éxito).
         { "Ways.Application/Compras/ServicioDeCompras.Edicion.cs", "ActualizarConfirmadaAsync" },
+
+        // Cambio de medios de una venta: da de baja e inserta cobros, mueve el acumulado de facturación, recalcula el arqueo
+        // y escribe ajustes de cuenta y auditoría sin clave de idempotencia; un reintento tras un commit ambiguo los repetiría
+        // (o respondería 409 cambio_de_medios_sin_diferencia a un cambio que sí tuvo éxito).
+        { "Ways.Application/Ventas/ServicioDeCambioDeMedios.cs", "EjecutarAsync" },
     };
 
     /// <summary>

@@ -169,6 +169,12 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Ventas/ServicioDePresupuestos.cs",
                 "var idComprobanteVenta = await db.ComprobantesVenta.AsNoTracking()")] =
                 (1, "Busca la venta que convirtió un presupuesto: id_presupuesto_origen es único y lo lleva el ticket."),
+            [("Ways.Application/Ventas/ServicioDeCambioDeMedios.cs",
+                "\"SELECT resultado_fiscal::text FROM comprobantes_venta \" +")] =
+                (1, "Lee a propósito el espejo de la factura de la venta para rechazar el cambio con CAE o con la factura en trámite."),
+            [("Ways.Application/Ventas/ServicioDeCambioDeMedios.cs",
+                "var cobrosVivos = await db.Cobros")] =
+                (1, "Cobros de una venta leída por id, sin espejos (LeerDatosInmutablesAsync) y bloqueada antes: un espejo no lleva cobros."),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "? await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == idAsociado, ct)")] =
                 (1, PorId),
