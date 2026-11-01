@@ -56,7 +56,7 @@ Each slice passes judgment-day before its PR.
   acumulados, closed-turno arqueo + cuenta compensation, audit, offline dedup), with tests.
 - [x] T2 — Backend: retiros list (filters + sort) and admin edit/delete (soft delete, arqueo
   recalc, tesorería Ajuste, audit), with tests and migration.
-- [ ] T3 — Backend: back-office ventas list with per-column filters and sort, with tests.
+- [x] T3 — Backend: back-office ventas list with per-column filters and sort, with tests.
 - [ ] T4 — Web: reusable sortable header + POS `VentasDelTurno` sort and "cambiar medio" modal.
 - [ ] T5 — Web: back-office ventas grid (filters + sort) with medio edit.
 - [ ] T6 — Web: back-office retiros grid (filters + sort) with edit/delete.
@@ -74,6 +74,7 @@ Each slice passes judgment-day before its PR.
 |------|-------|--------|--------|--------|
 | T1 | delegated (writer: 2+ non-trivial files) | a672d216 (refactor), f5e2fc1d (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2258/2258; Application.Tests 1639/1639; integration CambioDeMedios + SuperficieDeAutorizacion + regression (pagos edición, checkout, anulación, offline/reservas, facturación, cuentas, conciliación, sin reintento) 430/430; 5 mutants killed |
 | T2 | delegated (writer: 2+ non-trivial files) | e7e0ab43 (fix, audit labels), 712ed19e (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2298/2298; Application.Tests 1641/1641; integration new (RetirosDeAdministracion + ListadoDeRetiros) 43/43; regression (Caja, Turno, Libro, Conciliacion, Pago, Auditoria, Superficie, Aislamiento, SinReintento, CambioDeMedios, FiscalSchema, Tesoreria, Historico, Reportes) 1617/1617; web tsc clean, vitest tipos + Auditoria 28/28; mutants killed: 11 filter clauses, sort switch, 3 deleted_at/guard clauses, conciliación guard, backfill SET LOCAL |
+| T3 | delegated (writer: 2+ non-trivial files) | 369100ed (refactor), 87a96a32 (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2358/2358; Application.Tests 1641/1641; integration new (ListadoDeVentasDeAdministracion) 64/64; regression (LectoresDeComprobantesVenta, SuperficieDeAutorizacion, Aislamiento, VentasListadoExport, CambioDeMedios, RetirosDeAdministracion, ListadoDeRetiros, SinReintento) 210/210; mutants killed: all Filtrar clauses, sort switch, SinEspejosFiscales, c.DeletedAt, co.DeletedAt (filter and summary), min(cierre, fecha) rule |
 
 ## T1 notes
 
@@ -105,6 +106,38 @@ Each slice passes judgment-day before its PR.
 - Finding: `IgnoreQueryFilters(["BajaLogica"])` disables the filter for the WHOLE query, so queries that use it exclude deleted
   rows by hand.
 
+## T3 notes
+
+- Decision: a dedicated `GET /api/ventas/administracion`, not an extension of `GET /api/ventas`. The existing list is `OperacionDePos`
+  (a Vendedor reads it), returns ids without names and feeds the XLSX export; widening it would change who reads what and its
+  response shape. Both stay untouched (tests green). The grid lives beside T1's `PUT /api/ventas/administracion/{id}/medios`.
+- Auth: group `/api/ventas/administracion` is `LecturaDeReportes` (Supervisor + Admin, as the libro and the retiros list); the PUT adds
+  `GestionDeCatalogo` (AND), so Supervisor reads but cannot edit. The UI should show the edit action to Admin only.
+- Query params (all optional): `desde`, `hasta` (fecha, inclusive), `numero` (exact sequential number; PV and tipo have their own
+  filters), `idTipoComprobante`, `idPuntoVenta`, `idTurnoCaja`, `cliente` (text, accent/case-insensitive over the shown name),
+  `idEmpleado`, `idMedioPago` (a live cobro with that medio), `totalDesde`, `totalHasta`, `estado` (`Emitido`|`Anulado`),
+  `estadoFiscal` (`sin_factura`|`en_tramite`|`con_cae`), `turnoCerrado`, `conciliado`, `pagina` (1), `tamanio` (25, max 200),
+  `orden` (fecha, numero, tipo, puntoVenta, turno, cliente, empleado, medios, total, estado, estadoFiscal, estadoTurno, conciliado),
+  `direccion` (ascendente/descendente). Default order fecha desc, id desc; with `orden`, id asc tiebreak; empty names / no turno /
+  no cobros go last in both directions. `estado` sorts alphabetically (Anulado < Emitido), `numero` by (punto de venta, numero),
+  `medios` by the summary string. `turnoCerrado` true/false never matches a venta without turno.
+- Envelope `{ items, total, pagina, tamanio }`. Item: `id, numero, numeroVisible, fecha, idTipoComprobante, codigoTipo, tipo,
+  idPuntoVenta, puntoVenta, idTurnoCaja, turnoCerrado (null = sin turno), idCliente, cliente, idEmpleado, empleado, total, estado,
+  estadoFiscal, medios (distinct names by name, "A, B"; null without cobros), conciliado, medioEditable, motivoMedioNoEditable`.
+  Deleted PV / cliente / empleado come as null id + null name (filters do not match them).
+- Errors: 400 `orden_invalido`, `direccion_invalida`, `direccion_sin_orden`, `estado_fiscal_invalido`; 401/403 by role.
+- `medioEditable` is computed in C# per page row by `ReglaDeCambioDeMedios.MotivoDeBloqueo` (the same guards, same order as
+  `ServicioDeCambioDeMedios`: venta_anulada, comprobante_sin_cambio_de_medios, venta_con_cae, venta_con_factura_en_tramite,
+  periodo_conciliado, cambio_de_medios_con_cuenta_corriente). A test PUTs each blocked venta and asserts the real 409 code equals
+  `motivoMedioNoEditable`. It is not a filter/sort column (derived from the columns that are). Rejected invoices count as `sin_factura`.
+- `conciliado` uses T1's date rule (`ReglaDeCambioDeMedios.FechaQueCuentaParaElLibro` = min(cierre del turno, fecha de la venta)) for every
+  venta, so it also freezes ventas of open turnos or without turno whose own date is at or before the mark.
+- Cobros for the edit modal: use the existing `GET /api/ventas/{id}` (`pagos`: idMedioPago, importe, referencia, vuelto; the web resolves
+  names from the medios catalogue it needs for the selector anyway). The grid carries only the `medios` summary, aggregated in the same
+  SQL query (no per-row reads). Sorting by `medios` joins a per-venta aggregate over all cobros (only that sort pays it).
+- Structural: two reads registered in `LectoresDeComprobantesVentaEstructuralesTests` (filter by medio, medios aggregate), exact count 1.
+- Open: the grid has no export; `numero` is an exact match, not a contains over the formatted number.
+
 ## Next step
 
-T3.
+T4 (web: reusable sortable header + POS cambiar medio).
