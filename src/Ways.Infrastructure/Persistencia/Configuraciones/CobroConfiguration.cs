@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Catalogos;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Ventas;
 
@@ -49,6 +50,8 @@ public class CobroConfiguration : IEntityTypeConfiguration<Cobro>
             .HasDefaultValue(0m)
             .IsRequired();
 
+        builder.Property(p => p.IdCobroMercadoPago).HasColumnName("id_cobro_mercadopago");
+
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(p => p.DeletedAt).HasColumnName("deleted_at");
@@ -58,6 +61,7 @@ public class CobroConfiguration : IEntityTypeConfiguration<Cobro>
         builder.HasIndex(p => p.IdTenant).HasDatabaseName("ix_cobros_tenant");
         builder.HasIndex(p => new { p.IdComprobanteVenta, p.IdTenant }).HasDatabaseName("ix_cobros_comprobante");
         builder.HasIndex(p => new { p.IdMedioPago, p.IdTenant }).HasDatabaseName("ix_cobros_medio_pago");
+        builder.HasIndex(p => new { p.IdCobroMercadoPago, p.IdTenant }).HasDatabaseName("ix_cobros_cobro_mercadopago");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -77,6 +81,14 @@ public class CobroConfiguration : IEntityTypeConfiguration<Cobro>
             .HasForeignKey(p => new { p.IdMedioPago, p.IdTenant })
             .HasPrincipalKey(m => new { m.Id, m.IdTenant })
             .HasConstraintName("fk_cobros_medio_pago")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // El cobro de Mercado Pago que pagó este medio. La venta lo valida bajo FOR UPDATE; la FK es el respaldo (23503 -> 400).
+        builder.HasOne<CobroMercadoPago>()
+            .WithMany()
+            .HasForeignKey(p => new { p.IdCobroMercadoPago, p.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_cobros_cobro_mercadopago")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

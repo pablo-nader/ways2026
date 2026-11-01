@@ -104,4 +104,8 @@ public class CobroMercadoPago : EntidadTenant
     public DateTimeOffset? FechaUltimaConsulta { get; set; }
 
     public DateTimeOffset? FechaAprobacion { get; set; }
+
+    /// <summary>La venta que este cobro aprobado pagó (E3-T2); nulo hasta que una venta lo liga. Único: un cobro paga a lo sumo una venta.
+    /// Anular la venta lo deja ligado (el dinero entró; su devolución es de la conciliación).</summary>
+    public int? IdComprobanteVenta { get; set; }
 }

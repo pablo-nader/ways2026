@@ -3661,6 +3661,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_ultima_consulta");
 
+                    b.Property<int?>("IdComprobanteVenta")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_venta");
+
                     b.Property<int>("IdDispositivo")
                         .HasColumnType("integer")
                         .HasColumnName("id_dispositivo");
@@ -3728,8 +3732,15 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasKey("Id")
                         .HasName("pk_cobros_mercadopago");
 
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_cobros_mercadopago_id_id_tenant");
+
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_cobros_mercadopago_tenant");
+
+                    b.HasIndex("IdComprobanteVenta", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_cobros_mercadopago_comprobante_venta");
 
                     b.HasIndex("IdDispositivo", "IdTenant")
                         .HasDatabaseName("ix_cobros_mercadopago_dispositivo");
@@ -5898,6 +5909,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
 
+                    b.Property<int?>("IdCobroMercadoPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cobro_mercadopago");
+
                     b.Property<int>("IdComprobanteVenta")
                         .HasColumnType("integer")
                         .HasColumnName("id_comprobante_venta");
@@ -5936,6 +5951,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_cobros_tenant");
+
+                    b.HasIndex("IdCobroMercadoPago", "IdTenant")
+                        .HasDatabaseName("ix_cobros_cobro_mercadopago");
 
                     b.HasIndex("IdComprobanteVenta", "IdTenant")
                         .HasDatabaseName("ix_cobros_comprobante");
@@ -8049,6 +8067,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .IsRequired()
                         .HasConstraintName("fk_cobros_mercadopago_tenant");
 
+                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteVenta", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_cobros_mercadopago_comprobante_venta");
+
                     b.HasOne("Ways.Domain.Dispositivos.Dispositivo", null)
                         .WithMany()
                         .HasForeignKey("IdDispositivo", "IdTenant")
@@ -8776,6 +8801,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_cobros_tenant");
+
+                    b.HasOne("Ways.Domain.MercadoPago.CobroMercadoPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdCobroMercadoPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_cobros_cobro_mercadopago");
 
                     b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
                         .WithMany()

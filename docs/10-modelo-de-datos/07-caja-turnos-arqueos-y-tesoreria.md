@@ -575,6 +575,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
     expira_en,                               -- reserva de la fila + 10 minutos (expiration_time PT10M)
     fecha_ultima_consulta NULL,              -- última lectura de la orden; limita el refresco a una cada 2 segundos por cobro
     fecha_aprobacion NULL,
+    id_comprobante_venta NULL,               -- la venta que este cobro aprobado pagó (E3-T2); FK compuesta (id_comprobante_venta, id_tenant)
     created_at, updated_at, deleted_at
 )
 ```
@@ -586,6 +587,11 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
 > un cobro vivo por número de venta; y único `ux_cobros_mercadopago_intento` `(id_punto_venta, numero_preasignado, intento)`. Ambos 23505 se
 > traducen a 409 `cobro_mercadopago_en_curso` en `ManejadorDeErrores` (el servicio serializa las creaciones con un lock por punto de venta, así que
 > solo los alcanza una escritura que no pase por él). Índices de soporte `ix_cobros_mercadopago_tenant`, `_empresa`, `_dispositivo` y `_medio_pago`.
+> **Vínculo con la venta (E3-T2).** `id_comprobante_venta` (FK compuesta `fk_cobros_mercadopago_comprobante_venta`, RESTRICT) lo escribe la emisión de la venta
+> que usa el cobro; el único `ux_cobros_mercadopago_comprobante_venta` `(id_comprobante_venta, id_tenant)` hace que un cobro pague una sola venta y una venta
+> ligue un solo cobro (los nulos no chocan; a lo sumo hay un cobro vivo por número). Su 23505 es 409 `cobro_mercadopago_ya_usado` en `ManejadorDeErrores` (la venta
+> toma el cobro con `FOR UPDATE` y rechaza uno ya ligado, así que solo lo alcanza una escritura que se salte ese lock). La clave alterna `ak_cobros_mercadopago_id_id_tenant`
+> sostiene la FK `fk_cobros_cobro_mercadopago` de `cobros.id_cobro_mercadopago` (§4). Un cobro ligado a una venta no se borra (RESTRICT) y anular la venta no lo desliga.
 > RLS estándar. Efecto: como toda FK del modelo, un punto de venta, empresa o medio de pago con cobros cuenta como en uso y no se da de baja
 > (`inventario-de-dependientes.txt`, clasificación `marcado`). La tabla no se audita: es en sí el registro de cada intento y sus estados.
 >

@@ -214,6 +214,11 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_vivo_numero" or "ux_cobros_mercadopago_intento" } =>
                 (StatusCodes.Status409Conflict, "Esa venta ya tiene un cobro con Mercado Pago en curso.", "cobro_mercadopago_en_curso"),
 
+            // Backstop del vínculo entre una venta y su cobro de Mercado Pago: la venta toma el cobro con FOR UPDATE y rechaza uno ya
+            // ligado, así que solo lo alcanza una escritura que se salte ese lock. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_comprobante_venta" } =>
+                (StatusCodes.Status409Conflict, "El cobro de Mercado Pago ya pagó otra venta.", "cobro_mercadopago_ya_usado"),
+
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
             // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas
