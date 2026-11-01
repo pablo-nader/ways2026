@@ -12,6 +12,7 @@ import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { CATALOGO_DE_ACCIONES_AUDITADAS, type FilaDeAuditoria, type PaginaDeAuditoria, type PuntoVentaListado } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable } from '../componentes/grilla'
@@ -54,7 +55,6 @@ export function Auditoria() {
   const [pagina, setPagina] = useState<PaginaDeAuditoria | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const [filaExpandidaId, setFilaExpandidaId] = useState<number | null>(null)
   const generacionRef = useRef(0)
 
@@ -265,8 +265,7 @@ export function Auditoria() {
               })}
               etiqueta="Descargar"
               disabled={!puedeExportarAuditoria(filtros)}
-              onError={setErrorDescarga}
-              onInicio={() => setErrorDescarga('')}
+              onError={toast.error}
             />
             {/* `/auditoria/export` exige desde/hasta no vacíos (AuditoriaEndpoints.cs) — con
                 cualquiera de las dos fechas vacía, el botón queda deshabilitado con el motivo
@@ -276,8 +275,6 @@ export function Auditoria() {
             )}
           </div>
         </div>
-
-        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
         {cargando && !pagina && <Cargando />}
 

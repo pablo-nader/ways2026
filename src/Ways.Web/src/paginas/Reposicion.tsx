@@ -7,6 +7,7 @@ import { ROL } from '../api/tipos'
 import type { FilaDeReposicion, PuntoVentaListado, Reposicion as ReposicionRespuesta } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
@@ -71,7 +72,6 @@ export function Reposicion() {
   const [reposicion, setReposicion] = useState<ReposicionRespuesta | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   useEffect(() => {
@@ -176,13 +176,10 @@ export function Reposicion() {
                 <BotonDeDescarga
                   ruta={rutasDeExportacion.reposicion(idSucursal, null)}
                   etiqueta="Descargar"
-                  onError={setErrorDescarga}
-                  onInicio={() => setErrorDescarga('')}
+                  onError={toast.error}
                 />
               </div>
             </div>
-
-            {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
             {cargando && !reposicion && <Cargando />}
 
