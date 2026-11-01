@@ -6,6 +6,7 @@ using Ways.Domain.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
+using Ways.Domain.MercadoPago;
 
 namespace Ways.Application.Catalogos;
 
@@ -199,6 +200,9 @@ public class ServicioDeMediosPago(
 
         if (!esNuevo)
         {
+            await ExigirSinCobrosVivosDeMercadoPagoAsync(
+                entidad, entrada!.Property(m => m.Proveedor).OriginalValue, entrada.Property(m => m.Comportamiento).OriginalValue,
+                entrada.Property(m => m.Activo).OriginalValue, ct);
             await ExigirComportamientoNoEnUsoAsync(entidad, entrada!.Property(m => m.Comportamiento).OriginalValue, ct);
             await ExigirRutaDeTesoreriaSinPeriodosConciliadosAsync(
                 entidad, entrada.Property(m => m.Comportamiento).OriginalValue, entrada.Property(m => m.IdCuentaTesoreria).OriginalValue, ct);
@@ -274,6 +278,39 @@ public class ServicioDeMediosPago(
             {
                 throw ReglasDeConciliacion.PeriodoConciliado(hasta);
             }
+        }
+    }
+
+    /// <summary>Un medio con proveedor de cobro no puede perderlo, cambiarlo, dejar de ser electrónico ni desactivarse mientras tenga
+    /// cobros de Mercado Pago <c>creando</c> o <c>pendiente</c>: el cobro en curso sigue necesitando el medio tal como lo validó la
+    /// creación. Los aprobados (y el resto) quedan como historia vinculada y no bloquean. El <c>FOR UPDATE</c> del medio choca con el
+    /// <c>FOR KEY SHARE</c> con el que la creación de un cobro fija el medio: o el cobro se reserva antes y esta consulta lo ve, o la
+    /// creación espera a esta edición y vuelve a validar el medio.</summary>
+    private async Task ExigirSinCobrosVivosDeMercadoPagoAsync(
+        MedioPago entidad, string? proveedorAnterior, ComportamientoMedioPago comportamientoAnterior, bool estabaActivo, CancellationToken ct)
+    {
+        var perdeElProveedor = proveedorAnterior is not null && entidad.Proveedor != proveedorAnterior;
+        var dejaDeSerElectronico = proveedorAnterior is not null
+            && comportamientoAnterior == ComportamientoMedioPago.Electronico
+            && entidad.Comportamiento != ComportamientoMedioPago.Electronico;
+        var seDesactiva = proveedorAnterior is not null && estabaActivo && !entidad.Activo;
+
+        if (!perdeElProveedor && !dejaDeSerElectronico && !seDesactiva)
+        {
+            return;
+        }
+
+        await guardaDeCuentas.BloquearFilaAsync<MedioPago>(entidad.Id, ct);
+        var conCobrosVivos = await Db.CobrosMercadoPago.AnyAsync(
+            c => c.IdMedioPago == entidad.Id
+                && (c.Estado == EstadosDeCobroMercadoPago.Creando || c.Estado == EstadosDeCobroMercadoPago.Pendiente),
+            ct);
+
+        if (conCobrosVivos)
+        {
+            throw ErrorDominio.Conflicto(
+                "medio_con_cobros_mercadopago_vivos",
+                "El medio de pago tiene cobros de Mercado Pago en curso: esperá a que terminen para cambiar su proveedor, su comportamiento o desactivarlo.");
         }
     }
 

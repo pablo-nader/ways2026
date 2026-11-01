@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
 using Ways.Domain.Catalogos;
@@ -20,16 +22,26 @@ namespace Ways.Application.MercadoPago;
 /// <c>cobro_mercadopago_en_curso</c>, o el mismo cobro si coinciden medio e importe), la conexión (409) y la caja (409
 /// <c>mercadopago_caja_no_registrada</c>).
 ///
-/// <b>Un cobro vivo por número.</b> Un cobro <c>pendiente</c> o <c>aprobado</c> ocupa el número de venta
+/// <b>Un cobro vivo por número.</b> Un cobro <c>creando</c>, <c>pendiente</c> o <c>aprobado</c> ocupa el número de venta
 /// (<c>ux_cobros_mercadopago_vivo_numero</c>). Crear con el mismo medio e importe devuelve el pendiente tal cual (el dispositivo que
 /// reintenta no abre otra orden); con otro importe es un 409. Un cobro pendiente cuyo plazo ya pasó se consulta a Mercado Pago antes
 /// de decidir, porque pudo vencer o pagarse justo antes. Cada cobro nuevo después de uno cancelado o vencido suma uno a
-/// <c>intento</c>; la <c>external_reference</c> y la clave de idempotencia derivan de él, así que reintentar una creación que
-/// quedó a medias (Mercado Pago creó la orden y el guardado falló) devuelve la misma orden y nunca abre una segunda.
+/// <c>intento</c>.
 ///
-/// <b>Locks</b> (<c>single-read-under-lock</c>): crear toma el lock del punto de venta y, si refresca un cobro pendiente
-/// vencido, el del cobro (siempre en ese orden); consultar y cancelar toman solo el del cobro. Los cobros del número se leen UNA vez,
-/// después del lock. El lock se mantiene mientras se llama a Mercado Pago: dos consultas del mismo cobro se serializan, y la segunda
+/// <b>Reservar y después llamar.</b> Crear confirma primero la fila en estado <c>creando</c>, con la orden que se va a pedir
+/// (<c>external_reference</c>, importe, <c>external_pos_id</c> de la caja) y la clave de idempotencia, que es la huella del cuerpo
+/// completo; recién después llama a <c>POST /v1/orders</c> y pasa la fila a <c>pendiente</c>. Si Mercado Pago creó la orden y el
+/// guardado posterior falló, la fila queda <c>creando</c>: el siguiente crear, consultar o cancelar del cobro reenvía la orden
+/// ORIGINAL armada con los valores guardados (no con la caja actual) y la misma clave, de modo que Mercado Pago devuelve la misma
+/// orden, y solo entonces rigen las reglas de siempre (mismo medio e importe devuelve el cobro; otro importe es 409). Un rechazo
+/// definitivo (400 o 422) de Mercado Pago a ese reenvío deja la fila <c>cancelado</c>: la orden no existe. El resto de los
+/// errores la dejan <c>creando</c> para el próximo reintento. Una orden en estado <c>created</c> sin <c>qr_data</c> es una
+/// respuesta inválida (502); una en estado terminal pasa por el mapeo de estados.
+///
+/// <b>Locks</b> (<c>single-read-under-lock</c>), siempre en el orden punto de venta → cobro: crear toma el lock del punto de venta y,
+/// si hay un cobro vivo del número, el del cobro; consultar y cancelar toman el del cobro y, si el cobro está <c>creando</c> (hay
+/// que reenviar la orden), antes el del punto de venta. Todo camino que devuelve o modifica un cobro vivo lo vuelve a leer después
+/// de tomar su lock. El lock se mantiene mientras se llama a Mercado Pago: dos consultas del mismo cobro se serializan, y la segunda
 /// ve la <c>fecha_ultima_consulta</c> de la primera, de modo que Mercado Pago recibe a lo sumo una lectura cada
 /// <see cref="IntervaloMinimoDeConsulta"/> por cobro.
 ///
@@ -38,10 +50,16 @@ namespace Ways.Application.MercadoPago;
 /// llegar después de una escritura ya hecha (el estado nuevo de un cobro refrescado): en ambos casos se confirma lo ya guardado
 /// antes de relanzar. Cada <c>SaveChanges</c> deja un estado consistente por sí solo, así que confirmar nunca deja algo a medias.
 ///
+/// <b>Un pago sin importe legible no aprueba.</b> Una orden <c>processed</c> solo aprueba el cobro si trae un pago con importe
+/// pagado válido (<c>paid_amount</c> o, si falta, <c>amount</c>; mayor a 0 y con hasta 2 decimales); si no, el cobro sigue pendiente,
+/// se avisa en el log (sin datos sensibles) y la próxima consulta lo reintenta.
+///
 /// Los campos de la orden (<c>id</c>, <c>status</c>, <c>type_response.qr_data</c>, <c>transactions.payments[]</c>) están verificados
 /// contra la referencia de la API (2026-11-01) pero no se ejercitaron en vivo; los DTO ignoran lo que no usan.
 /// </summary>
-public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPago api, IRelojDelSistema reloj, IContextoDeUsuario contexto)
+public class ServicioDeCobrosMercadoPago(
+    IWaysDbContext db, IClienteApiMercadoPago api, IRelojDelSistema reloj, IContextoDeUsuario contexto,
+    ILogger<ServicioDeCobrosMercadoPago> log)
 {
     /// <summary>Segunda clave del <c>pg_advisory_xact_lock(int, int)</c> por punto de venta; la primera es el id del punto de venta.</summary>
     public const int ClaveDeLockDeCobrosDelPuntoVenta = 0x4D504351;
@@ -61,6 +79,10 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
 
     private const int LargoMaximoDeId = 64;
 
+    private const int MaximoDeVueltasAlCrear = 5;
+
+    private const string PrefijoDeClave = "ways-cobro-";
+
     public async Task<CobroDeMercadoPago> CrearAsync(SolicitudDeCobroMercadoPago solicitud, CancellationToken ct = default)
     {
         var (idDispositivo, idPuntoVenta, idTenant) = await ResolverDispositivoAsync(ct);
@@ -74,22 +96,46 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
         await ExigirMedioConQrAsync(solicitud.IdMedioPago, puntoVenta.IdEmpresa, ct);
         await PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync(db, contexto, puntoVenta, ct);
 
-        return await EnLockAsync(
-            idPuntoVenta, ClaveDeLockDeCobrosDelPuntoVenta, () => CrearBajoLockAsync(solicitud, puntoVenta, idDispositivo, idTenant, ct), ct);
+        // Cada vuelta es una transacción bajo el lock del punto de venta. Reservar la fila confirma y termina la vuelta sin respuesta:
+        // la siguiente la encuentra creando, reenvía la orden y aplica las reglas del cobro vivo.
+        for (var vuelta = 0; vuelta < MaximoDeVueltasAlCrear; vuelta++)
+        {
+            var respuesta = await EnLockAsync(
+                idPuntoVenta, ClaveDeLockDeCobrosDelPuntoVenta,
+                () => CrearBajoLockAsync(solicitud, puntoVenta, idDispositivo, idTenant, ct), ct);
+            if (respuesta is not null)
+            {
+                return respuesta;
+            }
+        }
+
+        throw ErrorDominio.Conflicto(
+            CodigosDeErrorDeCobrosMercadoPago.EnCurso, "Esa venta tiene cobros con Mercado Pago en curso: reintentá en unos segundos.");
     }
 
-    private async Task<CobroDeMercadoPago> CrearBajoLockAsync(
+    /// <summary>Devuelve la respuesta al dispositivo, o nulo si reservó una fila nueva (<c>creando</c>) que falta completar.</summary>
+    private async Task<CobroDeMercadoPago?> CrearBajoLockAsync(
         SolicitudDeCobroMercadoPago solicitud, PuntoVenta puntoVenta, int idDispositivo, int idTenant, CancellationToken ct)
     {
+        db.ChangeTracker.Clear();
+
         var cobros = await db.CobrosMercadoPago
+            .AsNoTracking()
             .Where(c => c.IdPuntoVenta == puntoVenta.Id && c.NumeroPreasignado == solicitud.NumeroPreasignado)
+            .Select(c => new { c.Id, c.Estado, c.Intento })
             .ToListAsync(ct);
 
-        if (cobros.FirstOrDefault(c => EstadosDeCobroMercadoPago.EsVivo(c.Estado)) is { } vivo)
+        if (cobros.FirstOrDefault(c => EstadosDeCobroMercadoPago.EsVivo(c.Estado)) is { } referencia)
         {
-            if (vivo.Estado == EstadosDeCobroMercadoPago.Pendiente && reloj.Ahora >= vivo.ExpiraEn)
+            await ServicioDeCajasMercadoPago.TomarLockAsync(db, referencia.Id, ClaveDeLockDeCobro, ct);
+            var vivo = await LeerCobroAsync(referencia.Id, puntoVenta.Id, ct);
+
+            if (vivo.Estado == EstadosDeCobroMercadoPago.Creando)
             {
-                await ServicioDeCajasMercadoPago.TomarLockAsync(db, vivo.Id, ClaveDeLockDeCobro, ct);
+                await CompletarCreacionAsync(vivo, ct);
+            }
+            else if (vivo.Estado == EstadosDeCobroMercadoPago.Pendiente && reloj.Ahora >= vivo.ExpiraEn)
+            {
                 await RefrescarAsync(vivo, respetarIntervalo: false, ct);
             }
 
@@ -139,26 +185,13 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
                 "El punto de venta todavía no está registrado como caja en Mercado Pago: registralo primero.",
                 409);
 
+        await FijarMedioAsync(solicitud.IdMedioPago, puntoVenta.IdEmpresa, ct);
+
         var externalReference = $"W{idTenant}P{puntoVenta.Id}N{solicitud.NumeroPreasignado}I{intento}";
-        var importe = ComoImporteDeMercadoPago(solicitud.Importe);
-        var cuerpo = new SolicitudDeOrdenQrMercadoPago(
-            "qr", externalReference, importe, VigenciaDeLaOrden,
-            new ConfiguracionDeOrdenMercadoPago(new ConfiguracionDeQrDeOrdenMercadoPago(caja.ExternalId, "dynamic")),
-            [new ItemDeOrdenMercadoPago($"Venta {solicitud.NumeroPreasignado}", importe, 1, "unit")]);
+        var cuerpo = ArmarOrden(externalReference, solicitud.Importe, caja.ExternalId, solicitud.NumeroPreasignado);
+        var ahora = reloj.Ahora;
 
-        var inicio = reloj.Ahora;
-        var orden = await api.EnviarAsync<OrdenDeMercadoPago>(
-            puntoVenta.IdEmpresa, HttpMethod.Post, "/v1/orders", cuerpo,
-            $"ways-cobro-{Huella($"{puntoVenta.Id}|{solicitud.NumeroPreasignado}|{intento}|{importe}")}", ct);
-
-        if (string.IsNullOrWhiteSpace(orden.Id) || orden.Id.Trim().Length > LargoMaximoDeId
-            || string.IsNullOrWhiteSpace(orden.TypeResponse?.QrData))
-        {
-            throw new ErrorDominio(
-                CodigosDeErrorDeMercadoPago.RespuestaInvalida, "Mercado Pago respondió con una orden sin identificador o sin QR.", 502);
-        }
-
-        var cobro = new CobroMercadoPago
+        db.CobrosMercadoPago.Add(new CobroMercadoPago
         {
             IdTenant = idTenant,
             IdEmpresa = puntoVenta.IdEmpresa,
@@ -170,37 +203,69 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
             Tipo = TiposDeCobroMercadoPago.Qr,
             Importe = solicitud.Importe,
             ExternalReference = externalReference,
-            IdOrdenMercadoPago = orden.Id.Trim(),
-            Estado = EstadosDeCobroMercadoPago.Pendiente,
-            QrData = orden.TypeResponse!.QrData!.Trim(),
-            ExpiraEn = inicio + Vigencia,
-            CreatedAt = inicio,
-            UpdatedAt = inicio
-        };
-        AplicarOrden(cobro, orden, inicio);
-        db.CobrosMercadoPago.Add(cobro);
+            ExternalPosId = caja.ExternalId,
+            ClaveIdempotencia = ClaveDeIdempotenciaDe(cuerpo),
+            Estado = EstadosDeCobroMercadoPago.Creando,
+            ExpiraEn = ahora + Vigencia,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
         await db.SaveChangesAsync(ct);
 
-        return Mapear(cobro);
+        return null;
+    }
+
+    /// <summary>
+    /// Pide a Mercado Pago la orden guardada en una fila <c>creando</c> (la original, con su clave: si ya existe, la devuelve) y
+    /// aplica la respuesta. Quien la llama tiene el lock del punto de venta y el del cobro y acaba de leer la fila.
+    /// </summary>
+    private async Task CompletarCreacionAsync(CobroMercadoPago cobro, CancellationToken ct)
+    {
+        var cuerpo = ArmarOrden(cobro.ExternalReference, cobro.Importe, cobro.ExternalPosId, cobro.NumeroPreasignado);
+
+        OrdenDeMercadoPago orden;
+        try
+        {
+            orden = await api.EnviarAsync<OrdenDeMercadoPago>(
+                cobro.IdEmpresa, HttpMethod.Post, "/v1/orders", cuerpo, cobro.ClaveIdempotencia, ct);
+        }
+        catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago is 400 or 422)
+        {
+            // Rechazo definitivo: la orden no existe en Mercado Pago, así que la fila no puede quedar ocupando el número.
+            cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
+            cobro.UpdatedAt = reloj.Ahora;
+            await db.SaveChangesAsync(ct);
+            throw;
+        }
+
+        var id = orden.Id?.Trim();
+        var qr = orden.TypeResponse?.QrData?.Trim();
+        var conEstadoFinal = orden.Status is "processed" or "canceled" or "expired" or "refunded";
+        if (string.IsNullOrEmpty(id) || id.Length > LargoMaximoDeId || (!conEstadoFinal && string.IsNullOrEmpty(qr)))
+        {
+            throw new ErrorDominio(
+                CodigosDeErrorDeMercadoPago.RespuestaInvalida, "Mercado Pago respondió con una orden sin identificador o sin QR.", 502);
+        }
+
+        var ahora = reloj.Ahora;
+        cobro.IdOrdenMercadoPago = id;
+        AplicarOrden(cobro, orden, ahora);
+        if (cobro.Estado == EstadosDeCobroMercadoPago.Creando)
+        {
+            cobro.Estado = EstadosDeCobroMercadoPago.Pendiente;
+        }
+
+        cobro.QrData = cobro.Estado == EstadosDeCobroMercadoPago.Pendiente ? qr : null;
+        cobro.UpdatedAt = ahora;
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<CobroDeMercadoPago> ObtenerAsync(int idCobro, CancellationToken ct = default)
     {
         var (_, idPuntoVenta, _) = await ResolverDispositivoAsync(ct);
 
-        var previo = await db.CobrosMercadoPago
-            .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == idCobro && c.IdPuntoVenta == idPuntoVenta, ct)
-            ?? throw CobroInexistente(idCobro);
-
-        if (previo.Estado != EstadosDeCobroMercadoPago.Pendiente)
+        return await SobreCobroAsync(idCobro, idPuntoVenta, async cobro =>
         {
-            return Mapear(previo);
-        }
-
-        return await EnLockAsync(idCobro, ClaveDeLockDeCobro, async () =>
-        {
-            var cobro = await LeerCobroAsync(idCobro, idPuntoVenta, ct);
             if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente)
             {
                 await RefrescarAsync(cobro, respetarIntervalo: true, ct);
@@ -214,15 +279,8 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
     {
         var (_, idPuntoVenta, _) = await ResolverDispositivoAsync(ct);
 
-        if (!await db.CobrosMercadoPago.AnyAsync(c => c.Id == idCobro && c.IdPuntoVenta == idPuntoVenta, ct))
+        return await SobreCobroAsync(idCobro, idPuntoVenta, async cobro =>
         {
-            throw CobroInexistente(idCobro);
-        }
-
-        return await EnLockAsync(idCobro, ClaveDeLockDeCobro, async () =>
-        {
-            var cobro = await LeerCobroAsync(idCobro, idPuntoVenta, ct);
-
             if (cobro.Estado == EstadosDeCobroMercadoPago.Aprobado)
             {
                 throw ErrorDominio.Conflicto(
@@ -237,12 +295,12 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
             try
             {
                 var cancelada = await api.EnviarAsync<OrdenDeMercadoPago>(
-                    cobro.IdEmpresa, HttpMethod.Post, $"/v1/orders/{Uri.EscapeDataString(cobro.IdOrdenMercadoPago)}/cancel",
+                    cobro.IdEmpresa, HttpMethod.Post, $"/v1/orders/{Uri.EscapeDataString(cobro.IdOrdenMercadoPago!)}/cancel",
                     claveIdempotencia: $"ways-cobro-{cobro.Id}-cancelar", ct: ct);
 
                 var ahora = reloj.Ahora;
                 AplicarOrden(cobro, cancelada, ahora);
-                if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente)
+                if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente && cancelada.Status != "processed")
                 {
                     cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
                 }
@@ -260,8 +318,50 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
         }, ct);
     }
 
+    /// <summary>
+    /// Consultar y cancelar: un cobro que ya no está vivo se devuelve sin lock ni llamada; uno vivo se vuelve a leer después de tomar su
+    /// lock. Si está <c>creando</c> hay que reenviar la orden antes de operar, y eso se hace bajo el lock del punto de venta primero
+    /// (el mismo orden que crear).
+    /// </summary>
+    private async Task<CobroDeMercadoPago> SobreCobroAsync(
+        int idCobro, int idPuntoVenta, Func<CobroMercadoPago, Task<CobroDeMercadoPago>> operacion, CancellationToken ct)
+    {
+        var previo = await db.CobrosMercadoPago
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == idCobro && c.IdPuntoVenta == idPuntoVenta, ct)
+            ?? throw CobroInexistente(idCobro);
+
+        if (!EstadosDeCobroMercadoPago.EsVivo(previo.Estado))
+        {
+            return Mapear(previo);
+        }
+
+        if (previo.Estado == EstadosDeCobroMercadoPago.Creando)
+        {
+            return await EnLockAsync(idPuntoVenta, ClaveDeLockDeCobrosDelPuntoVenta, async () =>
+            {
+                await ServicioDeCajasMercadoPago.TomarLockAsync(db, idCobro, ClaveDeLockDeCobro, ct);
+                db.ChangeTracker.Clear();
+                var cobro = await LeerCobroAsync(idCobro, idPuntoVenta, ct);
+                if (cobro.Estado == EstadosDeCobroMercadoPago.Creando)
+                {
+                    await CompletarCreacionAsync(cobro, ct);
+                }
+
+                return await operacion(cobro);
+            }, ct);
+        }
+
+        return await EnLockAsync(idCobro, ClaveDeLockDeCobro, async () =>
+        {
+            db.ChangeTracker.Clear();
+            return await operacion(await LeerCobroAsync(idCobro, idPuntoVenta, ct));
+        }, ct);
+    }
+
     /// <summary>Lee la orden de Mercado Pago y aplica su estado al cobro pendiente. Con <paramref name="respetarIntervalo"/> no hace
-    /// nada si la última consulta es de hace menos de <see cref="IntervaloMinimoDeConsulta"/>. Quien la llama tiene el lock del cobro.</summary>
+    /// nada si la última consulta es de hace menos de <see cref="IntervaloMinimoDeConsulta"/>. Quien la llama tiene el lock del cobro.
+    /// Un 404 de una orden que ya pasó su plazo la da por vencida; antes del plazo sigue siendo un error.</summary>
     private async Task RefrescarAsync(CobroMercadoPago cobro, bool respetarIntervalo, CancellationToken ct)
     {
         var ahora = reloj.Ahora;
@@ -270,8 +370,20 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
             return;
         }
 
-        var orden = await api.EnviarAsync<OrdenDeMercadoPago>(
-            cobro.IdEmpresa, HttpMethod.Get, $"/v1/orders/{Uri.EscapeDataString(cobro.IdOrdenMercadoPago)}", ct: ct);
+        OrdenDeMercadoPago orden;
+        try
+        {
+            orden = await api.EnviarAsync<OrdenDeMercadoPago>(
+                cobro.IdEmpresa, HttpMethod.Get, $"/v1/orders/{Uri.EscapeDataString(cobro.IdOrdenMercadoPago!)}", ct: ct);
+        }
+        catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404 && ahora >= cobro.ExpiraEn)
+        {
+            cobro.Estado = EstadosDeCobroMercadoPago.Expirado;
+            cobro.FechaUltimaConsulta = ahora;
+            cobro.UpdatedAt = ahora;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
 
         AplicarOrden(cobro, orden, ahora);
         cobro.FechaUltimaConsulta = ahora;
@@ -279,19 +391,31 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
         await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>Un estado de la orden que Ways no reconoce (<c>created</c>, <c>at_terminal</c>…) deja el cobro como está.</summary>
-    private static void AplicarOrden(CobroMercadoPago cobro, OrdenDeMercadoPago orden, DateTimeOffset ahora)
+    /// <summary>
+    /// Un estado de la orden que Ways no reconoce (<c>created</c>, <c>at_terminal</c>…) deja el cobro como está. <c>processed</c> solo
+    /// aprueba si trae un pago con importe pagado válido; si no, el cobro sigue como estaba y se avisa en el log.
+    /// </summary>
+    private void AplicarOrden(CobroMercadoPago cobro, OrdenDeMercadoPago orden, DateTimeOffset ahora)
     {
         switch (orden.Status)
         {
             case "processed":
                 var pagos = orden.Transactions?.Payments;
                 var pago = pagos?.FirstOrDefault(p => p.Status == "processed") ?? pagos?.FirstOrDefault();
+                var pagado = pago is null ? null : ImportePagadoValido(pago.PaidAmount ?? pago.Amount);
+                if (pagado is null)
+                {
+                    log.LogWarning(
+                        "La orden {IdOrden} de Mercado Pago figura procesada pero sin un pago con importe legible: el cobro {IdCobro} sigue sin aprobarse.",
+                        cobro.IdOrdenMercadoPago, cobro.Id);
+                    break;
+                }
+
                 cobro.Estado = EstadosDeCobroMercadoPago.Aprobado;
                 cobro.FechaAprobacion = ahora;
-                cobro.IdPagoMercadoPago = pago?.Id is { Length: > 0 and <= LargoMaximoDeId } idPago ? idPago : null;
-                cobro.ReferenciaPagoMercadoPago = pago?.ReferenciaNumerica;
-                cobro.ImportePagado = pago is null ? null : ImportePagadoValido(pago.PaidAmount ?? pago.Amount);
+                cobro.IdPagoMercadoPago = pago!.Id is { Length: > 0 and <= LargoMaximoDeId } idPago ? idPago : null;
+                cobro.ReferenciaPagoMercadoPago = pago.ReferenciaNumerica;
+                cobro.ImportePagado = pagado;
                 break;
             case "canceled":
                 cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
@@ -306,7 +430,16 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
     }
 
     private static decimal? ImportePagadoValido(decimal? importe) =>
-        importe is >= 0m and <= ImporteMaximo ? Math.Round(importe.Value, 2, MidpointRounding.AwayFromZero) : null;
+        importe is > 0m and <= ImporteMaximo && importe == Math.Round(importe.Value, 2) ? importe : null;
+
+    private static SolicitudDeOrdenQrMercadoPago ArmarOrden(string externalReference, decimal importe, string externalPosId, long numero)
+    {
+        var total = ComoImporteDeMercadoPago(importe);
+        return new SolicitudDeOrdenQrMercadoPago(
+            "qr", externalReference, total, VigenciaDeLaOrden,
+            new ConfiguracionDeOrdenMercadoPago(new ConfiguracionDeQrDeOrdenMercadoPago(externalPosId, "dynamic")),
+            [new ItemDeOrdenMercadoPago($"Venta {numero}", total, 1, "unit")]);
+    }
 
     private static CobroDeMercadoPago Mapear(CobroMercadoPago cobro)
     {
@@ -349,6 +482,17 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
                 "El medio de pago no existe, está inactivo o no cobra con QR de Mercado Pago.",
                 400);
         }
+    }
+
+    /// <summary>
+    /// Bajo el lock del punto de venta y justo antes de reservar: toma <c>FOR KEY SHARE</c> sobre la fila del medio, que choca con el
+    /// <c>FOR UPDATE</c> de una edición del medio (<c>ServicioDeMediosPago</c>), y vuelve a validar el medio. O la edición confirma antes
+    /// y se ve acá, o espera a que esta reserva confirme y ve el cobro.
+    /// </summary>
+    private async Task FijarMedioAsync(int idMedioPago, int idEmpresaDelPuntoVenta, CancellationToken ct)
+    {
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM medios_pago WHERE id_medio_pago = {idMedioPago} FOR KEY SHARE", ct);
+        await ExigirMedioConQrAsync(idMedioPago, idEmpresaDelPuntoVenta, ct);
     }
 
     private async Task<(int IdDispositivo, int IdPuntoVenta, int IdTenant)> ResolverDispositivoAsync(CancellationToken ct)
@@ -402,5 +546,7 @@ public class ServicioDeCobrosMercadoPago(IWaysDbContext db, IClienteApiMercadoPa
 
     private static string ComoImporteDeMercadoPago(decimal importe) => importe.ToString("F2", CultureInfo.InvariantCulture);
 
-    private static string Huella(string texto) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(texto)))[..16];
+    /// <summary><c>ways-cobro-</c> más la huella SHA-256 del cuerpo completo de la orden, cortada para entrar en los 64 caracteres.</summary>
+    private static string ClaveDeIdempotenciaDe(SolicitudDeOrdenQrMercadoPago cuerpo) =>
+        PrefijoDeClave + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cuerpo))))[..(64 - PrefijoDeClave.Length)];
 }

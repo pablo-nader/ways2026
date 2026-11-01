@@ -3620,6 +3620,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("ClaveIdempotencia")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("clave_idempotencia");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -3637,6 +3643,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<DateTimeOffset>("ExpiraEn")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expira_en");
+
+                    b.Property<string>("ExternalPosId")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("external_pos_id");
 
                     b.Property<string>("ExternalReference")
                         .IsRequired()
@@ -3665,7 +3677,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnName("id_medio_pago");
 
                     b.Property<string>("IdOrdenMercadoPago")
-                        .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("id_orden_mercadopago");
@@ -3737,7 +3748,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdPuntoVenta", "NumeroPreasignado")
                         .IsUnique()
                         .HasDatabaseName("ux_cobros_mercadopago_vivo_numero")
-                        .HasFilter("estado IN ('pendiente', 'aprobado')");
+                        .HasFilter("estado IN ('creando', 'pendiente', 'aprobado')");
 
                     b.HasIndex("IdPuntoVenta", "NumeroPreasignado", "Intento")
                         .IsUnique()
@@ -3747,7 +3758,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         {
                             t.HasCheckConstraint("ck_cobros_mercadopago_aprobacion", "estado <> 'aprobado' OR fecha_aprobacion IS NOT NULL");
 
-                            t.HasCheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto')");
+                            t.HasCheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto')");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_importe", "importe > 0");
 
@@ -3756,6 +3767,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_cobros_mercadopago_intento", "intento >= 1");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'cancelado') OR id_orden_mercadopago IS NOT NULL");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_tipo", "tipo IN ('qr', 'point')");
                         });

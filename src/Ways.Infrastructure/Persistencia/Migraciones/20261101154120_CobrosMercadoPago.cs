@@ -35,7 +35,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     tipo = table.Column<string>(type: "character varying(10)", maxLength: 10, nullable: false),
                     importe = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
                     external_reference = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
-                    id_orden_mercadopago = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    external_pos_id = table.Column<string>(type: "character varying(40)", maxLength: 40, nullable: false),
+                    clave_idempotencia = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    id_orden_mercadopago = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
                     estado = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
                     id_pago_mercadopago = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
                     referencia_pago_mercadopago = table.Column<long>(type: "bigint", nullable: true),
@@ -53,11 +55,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 {
                     table.PrimaryKey("pk_cobros_mercadopago", x => x.id_cobro_mercadopago);
                     table.CheckConstraint("ck_cobros_mercadopago_aprobacion", "estado <> 'aprobado' OR fecha_aprobacion IS NOT NULL");
-                    table.CheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto')");
+                    table.CheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto')");
                     table.CheckConstraint("ck_cobros_mercadopago_importe", "importe > 0");
                     table.CheckConstraint("ck_cobros_mercadopago_importe_pagado", "importe_pagado IS NULL OR importe_pagado >= 0");
                     table.CheckConstraint("ck_cobros_mercadopago_intento", "intento >= 1");
                     table.CheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
+                    table.CheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'cancelado') OR id_orden_mercadopago IS NOT NULL");
                     table.CheckConstraint("ck_cobros_mercadopago_tipo", "tipo IN ('qr', 'point')");
                     table.ForeignKey(
                         name: "fk_cobros_mercadopago_dispositivo",
@@ -137,7 +140,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 table: "cobros_mercadopago",
                 columns: new[] { "id_punto_venta", "numero_preasignado" },
                 unique: true,
-                filter: "estado IN ('pendiente', 'aprobado')");
+                filter: "estado IN ('creando', 'pendiente', 'aprobado')");
 
             migrationBuilder.HabilitarRlsDeTenant("cobros_mercadopago");
         }

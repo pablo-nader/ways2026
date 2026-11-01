@@ -59,6 +59,15 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         public Func<string, HttpResponseMessage?>? Cancelar { get; set; }
 
         public string? ReferenceId { get; set; } = "9876543";
+
+        /// <summary>Una orden <c>processed</c> sin la lista de pagos.</summary>
+        public bool SinPagos { get; set; }
+
+        /// <summary>El texto exacto de <c>paid_amount</c> (y de <c>amount</c> si es distinto del total); anula <see cref="Pagado"/>.</summary>
+        public string? PagadoCrudo { get; set; }
+
+        /// <summary>Una orden sin <c>type_response</c>.</summary>
+        public bool SinQr { get; set; }
     }
 
     private sealed class Escenario
@@ -96,13 +105,15 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
     {
         var estado = o.Estados.GetValueOrDefault(id, "created");
         var total = o.Totales.GetValueOrDefault(id, 0m);
-        var pagos = estado == "processed"
+        var pagado = o.PagadoCrudo ?? (o.Pagado ?? total).ToString("F2", CultureInfo.InvariantCulture);
+        var pagos = estado == "processed" && !o.SinPagos
             ? $$"""
-              "transactions": {"payments": [{"id": "PAY{{id}}", "status": "processed", "amount": "{{total.ToString("F2", CultureInfo.InvariantCulture)}}",
-              "paid_amount": "{{(o.Pagado ?? total).ToString("F2", CultureInfo.InvariantCulture)}}", "reference_id": {{(o.ReferenceId ?? "null")}}}]},
+              "transactions": {"payments": [{"id": "PAY{{id}}", "status": "processed", "amount": "{{pagado}}",
+              "paid_amount": "{{pagado}}", "reference_id": {{(o.ReferenceId ?? "null")}}}]},
               """
             : string.Empty;
-        return $$"""{ {{pagos}} "id": "{{id}}", "status": "{{estado}}", "extra": {"x": 1}, "type_response": {"qr_data": "000201QR{{id}}"} }""";
+        var qr = o.SinQr ? string.Empty : $$""", "type_response": {"qr_data": "000201QR{{id}}"}""";
+        return $$"""{ {{pagos}} "id": "{{id}}", "status": "{{estado}}", "extra": {"x": 1}{{qr}} }""";
     }
 
     private static void Guionar(Contexto ctx, OrdenesFalsas ordenes) =>
@@ -330,8 +341,9 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         await using var comando = conexion.CreateCommand();
         comando.CommandText =
             "INSERT INTO cobros_mercadopago (id_tenant, id_empresa, id_punto_venta, id_dispositivo, id_medio_pago, numero_preasignado, " +
-            "intento, tipo, importe, external_reference, id_orden_mercadopago, estado, expira_en, fecha_aprobacion, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', 10, $8, $9, $10, now(), now(), now(), now())";
+            "intento, tipo, importe, external_reference, external_pos_id, clave_idempotencia, id_orden_mercadopago, estado, expira_en, " +
+            "fecha_aprobacion, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', 10, $8, 'WAYSPVCRUDO', $8, $9, $10, now(), now(), now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = e.Ctx.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta ?? e.IdPuntoVenta });
@@ -447,28 +459,247 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(new[] { 1, 2 }, (await FilasAsync(e.IdPuntoVenta)).Select(f => (int)f["intento"]!).ToArray());
     }
 
-    // Clausula: la clave de idempotencia depende del intento y del importe, no del tiempo: un intento que fallo se reintenta con la misma
-    // clave (Mercado Pago devuelve la misma orden) y un importe distinto usa otra.
+    // Clausula: la fila se reserva (creando) y se confirma ANTES de llamar a Mercado Pago, con la clave y la orden guardadas; una
+    // creacion que fallo se reintenta reenviando la misma orden con la misma clave y no abre otra.
     [Fact]
-    public async Task UnaCreacionQueFalloSeReintentaConLaMismaClaveYNoAbreOtraOrden()
+    public async Task UnaCreacionQueFalloDejaLaFilaCreandoYSeReintentaConLaMismaClaveYNoAbreOtraOrden()
     {
         var e = await PrepararAsync("mp-cobro-reintento");
         var fallar = 1;
-        e.Ordenes.Antes = p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders" && Interlocked.Exchange(ref fallar, 0) == 1
-            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
-            : null;
+        string? estadoDuranteLaLlamada = null;
+        e.Ordenes.Antes = p =>
+        {
+            if (p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders" && Interlocked.Exchange(ref fallar, 0) == 1)
+            {
+                estadoDuranteLaLlamada = (string?)FilasAsync(e.IdPuntoVenta).GetAwaiter().GetResult().Single()["estado"];
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+
+            return null;
+        };
 
         await AssertCodigoAsync(await CrearAsync(e, 5005, 100m), HttpStatusCode.ServiceUnavailable, CodigosDeErrorDeMercadoPago.NoDisponible);
-        Assert.Empty(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("creando", estadoDuranteLaLlamada);
+        var reservada = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("creando", reservada["estado"]);
+        Assert.Null(reservada["id_orden_mercadopago"]);
+        Assert.Equal(e.ExternalIdCaja, reservada["external_pos_id"]);
+        Assert.Equal(Creaciones(e).Single().ClaveDeIdempotencia, reservada["clave_idempotencia"]);
 
         var cobro = await CrearOkAsync(e, 5005, 100m);
 
         var creaciones = Creaciones(e);
         Assert.Equal(2, creaciones.Count);
         Assert.Equal(creaciones[0].ClaveDeIdempotencia, creaciones[1].ClaveDeIdempotencia);
+        Assert.Equal(creaciones[0].Cuerpo, creaciones[1].Cuerpo);
         Assert.Single(e.Ordenes.OrdenPorClave);
         Assert.Equal("pendiente", cobro.Estado);
-        Assert.Equal(1, (int)Assert.Single(await FilasAsync(e.IdPuntoVenta))["intento"]!);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal(1, (int)fila["intento"]!);
+        Assert.Equal(cobro.IdCobro, fila["id_cobro_mercadopago"]);
+        Assert.Equal(e.Ordenes.OrdenPorClave.Values.Single(), fila["id_orden_mercadopago"]);
+    }
+
+    // ---- Crear: la orden se creo en Mercado Pago pero Ways no llego a guardarla --------------------------------------------
+
+    /// <summary>Hace fallar en la base el paso de <c>creando</c> a <c>pendiente</c>: la orden queda creada en Mercado Pago y la fila, creando.</summary>
+    private async Task<IAsyncDisposable> FallarElPasoAPendienteAsync()
+    {
+        await EjecutarAsync("CREATE OR REPLACE FUNCTION zz_falla_paso_a_pendiente() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'falla simulada'; END $$ LANGUAGE plpgsql");
+        await EjecutarAsync(
+            "CREATE TRIGGER zz_falla_paso_a_pendiente BEFORE UPDATE ON cobros_mercadopago FOR EACH ROW " +
+            "WHEN (OLD.estado = 'creando' AND NEW.estado = 'pendiente') EXECUTE FUNCTION zz_falla_paso_a_pendiente()");
+        return new Quitar(() => EjecutarAsync("DROP TRIGGER IF EXISTS zz_falla_paso_a_pendiente ON cobros_mercadopago"));
+    }
+
+    private sealed class Quitar(Func<Task> accion) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync() => await accion();
+    }
+
+    private async Task EjecutarAsync(string sql)
+    {
+        await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await conexion.OpenAsync();
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText = sql;
+        await comando.ExecuteNonQueryAsync();
+    }
+
+    private async Task<(Escenario E, int IdCobro)> ConCommitPerdidoAsync(string nombre, long numero, decimal importe)
+    {
+        var e = await PrepararAsync(nombre);
+        await using (await FallarElPasoAPendienteAsync())
+        {
+            var perdida = await CrearAsync(e, numero, importe);
+            Assert.False(perdida.IsSuccessStatusCode, "el paso a pendiente tenia que fallar");
+        }
+
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("creando", fila["estado"]);
+        Assert.Single(e.Ordenes.OrdenPorClave);
+        return (e, (int)fila["id_cobro_mercadopago"]!);
+    }
+
+    // Clausula: reserve-then-call. Mercado Pago creo la orden y el guardado fallo: el reintento reenvia el MISMO cuerpo con la MISMA clave
+    // (Mercado Pago devuelve la misma orden) y recupera el cobro, aunque la caja haya cambiado de external_id mientras tanto.
+    [Fact]
+    public async Task UnCommitPerdidoSeRecuperaReenviandoLaOrdenOriginalConLaMismaClaveAunqueLaCajaCambie()
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido", 5040, 100m);
+        await EjecutarAsync($"UPDATE cajas_mercadopago SET external_id = 'WAYSOTRACAJA' WHERE id_punto_venta = {e.IdPuntoVenta}");
+
+        var cobro = await CrearOkAsync(e, 5040, 100m);
+
+        Assert.Equal(idCobro, cobro.IdCobro);
+        Assert.Equal("pendiente", cobro.Estado);
+        Assert.StartsWith("000201QRORD", cobro.QrData);
+        var creaciones = Creaciones(e);
+        Assert.Equal(2, creaciones.Count);
+        Assert.Equal(creaciones[0].ClaveDeIdempotencia, creaciones[1].ClaveDeIdempotencia);
+        Assert.Equal(creaciones[0].Cuerpo, creaciones[1].Cuerpo);
+        Assert.Equal(
+            e.ExternalIdCaja,
+            JsonDocument.Parse(creaciones[1].Cuerpo).RootElement.GetProperty("config").GetProperty("qr").GetProperty("external_pos_id").GetString());
+        Assert.Single(e.Ordenes.OrdenPorClave);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("pendiente", fila["estado"]);
+        Assert.Equal(e.Ordenes.OrdenPorClave.Values.Single(), fila["id_orden_mercadopago"]);
+    }
+
+    // Clausula: despues de un commit perdido, un crear con OTRO importe primero recupera la orden original y recien despues responde 409.
+    [Fact]
+    public async Task UnCrearConOtroImporteDespuesDeUnCommitPerdidoRecuperaLaOrdenOriginalYResponde409()
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido-otro", 5041, 100m);
+
+        await AssertCodigoAsync(await CrearAsync(e, 5041, 100.01m), HttpStatusCode.Conflict, "cobro_mercadopago_en_curso");
+
+        var creaciones = Creaciones(e);
+        Assert.Equal(2, creaciones.Count);
+        Assert.Equal(creaciones[0].ClaveDeIdempotencia, creaciones[1].ClaveDeIdempotencia);
+        Assert.Equal(creaciones[0].Cuerpo, creaciones[1].Cuerpo);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal(idCobro, fila["id_cobro_mercadopago"]);
+        Assert.Equal("pendiente", fila["estado"]);
+        Assert.Equal(100m, fila["importe"]);
+        Assert.Equal(e.Ordenes.OrdenPorClave.Values.Single(), fila["id_orden_mercadopago"]);
+    }
+
+    // Clausula: la orden recuperada ya paso a processed y no trae qr_data: el guard de qr_data es solo para created; aprueba por el mapeo.
+    [Fact]
+    public async Task UnaOrdenRecuperadaYaProcesadaSinQrDataApruebaElCobro()
+    {
+        var (e, _) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido-pagado", 5042, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.SinQr = true;
+
+        await AssertCodigoAsync(await CrearAsync(e, 5042, 100m), HttpStatusCode.Conflict, "cobro_mercadopago_ya_aprobado");
+
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("aprobado", fila["estado"]);
+        Assert.Equal(100m, fila["importe_pagado"]);
+        Assert.Null(fila["qr_data"]);
+        Assert.NotNull(fila["fecha_aprobacion"]);
+    }
+
+    // Clausula: una orden created sin qr_data sigue siendo una respuesta invalida (502) y la fila queda creando para reintentar.
+    [Fact]
+    public async Task UnaOrdenCreatedRecuperadaSinQrDataEsUn502YLaFilaSigueCreando()
+    {
+        var (e, _) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido-sin-qr", 5043, 100m);
+        e.Ordenes.SinQr = true;
+
+        await AssertCodigoAsync(
+            await CrearAsync(e, 5043, 100m), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.RespuestaInvalida);
+
+        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: consultar un cobro creando reenvia la orden original y lo deja pendiente.
+    [Fact]
+    public async Task ConsultarUnCobroCreandoRecuperaLaOrdenYLoDejaPendiente()
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido-get", 5044, 100m);
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, idCobro));
+
+        Assert.Equal("pendiente", consultado.Estado);
+        Assert.StartsWith("000201QRORD", consultado.QrData);
+        Assert.Equal(2, Creaciones(e).Count);
+        Assert.Single(e.Ordenes.OrdenPorClave);
+        Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: cancelar un cobro creando primero recupera la orden y despues la cancela.
+    [Fact]
+    public async Task CancelarUnCobroCreandoRecuperaLaOrdenYLaCancela()
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido-cancelar", 5045, 100m);
+
+        var cancelado = await LeerAsync<CobroDeMercadoPago>(await CancelarAsync(e, idCobro));
+
+        Assert.Equal("cancelado", cancelado.Estado);
+        Assert.Equal(2, Creaciones(e).Count);
+        Assert.Single(Cancelaciones(e));
+        Assert.Equal("cancelado", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: el rechazo definitivo (400) de Mercado Pago al reenviar la orden deja la fila cancelada y libera el numero.
+    [Fact]
+    public async Task UnRechazoDefinitivoAlReenviarLaOrdenCancelaLaFilaYLiberaElNumero()
+    {
+        var (e, _) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido-rechazo", 5046, 100m);
+        e.Ordenes.Antes = p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders"
+            ? Json(HttpStatusCode.BadRequest, """{"error": "invalid_params", "message": "x"}""")
+            : null;
+
+        await AssertCodigoAsync(
+            await CrearAsync(e, 5046, 100m), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.SolicitudRechazada);
+        Assert.Equal("cancelado", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+
+        e.Ordenes.Antes = null;
+        var nuevo = await CrearOkAsync(e, 5046, 100m);
+
+        Assert.Equal("pendiente", nuevo.Estado);
+        Assert.Equal(new[] { "cancelado", "pendiente" }, (await FilasAsync(e.IdPuntoVenta)).Select(f => (string)f["estado"]!).ToArray());
+    }
+
+    // Clausula: single-read-under-lock. La rama de reuso relee el cobro despues de tomar el lock: si una cancelacion confirma entre la
+    // primera lectura y el lock, el crear no devuelve el cobro cancelado sino que abre otro intento.
+    [Fact]
+    public async Task LaRamaDeReusoReleeElCobroBajoElLockYNoDevuelveUnCobroCancelado()
+    {
+        var e = await PrepararAsync("mp-cobro-reuso-relee");
+        var viejo = await CrearOkAsync(e, 5047, 100m);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var transaccion = await conexion.BeginTransactionAsync();
+        await using (var tomar = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1, $2)", conexion, transaccion))
+        {
+            tomar.Parameters.Add(new NpgsqlParameter { Value = viejo.IdCobro });
+            tomar.Parameters.Add(new NpgsqlParameter { Value = ServicioDeCobrosMercadoPago.ClaveDeLockDeCobro });
+            await tomar.ExecuteNonQueryAsync();
+        }
+
+        var crear = CrearAsync(e, 5047, 100m);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        Assert.False(crear.IsCompleted);
+
+        await using (var cancelar = new NpgsqlCommand(
+            "UPDATE cobros_mercadopago SET estado = 'cancelado' WHERE id_cobro_mercadopago = $1", conexion, transaccion))
+        {
+            cancelar.Parameters.Add(new NpgsqlParameter { Value = viejo.IdCobro });
+            await cancelar.ExecuteNonQueryAsync();
+        }
+
+        await transaccion.CommitAsync();
+        var nuevo = await LeerAsync<CobroDeMercadoPago>(await crear);
+
+        Assert.NotEqual(viejo.IdCobro, nuevo.IdCobro);
+        Assert.Equal("pendiente", nuevo.Estado);
+        Assert.Equal(new[] { "cancelado", "pendiente" }, (await FilasAsync(e.IdPuntoVenta)).Select(f => (string)f["estado"]!).ToArray());
+        Assert.Equal(2, Creaciones(e).Count);
     }
 
     // Clausula: el pg_advisory_xact_lock por punto de venta serializa dos creaciones simultaneas del mismo numero.
@@ -510,25 +741,28 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Single(await FilasAsync(e.IdPuntoVenta));
     }
 
-    // Clausula: ux_cobros_mercadopago_vivo_numero, traducido a 409 cuando una escritura por fuera gana la carrera.
+    // Clausula: ux_cobros_mercadopago_vivo_numero cuenta la fila creando: mientras se llama a Mercado Pago, una escritura por fuera de un
+    // cobro vivo del mismo numero la rechaza la base.
     [Fact]
-    public async Task UnCobroVivoInsertadoPorFueraEntreLaLlamadaYElGuardadoRespondeLaCarreraConElIndiceUnico()
+    public async Task UnaFilaCreandoOcupaElNumeroVivoYUnaEscrituraPorFueraChocaConElIndiceUnico()
     {
         var e = await PrepararAsync("mp-cobro-carrera");
-        var competidora = 0;
+        PostgresException? rechazo = null;
         e.Ordenes.Antes = p =>
         {
-            if (p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders" && Interlocked.Increment(ref competidora) == 1)
+            if (p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders" && rechazo is null)
             {
-                InsertarFilaAsync(e, 5007, "pendiente", 7).GetAwaiter().GetResult();
+                rechazo = Assert.ThrowsAsync<PostgresException>(() => InsertarFilaAsync(e, 5007, "pendiente", 7)).GetAwaiter().GetResult();
             }
 
             return null;
         };
 
-        await AssertCodigoAsync(await CrearAsync(e, 5007, 100m), HttpStatusCode.Conflict, "cobro_mercadopago_en_curso");
+        var cobro = await CrearOkAsync(e, 5007, 100m);
 
-        Assert.Equal(7, (int)Assert.Single(await FilasAsync(e.IdPuntoVenta))["intento"]!);
+        Assert.Equal("23505", rechazo!.SqlState);
+        Assert.Equal("ux_cobros_mercadopago_vivo_numero", rechazo.ConstraintName);
+        Assert.Equal(cobro.IdCobro, Assert.Single(await FilasAsync(e.IdPuntoVenta))["id_cobro_mercadopago"]);
     }
 
     [Fact]
@@ -545,6 +779,9 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         await InsertarFilaAsync(e, 5008, "expirado", 4);
         await InsertarFilaAsync(e, 5008, "devuelto", 5);
         await InsertarFilaAsync(e, 5009, "pendiente", 1);
+
+        var creando = await Assert.ThrowsAsync<PostgresException>(() => InsertarFilaAsync(e, 5009, "creando", 2));
+        Assert.Equal("ux_cobros_mercadopago_vivo_numero", creando.ConstraintName);
 
         var mismoIntento = await Assert.ThrowsAsync<PostgresException>(() => InsertarFilaAsync(e, 5008, "cancelado", 3));
         Assert.Equal("ux_cobros_mercadopago_intento", mismoIntento.ConstraintName);
@@ -635,7 +872,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     [Fact]
-    public async Task UnCuerpoDeMercadoPagoSinIdOSinQrEsUn502SinFila()
+    public async Task UnCuerpoDeMercadoPagoSinIdOSinQrEsUn502YElRechazoDefinitivoCancelaLaFila()
     {
         var e = await PrepararAsync("mp-cobro-respuesta-invalida");
         e.Ordenes.Antes = p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders"
@@ -643,6 +880,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
             : null;
         await AssertCodigoAsync(
             await CrearAsync(e, 5015, 100m), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.RespuestaInvalida);
+        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
 
         e.Ordenes.Antes = p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders"
             ? Json(HttpStatusCode.BadRequest, """{"error": "invalid_params", "message": "x"}""")
@@ -650,7 +888,9 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         await AssertCodigoAsync(
             await CrearAsync(e, 5015, 100m), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.SolicitudRechazada);
 
-        Assert.Empty(await FilasAsync(e.IdPuntoVenta));
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("cancelado", fila["estado"]);
+        Assert.Null(fila["id_orden_mercadopago"]);
     }
 
     [Fact]
@@ -664,7 +904,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         var conexion = Assert.Single(await _apoyo.FilasAsync(e.Ctx.IdEmpresa), f => f.Estado != "desconectada");
         Assert.Equal("requiere_reconexion", conexion.Estado);
-        Assert.Empty(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
     }
 
     // ---- Alcance del dispositivo ----------------------------------------------------------------------------------------
@@ -783,6 +1023,76 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal("aprobado", consultado.Estado);
         Assert.Null(Assert.Single(await FilasAsync(e.IdPuntoVenta))["referencia_pago_mercadopago"]);
+    }
+
+    // Clausula: F1. Una orden processed sin un pago con importe pagado legible NO aprueba: el cobro sigue pendiente (con su QR) y la
+    // proxima consulta lo reintenta.
+    [Fact]
+    public async Task UnaOrdenProcesadaSinPagosNoApruebaElCobroYLaProximaConsultaLoReintenta()
+    {
+        var e = await PrepararAsync("mp-cobro-sin-pagos");
+        var cobro = await CrearOkAsync(e, 5048, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.SinPagos = true;
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("pendiente", consultado.Estado);
+        Assert.NotNull(consultado.QrData);
+        Assert.Null(consultado.ImportePagado);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("pendiente", fila["estado"]);
+        Assert.Null(fila["importe_pagado"]);
+        Assert.Null(fila["fecha_aprobacion"]);
+        Assert.Null(fila["id_pago_mercadopago"]);
+
+        e.Ordenes.SinPagos = false;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        var reintento = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("aprobado", reintento.Estado);
+        Assert.Equal(100m, reintento.ImportePagado);
+    }
+
+    // Clausula: F1. El importe pagado tiene que ser mayor a 0 y con hasta 2 decimales; si no, no se aprueba.
+    [Theory]
+    [InlineData("0.00")]
+    [InlineData("-5.00")]
+    [InlineData("10.005")]
+    [InlineData("99999999999999.00")]
+    public async Task UnImportePagadoNoValidoNoApruebaElCobro(string pagado)
+    {
+        var e = await PrepararAsync("mp-cobro-pagado-invalido-" + pagado.Replace(".", "p").Replace("-", "m"));
+        var cobro = await CrearOkAsync(e, 5049, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.PagadoCrudo = pagado;
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("pendiente", consultado.Estado);
+        Assert.Null(Assert.Single(await FilasAsync(e.IdPuntoVenta))["importe_pagado"]);
+    }
+
+    // Clausula: F5. Un 404 de la orden de un cobro pendiente cuyo plazo ya paso lo deja expirado; antes del plazo sigue siendo el 502.
+    [Fact]
+    public async Task UnoDe404DeLaOrdenDespuesDelPlazoDejaElCobroExpiradoYAntesSigueSiendoUn502()
+    {
+        var e = await PrepararAsync("mp-cobro-404");
+        var cobro = await CrearOkAsync(e, 5050, 100m);
+        e.Ordenes.Antes = p => p.Metodo == HttpMethod.Get
+            ? Json(HttpStatusCode.NotFound, """{"error": "not_found", "message": "order not found"}""")
+            : null;
+
+        await AssertCodigoAsync(
+            await ConsultarAsync(e, cobro.IdCobro), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.SolicitudRechazada);
+        Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+
+        e.Reloj.Ahora = e.Reloj.Ahora.AddMinutes(11);
+        var vencido = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("expirado", vencido.Estado);
+        Assert.Null(vencido.QrData);
+        Assert.Equal("expirado", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
     }
 
     // Clausula: canceled -> cancelado, expired -> expirado, refunded -> devuelto; un estado que Ways no conoce deja el cobro pendiente.
@@ -976,6 +1286,67 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var conexion = Assert.Single(await _apoyo.FilasAsync(e.Ctx.IdEmpresa), f => f.Estado != "desconectada");
         Assert.Equal("requiere_reconexion", conexion.Estado);
         Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // ---- Guarda del medio ------------------------------------------------------------------------------------------------
+
+    private static Task<HttpResponseMessage> EditarMedioAsync(
+        Escenario e, string comportamiento, string? proveedor, bool activo = true) =>
+        e.Ctx.Admin.PutAsJsonAsync($"/api/catalogos/medios-pago/{e.IdMedio}", new Dictionary<string, object?>
+        {
+            ["nombre"] = "QR Mercado Pago",
+            ["idEmpresa"] = e.Ctx.IdEmpresa,
+            ["orden"] = 9,
+            ["comportamiento"] = comportamiento,
+            ["admiteVuelto"] = false,
+            ["requiereReferencia"] = false,
+            ["recargoPorcentaje"] = null,
+            ["proveedor"] = proveedor,
+            ["activo"] = activo
+        });
+
+    // Clausula: F4. Un medio con cobros creando o pendientes no cambia de proveedor, no deja de ser electronico ni se desactiva.
+    [Fact]
+    public async Task UnMedioConCobrosVivosNoPuedeCambiarDeProveedorDejarDeSerElectronicoNiDesactivarse()
+    {
+        var e = await PrepararAsync("mp-cobro-guarda-medio");
+        var cobro = await CrearOkAsync(e, 5051, 100m);
+
+        foreach (var respuesta in new[]
+        {
+            await EditarMedioAsync(e, "Electronico", null),
+            await EditarMedioAsync(e, "Electronico", "mercadopago_point"),
+            await EditarMedioAsync(e, "Efectivo", null),
+            await EditarMedioAsync(e, "Electronico", "mercadopago_qr", activo: false)
+        })
+        {
+            await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, "medio_con_cobros_mercadopago_vivos");
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await EditarMedioAsync(e, "Electronico", "mercadopago_qr")).StatusCode);
+
+        await CancelarAsync(e, cobro.IdCobro);
+        Assert.Equal(HttpStatusCode.OK, (await EditarMedioAsync(e, "Electronico", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task UnMedioConUnCobroCreandoTampocoCambia()
+    {
+        var (e, _) = await ConCommitPerdidoAsync("mp-cobro-guarda-medio-creando", 5052, 100m);
+
+        await AssertCodigoAsync(
+            await EditarMedioAsync(e, "Electronico", null), HttpStatusCode.Conflict, "medio_con_cobros_mercadopago_vivos");
+    }
+
+    [Fact]
+    public async Task UnCobroAprobadoNoBloqueaElCambioDelMedio()
+    {
+        var e = await PrepararAsync("mp-cobro-guarda-medio-aprobado");
+        var cobro = await CrearOkAsync(e, 5053, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        Assert.Equal("aprobado", (await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro))).Estado);
+
+        Assert.Equal(HttpStatusCode.OK, (await EditarMedioAsync(e, "Electronico", null)).StatusCode);
     }
 
     // ---- RLS -------------------------------------------------------------------------------------------------------------

@@ -10,9 +10,19 @@ public static class TiposDeCobroMercadoPago
     public const string Point = "point";
 }
 
-/// <summary>Estado de un cobro de Ways frente a Mercado Pago (<c>cobros_mercadopago.estado</c>). Solo <see cref="Pendiente"/> cambia.</summary>
+/// <summary>
+/// Estado de un cobro de Ways frente a Mercado Pago (<c>cobros_mercadopago.estado</c>). Solo <see cref="Creando"/> y
+/// <see cref="Pendiente"/> cambian: <see cref="Aprobado"/> es final en esta etapa y <see cref="Devuelto"/> solo se observa mientras el cobro
+/// estaba pendiente (una devolución posterior a la aprobación es de la conciliación, E6).
+/// </summary>
 public static class EstadosDeCobroMercadoPago
 {
+    /// <summary>
+    /// La fila se reservó (con la orden que se va a pedir) y todavía no se sabe qué respondió Mercado Pago: la orden puede existir allá
+    /// sin que Ways la haya guardado. Reintentar reenvía la misma orden con la misma clave de idempotencia.
+    /// </summary>
+    public const string Creando = "creando";
+
     /// <summary>La orden existe y todavía no se pagó, venció ni se canceló.</summary>
     public const string Pendiente = "pendiente";
 
@@ -22,10 +32,11 @@ public static class EstadosDeCobroMercadoPago
 
     public const string Expirado = "expirado";
 
+    /// <summary>Mercado Pago informó <c>refunded</c> mientras el cobro seguía pendiente; la devolución de un cobro ya aprobado no se observa acá.</summary>
     public const string Devuelto = "devuelto";
 
     /// <summary>Los estados que ocupan el número de venta: a lo sumo un cobro por número (<c>ux_cobros_mercadopago_vivo_numero</c>).</summary>
-    public static bool EsVivo(string estado) => estado is Pendiente or Aprobado;
+    public static bool EsVivo(string estado) => estado is Creando or Pendiente or Aprobado;
 }
 
 /// <summary>
@@ -59,8 +70,20 @@ public class CobroMercadoPago : EntidadTenant
     /// <summary><c>W{tenant}P{punto de venta}N{número}I{intento}</c>: lo que Mercado Pago devuelve en sus informes.</summary>
     public required string ExternalReference { get; set; }
 
-    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>).</summary>
-    public required string IdOrdenMercadoPago { get; set; }
+    /// <summary>
+    /// <c>external_id</c> de la caja con el que se pidió la orden. Se guarda para que reintentar una creación reenvíe la misma
+    /// orden aunque la caja haya cambiado desde entonces.
+    /// </summary>
+    public required string ExternalPosId { get; set; }
+
+    /// <summary>
+    /// <c>X-Idempotency-Key</c> de <c>POST /v1/orders</c>: huella del cuerpo completo de la orden. Mercado Pago devuelve la misma orden
+    /// para la misma clave y el mismo cuerpo.
+    /// </summary>
+    public required string ClaveIdempotencia { get; set; }
+
+    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>); nulo solo mientras el cobro está <see cref="EstadosDeCobroMercadoPago.Creando"/> o si Mercado Pago rechazó la creación y quedó cancelado.</summary>
+    public string? IdOrdenMercadoPago { get; set; }
 
     /// <see cref="EstadosDeCobroMercadoPago"/>.
     public required string Estado { get; set; }
