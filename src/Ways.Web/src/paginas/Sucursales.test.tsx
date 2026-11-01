@@ -509,3 +509,59 @@ describe('Sucursales — fusión', () => {
     expect(within(screen.getByRole('row', { name: /Sucursal Centro/ })).getByRole('button', { name: 'Fusionar' })).toBeDisabled()
   })
 })
+
+describe('Sucursales — Mercado Pago', () => {
+  const estadoDeLocal = {
+    estado: 'no_registrada',
+    idStoreMercadoPago: null,
+    externalId: 'WAYSS500',
+    fechaRegistro: null,
+    fechaSincronizacion: null,
+    camposFaltantes: [],
+  }
+
+  function montarConMercadoPago() {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/sucursales') return Promise.resolve([centro, deposito])
+      if (ruta === '/sucursales/500/mercadopago') return Promise.resolve(estadoDeLocal)
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    return render(<Sucursales />)
+  }
+
+  it('el Admin ve la acción en cada fila y abre el modal de la sucursal elegida', async () => {
+    const usuario = userEvent.setup()
+    montarConMercadoPago()
+    await esperarFilas()
+
+    expect(screen.getAllByRole('button', { name: 'Mercado Pago' })).toHaveLength(2)
+    await usuario.click(within(screen.getByRole('row', { name: /Sucursal Centro/ })).getByRole('button', { name: 'Mercado Pago' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Mercado Pago de Sucursal Centro' })
+    expect(await within(dialogo).findByText('No registrada')).toBeInTheDocument()
+    expect(apiGetMock).toHaveBeenCalledWith('/sucursales/500/mercadopago')
+  })
+
+  it('cerrar el modal lo desmonta', async () => {
+    const usuario = userEvent.setup()
+    montarConMercadoPago()
+    await esperarFilas()
+    await usuario.click(within(screen.getByRole('row', { name: /Sucursal Centro/ })).getByRole('button', { name: 'Mercado Pago' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Mercado Pago de Sucursal Centro' })
+    await within(dialogo).findByText('No registrada')
+
+    await usuario.click(within(dialogo).getAllByRole('button', { name: 'Cerrar' })[0])
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('quien no es Admin no ve la acción', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Root, rol: 'Root', idTenant: null })
+    montarConMercadoPago()
+    await esperarFilas()
+
+    expect(screen.queryByRole('button', { name: 'Mercado Pago' })).not.toBeInTheDocument()
+  })
+})

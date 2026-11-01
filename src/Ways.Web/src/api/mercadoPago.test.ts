@@ -23,6 +23,8 @@ vi.mock('./cliente', () => ({
 
 import { ErrorApi } from './cliente'
 import {
+  clienteDeCajasMercadoPago,
+  clienteDeLocalesMercadoPago,
   clienteDeMercadoPago,
   copiaDeFalloDeMercadoPago,
   esUrlDeAutorizacionNavegable,
@@ -135,5 +137,83 @@ describe('clienteDeMercadoPago', () => {
     expect(apiPostMock).toHaveBeenNthCalledWith(1, '/empresas/7/mercadopago/conexion/inicio', { idCuentaTesoreria: 31 })
     expect(apiPostMock).toHaveBeenNthCalledWith(2, '/empresas/7/mercadopago/conexion/completar', { code: 'c', state: 's' })
     expect(apiDeleteMock).toHaveBeenCalledWith('/empresas/7/mercadopago/conexion')
+  })
+})
+
+describe('clientes de locales y cajas de Mercado Pago', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiDeleteMock.mockReset()
+  })
+
+  it('el local de una sucursal se lee y se registra en su ruta, sin cuerpo', async () => {
+    await clienteDeLocalesMercadoPago.obtener(5)
+    await clienteDeLocalesMercadoPago.registrar(5)
+
+    expect(apiGetMock).toHaveBeenCalledWith('/sucursales/5/mercadopago')
+    expect(apiPostMock).toHaveBeenCalledWith('/sucursales/5/mercadopago')
+  })
+
+  it('la caja de un punto de venta, sus terminales y su asignación van cada una a su ruta', async () => {
+    await clienteDeCajasMercadoPago.obtener(9)
+    await clienteDeCajasMercadoPago.registrar(9)
+    await clienteDeCajasMercadoPago.listarTerminales(9)
+    await clienteDeCajasMercadoPago.asignarTerminal(9, 'PAX_A910__8701')
+    await clienteDeCajasMercadoPago.quitarTerminal(9)
+
+    expect(apiGetMock).toHaveBeenNthCalledWith(1, '/puntos-venta/9/mercadopago')
+    expect(apiGetMock).toHaveBeenNthCalledWith(2, '/puntos-venta/9/mercadopago/terminales')
+    expect(apiPostMock).toHaveBeenNthCalledWith(1, '/puntos-venta/9/mercadopago')
+    expect(apiPostMock).toHaveBeenNthCalledWith(2, '/puntos-venta/9/mercadopago/terminal', { idTerminal: 'PAX_A910__8701' })
+    expect(apiDeleteMock).toHaveBeenCalledWith('/puntos-venta/9/mercadopago/terminal')
+  })
+})
+
+describe('copiaDeFalloDeMercadoPago — locales, cajas y terminales', () => {
+  it.each([
+    ['direccion_incompleta_para_mercadopago', /faltan datos de la dirección/],
+    ['nombre_invalido_para_mercadopago', /nombre del punto de venta/],
+    ['mercadopago_no_conectada', /no tiene Mercado Pago conectado/],
+    ['mercadopago_requiere_reconexion', /volver a conectar/],
+    ['mercadopago_local_no_registrado', /registrar la sucursal/],
+    ['mercadopago_local_duplicado', /más de un local/],
+    ['mercadopago_caja_duplicada', /más de una caja/],
+    ['mercadopago_punto_venta_movido', /cambió de sucursal/],
+    ['mercadopago_caja_no_registrada', /todavía no está registrado como caja/],
+    ['mercadopago_terminal_no_vinculada', /no está vinculada a la caja/],
+    ['mercadopago_terminal_modelo_no_admitido', /no admite el modo/],
+    ['mercadopago_caja_con_terminal_en_pdv', /modo PDV/],
+    ['terminal_point_invalida', /identificador de la terminal/],
+    ['mercadopago_solicitud_rechazada', /rechazó la solicitud/],
+    ['mercadopago_respuesta_invalida', /respondió algo inesperado/],
+    ['mercadopago_no_disponible', /no está disponible/],
+  ])('el código %s tiene su copia propia, sin usar el mensaje del servidor', (codigo, esperada) => {
+    const error = new ErrorApi(409, codigo, 'texto libre del servidor')
+
+    expect(copiaDeFalloDeMercadoPago(error, 'registrar_caja')).toMatch(esperada)
+    expect(copiaDeFalloDeMercadoPago(error, 'registrar_caja')).not.toContain('texto libre')
+  })
+
+  it('un 404 nombra la sucursal para las acciones del local y el punto de venta para las de la caja', () => {
+    const error = new ErrorApi(404, 'no_encontrado', 'x')
+
+    expect(copiaDeFalloDeMercadoPago(error, 'leer_local')).toMatch(/La sucursal ya no existe/)
+    expect(copiaDeFalloDeMercadoPago(error, 'registrar_local')).toMatch(/La sucursal ya no existe/)
+    expect(copiaDeFalloDeMercadoPago(error, 'leer_terminales')).toMatch(/El punto de venta ya no existe/)
+    expect(copiaDeFalloDeMercadoPago(error, 'asignar_terminal')).toMatch(/El punto de venta ya no existe/)
+  })
+
+  it.each([
+    ['leer_local', /sucursal/],
+    ['registrar_local', /registrar la sucursal/],
+    ['leer_caja', /estado del punto de venta/],
+    ['registrar_caja', /registrar el punto de venta/],
+    ['leer_terminales', /terminales/],
+    ['asignar_terminal', /asignar la terminal/],
+    ['quitar_terminal', /quitar la terminal/],
+  ] as const)('un error sin código conocido cae en la copia genérica de %s', (accion, esperada) => {
+    expect(copiaDeFalloDeMercadoPago(new ErrorApi(500, 'error_interno', 'x'), accion)).toMatch(esperada)
+    expect(copiaDeFalloDeMercadoPago(new Error('red'), accion)).toMatch(esperada)
   })
 })

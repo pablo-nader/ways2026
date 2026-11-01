@@ -2237,3 +2237,51 @@ describe('PuntosVenta — filtros por columna y orden', () => {
     expect(screen.getByLabelText('Filtrar por domicilio')).toBeDisabled()
   })
 })
+
+describe('PuntosVenta — Mercado Pago', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+  })
+
+  function montarConMercadoPago() {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([pvSurCentro])
+      if (ruta === '/puntos-venta/100/mercadopago') {
+        return Promise.resolve({
+          estado: 'no_registrada',
+          idPosMercadoPago: null,
+          idStoreMercadoPago: null,
+          externalId: 'WAYSP100',
+          urlQr: null,
+          fechaRegistro: null,
+          fechaSincronizacion: null,
+          idTerminalPoint: null,
+        })
+      }
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    return render(<><PuntosVenta /><Toaster /></>)
+  }
+
+  it('el Admin ve la acción y abre el modal del punto de venta', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    const usuario = userEvent.setup()
+    montarConMercadoPago()
+
+    await usuario.click(await screen.findByRole('button', { name: 'Mercado Pago' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Mercado Pago de PV Centro' })
+    expect(await within(dialogo).findByText('No registrada')).toBeInTheDocument()
+    expect(apiGetMock).toHaveBeenCalledWith('/puntos-venta/100/mercadopago')
+  })
+
+  it('quien no es Admin no ve la acción', async () => {
+    usuarioActual = usuarioFixture()
+    montarConMercadoPago()
+    await screen.findByText('PV Centro')
+
+    expect(screen.queryByRole('button', { name: 'Mercado Pago' })).not.toBeInTheDocument()
+  })
+})
