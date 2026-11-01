@@ -12,8 +12,11 @@ public sealed record SolicitudDeTerminalMercadoPago(string? IdTerminal);
 public sealed record TerminalDelPuntoDeVenta(string Id, string? ModoOperativo, bool Asignada);
 
 /// <summary>Las terminales de la caja del punto de venta. <see cref="Instrucciones"/> viene solo cuando la lista está vacía: dice cómo
-/// vincular la terminal en la app de Mercado Pago, el único lugar donde se puede.</summary>
-public sealed record ListadoDeTerminalesDelPuntoDeVenta(IReadOnlyList<TerminalDelPuntoDeVenta> Terminales, string? Instrucciones);
+/// vincular la terminal en la app de Mercado Pago, el único lugar donde se puede. <see cref="IdTerminalAsignada"/> es la que Ways tiene
+/// guardada (nula si ninguna) y <see cref="AsignadaVigente"/> dice si todavía figura entre las terminales de la caja: falso con una
+/// asignación guardada es una asignación vieja (la terminal se desvinculó en la app) que conviene quitar.</summary>
+public sealed record ListadoDeTerminalesDelPuntoDeVenta(
+    IReadOnlyList<TerminalDelPuntoDeVenta> Terminales, string? Instrucciones, string? IdTerminalAsignada, bool AsignadaVigente);
 
 /// <summary>Resultado de asignar o quitar la terminal. <see cref="ModoCambiado"/> es verdadero si Ways cambió el modo de la terminal a
 /// <c>PDV</c> en esta llamada: Mercado Pago pide reiniciarla para que lo tome.</summary>

@@ -220,6 +220,18 @@ public class ServicioDeCajasMercadoPago(
         }
         else
         {
+            // La terminal está vinculada a la caja anterior de Mercado Pago: si la caja cambió (adopción o recreación), la asignación no vale.
+            if (vinculo.IdPosMercadoPago != enviado.IdPos && vinculo.IdTerminalPoint is not null)
+            {
+                var (terminalAnterior, terminalNueva) = PayloadDeAuditoria.TerminalDeMercadoPago(
+                    "desasignacion", idUsuario, vinculo.IdPosMercadoPago, vinculo.IdTerminalPoint, null, false);
+                auditoria.Registrar(new RegistroDeAuditoria(
+                    puntoVenta.IdTenant, idPuntoVenta, AccionAuditada.PuntoVentaTerminalMercadoPago, idPuntoVenta,
+                    terminalAnterior, terminalNueva));
+                vinculo.IdTerminalPoint = null;
+                vinculo.FechaTerminal = null;
+            }
+
             vinculo.IdLocalMercadoPago = local.Id;
             vinculo.IdStoreMercadoPago = local.IdStoreMercadoPago;
             vinculo.IdPosMercadoPago = enviado.IdPos;

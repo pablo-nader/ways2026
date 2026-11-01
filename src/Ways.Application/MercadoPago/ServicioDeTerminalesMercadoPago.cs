@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
@@ -20,7 +18,9 @@ namespace Ways.Application.MercadoPago;
 /// <c>mercadopago_terminal_no_vinculada</c> con las instrucciones. Una caja admite una terminal.
 ///
 /// <b>Modo.</b> Si la terminal ya está en <c>PDV</c> no se manda ningún <c>PATCH /terminals/v1/setup</c>; si no, se manda con una clave de
-/// idempotencia derivada de la terminal y el modo. Los rechazos de ese <c>PATCH</c> son 409 con mensaje propio: 403
+/// idempotencia nueva en cada intento (pasar una terminal a <c>PDV</c> es idempotente por sí mismo, y repetir la clave después de que
+/// alguien la devolvió a <c>STANDALONE</c> en la app haría que Mercado Pago conteste lo guardado sin aplicar el cambio) y se verifica
+/// el eco: si la respuesta trae la terminal en otro modo, 502 <c>mercadopago_respuesta_invalida</c> y no se guarda nada. Los rechazos de ese <c>PATCH</c> son 409 con mensaje propio: 403
 /// <c>terminal_not_allowed_action</c> (modelo no admitido), 403 <c>store_pos_not_found</c> (la terminal perdió su vinculación) y 412 (la
 /// caja ya tiene otra terminal en <c>PDV</c> o suspendida). Mercado Pago pide reiniciar la terminal para que tome el modo.
 ///
@@ -32,7 +32,8 @@ namespace Ways.Application.MercadoPago;
 /// repetir a ciegas; si el guardado falla, el próximo intento encuentra la terminal ya en <c>PDV</c>, no manda otro <c>PATCH</c> y guarda.
 /// Un 401 deja la conexión en <c>requiere_reconexion</c> dentro de la transacción, así que se confirma igual antes de relanzar el error.
 ///
-/// <b>Quitar la terminal</b> solo borra la asignación en Ways: no toca Mercado Pago ni el modo de la terminal.
+/// <b>Quitar la terminal</b> solo borra la asignación en Ways, en todas las filas de caja del punto de venta (cualquier vendedor): no
+/// toca Mercado Pago ni el modo de la terminal, y por eso tampoco necesita una conexión activa.
 /// </summary>
 public class ServicioDeTerminalesMercadoPago(
     IWaysDbContext db,
@@ -62,7 +63,10 @@ public class ServicioDeTerminalesMercadoPago(
             .Select(t => new TerminalDelPuntoDeVenta(t.Id, t.ModoOperativo, caja.IdTerminalPoint == t.Id))
             .ToList();
 
-        return new ListadoDeTerminalesDelPuntoDeVenta(vistas, vistas.Count == 0 ? InstruccionesDeVinculacion : null);
+        var vigente = caja.IdTerminalPoint is not null && vistas.Any(t => t.Asignada);
+
+        return new ListadoDeTerminalesDelPuntoDeVenta(
+            vistas, vistas.Count == 0 ? InstruccionesDeVinculacion : null, caja.IdTerminalPoint, vigente);
     }
 
     /// <summary>Asigna la terminal a la caja y la pasa a <c>PDV</c> si no lo estaba. Idempotente: repetir la misma asignación con la
@@ -85,7 +89,8 @@ public class ServicioDeTerminalesMercadoPago(
 
             return await EnTransaccionAsync(
                 idPuntoVenta, idSucursal, ct,
-                (puntoVenta, idUsuario) => AsignarBajoLockAsync(puntoVenta, idPuntoVenta, idUsuario, idTerminal, ct));
+                async puntoVenta => await AsignarBajoLockAsync(
+                    puntoVenta, idPuntoVenta, await LeerIdUsuarioAsync(puntoVenta.IdEmpresa, ct), idTerminal, ct));
         });
     }
 
@@ -99,13 +104,13 @@ public class ServicioDeTerminalesMercadoPago(
             var idSucursal = (await LeerPuntoVentaAsync(idPuntoVenta, ct)).IdSucursal;
 
             return await EnTransaccionAsync(
-                idPuntoVenta, idSucursal, ct, (puntoVenta, idUsuario) => QuitarBajoLockAsync(puntoVenta, idPuntoVenta, idUsuario, ct));
+                idPuntoVenta, idSucursal, ct, puntoVenta => QuitarBajoLockAsync(puntoVenta, idPuntoVenta, ct));
         });
     }
 
     private async Task<AsignacionDeTerminalMercadoPago> EnTransaccionAsync(
         int idPuntoVenta, int idSucursal, CancellationToken ct,
-        Func<PuntoVentaLeido, long, Task<AsignacionDeTerminalMercadoPago>> bajoLock)
+        Func<PuntoVentaLeido, Task<AsignacionDeTerminalMercadoPago>> bajoLock)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
         await ServicioDeCajasMercadoPago.TomarLockAsync(db, idSucursal, ServicioDeLocalesMercadoPago.ClaveDeLockDeLocal, ct);
@@ -123,8 +128,7 @@ public class ServicioDeTerminalesMercadoPago(
         AsignacionDeTerminalMercadoPago? resultado = null;
         try
         {
-            var idUsuario = await LeerIdUsuarioAsync(puntoVenta.IdEmpresa, ct);
-            resultado = await bajoLock(puntoVenta, idUsuario);
+            resultado = await bajoLock(puntoVenta);
         }
         catch (ErrorDominio error) when (error.Codigo == CodigosDeErrorDeMercadoPago.RequiereReconexion)
         {
@@ -175,44 +179,47 @@ public class ServicioDeTerminalesMercadoPago(
     }
 
     private async Task<AsignacionDeTerminalMercadoPago> QuitarBajoLockAsync(
-        PuntoVentaLeido puntoVenta, int idPuntoVenta, long idUsuario, CancellationToken ct)
+        PuntoVentaLeido puntoVenta, int idPuntoVenta, CancellationToken ct)
     {
-        var caja = await db.CajasMercadoPago
-            .FirstOrDefaultAsync(c => c.IdPuntoVenta == idPuntoVenta && c.IdUsuarioMercadoPago == idUsuario, ct)
-            ?? throw CajaNoRegistrada();
-
-        if (caja.IdTerminalPoint is null)
+        var cajas = await db.CajasMercadoPago
+            .Where(c => c.IdPuntoVenta == idPuntoVenta && c.IdTerminalPoint != null)
+            .ToListAsync(ct);
+        if (cajas.Count == 0)
         {
             return new AsignacionDeTerminalMercadoPago(null, null, false);
         }
 
-        var anterior = caja.IdTerminalPoint;
-        caja.IdTerminalPoint = null;
-        caja.FechaTerminal = null;
-        caja.UpdatedAt = reloj.Ahora;
+        var ahora = reloj.Ahora;
+        foreach (var caja in cajas)
+        {
+            var anterior = caja.IdTerminalPoint;
+            caja.IdTerminalPoint = null;
+            caja.FechaTerminal = null;
+            caja.UpdatedAt = ahora;
 
-        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.TerminalDeMercadoPago(
-            "desasignacion", idUsuario, caja.IdPosMercadoPago, anterior, null, false);
-        auditoria.Registrar(new RegistroDeAuditoria(
-            puntoVenta.IdTenant, idPuntoVenta, AccionAuditada.PuntoVentaTerminalMercadoPago, idPuntoVenta, valorAnterior, valorNuevo));
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.TerminalDeMercadoPago(
+                "desasignacion", caja.IdUsuarioMercadoPago, caja.IdPosMercadoPago, anterior, null, false);
+            auditoria.Registrar(new RegistroDeAuditoria(
+                puntoVenta.IdTenant, idPuntoVenta, AccionAuditada.PuntoVentaTerminalMercadoPago, idPuntoVenta, valorAnterior, valorNuevo));
+        }
+
         await db.SaveChangesAsync(ct);
 
         return new AsignacionDeTerminalMercadoPago(null, null, false);
     }
 
-    /// <summary>La clave lleva la terminal y el modo pedido: reintentar el mismo cambio repite la clave y Mercado Pago contesta lo ya
-    /// guardado en vez de aplicarlo dos veces.</summary>
+    /// <summary>Clave nueva por intento: poner <c>PDV</c> es idempotente, y una clave repetida podría devolver lo guardado de un cambio
+    /// anterior sin aplicar este. Después se verifica que el eco traiga la terminal en <c>PDV</c>.</summary>
     private async Task PasarAPdvAsync(int idEmpresa, int idPuntoVenta, string idTerminal, CancellationToken ct)
     {
         var cuerpo = new SolicitudDeModoDeTerminalMercadoPago(
             [new ModoDeTerminalMercadoPago(idTerminal, TerminalPointMercadoPago.ModoPdv)]);
-        var huella = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes($"{idTerminal}|{TerminalPointMercadoPago.ModoPdv}")))[..16];
 
+        RespuestaDeModoDeTerminalMercadoPago? respuesta;
         try
         {
-            await api.EnviarAsync<RespuestaDeModoDeTerminalMercadoPago>(
-                idEmpresa, HttpMethod.Patch, RutaDeModo, cuerpo, $"ways-terminal-{idPuntoVenta}-{huella}", ct);
+            respuesta = await api.EnviarAsync<RespuestaDeModoDeTerminalMercadoPago>(
+                idEmpresa, HttpMethod.Patch, RutaDeModo, cuerpo, $"ways-terminal-{idPuntoVenta}-{Guid.NewGuid():N}", ct);
         }
         catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 412)
         {
@@ -230,6 +237,15 @@ public class ServicioDeTerminalesMercadoPago(
         catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 403 && error.CodigoMercadoPago == "store_pos_not_found")
         {
             throw TerminalNoVinculada();
+        }
+
+        var eco = respuesta?.Terminals?.FirstOrDefault(t => string.Equals(t.Id, idTerminal, StringComparison.Ordinal));
+        if (eco is not null && !TerminalPointMercadoPago.EstaEnPdv(eco.OperatingMode))
+        {
+            throw new ErrorDominio(
+                CodigosDeErrorDeMercadoPago.RespuestaInvalida,
+                "Mercado Pago no dejó la terminal en modo PDV: intentalo de nuevo.",
+                502);
         }
     }
 
