@@ -40,4 +40,11 @@ public class CajaMercadoPago : EntidadTenant
     /// <summary>Cuándo se leyó el punto de venta para enviar sus datos a Mercado Pago por última vez; una edición posterior del
     /// punto de venta (o su paso a otra sucursal) la deja desactualizada.</summary>
     public DateTimeOffset FechaSincronizacion { get; set; }
+
+    /// <summary>Terminal Point (<c>TIPO__SERIE</c>) que se eligió para la caja, si hay una (<see cref="TerminalPointMercadoPago"/>). La
+    /// terminal se vincula al local y a la caja en la app de Mercado Pago; acá solo se guarda cuál es.</summary>
+    public string? IdTerminalPoint { get; set; }
+
+    /// <summary>Cuándo se asignó <see cref="IdTerminalPoint"/>; nula si y solo si no hay terminal.</summary>
+    public DateTimeOffset? FechaTerminal { get; set; }
 }

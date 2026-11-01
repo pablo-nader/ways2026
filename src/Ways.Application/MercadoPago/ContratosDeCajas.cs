@@ -20,7 +20,8 @@ public static class EstadosDeCajaMercadoPago
 
 /// <summary>
 /// Estado de la caja de Mercado Pago de un punto de venta. <see cref="IdStoreMercadoPago"/> es el local del que cuelga hoy la caja en
-/// Mercado Pago (el de la sucursal que tenía el punto de venta en la última sincronización). Nunca lleva tokens.
+/// Mercado Pago (el de la sucursal que tenía el punto de venta en la última sincronización). <see cref="IdTerminalPoint"/> es la terminal
+/// Point asignada a la caja, si hay una. Nunca lleva tokens.
 /// </summary>
 public sealed record EstadoDeCajaMercadoPago(
     string Estado,
@@ -29,7 +30,8 @@ public sealed record EstadoDeCajaMercadoPago(
     string? ExternalId,
     string? UrlQr,
     DateTimeOffset? FechaRegistro,
-    DateTimeOffset? FechaSincronizacion);
+    DateTimeOffset? FechaSincronizacion,
+    string? IdTerminalPoint = null);
 
 /// <summary>
 /// Cuerpo de <c>POST /v2/pos</c> y <c>PATCH /v2/pos/{id}</c> de Mercado Pago. Los nombres salen en snake_case. <c>store_id</c> viaja

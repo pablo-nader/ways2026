@@ -397,6 +397,23 @@ public static class PayloadDeAuditoria
                 ["fecha_sincronizacion"] = fechaSincronizacion
             });
 
+    /// <summary><c>pv.terminalmercadopago</c>. <c>anterior</c> = <c>{id_terminal_point}</c> (nulo si no había terminal); <c>nuevo</c> =
+    /// <c>{operacion, id_usuario_mercadopago, id_pos_mercadopago, id_terminal_point, modo_cambiado}</c>. <paramref name="operacion"/> es
+    /// <c>asignacion</c> o <c>desasignacion</c>; en la segunda <paramref name="idTerminalNueva"/> es nulo. Nunca lleva un token.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        TerminalDeMercadoPago(
+            string operacion, long idUsuarioMercadoPago, long idPosMercadoPago, string? idTerminalAnterior, string? idTerminalNueva,
+            bool modoCambiado) => (
+            new Dictionary<string, object?> { ["id_terminal_point"] = idTerminalAnterior },
+            new Dictionary<string, object?>
+            {
+                ["operacion"] = operacion,
+                ["id_usuario_mercadopago"] = idUsuarioMercadoPago,
+                ["id_pos_mercadopago"] = idPosMercadoPago,
+                ["id_terminal_point"] = idTerminalNueva,
+                ["modo_cambiado"] = modoCambiado
+            });
+
     private static Dictionary<string, object?> ConDireccion(
         Dictionary<string, object?> campos, DireccionDeSucursal direccion)
     {

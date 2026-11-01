@@ -181,6 +181,11 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// (alta, adopción de una caja ya existente o actualización) y los ids de Mercado Pago, nunca un token.</summary>
     public static readonly AccionAuditada PuntoVentaMercadoPago = new("pv.mercadopago", "punto_venta");
 
+    /// <summary>Asignación o desasignación de la terminal Point de la caja de Mercado Pago de un punto de venta
+    /// (<c>POST|DELETE /api/puntos-venta/{id}/mercadopago/terminal</c>). El <c>id_entidad</c> es el punto de venta; el payload lleva
+    /// la terminal anterior y la nueva y el modo que se cambió en Mercado Pago, nunca un token.</summary>
+    public static readonly AccionAuditada PuntoVentaTerminalMercadoPago = new("pv.terminalmercadopago", "punto_venta");
+
     /// <summary>Edición de una compra confirmada (<c>PUT /api/compras/{id}</c>) — <c>Compras/ServicioDeCompras.cs</c>. El
     /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
     public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
@@ -245,6 +250,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         SucursalFusion,
         SucursalMercadoPago,
         PuntoVentaMercadoPago,
+        PuntoVentaTerminalMercadoPago,
         VentaCambioDeMedios
     ];
 }

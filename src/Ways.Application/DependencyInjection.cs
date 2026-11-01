@@ -237,6 +237,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeConexionMercadoPago>();
         services.AddScoped<ServicioDeLocalesMercadoPago>();
         services.AddScoped<ServicioDeCajasMercadoPago>();
+        services.AddScoped<ServicioDeTerminalesMercadoPago>();
         services.AddScoped<ServicioDeRenovacionDeConexionesMercadoPago>();
         services.AddScoped<IProveedorDeTokenMercadoPago, ProveedorDeTokenMercadoPago>();
 

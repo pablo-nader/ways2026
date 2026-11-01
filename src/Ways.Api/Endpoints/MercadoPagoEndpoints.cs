@@ -129,6 +129,28 @@ public static class MercadoPagoEndpoints
             "mercadopago_requiere_reconexion|mercadopago_local_no_registrado, 502 mercadopago_solicitud_rechazada, " +
             "503 mercadopago_no_disponible.");
 
+        cajas.MapGet("/terminales", (ServicioDeTerminalesMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.ListarAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Terminales Point que Mercado Pago tiene vinculadas a la caja del punto de venta (id, modo, si es la asignada); con la lista " +
+            "vacía trae las instrucciones para vincularla en la app de Mercado Pago. 404 punto de venta inexistente, 409 " +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion|mercadopago_caja_no_registrada, 502 mercadopago_solicitud_rechazada, " +
+            "503 mercadopago_no_disponible.");
+
+        cajas.MapPost("/terminal", (ServicioDeTerminalesMercadoPago servicio, int idPuntoVenta, SolicitudDeTerminalMercadoPago? solicitud, CancellationToken ct) =>
+            servicio.AsignarAsync(idPuntoVenta, solicitud, ct))
+        .WithSummary(
+            "Asigna la terminal Point (solo una vinculada a la caja) al punto de venta y la pasa a modo PDV si no lo estaba. 404 punto de " +
+            "venta inexistente, 400 terminal_point_invalida, 409 mercadopago_no_conectada|mercadopago_requiere_reconexion|" +
+            "mercadopago_caja_no_registrada|mercadopago_terminal_no_vinculada|mercadopago_terminal_modelo_no_admitido|" +
+            "mercadopago_caja_con_terminal_en_pdv, 502 mercadopago_solicitud_rechazada, 503 mercadopago_no_disponible.");
+
+        cajas.MapDelete("/terminal", (ServicioDeTerminalesMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.QuitarAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Quita la terminal asignada al punto de venta en Ways; no toca Mercado Pago. 404 punto de venta inexistente, 409 " +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion|mercadopago_caja_no_registrada.");
+
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,
             string? code,
