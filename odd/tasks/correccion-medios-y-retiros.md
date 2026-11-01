@@ -57,7 +57,7 @@ Each slice passes judgment-day before its PR.
 - [x] T2 — Backend: retiros list (filters + sort) and admin edit/delete (soft delete, arqueo
   recalc, tesorería Ajuste, audit), with tests and migration.
 - [x] T3 — Backend: back-office ventas list with per-column filters and sort, with tests.
-- [ ] T4 — Web: reusable sortable header + POS `VentasDelTurno` sort and "cambiar medio" modal.
+- [x] T4 — Web: reusable sortable header + POS `VentasDelTurno` sort and "cambiar medio" modal.
 - [ ] T5 — Web: back-office ventas grid (filters + sort) with medio edit.
 - [ ] T6 — Web: back-office retiros grid (filters + sort) with edit/delete.
 
@@ -75,6 +75,7 @@ Each slice passes judgment-day before its PR.
 | T1 | delegated (writer: 2+ non-trivial files) | a672d216 (refactor), f5e2fc1d (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2258/2258; Application.Tests 1639/1639; integration CambioDeMedios + SuperficieDeAutorizacion + regression (pagos edición, checkout, anulación, offline/reservas, facturación, cuentas, conciliación, sin reintento) 430/430; 5 mutants killed |
 | T2 | delegated (writer: 2+ non-trivial files) | e7e0ab43 (fix, audit labels), 712ed19e (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2298/2298; Application.Tests 1641/1641; integration new (RetirosDeAdministracion + ListadoDeRetiros) 43/43; regression (Caja, Turno, Libro, Conciliacion, Pago, Auditoria, Superficie, Aislamiento, SinReintento, CambioDeMedios, FiscalSchema, Tesoreria, Historico, Reportes) 1617/1617; web tsc clean, vitest tipos + Auditoria 28/28; mutants killed: 11 filter clauses, sort switch, 3 deleted_at/guard clauses, conciliación guard, backfill SET LOCAL |
 | T3 | delegated (writer: 2+ non-trivial files) | 369100ed (refactor), 87a96a32 (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2358/2358; Application.Tests 1641/1641; integration new (ListadoDeVentasDeAdministracion) 64/64; regression (LectoresDeComprobantesVenta, SuperficieDeAutorizacion, Aislamiento, VentasListadoExport, CambioDeMedios, RetirosDeAdministracion, ListadoDeRetiros, SinReintento) 210/210; mutants killed: all Filtrar clauses, sort switch, SinEspejosFiscales, c.DeletedAt, co.DeletedAt (filter and summary), min(cierre, fecha) rule |
+| T4 | delegated (writer: 2+ non-trivial files) | b93fc48b (modal + rules + client), dd02e315 (VentasDelTurno action + sort tests) | pending (judgment-day at slice) | tsc -b clean; oxlint no findings in touched files; vitest full 310 files / 9469 tests green (first full run had one unrelated flake in GrillaDeItemsDeCompra, green alone and on the rerun); new tests: cambioDeMedios 34, ModalDeCambioDeMedios 31, useEnLinea 2, VentasDelTurno +21 (6 columns x asc/desc, 9 action cases); mutants killed: double-click ref guard, stale-read generation, CC filter, no-changes gate, error focus, offline disable, sort fallback to original order |
 
 ## T1 notes
 
@@ -138,6 +139,31 @@ Each slice passes judgment-day before its PR.
 - Structural: two reads registered in `LectoresDeComprobantesVentaEstructuralesTests` (filter by medio, medios aggregate), exact count 1.
 - Open: the grid has no export; `numero` is an exact match, not a contains over the formatted number.
 
+## T4 notes
+
+- The sortable header and the sort already existed (`componentes/grilla`: `EncabezadoOrdenable`, `useOrdenamiento`, `ordenarFilas`,
+  `siguienteOrden`), and `VentasDelTurno` already sorted all six data columns client-side. T4 built no new header; it added per-column
+  asc/desc tests for the screen. Header API for T5/T6 (controlled, does not own the sort): `<EncabezadoOrdenable columna orden
+  onAlternar className>` with `orden: {columna, direccion: 'ascendente' | 'descendente'} | null` (same literals as the server `direccion`
+  param) and `onAlternar(columna)`; the cycle is asc → desc → none (`siguienteOrden`). For server-side sort keep `orden` in `useState`, call
+  `siguienteOrden` in `onAlternar` and send `orden=<columna>&direccion=<direccion>` (omit both when `null`); do not use `useOrdenamiento`
+  there (it sorts rows locally).
+- Modal: `componentes/ModalDeCambioDeMedios` props `{ venta: {id, numeroVisible}, medios: MedioPagoListado[] (full catalogue; CC is dropped
+  by the selector), modo?: 'pos' | 'administracion', onGuardado(comprobante), onCerrar() }`. Mount it with `key={venta.id}`. It reads
+  `GET /ventas/{id}`, prefills the cobros, calls `clienteDeVentas.cambiarMedios(id, {pagos}, modo)` (`PUT /ventas/{id}/medios` or
+  `/ventas/administracion/{id}/medios`) and never refreshes the list: the screen toasts and reloads in `onGuardado`. Pure rules live in
+  `api/cambioDeMedios.ts` (`evaluarCambioDeMedios`, `motivoDeNoCambiarMedios(venta, medios)`, `mensajeDeErrorDeCambioDeMedios`, nine fixed
+  Spanish texts for the 409/400 codes). For the grid in T5 use `medioEditable`/`motivoMedioNoEditable` from the server instead of
+  `motivoDeNoCambiarMedios`.
+- Local validation mirrors `ValidadorDePagos` through the checkout helpers (`validarPagosLocal`, `filasAPagosConVuelto`) plus the
+  total check (importe − vuelto must equal the original cobrado; difference shown live, save disabled) and "no changes" (same reparto as
+  the original). The tolerance is unknown to the web, so it is inferred as `total − cobrado original`.
+- Offline: the POS lists ventas from the server, so the action is online-only. `pos/useEnLinea` (navigator.onLine, optimistic) disables
+  it with an explanation; a real network failure still shows the error on save. It is not queued in the outbox.
+- Not done here: the vuelto field is editable only for medios that admit it (non-admitting medios ignore a manual vuelto, so the
+  `medio_no_admite_vuelto` rule is unreachable from this UI).
+- POS web changes reach the cajas only with a Ways.Desktop bump + `pos-v*` tag (the release was NOT done here).
+
 ## Next step
 
-T4 (web: reusable sortable header + POS cambiar medio).
+T5 (web: back-office ventas grid with medio edit, reusing `ModalDeCambioDeMedios` with `modo="administracion"`).
