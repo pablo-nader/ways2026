@@ -3467,6 +3467,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_ultima_renovacion");
 
+                    b.Property<DateTimeOffset?>("FechaUltimoIntentoRenovacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_ultimo_intento_renovacion");
+
                     b.Property<string>("IdClaveMaestra")
                         .IsRequired()
                         .HasMaxLength(30)

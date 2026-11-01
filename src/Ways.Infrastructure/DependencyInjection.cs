@@ -156,6 +156,12 @@ public static class DependencyInjection
             http.BaseAddress = new Uri(url.TrimEnd('/') + "/");
             http.Timeout = TimeSpan.FromSeconds(15);
         });
+        services.AddHttpClient<IClienteApiMercadoPago, ClienteApiMercadoPago>((sp, http) =>
+        {
+            var url = sp.GetRequiredService<IOptions<OpcionesDeMercadoPago>>().Value.UrlApi;
+            http.BaseAddress = new Uri(url.TrimEnd('/') + "/");
+            http.Timeout = TimeSpan.FromSeconds(15);
+        });
 
         // stage-19a-slice5: el orquestador end-to-end — OpcionesFiscales bindable (Ways:Fiscal,
         // solo la clave Ambiente en 19a; ver el doc-comment de OpcionesFiscales sobre el default).

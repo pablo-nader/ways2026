@@ -25,6 +25,13 @@ public enum ResultadoDeRenovacion
     /// corrida se corta, porque las mismas credenciales fallarían en todas las demás.</summary>
     CredencialesRechazadas,
 
+    /// <summary>Solo de la renovación previa al uso: otra renovación tiene la fila bloqueada, así que no se espera ni se llama a
+    /// Mercado Pago; quien llama usa el token guardado si todavía sirve.</summary>
+    Ocupada,
+
+    /// <summary>Solo de la renovación previa al uso: un intento reciente falló y el backoff todavía no venció.</summary>
+    EnEspera,
+
     /// <summary>Mercado Pago aceptó la renovación y rotó el refresh token, pero el resultado no llegó a guardarse: el token nuevo
     /// se perdió y la fila conserva el anterior, que ya no sirve. Lo probable es que la conexión necesite reconectarse.</summary>
     RotacionPerdida
@@ -64,6 +71,11 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
     public static DateTimeOffset UmbralDeRenovacion(DateTimeOffset ahora, TimeSpan ventana) => ahora + ventana;
 
     public static bool LeToca(DateTimeOffset accessTokenExpiraEn, DateTimeOffset umbral) => accessTokenExpiraEn <= umbral;
+
+    /// <summary>Un intento fallido reciente frena el siguiente hasta que pase el backoff. Un intento fechado en el futuro (reloj
+    /// retrocedido) no frena nada: el backoff nunca puede quedar más largo que el configurado.</summary>
+    public static bool EstaEnBackoff(DateTimeOffset? ultimoIntento, DateTimeOffset ahora, TimeSpan backoff) =>
+        ultimoIntento is { } intento && intento <= ahora && ahora < intento + backoff;
 
     public async Task<ResumenDeRenovacion> RenovarConexionesPorVencerAsync(DateTimeOffset ahora, CancellationToken ct = default)
     {
@@ -125,8 +137,34 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
 
     /// <summary>Renueva una conexión puntual con el criterio de la corrida: bajo lock y releída, solo si sigue activa y le toca.
     /// Las excepciones inesperadas suben a quien llama; <see cref="RenovarConexionesPorVencerAsync"/> las aísla por conexión.</summary>
-    public async Task<ResultadoDeRenovacion> RenovarConexionAsync(
-        int idConexion, int idTenant, DateTimeOffset ahora, CancellationToken ct = default)
+    public Task<ResultadoDeRenovacion> RenovarConexionAsync(
+        int idConexion, int idTenant, DateTimeOffset ahora, CancellationToken ct = default) =>
+        RenovarAsync(idConexion, idTenant, ahora, null, ct);
+
+    /// <summary>
+    /// Renovación previa al uso de una llamada a Mercado Pago. A diferencia de la corrida, no espera el lock (<c>FOR UPDATE SKIP
+    /// LOCKED</c>: si otra renovación tiene la fila devuelve <see cref="ResultadoDeRenovacion.Ocupada"/>) y respeta el backoff
+    /// guardado, releído bajo el lock: con el token todavía utilizable y un intento fallido más reciente que <paramref name="backoff"/>
+    /// devuelve <see cref="ResultadoDeRenovacion.EnEspera"/> sin llamar a Mercado Pago.
+    /// </summary>
+    public Task<ResultadoDeRenovacion> RenovarAntesDeUsarAsync(
+        int idConexion, int idTenant, DateTimeOffset ahora, TimeSpan backoff, CancellationToken ct = default) =>
+        RenovarAsync(idConexion, idTenant, ahora, backoff, ct);
+
+    private async Task<ResultadoDeRenovacion> RenovarAsync(
+        int idConexion, int idTenant, DateTimeOffset ahora, TimeSpan? backoffPrevio, CancellationToken ct)
+    {
+        var resultado = await RenovarBajoLockAsync(idConexion, idTenant, ahora, backoffPrevio, ct);
+        if (resultado == ResultadoDeRenovacion.RotacionPerdida)
+        {
+            await RegistrarIntentoAparteAsync(idConexion, idTenant, ahora);
+        }
+
+        return resultado;
+    }
+
+    private async Task<ResultadoDeRenovacion> RenovarBajoLockAsync(
+        int idConexion, int idTenant, DateTimeOffset ahora, TimeSpan? backoffPrevio, CancellationToken ct)
     {
         var umbral = UmbralDeRenovacion(ahora, opciones.Value.VentanaDeRenovacion);
 
@@ -140,8 +178,22 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            await db.Database.ExecuteSqlAsync(
-                $"SELECT 1 FROM conexiones_mercadopago WHERE id_conexion_mercadopago = {idConexion} FOR UPDATE", ct);
+            if (backoffPrevio is null)
+            {
+                await db.Database.ExecuteSqlAsync(
+                    $"SELECT 1 FROM conexiones_mercadopago WHERE id_conexion_mercadopago = {idConexion} FOR UPDATE", ct);
+            }
+            else
+            {
+                var tomadas = await db.Database
+                    .SqlQuery<int>(
+                        $"SELECT 1 AS \"Value\" FROM conexiones_mercadopago WHERE id_conexion_mercadopago = {idConexion} FOR UPDATE SKIP LOCKED")
+                    .ToListAsync(ct);
+                if (tomadas.Count == 0)
+                {
+                    return ResultadoDeRenovacion.Ocupada;
+                }
+            }
 
             // La única lectura de la fila, después del lock: una desconexión o una renovación que haya commiteado mientras
             // esta transacción esperaba ya se ve acá.
@@ -153,6 +205,13 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
                 return ResultadoDeRenovacion.Omitida;
             }
 
+            if (backoffPrevio is { } backoff
+                && ProveedorDeTokenMercadoPago.EsUsable(conexion.AccessTokenExpiraEn, ahora)
+                && EstaEnBackoff(conexion.FechaUltimoIntentoRenovacion, ahora, backoff))
+            {
+                return ResultadoDeRenovacion.EnEspera;
+            }
+
             string refreshActual;
             try
             {
@@ -162,6 +221,7 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
             {
                 log.LogWarning(
                     "Los tokens de la conexión {IdConexion} de Mercado Pago no se pudieron descifrar; no se renueva.", idConexion);
+                await GuardarIntentoFallidoAsync(db, transaccion, conexion, ahora, ct);
                 return ResultadoDeRenovacion.Fallida;
             }
 
@@ -181,8 +241,9 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
             catch (ErrorDominio error) when (error.Codigo == CodigosDeErrorDeMercadoPago.CredencialesRechazadas)
             {
                 log.LogWarning(
-                    "Mercado Pago rechazó las credenciales de la aplicación al renovar la conexión {IdConexion}; la fila no se toca.",
+                    "Mercado Pago rechazó las credenciales de la aplicación al renovar la conexión {IdConexion}; solo se anota el intento.",
                     idConexion);
+                await GuardarIntentoFallidoAsync(db, transaccion, conexion, ahora, ct);
                 return ResultadoDeRenovacion.CredencialesRechazadas;
             }
             catch (ErrorDominio)
@@ -190,6 +251,7 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
                 log.LogWarning(
                     "Mercado Pago no pudo renovar la conexión {IdConexion}; queda como estaba y se reintenta en la próxima corrida.",
                     idConexion);
+                await GuardarIntentoFallidoAsync(db, transaccion, conexion, ahora, ct);
                 return ResultadoDeRenovacion.Fallida;
             }
 
@@ -235,6 +297,42 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
                 return ResultadoDeRenovacion.RotacionPerdida;
             }
         });
+    }
+
+    /// <summary>Anota la hora del intento fallido y commitea, todavía con el lock. Si no se puede guardar, el resultado del intento
+    /// no cambia: solo se pierde el backoff.</summary>
+    private async Task GuardarIntentoFallidoAsync(
+        IWaysDbContext db, IDbContextTransaction transaccion, ConexionMercadoPago conexion, DateTimeOffset ahora, CancellationToken ct)
+    {
+        try
+        {
+            conexion.FechaUltimoIntentoRenovacion = ahora;
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            log.LogWarning(error, "No se pudo anotar el intento fallido de renovar la conexión {IdConexion} de Mercado Pago.", conexion.Id);
+        }
+    }
+
+    /// <summary>Anota el intento cuando la transacción de la renovación ya no sirve (la rotación se perdió): un UPDATE aparte, que si
+    /// falla solo se registra.</summary>
+    private async Task RegistrarIntentoAparteAsync(int idConexion, int idTenant, DateTimeOffset ahora)
+    {
+        try
+        {
+            await using var alcance = alcances.CreateAsyncScope();
+            using var suplantacion = alcance.ServiceProvider.GetRequiredService<ITenantActual>().Suplantar(idTenant);
+            var db = alcance.ServiceProvider.GetRequiredService<IWaysDbContext>();
+            await db.Database.ExecuteSqlAsync(
+                $"UPDATE conexiones_mercadopago SET fecha_ultimo_intento_renovacion = {ahora} WHERE id_conexion_mercadopago = {idConexion}",
+                CancellationToken.None);
+        }
+        catch (Exception error)
+        {
+            log.LogWarning(error, "No se pudo anotar el intento perdido de renovar la conexión {IdConexion} de Mercado Pago.", idConexion);
+        }
     }
 
     private static async Task MarcarRequiereReconexionAsync(
