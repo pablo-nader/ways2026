@@ -1,11 +1,11 @@
 import { StrictMode } from 'react'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SeccionMercadoPago } from './SeccionMercadoPago'
 import { ErrorApi } from '../../api/cliente'
 import type { CuentaTesoreriaListado } from '../../api/cuentasTesoreria'
-import type { EstadoDeConexionMercadoPago } from '../../api/mercadoPago'
+import type { EstadoDeConexionMercadoPago, RetornoDeMercadoPago } from '../../api/mercadoPago'
 import type { EmpresaListado } from '../../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -157,6 +157,27 @@ describe('SeccionMercadoPago — estados', () => {
     expect(within(tarjeta).getByRole('button', { name: 'Conectar Mercado Pago' })).toBeInTheDocument()
   })
 
+  it('si requiere reconexión ofrece Desconectar con la misma confirmación, y desconectar vuelve a leer el estado', async () => {
+    conexiones[10] = REQUIERE_RECONEXION
+    apiDeleteMock.mockImplementation(() => {
+      conexiones[10] = SIN_CONEXION
+
+      return Promise.resolve(undefined)
+    })
+    const usuario = userEvent.setup()
+    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    const tarjeta = await esperarDatos()
+
+    await usuario.click(await within(tarjeta).findByRole('button', { name: 'Desconectar' }))
+    const puerta = await screen.findByRole('alertdialog')
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    await usuario.click(within(puerta).getByRole('button', { name: 'Desconectar' }))
+
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/empresas/10/mercadopago/conexion'))
+    expect(await within(tarjeta).findByText('Mercado Pago no está conectado.')).toBeInTheDocument()
+    expect(within(tarjeta).queryByRole('button', { name: 'Desconectar' })).not.toBeInTheDocument()
+  })
+
   it('sin cuentas de tesorería activas explica que hay que crear una y enlaza a su pantalla, sin selector', async () => {
     cuentas = [cuenta(32, 10, 'Cuenta vieja', false)]
     render(<SeccionMercadoPago empresas={[EMPRESA]} />)
@@ -216,6 +237,50 @@ describe('SeccionMercadoPago — conectar', () => {
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock).toHaveBeenCalledWith('/empresas/10/mercadopago/conexion/inicio', { idCuentaTesoreria: 34 })
     expect(within(tarjeta).getByRole('button', { name: 'Conectando…' })).toBeDisabled()
+  })
+
+  describe('al volver de Mercado Pago con "Atrás" (caché de ida y vuelta)', () => {
+    function restaurarPagina(persisted: boolean) {
+      const evento = new Event('pageshow')
+      Object.defineProperty(evento, 'persisted', { value: persisted })
+      act(() => {
+        window.dispatchEvent(evento)
+      })
+    }
+
+    async function conectarYSalir() {
+      vi.stubGlobal('location', { hash: '', pathname: '/organizacion/empresas', search: '', assign: vi.fn() })
+      apiPostMock.mockResolvedValue({ urlAutorizacion: 'https://auth.mercadopago.com/authorization?state=abc' })
+      const usuario = userEvent.setup()
+      render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+      const tarjeta = await esperarDatos()
+      await usuario.click(await within(tarjeta).findByRole('button', { name: 'Conectar Mercado Pago' }))
+      expect(await within(tarjeta).findByRole('button', { name: 'Conectando…' })).toBeDisabled()
+
+      return tarjeta
+    }
+
+    const lecturasDeConexion = () => apiGetMock.mock.calls.filter(([ruta]) => /conexion$/.test(String(ruta))).length
+
+    it('una restauración libera la tarjeta y vuelve a leer el estado', async () => {
+      const tarjeta = await conectarYSalir()
+      const lecturasAntes = lecturasDeConexion()
+
+      restaurarPagina(true)
+
+      await waitFor(() => expect(within(tarjeta).getByRole('button', { name: 'Conectar Mercado Pago' })).toBeEnabled())
+      await waitFor(() => expect(lecturasDeConexion()).toBe(lecturasAntes + 1))
+    })
+
+    it('un pageshow que no es una restauración no toca la tarjeta', async () => {
+      const tarjeta = await conectarYSalir()
+      const lecturasAntes = lecturasDeConexion()
+
+      restaurarPagina(false)
+
+      expect(within(tarjeta).getByRole('button', { name: 'Conectando…' })).toBeDisabled()
+      expect(lecturasDeConexion()).toBe(lecturasAntes)
+    })
   })
 
   it('un doble clic en el mismo tick inicia UNA sola conexión', async () => {
@@ -322,23 +387,59 @@ describe('SeccionMercadoPago — desconectar', () => {
   })
 })
 
-describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () => {
-  const HASH_COMPLETAR = '#mercadopago=completar&empresa=10&code=TG-codigo&state=estado-protegido'
+describe('SeccionMercadoPago — lectura posterior a una escritura', () => {
+  it('si la lectura que sigue a desconectar falla, la tarjeta muestra el error y no el estado viejo', async () => {
+    conexiones[10] = ACTIVA
+    apiDeleteMock.mockResolvedValue(undefined)
+    const usuario = userEvent.setup()
+    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    const tarjeta = await esperarDatos()
 
-  function ponerHash(hash: string) {
-    window.history.replaceState(null, '', `/organizacion/empresas${hash}`)
+    await usuario.click(await within(tarjeta).findByRole('button', { name: 'Desconectar' }))
+    const puerta = await screen.findByRole('alertdialog')
+    apiGetMock.mockImplementation((ruta: string) =>
+      /conexion$/.test(ruta) ? Promise.reject(new ErrorApi(500, 'error_interno', 'x')) : Promise.resolve(cuentas),
+    )
+    await usuario.click(within(puerta).getByRole('button', { name: 'Desconectar' }))
+
+    expect(await within(tarjeta).findByText('No se pudo leer el estado de Mercado Pago.')).toBeInTheDocument()
+    expect(within(tarjeta).queryByText('Conectada')).not.toBeInTheDocument()
+  })
+
+  it('el error de lectura ofrece Reintentar, que vuelve a leer', async () => {
+    let falla = true
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/cuentas-tesoreria') return Promise.resolve(cuentas)
+      if (falla) return Promise.reject(new ErrorApi(500, 'error_interno', 'x'))
+
+      return Promise.resolve(ACTIVA)
+    })
+    const usuario = userEvent.setup()
+    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
+
+    falla = false
+    await usuario.click(await within(tarjeta).findByRole('button', { name: 'Reintentar' }))
+
+    expect(await within(tarjeta).findByText('Conectada')).toBeInTheDocument()
+  })
+})
+
+describe('SeccionMercadoPago — retorno de Mercado Pago recibido de la pantalla', () => {
+  const COMPLETAR: RetornoDeMercadoPago = {
+    tipo: 'completar',
+    idEmpresa: 10,
+    code: 'TG-codigo',
+    state: 'estado-protegido',
   }
 
-  it('borra el fragmento ANTES del POST, completa el canje con code y state y refresca la conexión', async () => {
-    ponerHash(HASH_COMPLETAR)
-    let hashAlPostear: string | null = null
+  it('completa el canje con code y state y refresca la conexión', async () => {
     apiPostMock.mockImplementation(() => {
-      hashAlPostear = window.location.hash
       conexiones[10] = ACTIVA
 
       return Promise.resolve(ACTIVA)
     })
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
 
     await waitFor(() =>
       expect(apiPostMock).toHaveBeenCalledWith('/empresas/10/mercadopago/conexion/completar', {
@@ -346,8 +447,6 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
         state: 'estado-protegido',
       }),
     )
-    expect(hashAlPostear).toBe('')
-    expect(window.location.pathname).toBe('/organizacion/empresas')
 
     const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
     expect(await within(tarjeta).findByText('Conectada')).toBeInTheDocument()
@@ -355,15 +454,24 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
   })
 
   it('bajo StrictMode el canje de un code de un solo uso se hace UNA vez', async () => {
-    ponerHash(HASH_COMPLETAR)
     apiPostMock.mockResolvedValue(ACTIVA)
     render(
       <StrictMode>
-        <SeccionMercadoPago empresas={[EMPRESA]} />
+        <SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />
       </StrictMode>,
     )
 
     await screen.findByText('Mercado Pago quedó conectado.')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('un re-render con el mismo retorno no canjea otra vez', async () => {
+    apiPostMock.mockResolvedValue(ACTIVA)
+    const { rerender } = render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
+    await screen.findByText('Mercado Pago quedó conectado.')
+    rerender(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
+    await esperarDatos()
+
     expect(apiPostMock).toHaveBeenCalledTimes(1)
   })
 
@@ -374,22 +482,19 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
     ['mercadopago_estado_ajeno', /otra sesión o otra empresa/],
     ['mercadopago_estado_invalido', /venció o no es válido/],
   ])('con %s muestra el mensaje mapeado y vuelve a leer la conexión', async (codigo, mensaje) => {
-    ponerHash(HASH_COMPLETAR)
     apiPostMock.mockRejectedValue(new ErrorApi(409, codigo, 'texto del servidor'))
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
 
     expect(await screen.findByText(mensaje)).toBeInTheDocument()
-    expect(window.location.hash).toBe('')
     const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
     await within(tarjeta).findByText('Mercado Pago no está conectado.')
     expect(screen.queryByText('texto del servidor')).not.toBeInTheDocument()
   })
 
   it('mientras el canje está en vuelo la tarjeta queda inerte y avisa', async () => {
-    ponerHash(HASH_COMPLETAR)
     let resolver: (valor: EstadoDeConexionMercadoPago) => void = () => undefined
     apiPostMock.mockReturnValue(new Promise<EstadoDeConexionMercadoPago>((r) => (resolver = r)))
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
 
     expect(await screen.findByText('Completando la conexión con Mercado Pago…')).toBeInTheDocument()
     const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
@@ -402,17 +507,14 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
   })
 
   it('mercadopago=cancelado informa que no se guardó nada y no llama a la API de completar', async () => {
-    ponerHash('#mercadopago=cancelado&empresa=10')
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={{ tipo: 'cancelado', idEmpresa: 10 }} />)
 
     expect(await screen.findByText('Se canceló la conexión con Mercado Pago. No se guardó nada.')).toBeInTheDocument()
-    expect(window.location.hash).toBe('')
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('un fragmento incompleto no canjea nada y se deja como está', async () => {
-    ponerHash('#mercadopago=completar&empresa=10&code=solo-el-code')
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+  it('sin retorno no canjea nada', async () => {
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={null} />)
     await esperarDatos()
 
     expect(apiPostMock).not.toHaveBeenCalled()

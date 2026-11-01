@@ -57,6 +57,8 @@ export function ConexionMercadoPago({ empresa, cuentas, errorDeCuentas, version,
 
   const generacion = useRef(0)
   const ocupadoRef = useRef(false)
+  /** `true` desde que "Conectar" mandó la página a Mercado Pago: solo entonces un `pageshow` restaurado debe liberar la tarjeta. */
+  const navegandoRef = useRef(false)
 
   const cargar = useCallback(
     async (token: number) => {
@@ -68,6 +70,8 @@ export function ConexionMercadoPago({ empresa, cuentas, errorDeCuentas, version,
         setErrorDeLectura('')
       } catch (e) {
         if (generacion.current !== token) return
+        // El estado viejo ya no es de fiar (una escritura pudo haberlo cambiado): se muestra el error y no la tarjeta anterior.
+        setEstado(null)
         setErrorDeLectura(copiaDeFalloDeMercadoPago(e, 'leer'))
       } finally {
         if (generacion.current === token) setCargando(false)
@@ -79,6 +83,23 @@ export function ConexionMercadoPago({ empresa, cuentas, errorDeCuentas, version,
   useEffect(() => {
     void cargar(++generacion.current)
   }, [cargar, version])
+
+  // Volver con "Atrás" desde Mercado Pago restaura la página desde la caché de ida y vuelta con el estado en memoria
+  // ("Conectando…"): se libera la tarjeta y se vuelve a leer, porque la conexión pudo haber cambiado mientras tanto.
+  useEffect(() => {
+    function alRestaurar(evento: PageTransitionEvent) {
+      if (!evento.persisted || !navegandoRef.current) return
+
+      navegandoRef.current = false
+      ocupadoRef.current = false
+      setOcupado(false)
+      void cargar(++generacion.current)
+    }
+
+    window.addEventListener('pageshow', alRestaurar)
+
+    return () => window.removeEventListener('pageshow', alRestaurar)
+  }, [cargar])
 
   const cuentaVigente = cuentas.some((c) => String(c.id) === elegida)
     ? elegida
@@ -98,7 +119,8 @@ export function ConexionMercadoPago({ empresa, cuentas, errorDeCuentas, version,
       if (!esUrlDeAutorizacionNavegable(inicio.urlAutorizacion)) {
         setError(copiaDeFalloDeMercadoPago(null, 'iniciar'))
       } else {
-        // La página se va: la tarjeta queda inerte hasta que el navegador navegue.
+        // La página se va: la tarjeta queda inerte hasta que el navegador navegue (o hasta que vuelva restaurada, ver `pageshow`).
+        navegandoRef.current = true
         window.location.assign(inicio.urlAutorizacion)
 
         return
@@ -165,8 +187,8 @@ export function ConexionMercadoPago({ empresa, cuentas, errorDeCuentas, version,
           arrastra={[]}
           nota="Se borran los tokens guardados. Los cobros con Mercado Pago dejan de funcionar hasta volver a conectar."
           etiquetaConfirmar="Desconectar"
-          etiquetaEnCurso="Desconectando…"
-          ocupado={ocupado}
+          etiquetaEnCurso={ocupado ? 'Desconectando…' : 'Completando la conexión…'}
+          ocupado={inerte}
           disparador={disparador}
           error={error}
           onConfirmar={() => void confirmarDesconexion()}
@@ -179,7 +201,12 @@ export function ConexionMercadoPago({ empresa, cuentas, errorDeCuentas, version,
       {cargando && estado === null ? (
         <Cargando />
       ) : errorDeLectura && estado === null ? (
-        <div className="alert alert-danger">{errorDeLectura}</div>
+        <div className="alert alert-danger" role="alert">
+          {errorDeLectura}{' '}
+          <button type="button" className="btn btn-sm btn-outline-danger" disabled={inerte} onClick={() => void cargar(++generacion.current)}>
+            Reintentar
+          </button>
+        </div>
       ) : activa && estado ? (
         <div>
           <p className="mb-1">
@@ -208,6 +235,18 @@ export function ConexionMercadoPago({ empresa, cuentas, errorDeCuentas, version,
             </div>
           )}
           {!requiereReconexion && <p className="text-muted">Mercado Pago no está conectado.</p>}
+          {requiereReconexion && (
+            <p>
+              <button
+                type="button"
+                className="btn btn-outline-danger"
+                disabled={inerte || confirmando}
+                onClick={(evento) => pedirDesconexion(evento.currentTarget)}
+              >
+                Desconectar
+              </button>
+            </p>
+          )}
 
           {errorDeCuentas ? (
             <div className="alert alert-danger">{errorDeCuentas}</div>

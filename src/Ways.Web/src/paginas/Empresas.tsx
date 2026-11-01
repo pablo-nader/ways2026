@@ -10,6 +10,7 @@ import {
   seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
+import type { RetornoDeMercadoPago } from '../api/mercadoPago'
 import type { EmpresaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -33,6 +34,7 @@ import {
   type FormularioDeEmpresa,
 } from './empresaFormulario'
 import { ModalDeEmpresa } from './organizacion/ModalDeEmpresa'
+import { tomarRetornoDeMercadoPago } from './organizacion/fragmentoMercadoPago'
 import { toast } from '../toasts/toasts'
 import { SeccionMercadoPago } from './organizacion/SeccionMercadoPago'
 
@@ -154,6 +156,21 @@ export function Empresas() {
   useEffect(() => {
     void cargar(++generacion.current)
   }, [cargar])
+
+  /**
+   * El retorno de Mercado Pago se toma y se borra de la URL al llegar, para cualquier usuario y antes de cualquier espera:
+   * no depende de que la carga termine ni de que la sección se monte. Solo un Admin lo pasa a la sección, que lo canjea
+   * cuando se monta (también si la carga de empresas falló). La referencia hace que la segunda corrida del efecto bajo
+   * StrictMode no pise lo ya leído.
+   */
+  const retornoLeido = useRef(false)
+  const [retornoDeMercadoPago, setRetornoDeMercadoPago] = useState<RetornoDeMercadoPago | null>(null)
+  useEffect(() => {
+    if (retornoLeido.current) return
+
+    retornoLeido.current = true
+    setRetornoDeMercadoPago(tomarRetornoDeMercadoPago())
+  }, [])
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga `ocupado`: de
@@ -431,7 +448,7 @@ export function Empresas() {
         )}
       </Box>
 
-      {esAdmin && cargada && <SeccionMercadoPago empresas={items} />}
+      {esAdmin && cargada && <SeccionMercadoPago empresas={items} retorno={retornoDeMercadoPago} />}
     </div>
   )
 }
