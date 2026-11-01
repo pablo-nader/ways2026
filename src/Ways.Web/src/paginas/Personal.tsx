@@ -43,6 +43,7 @@ import {
   type OpcionDeVinculo,
   type VinculoActual,
 } from './personalFormulario'
+import { toast } from '../toasts/toasts'
 
 const ID_FORMULARIO_PERSONAL = 'formulario-personal'
 
@@ -84,7 +85,6 @@ export function Personal() {
   /** Hasta la primera respuesta la pantalla es un "Cargando…"; después la tabla y sus filtros no se desmontan. */
   const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [errorFormulario, setErrorFormulario] = useState<ErrorDePersonal | null>(null)
   const [guardando, setGuardando] = useState(false)
@@ -202,11 +202,11 @@ export function Personal() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, padron.consultaRef.current, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -267,7 +267,6 @@ export function Personal() {
         original?.idCliente != null ? { id: original.idCliente, nombre: original.nombreCliente ?? `Cliente ${original.idCliente}` } : null,
     })
     setFormulario(valor)
-    setAviso('')
     setError('')
     setErrorFormulario(null)
   }
@@ -307,7 +306,6 @@ export function Personal() {
     setDisparadorDeLaPuerta(disparador)
     setBaja(p)
     setError('')
-    setAviso('')
   }
 
   function cancelarBaja() {
@@ -316,7 +314,6 @@ export function Personal() {
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -403,7 +400,6 @@ export function Personal() {
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Personal" variante="inverse" herramientas={herramientas}>
         {error && !baja && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja

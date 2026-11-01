@@ -13,6 +13,7 @@ import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { EncabezadoOrdenable, FilaDeFiltros, useFiltrosDeColumna, useOrdenamiento } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
 import { atributosDeCampoDecimal, atributosDeCampoEntero } from '../formato/numeros'
+import { toast } from '../toasts/toasts'
 
 type Formulario = {
   id: number | null
@@ -45,7 +46,7 @@ const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la 
  * mientras cualquiera de las dos está en vuelo.
  *
  * El alta y la edición viven en un `Modal` (mismo criterio que `Ofertas.tsx` y `Pagos.tsx`): un
- * guardado exitoso lo cierra y el aviso queda en la pantalla; el rechazo de un guardado se muestra
+ * guardado exitoso lo cierra y el resultado se avisa con un toast; el rechazo de un guardado se muestra
  * adentro (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores
  * de la carga del listado y de la baja siguen en la pantalla.
  */
@@ -65,7 +66,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   const [incluirInactivos, setIncluirInactivos] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [errorFormulario, setErrorFormulario] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
@@ -165,11 +165,11 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, incluirInactivos, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -178,7 +178,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
 
     marcarApertura()
     setFormulario({ id: null, nombre: '', activo: true, idEmpresa: null, valores: { ...valoresPorDefecto } })
-    setAviso('')
     setError('')
     setErrorFormulario('')
   }
@@ -188,7 +187,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
 
     marcarApertura()
     setFormulario({ id: item.id, nombre: item.nombre, activo: item.activo, idEmpresa: item.idEmpresa, valores: aValores(item) })
-    setAviso('')
     setError('')
     setErrorFormulario('')
   }
@@ -211,7 +209,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     setGuardando(true)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       try {
         const alta = aAlta(datos.nombre, datos.activo, datos.valores, datos.idEmpresa)
@@ -251,18 +248,16 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     setDisparadorDeLaPuerta(disparador)
     setBaja(item)
     setError('')
-    setAviso('')
   }
 
-  /** Cancelar no supersede nada: solo cierra la puerta. Por eso no acuña generación y limpia los
-   * dos avisos, en simetría con la apertura. */
+  /** Cancelar no supersede nada: solo cierra la puerta. Por eso no acuña generación y limpia el
+   * error, en simetría con la apertura. */
   function cancelarBaja() {
     if (ocupadoRef.current) return
 
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -275,7 +270,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     ocupadoRef.current = true
     setOcupadoBaja(item.id)
     setError('')
-    setAviso('')
     try {
       try {
         await api.delete(`/catalogos/${recurso}/${item.id}`)
@@ -332,7 +326,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo={titulo} variante="inverse" herramientas={herramientas}>
         {error && !baja && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja

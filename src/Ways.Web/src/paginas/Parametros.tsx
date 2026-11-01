@@ -7,6 +7,7 @@ import type { EmpresaListado, ParametroAlta, ParametroListado, ParametroResuelto
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { atributosDeCampoDecimal, atributosDeCampoEntero, parsearNumeroDecimal } from '../formato/numeros'
+import { toast } from '../toasts/toasts'
 
 /**
  * Editor de `parametros` (ADR-13): punto de venta gana sobre empresa, empresa gana sobre el
@@ -22,7 +23,6 @@ export function Parametros() {
   const [items, setItems] = useState<ParametroListado[]>([])
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
 
   const [clave, setClave] = useState(PARAMETROS_CONOCIDOS[0].clave)
   const [valorTexto, setValorTexto] = useState('')
@@ -94,7 +94,6 @@ export function Parametros() {
 
     setGuardando(true)
     setError('')
-    setAviso('')
 
     const numeroDelValor = parsearNumeroDecimal(valorTexto, { permitirNegativo: true })
     const esNumerico = conocidoSeleccionado?.tipo !== 'texto' && conocidoSeleccionado?.tipo !== 'booleano'
@@ -121,7 +120,7 @@ export function Parametros() {
       }
 
       await api.put(`/parametros?idEmpresa=${idEmpresa}`, datos)
-      setAviso(`Se guardó "${clave}".`)
+      toast.exito(`Se guardó "${clave}".`)
       setValorTexto(
         conocidoSeleccionado?.tipo === 'texto'
           ? ZONAS_HORARIAS_OFRECIDAS[0].id
@@ -131,7 +130,7 @@ export function Parametros() {
       )
       await cargarListado(idEmpresa)
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el parámetro.')
+      toast.error(e instanceof ErrorApi ? e.message : 'No se pudo guardar el parámetro.')
     } finally {
       setGuardando(false)
     }
@@ -164,7 +163,6 @@ export function Parametros() {
         </p>
 
         {error && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {empresas === null ? (
           <Cargando />

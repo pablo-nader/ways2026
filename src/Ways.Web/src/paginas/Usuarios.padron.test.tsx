@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Usuarios } from './Usuarios'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type { PaginaDe, RolListado, TenantListado, UsuarioAutenticado, UsuarioListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -129,7 +130,7 @@ function rutasDelListado() {
 }
 
 function renderUsuarios() {
-  return render(<Usuarios />)
+  return render(<><Usuarios /><Toaster /></>)
 }
 
 beforeEach(() => {
@@ -557,7 +558,7 @@ describe('Usuarios — los controles del padrón durante una escritura', () => {
     await resolver()
 
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/usuarios?usuario=zz'))
-    expect(await screen.findByText('Usuario "nuevo.admin" creado.')).toBeInTheDocument()
+    expect((await screen.findByText('Usuario "nuevo.admin" creado.')).closest('[role="status"]')).not.toBeNull()
   })
 
   it('con la confirmación de baja abierta los filtros y el pager quedan inertes, y un filtro tipeado antes espera', async () => {
@@ -623,28 +624,7 @@ describe('Usuarios — una escritura fallida con una lectura en vuelo', () => {
     await act(async () => pendientes[1].resolver(paginaDeLaRuta(pendientes[1].ruta, [bloqueado], 1)))
 
     expect(cuerpo).not.toHaveStyle({ opacity: '0.6' })
-    expect(screen.getByText('No se pudo completar la acción.')).toBeInTheDocument()
-  })
-})
-
-describe('Usuarios — el aviso del cambio de contraseña fallido', () => {
-  it('se apaga cuando cambia la consulta (un filtro, no solo Buscar)', async () => {
-    const usuario = userEvent.setup()
-    usuarioActual = autenticado({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
-    apiPutMock.mockResolvedValue(undefined)
-    apiPostMock.mockRejectedValue(new Error('clave débil'))
-    responder()
-    renderUsuarios()
-    await screen.findByText('vendedor.sur')
-
-    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Editando usuario 50' })
-    await usuario.type(within(dialogo).getByLabelText('Contraseña'), 'unaClaveLarga')
-    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
-    expect(await screen.findByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument()
-
-    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activo')
-
-    await waitFor(() => expect(screen.queryByText(/no se pudo cambiar la contraseña/)).toBeNull())
+    expect(screen.getByRole('alert')).toHaveTextContent('No se pudo completar la acción.')
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 })

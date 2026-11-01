@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Parametros } from './Parametros'
+import { Toaster } from '../toasts/Toaster'
 import type { EmpresaListado, ParametroListado, PuntoVentaListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -64,7 +65,7 @@ describe('Parametros — clave zona_horaria (stage-10, design decisión 12)', ()
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'zona_horaria')
@@ -86,7 +87,7 @@ describe('Parametros — clave zona_horaria (stage-10, design decisión 12)', ()
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'zona_horaria')
@@ -100,7 +101,7 @@ describe('Parametros — claves numéricas existentes (flujo sin cambios)', () =
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     // tolerancia_pago es la clave por defecto: el input numérico ya está montado.
@@ -119,7 +120,7 @@ describe('Parametros — claves numéricas existentes (flujo sin cambios)', () =
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'slots_tickets_espera')
@@ -139,7 +140,7 @@ describe('Parametros — clave lotes_habilitado (tipo booleano, nuevo en el regi
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
@@ -154,7 +155,7 @@ describe('Parametros — clave lotes_habilitado (tipo booleano, nuevo en el regi
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
@@ -171,7 +172,7 @@ describe('Parametros — clave lotes_habilitado (tipo booleano, nuevo en el regi
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
@@ -186,7 +187,7 @@ describe('Parametros — clave lotes_habilitado (tipo booleano, nuevo en el regi
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
@@ -204,7 +205,7 @@ describe('Parametros — clave dias_alerta_vencimiento (entero, nuevo en el regi
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'dias_alerta_vencimiento')
@@ -225,7 +226,7 @@ describe('Parametros — clave redondeo_sugerencia_precio (decimal, default 100)
     mockearRutasBase()
     const usuario = userEvent.setup()
 
-    render(<Parametros />)
+    render(<><Parametros /><Toaster /></>)
     await screen.findByText('Empresa Uno SA')
 
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'redondeo_sugerencia_precio')
@@ -238,5 +239,37 @@ describe('Parametros — clave redondeo_sugerencia_precio (decimal, default 100)
     const [, datos] = apiPutMock.mock.calls[0] as [string, { clave: string; valor: string }]
     expect(datos.clave).toBe('redondeo_sugerencia_precio')
     expect(datos.valor).toBe('50')
+  })
+})
+
+describe('Parametros — el resultado de guardar se avisa con toasts', () => {
+  it('un guardado exitoso avisa con un toast de éxito y no deja un alert en la pantalla', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+
+    render(<><Parametros /><Toaster /></>)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.type(screen.getByLabelText('Valor'), '15')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Se guardó "tolerancia_pago".')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
+  })
+
+  it('un guardado rechazado avisa con un toast de error y no con un banner', async () => {
+    mockearRutasBase()
+    apiPutMock.mockRejectedValue(new Error('No se pudo guardar el parámetro.'))
+    const usuario = userEvent.setup()
+
+    render(<><Parametros /><Toaster /></>)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.type(screen.getByLabelText('Valor'), '15')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo guardar el parámetro.')
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })

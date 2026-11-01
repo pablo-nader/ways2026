@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Personal } from './Personal'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type { PaginaDe, PersonalListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -99,7 +100,7 @@ function rutasDelListado() {
 }
 
 function renderPersonal() {
-  return render(<Personal />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<><Personal /><Toaster /></>, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
 beforeEach(() => {
@@ -486,7 +487,7 @@ describe('Personal — los controles del padrón durante una escritura', () => {
     await resolver(personalFixture({ id: 8 }))
 
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/personal?nombre=zz'))
-    expect(await screen.findByText('Personal "Carla" creado.')).toBeInTheDocument()
+    expect((await screen.findByText('Personal "Carla" creado.')).closest('[role="status"]')).not.toBeNull()
   })
 
   it('con la confirmación de baja abierta los filtros y el pager quedan inertes, y un filtro tipeado antes espera', async () => {
