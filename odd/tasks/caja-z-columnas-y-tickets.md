@@ -82,6 +82,12 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
   `window.print()`. En el modal "Cierres de caja" del POS solo se agrega Ver detalle (sin Reimprimir: no tiene seam de impresión).
   Verificación: `npx tsc -b` 0 errores; `npx vitest run` 9223 OK + 1 intermitente (GrillaDeItemsDeCompra, ajeno, pasa solo).
 
+- S2 judgment-day ronda 1: sin CRITICAL; JUDGMENT: APPROVED. Info coincidente (ambos jueces, WARNING): la reimpresión web
+  del ticket (CajaZ.reimprimirTicket) no tiene guarda de generación y una respuesta tardía tras cambiar de turno puede
+  imprimir el ticket viejo. Otras info: el ticket reimpreso dice 'Cajero' = quien reimprime, no el cajero del turno;
+  depende de resumen-de-cierre para el encabezado; detalle viejo visible al cambiar de turno; medios caídos sin aviso;
+  test de reimpresión web no fija el número del ticket; espacio de más en un import de VentasDelTurno.
+
 ## Next step
 
-Judgment-day de la rebanada S2, luego PR.
+PR de S2 apilado sobre S1; seguimiento: guarda de generación y cajero del turno en la reimpresión.
