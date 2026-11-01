@@ -20,7 +20,9 @@ namespace Ways.Application.MercadoPago;
 /// <b>Modo.</b> Si la terminal ya está en <c>PDV</c> no se manda ningún <c>PATCH /terminals/v1/setup</c>; si no, se manda con una clave de
 /// idempotencia nueva en cada intento (pasar una terminal a <c>PDV</c> es idempotente por sí mismo, y repetir la clave después de que
 /// alguien la devolvió a <c>STANDALONE</c> en la app haría que Mercado Pago conteste lo guardado sin aplicar el cambio) y se verifica
-/// el eco: si la respuesta trae la terminal en otro modo, 502 <c>mercadopago_respuesta_invalida</c> y no se guarda nada. Los rechazos de ese <c>PATCH</c> son 409 con mensaje propio: 403
+/// el eco: si la respuesta trae la terminal en otro modo, 502 <c>mercadopago_respuesta_invalida</c> y no se guarda nada; si no la trae
+/// (la forma de la respuesta no está verificada) se acepta el 2xx y el listado muestra después el modo real. Los rechazos de ese
+/// <c>PATCH</c> son 409 con mensaje propio: 403
 /// <c>terminal_not_allowed_action</c> (modelo no admitido), 403 <c>store_pos_not_found</c> (la terminal perdió su vinculación) y 412 (la
 /// caja ya tiene otra terminal en <c>PDV</c> o suspendida). Mercado Pago pide reiniciar la terminal para que tome el modo.
 ///

@@ -430,10 +430,39 @@ Commit `1f9f626d` on `pnader/mercadopago-e2-t5` (route: delegated writer).
   `asignadaVigente` ignoring the listing -> 1 fail; DELETE reading the connection -> 2 fail. All restored.
 - Verification: build 0 errors; pending model changes: none; Domain 2378; Application 1640; integration `MercadoPagoCajas` 78 passed.
 
+## Judgment-day T5 verdict
+
+- 2026-11-01: **APPROVED** after one fix round. Both judges confirmed: the setup PATCH key repeated across attempts, and a
+  stale terminal assignment was silent (terminal unbound in the app, or caja re-registered under a new POS id); judge B also
+  suggested clearing without an active connection. Fixed in 3f3d4134 (fresh key per attempt + echo check, clear on POS id
+  change with audit, `idTerminalAsignada`/`asignadaVigente` in the listing, DELETE clears every row of the PV without reading
+  the connection); mutation evidence per fix. Scoped re-judgment: both clean (suggestion: a 2xx without the terminal is
+  accepted; the class comment now says so). RDD is off.
+
+## T6 design (2026-11-01)
+
+Branch `pnader/mercadopago-e2-t6`, stacked on T5. Web only (`src/Ways.Web`), Admin only.
+
+- `api/mercadoPago.ts`: typed calls for the sucursal local (GET/POST `/sucursales/{id}/mercadopago`), the caja (GET/POST
+  `/puntos-venta/{id}/mercadopago`) and the terminal (GET `.../mercadopago/terminales`, POST/DELETE `.../mercadopago/terminal`),
+  plus Spanish messages for every new error code (`direccion_incompleta_para_mercadopago`, `mercadopago_local_no_registrado`,
+  `mercadopago_local_duplicado`, `mercadopago_caja_duplicada`, `mercadopago_punto_venta_movido`, `mercadopago_caja_no_registrada`,
+  `mercadopago_terminal_no_vinculada`, `mercadopago_terminal_modelo_no_admitido`, `mercadopago_caja_con_terminal_en_pdv`,
+  `terminal_point_invalida`, `mercadopago_solicitud_rechazada`, `mercadopago_no_disponible`).
+- Sucursales screen: a "Mercado Pago" row action (Admin) opens `ModalDeMercadoPagoDeSucursal`: state badge (`sin_conexion` with a
+  pointer to Empresas, `no_registrada`, `registrada` with the store id and dates, `desactualizada`), the missing address fields
+  by label, and "Registrar en Mercado Pago" / "Actualizar en Mercado Pago".
+- Puntos de venta screen: a "Mercado Pago" row action (Admin) opens `ModalDeMercadoPagoDePuntoVenta`: caja state (same badges
+  plus `local_no_registrado`), register/update, the static QR image (`urlQr`) with a link to open it for printing, and a
+  "Terminal Point" section: list of terminals of the POS with mode, assign / remove, the binding instructions when empty, and a
+  warning when the stored assignment is no longer bound (`asignadaVigente` false).
+- No per-row status fetch in the grids (one request per row); the state lives in the modal.
+- react-async-state for every read (generation token) and write (full-window disabled, re-entrancy ref); colocated Vitest tests
+  for the pure mapping helpers (labels of states and missing fields); component tests wait for data (web-test-data-gates).
+
 ## Next step
 
-T6 — Web: Mercado Pago status per sucursal and per punto de venta in their screens (including the terminal picker and the binding
-instructions from `GET .../mercadopago/terminales`).
+T6 implementation (delegated writer).
 
 ## Judgment-day T1 verdict
 
