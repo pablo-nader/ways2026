@@ -9,6 +9,7 @@ import { totalesDeAjusteManual } from './ajusteManual'
 import { calcularTotalesDeLineaConCombo, comboVigenteDeLinea } from './combos'
 import type { ArticuloParaCarrito, LineaCarrito } from './carrito'
 import { redondearAPeso } from '../formato/importes'
+import { fechaIsoConOffset } from './fechas'
 import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   ArticuloEscaneado,
@@ -108,8 +109,8 @@ export function construirQueryDeVentasDeAdministracion(
   orden: OrdenDeVentasDeAdministracion = null,
 ): string {
   const parametros = new URLSearchParams()
-  if (filtros.desde) parametros.set('desde', filtros.desde)
-  if (filtros.hasta) parametros.set('hasta', filtros.hasta)
+  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   if (ENTERO_POSITIVO.test(filtros.numero.trim())) parametros.set('numero', filtros.numero.trim())
   if (filtros.idTipoComprobante !== null) parametros.set('idTipoComprobante', String(filtros.idTipoComprobante))
   if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))

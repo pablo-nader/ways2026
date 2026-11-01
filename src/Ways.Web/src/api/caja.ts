@@ -6,6 +6,7 @@
  * validar todo (mismo criterio que `pagos.ts`, stage-5).
  */
 import { api } from './cliente'
+import { fechaIsoConOffset } from './fechas'
 import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   DetalleDeTurno,
@@ -124,8 +125,8 @@ export function filtrosDeRetirosVacios(): FiltrosDeRetiros {
 /** Query de la grilla de retiros: un parámetro por filtro activo, `orden` + `direccion` solo con orden. */
 export function construirQueryDeRetiros(filtros: FiltrosDeRetiros, orden: OrdenDeRetiros = null): string {
   const parametros = new URLSearchParams()
-  if (filtros.desde) parametros.set('desde', filtros.desde)
-  if (filtros.hasta) parametros.set('hasta', filtros.hasta)
+  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
   if (/^\d+$/.test(filtros.idTurnoCaja.trim())) parametros.set('idTurnoCaja', filtros.idTurnoCaja.trim())
   if (filtros.idEmpleado !== null) parametros.set('idEmpleado', String(filtros.idEmpleado))

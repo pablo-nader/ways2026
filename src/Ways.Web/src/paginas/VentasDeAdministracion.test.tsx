@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { VentasDeAdministracion } from './VentasDeAdministracion'
+import { fechaIsoConOffset } from '../api/fechas'
 import { COLUMNAS_ORDENABLES_DE_VENTAS_DE_ADMINISTRACION } from '../api/ventas'
 import type {
   ComprobanteEmitido,
@@ -341,9 +342,9 @@ describe('VentasDeAdministracion — un filtro por columna', () => {
   })
 
   it.each([
-    ['desde', 'Fecha desde', '01112026', '2026-11-01'],
-    ['hasta', 'Fecha hasta', '30112026', '2026-11-30'],
-  ])('fecha %s: una fecha completa envía solo su parámetro', async (clave, etiqueta, tipeado, iso) => {
+    ['desde', 'Fecha desde', '01112026', fechaIsoConOffset('2026-11-01', '00:00:00')],
+    ['hasta', 'Fecha hasta', '30112026', fechaIsoConOffset('2026-11-30', '23:59:59.999')],
+  ])('fecha %s: una fecha completa envía solo su parámetro, como límite del día local', async (clave, etiqueta, tipeado, iso) => {
     mockearGrilla(paginaFixture([ventaFixture()]))
     await renderizar()
 

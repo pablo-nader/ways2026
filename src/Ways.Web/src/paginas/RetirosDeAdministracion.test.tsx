@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { RetirosDeAdministracion } from './RetirosDeAdministracion'
 import { COLUMNAS_ORDENABLES_DE_RETIROS } from '../api/caja'
+import { fechaIsoConOffset } from '../api/fechas'
 import type { FilaDeRetiro, PaginaDeRetiros, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { ROL } from '../api/tipos'
 import { Toaster } from '../toasts/Toaster'
@@ -232,9 +233,9 @@ describe('RetirosDeAdministracion — un filtro por columna', () => {
   })
 
   it.each([
-    ['desde', 'Fecha desde', '01112026', '2026-11-01'],
-    ['hasta', 'Fecha hasta', '30112026', '2026-11-30'],
-  ])('fecha %s: una fecha completa envía solo su parámetro', async (clave, etiqueta, tipeado, iso) => {
+    ['desde', 'Fecha desde', '01112026', fechaIsoConOffset('2026-11-01', '00:00:00')],
+    ['hasta', 'Fecha hasta', '30112026', fechaIsoConOffset('2026-11-30', '23:59:59.999')],
+  ])('fecha %s: una fecha completa envía solo su parámetro, como límite del día local', async (clave, etiqueta, tipeado, iso) => {
     mockearGrilla(paginaFixture([retiroFixture()]))
     await renderizar()
 
