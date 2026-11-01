@@ -61,8 +61,8 @@ much in each digital account the business has, nor where each movement came from
 - [x] T4 — Delete the old reports (endpoints, services, DTOs, web, tests), keeping shared pieces
   (`ExportacionDeCaja` histórico part, `ModalDeAjusteDeCuenta`, account ABM). Route: delegated.
 - [x] T5a — Conciliation mark + freeze guard (backend). Route: delegated. Evidence in Progress (2026-11-01, T5a).
-- [ ] T5b — Web: "Conciliado hasta" banner in the ledger, Admin "Conciliar" action with a date-time picker, frozen rows marked
-  (rows dated at or before `conciliadoHasta`). Route: delegated.
+- [x] T5b — Web: "Conciliado hasta" banner in the ledger, Admin "Conciliar" action with a date-time picker, frozen rows marked
+  (rows dated at or before `conciliadoHasta`). Route: delegated. Evidence in Progress (2026-11-01, T5b).
 
 ## Known limitation (solved by T5a once conciliated)
 
@@ -121,6 +121,18 @@ pago row together. The freeze removes this once conciliated.
   prueba de integración con la mutación registrada en el doc-comment de `ConciliacionDeTesoreriaTests`; la prueba del turno abierto usa el
   instante exacto de la apertura.
 
+### Conciliación en el libro (T5b)
+
+- 2026-11-01: T5b done (web). Banner `role=status` bajo los filtros ("Conciliado hasta {fecha y hora local}" / "Sin conciliar", color `--ws-ink-muted`);
+  botón "Conciliar" solo Admin junto a "Ajustar efectivo" (deshabilitado con cualquier modal abierto); `ModalDeConciliacion`: `datetime-local` con
+  ahora redondeado al minuto, nota con contador /500, advertencia (congela, solo ajustes corrigen, irreversible) y casilla obligatoria "Entiendo que
+  no se puede deshacer" (sin segunda pantalla); `hasta` viaja ISO con el offset local; ventana inerte, ref de reentrancia, sin reintento, incierto
+  (5xx/red) cierra, recarga y pide verificar. Errores por `codigo` (futura, anterior con la marca del libro, turno abierto, 400, 404/403).
+- Filas congeladas (`estaConciliada`, borde inclusivo, compara instantes): candado `role=img` "Conciliado" + fondo `--ws-surface-sunken` (el rojo de
+  importe conserva 5,40:1 claro / 6,95:1 oscuro sobre él); el saldo anterior también si `desde <= marca`.
+- `periodo_conciliado`: los modales de ajuste de efectivo y de cuenta muestran el mensaje del servidor (probado). No hay mapeo central código -> mensaje
+  en la web (cada módulo `api/*` tiene el suyo y cae al mensaje del servidor), así que no se agregó nada global.
+
 ## Next step
 
-T5b (web de la conciliación). T4 entregada en #588.
+Ninguno pendiente en el libro; T5b entregada sobre T5a (#589).

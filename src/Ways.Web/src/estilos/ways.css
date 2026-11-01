@@ -186,6 +186,22 @@
   color: var(--ws-danger);
 }
 
+/* Conciliación: la fila congelada usa la superficie hundida del tema (el rojo de importe conserva >= 5,4:1 sobre ella en claro y oscuro). */
+.libro-conciliacion {
+  color: var(--ws-ink-muted);
+}
+
+.libro-tabla tr.libro-fila--conciliada > td {
+  background-color: var(--ws-surface-sunken);
+}
+
+.libro-candado {
+  display: inline-flex;
+  margin-right: var(--ws-space-1, 0.25rem);
+  color: var(--ws-ink-muted);
+  vertical-align: -1px;
+}
+
 .libro-tabla th,
 .libro-tabla td {
   white-space: nowrap;

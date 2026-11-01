@@ -10,6 +10,8 @@ import { CampoFecha } from '../componentes/CampoFecha'
 import { Cargando } from '../componentes/Cargando'
 import { ModalDeAjusteDeCuenta } from '../componentes/ModalDeAjusteDeCuenta'
 import { ModalDeAjusteDeEfectivo } from '../componentes/ModalDeAjusteDeEfectivo'
+import { ModalDeConciliacion } from '../componentes/ModalDeConciliacion'
+import { fechaHoraATexto } from '../formato/fechas'
 import { ResumenDeLiquidez } from './tesoreria/ResumenDeLiquidez'
 import { TablaDelLibro } from './tesoreria/TablaDelLibro'
 
@@ -45,6 +47,7 @@ export function Tesoreria() {
 
   const [ajustandoEfectivo, setAjustandoEfectivo] = useState(false)
   const [cuentaAAjustar, setCuentaAAjustar] = useState<CuentaAAjustar | null>(null)
+  const [conciliando, setConciliando] = useState(false)
   const [confirmacion, setConfirmacion] = useState('')
   const [avisoIncierto, setAvisoIncierto] = useState('')
 
@@ -128,7 +131,23 @@ export function Tesoreria() {
     cargar()
   }
 
-  const modalAbierto = ajustandoEfectivo || cuentaAAjustar !== null
+  function alConciliar() {
+    setConciliando(false)
+    setAvisoIncierto('')
+    setConfirmacion('Conciliación registrada.')
+    cargar()
+  }
+
+  function alSerInciertaLaConciliacion() {
+    setConciliando(false)
+    setConfirmacion('')
+    setAvisoIncierto(
+      'No se pudo confirmar la conciliación. Ya se volvió a cargar el libro: verificá si figura como conciliado antes de reintentarla.',
+    )
+    cargar()
+  }
+
+  const modalAbierto = ajustandoEfectivo || cuentaAAjustar !== null || conciliando
 
   return (
     <div className="container-fluid py-4">
@@ -145,6 +164,14 @@ export function Tesoreria() {
                 onClick={() => setAjustandoEfectivo(true)}
               >
                 Ajustar efectivo
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-light text-nowrap"
+                disabled={modalAbierto}
+                onClick={() => setConciliando(true)}
+              >
+                Conciliar
               </button>
             </nav>
           ) : undefined
@@ -167,7 +194,11 @@ export function Tesoreria() {
                   id="libro-empresa"
                   className="form-select"
                   value={idEmpresa ?? ''}
-                  onChange={(e) => cambiarFiltros({ idEmpresa: e.target.value === '' ? null : Number(e.target.value) })}
+                  onChange={(e) =>
+                    cambiarFiltros({
+                      idEmpresa: e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
                 >
                   <option value="">Elegir…</option>
                   {empresas.map((emp) => (
@@ -181,13 +212,23 @@ export function Tesoreria() {
                 <label className="form-label" htmlFor="libro-desde">
                   Desde
                 </label>
-                <CampoFecha id="libro-desde" className="form-control" value={desde} onChange={(valor) => cambiarFiltros({ desde: valor })} />
+                <CampoFecha
+                  id="libro-desde"
+                  className="form-control"
+                  value={desde}
+                  onChange={(valor) => cambiarFiltros({ desde: valor })}
+                />
               </div>
               <div className="col-md-2">
                 <label className="form-label" htmlFor="libro-hasta">
                   Hasta
                 </label>
-                <CampoFecha id="libro-hasta" className="form-control" value={hasta} onChange={(valor) => cambiarFiltros({ hasta: valor })} />
+                <CampoFecha
+                  id="libro-hasta"
+                  className="form-control"
+                  value={hasta}
+                  onChange={(valor) => cambiarFiltros({ hasta: valor })}
+                />
               </div>
             </div>
 
@@ -221,7 +262,9 @@ export function Tesoreria() {
             {idEmpresa === null ? (
               <p className="text-muted text-center py-4">Elegí una empresa para ver su libro de tesorería.</p>
             ) : rangoInvertido ? (
-              <div className="alert alert-warning py-1 px-2 small">La fecha &quot;Desde&quot; no puede ser posterior a &quot;Hasta&quot;.</div>
+              <div className="alert alert-warning py-1 px-2 small">
+                La fecha &quot;Desde&quot; no puede ser posterior a &quot;Hasta&quot;.
+              </div>
             ) : desde === '' || hasta === '' ? (
               <p className="text-muted text-center py-4">Elegí las fechas &quot;Desde&quot; y &quot;Hasta&quot;.</p>
             ) : (
@@ -229,12 +272,10 @@ export function Tesoreria() {
                 {cargando && !libro && <Cargando />}
                 {libro && (
                   <>
-                    <ResumenDeLiquidez
-                      libro={libro}
-                      esAdmin={esAdmin}
-                      deshabilitado={modalAbierto}
-                      onAjustarCuenta={setCuentaAAjustar}
-                    />
+                    <p className="libro-conciliacion small mb-2" role="status" data-conciliado={libro.conciliadoHasta !== null}>
+                      {libro.conciliadoHasta !== null ? `Conciliado hasta ${fechaHoraATexto(libro.conciliadoHasta)}` : 'Sin conciliar'}
+                    </p>
+                    <ResumenDeLiquidez libro={libro} esAdmin={esAdmin} deshabilitado={modalAbierto} onAjustarCuenta={setCuentaAAjustar} />
                     <TablaDelLibro libro={libro} puedeAbrirPagos={esAdmin} />
                   </>
                 )}
@@ -250,6 +291,16 @@ export function Tesoreria() {
           onCerrar={() => setAjustandoEfectivo(false)}
           onAjustado={() => alAjustar('Ajuste de efectivo registrado.')}
           onIncierto={() => alSerIncierto('efectivo')}
+        />
+      )}
+
+      {conciliando && idEmpresa !== null && (
+        <ModalDeConciliacion
+          idEmpresa={idEmpresa}
+          conciliadoHasta={libro?.conciliadoHasta ?? null}
+          onCerrar={() => setConciliando(false)}
+          onConciliado={alConciliar}
+          onIncierto={alSerInciertaLaConciliacion}
         />
       )}
 
