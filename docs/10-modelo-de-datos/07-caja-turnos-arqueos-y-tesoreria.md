@@ -432,3 +432,44 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > reintenta, y si no logra renovarlo responde 503 `mercadopago_no_disponible`. La corrida en segundo plano no respeta el backoff, pero sí lo
 > anota cuando falla. Una excepción inesperada de la renovación previa al uso se registra (sin tokens) y no corta la llamada si el token
 > guardado todavía sirve.
+
+### Locales de Mercado Pago (sucursales)
+
+```sql
+locales_mercadopago (         -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una por sucursal y cuenta de Mercado Pago
+    id_local_mercadopago, id_tenant, id_empresa,
+    id_sucursal,                             -- FK compuesta (id_sucursal, id_empresa, id_tenant): la base rechaza una sucursal de otra empresa
+    id_usuario_mercadopago bigint,           -- user_id del vendedor dueño del local; NO es FK (la conexión puede desconectarse y la fila queda de historia)
+    id_store_mercadopago bigint,             -- id numérico que Mercado Pago asignó al local
+    external_id varchar(60),                 -- 'WAYSS' + id_sucursal: alfanumérico, estable, único por vendedor
+    fecha_registro, fecha_sincronizacion,    -- esta última es la de la LECTURA de la sucursal, no la del fin de la llamada
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_locales_mercadopago_tenant` (simple), `fk_locales_mercadopago_empresa` (compuesta `(id_empresa, id_tenant)`) y
+> `fk_locales_mercadopago_sucursal` (compuesta `(id_sucursal, id_empresa, id_tenant)`, sobre la clave alterna de `sucursales`); todas RESTRICT.
+> CHECK `ck_locales_mercadopago_external_id` (no vacío). Único `ux_locales_mercadopago_sucursal_usuario` `(id_sucursal, id_usuario_mercadopago)`:
+> una fila por sucursal y cuenta; si la empresa se reconecta con otra cuenta, la sucursal se registra de nuevo y la fila anterior queda de
+> historia. `ManejadorDeErrores` traduce su 23505 a 409 `mercadopago_local_duplicado` (solo lo alcanza una escritura que no pase por el
+> servicio, que serializa con un lock por sucursal). Índices de soporte: `ix_locales_mercadopago_tenant`, `_empresa` y `_sucursal`. RLS
+> estándar. Efecto: como toda FK del modelo, una sucursal con un local registrado cuenta como en uso y no se da de baja (409
+> `sucursal_en_uso`), y lo mismo la empresa y el tenant (`inventario-de-dependientes.txt`).
+>
+> **Endpoints (solo Admin).** `GET /api/sucursales/{id}/mercadopago` devuelve `{ estado, idStoreMercadoPago, externalId, fechaRegistro,
+> fechaSincronizacion, camposFaltantes }` con `estado` en `sin_conexion` (la empresa no tiene una conexión activa), `no_registrada`,
+> `registrada` o `desactualizada` (la sucursal se editó después de `fecha_sincronizacion`), para la cuenta conectada hoy.
+> `camposFaltantes` lista, en orden, lo que la sucursal todavía no tiene para registrarse (`nombre`, `calle`, `altura`, `ciudad`,
+> `provincia`, `latitud`, `longitud`; el código postal y la referencia no son requisito). `POST` del mismo recurso la registra. Orden:
+> 404 de la sucursal (inexistente, ajena o dada de baja), 400 `direccion_incompleta_para_mercadopago` (nombra lo que falta), 409
+> `mercadopago_no_conectada` o `mercadopago_requiere_reconexion`. Bajo un `pg_advisory_xact_lock` por sucursal que se mantiene durante las
+> llamadas a Mercado Pago: con vínculo para la cuenta actual, `PUT /users/{user_id}/stores/{id}` con los datos actuales; sin vínculo,
+> primero `GET /users/{user_id}/stores/search?external_id=` y, si hay un local con ese `external_id` (un alta cuyo guardado se perdió), se
+> adopta y se actualiza; si no, `POST /users/{user_id}/stores`. Toda llamada que no es GET lleva `X-Idempotency-Key`. Después se guarda o
+> actualiza la fila y se registra `sucursal.mercadopago` (operación `alta`, `adopcion` o `actualizacion`, ids de Mercado Pago, nunca un
+> token). El texto que viaja a Mercado Pago se limpia (sin acentos; solo letras ASCII, dígitos, espacio y `. , -`) y se corta a su largo; un
+> campo que queda vacío cuenta como faltante. El rechazo de Mercado Pago sale como 502 `mercadopago_solicitud_rechazada` con su mensaje
+> saneado, un 401 deja la conexión en `requiere_reconexion` (409) y la caída o el tiempo agotado son 503 `mercadopago_no_disponible`.
+> **Sin verificar contra la API real:** la forma del cuerpo y de la respuesta (`id`, `external_id`, `{paging, results}` de la búsqueda),
+> qué caracteres acepta cada campo, el nombre de provincia que espera Mercado Pago para la Ciudad Autónoma de Buenos Aires y qué responde
+> un `PUT` a un local borrado en Mercado Pago.

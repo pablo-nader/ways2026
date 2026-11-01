@@ -39,7 +39,7 @@ QR charge) and E4 (Point charge) need to create orders. Builds on E1 (`odd/tasks
   Done 2026-10-31 (see Progress).
 - [x] T2 — Sucursal address: structured address columns on `sucursales` + its ABM form, docs/10. Route: delegated
   (writer touches domain, service, migration, API contract, web modal and tests: 2+ non-trivial files).
-- [ ] T3 — Store sync: link table sucursal ↔ MP store (`id_store` MP, external_id), "registrar en Mercado Pago"
+- [x] T3 — Store sync: link table sucursal ↔ MP store (`id_store` MP, external_id), "registrar en Mercado Pago"
   per sucursal, update when the address changes.
 - [ ] T4 — POS sync: link table punto de venta ↔ MP POS (`id_pos` MP, `external_id` derived from the PV id), created
   under its sucursal's store; moving a PV to another sucursal re-homes the POS.
@@ -163,9 +163,110 @@ Commit `5516a04d` on `pnader/mercadopago-e2-t2` (route: delegated writer).
 - Deviation: tests for the RED step were written with the Domain code in the same pass, so RED was shown by mutation, not by a
   missing type. `SucursalListado` fields are optional (`Partial`) in the web type to avoid touching unrelated fixtures.
 
+## T3 design (2026-11-01)
+
+Branch `pnader/mercadopago-e2-t3`, stacked on T2 (#592). Backend only; the web is T6.
+
+- Table `locales_mercadopago` (operativa: id_tenant + id_empresa, RLS like `conexiones_mercadopago`): `id_local_mercadopago`
+  PK, `id_tenant`, `id_empresa`, `id_sucursal` (FK compuesta con empresa y tenant), `id_usuario_mercadopago bigint` (the
+  seller the store belongs to), `id_store_mercadopago bigint`, `external_id varchar(60)`, `fecha_registro`,
+  `fecha_sincronizacion`, `created_at`/`updated_at`. UNIQUE (`id_sucursal`, `id_usuario_mercadopago`): one store per sucursal
+  per Mercado Pago account (a reconnection to another account registers again; the old row stays as history).
+- `external_id` = `WAYSS` + id_sucursal (alphanumeric, stable, unique per seller).
+- `POST /api/sucursales/{id}/mercadopago` (Admin; the sucursal's empresa must have an active connection):
+  1. 404 first for a missing/other-tenant/soft-deleted sucursal.
+  2. Address completeness for Mercado Pago: calle, altura, ciudad, provincia, latitud, longitud; otherwise 400
+     `direccion_incompleta_para_mercadopago` naming the missing fields. `referencia` optional.
+  3. Per-sucursal advisory lock (serializes two clicks), then: row for (sucursal, current seller) exists -> `PUT
+     /users/{user_id}/stores/{id}` with the current name and location; no row -> first `GET
+     /users/{user_id}/stores/search?external_id=` (adopt a store a lost commit left behind), else `POST
+     /users/{user_id}/stores`. Then upsert the row and an audit entry. Always an idempotency key on non-GET calls.
+  4. Text sent to Mercado Pago: accents stripped, characters outside letters/digits/space/`.,-` removed, trimmed to its
+     limits; Mercado Pago's rejection surfaces as the existing `mercadopago_solicitud_rechazada` (502) with its sanitized
+     message.
+- `GET /api/sucursales/{id}/mercadopago`: link state for the current seller: `sin_conexion`, `no_registrada`,
+  `registrada` (with ids and dates) or `desactualizada` (sucursal `updated_at` after `fecha_sincronizacion`).
+- The fake Mercado Pago handler in the integration tests covers create, search-adopt, update and a 4xx rejection.
+
+## T3 progress (2026-11-01)
+
+Commit `198123a3` on `pnader/mercadopago-e2-t3` (route: delegated writer).
+
+- Domain: `LocalMercadoPago`, `LocalParaMercadoPago` (completeness rule, `external_id` = `WAYSS`+id, limits), `TextoParaMercadoPago`
+  (sanitizer), action `sucursal.mercadopago` and `PayloadDeAuditoria.LocalDeMercadoPago`.
+- Application: `ServicioDeLocalesMercadoPago` (`ObtenerAsync`, `RegistrarAsync`), `ContratosDeLocales`, DbSet, DI. Infrastructure:
+  `LocalMercadoPagoConfiguration`, migration `20261101111426_LocalesMercadoPago` (RLS via `HabilitarRlsDeTenant`). API: routes in
+  `MercadoPagoEndpoints` (group `GestionDeCatalogo`, so `SuperficieDeAutorizacion` needed no allow-list entry), 23505 mapping
+  `mercadopago_local_duplicado`. Docs: index row + section in docs/10 part 07. Golden inventory: 4 lines added.
+- Tests: `LocalParaMercadoPagoTests` (28), audit tests, `MercadoPagoLocalesTests` (22, fake handler, real Postgres).
+- Verification: build 0 errors; Domain 2295; Application 1637 (guards green); integration filter 245 passed.
+- Mutation evidence (mutate, run, revert): `Latitud is null` check -> `false`: 3 domain tests fail; search-adopt branch -> `false`: 3
+  integration tests fail; lock call removed: concurrency test fails; commit-on-401 catch -> `false`: 401 test fails; `HabilitarRlsDeTenant`
+  removed: RLS test, `LaCoberturaDePoliciesEsCompleta` and one more fail.
+- Decisions: the lock transaction runs on the request db, and a 401 mark made inside it is committed before rethrowing (otherwise the
+  rollback undoes the reconnection mark). The PUT after an adoption refreshes the data. The idempotency key is `ways-local-{id}-alta` for
+  the create and `ways-local-{id}-{hash of body}` for the update. `sync date` = time the sucursal was read, not the end of the call.
+- Deviations: no dedicated migration test (the `UpDownUp` chain covers Up/Down); the web `tipos.ts` action union was not touched.
+- Open: a registered sucursal now counts as in use (`sucursal_en_uso` on baja; same for empresa/tenant); a PUT to a store deleted in
+  Mercado Pago surfaces as 502 instead of re-creating; MP DTO shapes, accepted characters and the state name for CABA are unverified live.
+
+## Judgment-day T3 round 1
+
+- 2026-11-01: three findings confirmed by both blind judges on 198123a3; fixed in cdc6701f.
+- T3-1: the create key was fixed per sucursal (`ways-local-{id}-alta`) while the body can change; Mercado Pago answers 409 for the
+  same key with another body within 24 h. Now `ways-local-{id}-alta-{body hash}`. The update key adds the sucursal's `updated_at`
+  ticks (`ways-local-{id}-{hash}-{ticks}`), so A -> B -> A yields three distinct keys and a retry of the same state reuses its key.
+- T3-2: with a link row a PUT to a store deleted in Mercado Pago (404) left the sucursal stuck. A 404 from the PUT now falls back
+  to search by `external_id` (adopt + PUT) or create, and the link row's store id is updated in the same transaction. Other 4xx
+  still surface as 502.
+- T3-3: the sanitizer replaces any non-admitted character with a space (S/N -> S N, 1234 1/2 -> 1234 1 2, O'Higgins -> O Higgins,
+  9º -> 9) and an altura of S/N / SN / S N counts as missing for Mercado Pago.
+- Tests: 8 new domain cases (sanitizer, S/N rule); 5 new integration tests (alta key changes with the body, A-B-A-B update keys all
+  distinct, PUT 404 -> adopt, PUT 404 -> create, PUT 400 still 502 without search/create). `AuditoriaAsync` now orders by
+  `id_auditoria DESC` (it ordered by text, which picked the wrong row).
+- Verification: build 0 errors; Domain 2304; Application 1637; integration filter MercadoPagoLocales 27 passed.
+- Mutation evidence (mutate, run, revert): create key back to fixed `-alta` + update key without ticks + `when (false)` on the 404
+  catch, together -> 4 integration tests failed (alta key, update keys, adopt, create); sanitizer non-admitted branch removed + S/N
+  rule removed, together -> 8 domain tests failed. All reverted, green again.
+- Verdict pending: scoped re-judgment of the fix delta.
+
+## Judgment-day T3 verdict
+
+- 2026-11-01: **APPROVED** after two rounds. Round 1: both judges confirmed three warnings (create key fixed per sucursal,
+  no recovery from a store deleted in Mercado Pago, sanitizer glued words); fixed in cdc6701f. Scoped re-judgment: both
+  judges confirmed the adopt PUT reused the failed PUT's key, and the sin-número rule was too narrow; fixed in 224e9df5
+  (update key = sucursal + hash of store id, body hash and sucursal state; sin-número forms compared on letters/digits).
+  Mutation: dropping the store id from the key fails the adopt test; shrinking the sin-número set fails 4 domain cases.
+  Final scoped re-judgment: both clean (suggestions only). RDD is off.
+- Open (one judge, not fixed): a registered sucursal counts as in use for bajas (OD4 strict, same as the E1 connection for
+  the empresa) and fusion leaves the origin's link as history; there is no unregister path; a reconnection to another
+  Mercado Pago account leaves the old link as history. Suggestion: `desactualizada` fires on any sucursal edit, even of
+  fields not sent to Mercado Pago.
+
+## T4 design (2026-11-01)
+
+Branch `pnader/mercadopago-e2-t4`, stacked on T3. Backend only; the web is T6.
+
+- Table `cajas_mercadopago` (operativa: id_tenant + id_empresa, RLS): `id_caja_mercadopago` PK, `id_tenant`, `id_empresa`,
+  `id_punto_venta` (FK compuesta con empresa y tenant), `id_local_mercadopago` (FK to `locales_mercadopago`: the store it
+  hangs from), `id_usuario_mercadopago bigint`, `id_pos_mercadopago bigint`, `external_id varchar(40)`, `url_qr` (the
+  `qr_response` static QR image link, nullable), `fecha_registro`, `fecha_sincronizacion`, `created_at`/`updated_at`. UNIQUE
+  (`id_punto_venta`, `id_usuario_mercadopago`).
+- `external_id` = `WAYSPV` + id_punto_venta (letters+digits, <= 40, unique per seller).
+- `POST /api/puntos-venta/{id}/mercadopago` (Admin): 404 first; the PV's sucursal must be registered as a local for the
+  current seller, else 409 `mercadopago_local_no_registrado`; per-PV advisory lock; row exists -> `PUT /pos/{id}` with
+  name and `store_id` of the PV's current sucursal's local (this is what re-homes a PV moved to another sucursal), with the
+  same 404 -> search -> adopt/create recovery as T3; no row -> `GET /pos?external_id=` adopt, else `POST /pos` with
+  `{name, external_id, store_id, fixed_amount: false, category}` (category optional, omitted). Keys follow T3's scheme
+  (content + target + state hashes, <= 64).
+- `GET /api/puntos-venta/{id}/mercadopago`: `sin_conexion`, `local_no_registrado`, `no_registrada`, `registrada` (ids, QR
+  url) or `desactualizada` (PV `updated_at` after `fecha_sincronizacion`, or its sucursal's local differs from the row's).
+- Name sent: PV name through `TextoParaMercadoPago`, <= 45 chars.
+- Same fake-handler integration coverage as T3, plus re-homing after moving the PV to another registered sucursal.
+
 ## Next step
 
-T3 (store sync).
+T4 implementation (delegated writer).
 
 ## Judgment-day T1 verdict
 

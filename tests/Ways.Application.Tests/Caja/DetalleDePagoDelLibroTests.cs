@@ -1,42 +1,41 @@
 using Ways.Application.Caja;
-using Ways.Domain.Pagos;
 
 namespace Ways.Application.Tests.Caja;
 
 public class DetalleDePagoDelLibroTests
 {
     [Fact]
-    public void UnPagoSinProveedorNiPersonaMuestraCategoriaYConcepto()
+    public void UnPagoSinProveedorNiPersonaMuestraSoloElConcepto()
     {
         Assert.Equal(
-            "Servicios — Luz de octubre",
-            DetalleDePagoDelLibro.Armar(CategoriaPago.Servicios, "Luz de octubre", null, null, null, null));
+            "Luz de octubre",
+            DetalleDePagoDelLibro.Armar("Luz de octubre", null, null, null, null));
     }
 
     [Fact]
-    public void UnPagoAProveedorAgregaSuRazonSocial()
+    public void UnPagoAProveedorMuestraSuRazonSocialEnLugarDelConcepto()
     {
         Assert.Equal(
-            "Proveedores — Factura 123 · Distribuidora SA",
-            DetalleDePagoDelLibro.Armar(CategoriaPago.Proveedor, "Factura 123", 4, "Distribuidora SA", null, null));
+            "Distribuidora SA",
+            DetalleDePagoDelLibro.Armar("Factura 123", 4, "Distribuidora SA", null, null));
     }
 
     [Fact]
-    public void UnPagoDeSueldoAgregaElNombreDeLaPersona()
+    public void UnPagoDeSueldoMuestraElNombreDeLaPersonaEnLugarDelConcepto()
     {
         Assert.Equal(
-            "Sueldos — Quincena · Ana Gómez",
-            DetalleDePagoDelLibro.Armar(CategoriaPago.Sueldos, "Quincena", null, null, 9, "Ana Gómez"));
+            "Ana Gómez",
+            DetalleDePagoDelLibro.Armar("Quincena", null, null, 9, "Ana Gómez"));
     }
 
     [Fact]
     public void UnProveedorOUnaPersonaDadosDeBajaSeMuestranComoNoDisponiblesSinPerderLaFila()
     {
         Assert.Equal(
-            "Proveedores — Factura 1 · (proveedor no disponible)",
-            DetalleDePagoDelLibro.Armar(CategoriaPago.Proveedor, "Factura 1", 4, null, null, null));
+            "(proveedor no disponible)",
+            DetalleDePagoDelLibro.Armar("Factura 1", 4, null, null, null));
         Assert.Equal(
-            "Sueldos — Quincena · (persona no disponible)",
-            DetalleDePagoDelLibro.Armar(CategoriaPago.Sueldos, "Quincena", null, null, 9, null));
+            "(persona no disponible)",
+            DetalleDePagoDelLibro.Armar("Quincena", null, null, 9, null));
     }
 }
