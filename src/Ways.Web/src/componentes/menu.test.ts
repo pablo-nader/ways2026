@@ -109,6 +109,7 @@ const REPORTES: Resumen = {
         ['Tablero', '/tablero'],
         ['Histórico de cajas', '/caja/historico'],
         ['Tesorería', '/caja/tesoreria'],
+        ['Listado de ventas', '/caja/ventas'],
         ['Existencias', '/reportes/existencias'],
         ['Vencimientos', '/reportes/stock/vencimientos'],
         ['Reposición', '/reportes/stock/reposicion'],
@@ -129,6 +130,7 @@ const REPORTES_DE_ADMIN: Resumen = {
         ['Tablero', '/tablero'],
         ['Histórico de cajas', '/caja/historico'],
         ['Tesorería', '/caja/tesoreria'],
+        ['Listado de ventas', '/caja/ventas'],
         ['Cuentas de tesorería', '/caja/cuentas-tesoreria'],
         ['Existencias', '/reportes/existencias'],
         ['Vencimientos', '/reportes/stock/vencimientos'],
@@ -298,6 +300,7 @@ describe('esRutaActiva', () => {
   const casos: [string, string[]][] = [
     ['/caja/historico', ['Reportes']],
     ['/caja/tesoreria', ['Reportes']],
+    ['/caja/ventas', ['Reportes']],
     ['/caja/cuentas-tesoreria', ['Reportes']],
     ['/caja', ['Caja']],
     ['/caja/cierre', ['Caja']],

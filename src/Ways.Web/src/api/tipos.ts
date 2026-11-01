@@ -4046,3 +4046,36 @@ export type DatosDePersonal = {
   /** `null` = sin horario habitual; si no, exactamente 7 horas (lunes a domingo), 0 = franco. */
   horarioHabitual: number[] | null
 }
+
+/** Estado fiscal de una venta en la grilla de administración (`estadoFiscal` de `GET /api/ventas/administracion`). */
+export type EstadoFiscalDeGrilla = 'sin_factura' | 'en_tramite' | 'con_cae'
+
+/** Fila de `GET /api/ventas/administracion`. Un punto de venta, cliente o empleado dado de baja llega con id y nombre `null`. */
+export type FilaDeVentaDeAdministracion = {
+  id: number
+  numero: number
+  numeroVisible: string
+  fecha: string
+  idTipoComprobante: number
+  codigoTipo: string
+  tipo: string
+  idPuntoVenta: number | null
+  puntoVenta: string | null
+  idTurnoCaja: number | null
+  /** `null` = la venta no tiene turno. */
+  turnoCerrado: boolean | null
+  idCliente: number | null
+  cliente: string | null
+  idEmpleado: number | null
+  empleado: string | null
+  total: number
+  estado: EstadoComprobante
+  estadoFiscal: EstadoFiscalDeGrilla
+  /** Nombres distintos de los medios cobrados, "A, B"; `null` sin cobros. */
+  medios: string | null
+  conciliado: boolean
+  medioEditable: boolean
+  motivoMedioNoEditable: string | null
+}
+
+export type PaginaDeVentasDeAdministracion = PaginaDe<FilaDeVentaDeAdministracion>
