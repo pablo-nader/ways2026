@@ -56,3 +56,21 @@ public enum ColumnaDeOrdenDeRetiros
     Conciliado,
     EsRetiroDeCierre,
 }
+
+/// <summary>Columnas por las que <c>GET /api/ventas/administracion</c> acepta <c>orden</c>.</summary>
+public enum ColumnaDeOrdenDeVentasDeAdministracion
+{
+    Fecha,
+    Numero,
+    Tipo,
+    PuntoVenta,
+    Turno,
+    Cliente,
+    Empleado,
+    Medios,
+    Total,
+    Estado,
+    EstadoFiscal,
+    EstadoTurno,
+    Conciliado,
+}

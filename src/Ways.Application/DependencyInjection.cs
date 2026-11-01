@@ -100,6 +100,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeEscaneo>();
         services.AddScoped<ServicioDeVentas>();
         services.AddScoped<ServicioDeCambioDeMedios>();
+        services.AddScoped<ServicioDeVentasDeAdministracion>();
 
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva de bloques offline,
         // registrado junto a ServicioDeVentas por compartir el mismo espacio de numeración.
