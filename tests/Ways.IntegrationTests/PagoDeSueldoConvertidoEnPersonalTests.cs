@@ -313,6 +313,131 @@ public class PagoDeSueldoConvertidoEnPersonalTests(WaysApiFixture fixture) : ICl
     }
 
     [Fact]
+    public async Task ElAsientoDelEmpleadoLlevaLaFechaDeNegocioDelPagoEnLaZonaDeLaEmpresaYNoLaFechaUtc()
+    {
+        var ctx = await PrepararAsync(nameof(ElAsientoDelEmpleadoLlevaLaFechaDeNegocioDelPagoEnLaZonaDeLaEmpresaYNoLaFechaUtc));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, "Ana", saldoInicial: 1000m);
+        var idPago = await PagoDeTesoreriaAsync(ctx, 300m);
+
+        // 01:00 UTC del día 10 es el día 9 a las 22:00 en la zona de la empresa (UTC-3).
+        await using (var siembra = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var instante = new DateTimeOffset(2026, 10, 10, 1, 0, 0, TimeSpan.Zero);
+            await siembra.Pagos.Where(p => p.Id == idPago).ExecuteUpdateAsync(s => s.SetProperty(p => p.Fecha, instante));
+        }
+
+        await CuerpoAsync(await EditarAdminAsync(ctx, idPago, Conversion(ctx, 300m, idPersonal)), HttpStatusCode.OK);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idMovimiento = await db.Pagos.Where(p => p.Id == idPago).Select(p => p.IdMovimientoPersonal).SingleAsync();
+        var movimiento = await db.MovimientosPersonal.SingleAsync(m => m.Id == idMovimiento);
+        Assert.Equal(new DateOnly(2026, 10, 9), movimiento.Fecha);
+    }
+
+    [Fact]
+    public async Task UnPagoDeVariasLineasConvertidoBajaElSaldoYAsientaElTotal()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoDeVariasLineasConvertidoBajaElSaldoYAsientaElTotal));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, "Ana", saldoInicial: 1000m);
+
+        int idElectronico;
+        await using (var siembra = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var medio = new MedioPago
+            {
+                IdTenant = ctx.IdTenant, Nombre = "Transferencia-sueldos", Orden = 50,
+                Comportamiento = ComportamientoMedioPago.Electronico, AdmiteVuelto = false, RequiereReferencia = false,
+                CreatedAt = ahora, UpdatedAt = ahora
+            };
+            siembra.MediosPago.Add(medio);
+            await siembra.SaveChangesAsync();
+            idElectronico = medio.Id;
+        }
+
+        LineaDePago[] lineas = [new(ctx.IdMedioEfectivo, 60m, null), new(idElectronico, 40m, null)];
+        var alta = await ctx.Admin.PostAsJsonAsync(
+            "/api/pagos/administracion",
+            new SolicitudDePagoDeAdministracionConLineas(
+                FechaDelNegocio.Hoy().AddDays(-1), ctx.IdEmpresa, null, CategoriaPago.Sueldos, null, null, "Sueldo suelto",
+                null, null, lineas));
+        var idPago = (await CuerpoAsync(alta, HttpStatusCode.Created)).GetProperty("id").GetInt32();
+
+        var conversion = new SolicitudDeEdicionDePagoConLineas(
+            CategoriaPago.Sueldos, null, null, "", null, null, lineas, idPersonal);
+        await CuerpoAsync(await EditarAdminAsync(ctx, idPago, conversion), HttpStatusCode.OK);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idMovimiento = await db.Pagos.Where(p => p.Id == idPago).Select(p => p.IdMovimientoPersonal).SingleAsync();
+        var movimiento = await db.MovimientosPersonal.SingleAsync(m => m.Id == idMovimiento);
+        Assert.Equal(-100m, movimiento.Importe);
+        Assert.Equal(900m, movimiento.SaldoResultante);
+        Assert.Equal(900m, await db.Personal.Where(p => p.Id == idPersonal).Select(p => p.Saldo).SingleAsync());
+    }
+
+    [Fact]
+    public async Task ConservarElProveedorAlAsignarUnEmpleadoSeRechazaSinEscribirNada()
+    {
+        var ctx = await PrepararAsync(nameof(ConservarElProveedorAlAsignarUnEmpleadoSeRechazaSinEscribirNada));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, "Ana", saldoInicial: 1000m);
+        var idPago = await PagoDeTesoreriaAsync(ctx, 100m);
+        var antes = await FotoAsync(ctx, idPersonal);
+
+        var conProveedor = Conversion(ctx, 100m, idPersonal) with { IdProveedor = 1 };
+
+        Assert.Equal("pago_personal_sin_proveedor", await CodigoAsync(await EditarAdminAsync(ctx, idPago, conProveedor), HttpStatusCode.BadRequest));
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+    }
+
+    [Fact]
+    public async Task UnPagoEnUnPeriodoConciliadoNoSeConvierteYNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoEnUnPeriodoConciliadoNoSeConvierteYNoEscribeNada));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, "Ana", saldoInicial: 1000m);
+        var idPago = await PagoDeTesoreriaAsync(ctx, 100m);
+
+        await using (var siembra = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var idUsuario = await siembra.Usuarios.Select(u => u.Id).FirstAsync();
+            siembra.ConciliacionesTesoreria.Add(new Ways.Domain.Caja.ConciliacionTesoreria
+            {
+                IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, Hasta = DateTimeOffset.UtcNow.AddMinutes(-1),
+                IdUsuario = idUsuario, CreadoEl = DateTimeOffset.UtcNow
+            });
+            await siembra.SaveChangesAsync();
+        }
+
+        var antes = await FotoAsync(ctx, idPersonal);
+
+        Assert.Equal(
+            "periodo_conciliado",
+            await CodigoAsync(await EditarAdminAsync(ctx, idPago, Conversion(ctx, 100m, idPersonal)), HttpStatusCode.Conflict));
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+    }
+
+    [Fact]
+    public async Task ElMovimientoDeTesoreriaDelPagoTomaElConceptoDelPagoDePersonal()
+    {
+        var ctx = await PrepararAsync(nameof(ElMovimientoDeTesoreriaDelPagoTomaElConceptoDelPagoDePersonal));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, "Ana", saldoInicial: 1000m);
+        var idPago = await PagoDeTesoreriaAsync(ctx, 300m);
+
+        await using (var antes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var original = await antes.MovimientosTesoreria.Where(m => m.IdPago == idPago).Select(m => m.Concepto).ToListAsync();
+            Assert.NotEmpty(original);
+            Assert.All(original, c => Assert.Equal("Sueldo suelto", c));
+        }
+
+        await CuerpoAsync(await EditarAdminAsync(ctx, idPago, Conversion(ctx, 300m, idPersonal)), HttpStatusCode.OK);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var conceptos = await db.MovimientosTesoreria.Where(m => m.IdPago == idPago).Select(m => m.Concepto).ToListAsync();
+        Assert.NotEmpty(conceptos);
+        Assert.All(conceptos, c => Assert.Equal("Pago de personal: Ana", c));
+    }
+
+    [Fact]
     public async Task DosConversionesSimultaneasDelMismoPagoDejanUnSoloAsientoYUnSoloDescuento()
     {
         var ctx = await PrepararAsync(nameof(DosConversionesSimultaneasDelMismoPagoDejanUnSoloAsientoYUnSoloDescuento));

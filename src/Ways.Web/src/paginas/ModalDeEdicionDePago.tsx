@@ -7,7 +7,7 @@ import {
   lineasIniciales,
 } from '../api/registroDePagos'
 import type { FormularioDeEdicionDePago, PagoEditable } from '../api/registroDePagos'
-import { cambiosAlElegirCategoria, conEmpleadoAsignado, ofreceElegirPersonal } from '../api/sueldoConPersonal'
+import { conEmpleadoAsignado, ofreceElegirPersonal } from '../api/sueldoConPersonal'
 import { CATEGORIAS_PAGO } from '../api/tipos'
 import type {
   AreaListado,
@@ -85,13 +85,9 @@ export function ModalDeEdicionDePago({
   const conEmpleado = ofrecePersonal && idPersonal !== ''
 
   function alCambiarCategoria(categoria: FormularioDeEdicionDePago['categoria']) {
-    if (personal === undefined) {
-      setFormulario((prev) => ({ ...prev, categoria }))
-      return
-    }
-    const cambios = cambiosAlElegirCategoria({ idProveedor: formulario.idProveedor, idPersonal }, categoria)
-    setIdPersonal(cambios.idPersonal)
-    setFormulario((prev) => ({ ...prev, categoria: cambios.categoria, idProveedor: cambios.idProveedor }))
+    // Al editar, el proveedor del pago no se descarta al entrar a Sueldos: solo asignar un empleado lo reemplaza.
+    if (!ofreceElegirPersonal(categoria)) setIdPersonal('')
+    setFormulario((prev) => ({ ...prev, categoria }))
   }
 
   function alCambiarProveedor(valorCrudo: string) {

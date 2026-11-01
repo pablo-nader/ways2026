@@ -70,6 +70,13 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
   RED 7 failed -> GREEN; mutation: Sueldos guard disabled -> killed, under-lock re-check removed -> killed by the concurrent
   conversion test. Web: `ModalDeEdicionDePago` shows `Empleado (opcional)` for Sueldos (`personal` prop), POS reads
   `GET /api/pos/personal/opciones`, offline disables the options only. Results: dotnet build ok; Application.Tests 1638, Domain.Tests 2322 passed; integration (new class, PagosEdicion*, PagoDePersonal*, PagosConLineas/ApiConLineas, SuperficieDeAutorizacion, AislamientoDeTenant, OpenApi, ConciliacionDeTesoreria) 173 passed; vitest 308 files / 9428 tests passed; tsc -b ok; lint 0 errors.
+  Judgment Day round 1 fixes (G1-G3): G1 the edit modal no longer drops the provider on entering Sueldos (a pago with a
+  provider keeps showing the provider select; the employee picker appears once the provider is set to "Sin proveedor", and
+  choosing an employee sends `idProveedor: null`); component test in `Pagos.test.tsx` killed by restoring the old clearing.
+  G2 five integration tests (fecha in the empresa zone, 2-line total, 400 `pago_personal_sin_proveedor`, `periodo_conciliado`
+  409, treasury concepto rewrite), all five killed together by mutating `ServicioDePagos` (UTC date, provider check off, conciliation
+  guard off, importe halved, concepto UPDATE neutralized) and guard restored; no real bug found. G3 stale comment in `Pagos.tsx` fixed.
+  Results: dotnet build ok; PagoDeSueldoConvertidoEnPersonalTests + PagosEdicionEndpoints 37 passed; vitest Pagos/PagosDelTurno/sueldoConPersonal 172 passed; tsc -b ok; lint 0 errors.
 
 ## Checks
 

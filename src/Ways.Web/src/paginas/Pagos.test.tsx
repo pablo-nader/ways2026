@@ -1714,6 +1714,31 @@ describe('Pagos (administración) — asignar un empleado a un sueldo común al 
     expect(cuerpo.categoria).toBe('Otros')
   })
 
+  it('pasar un pago con proveedor a Sueldos y guardarlo sin empleado conserva el proveedor', async () => {
+    mockearRutas({
+      personal: empleados,
+      pagina: paginaFixture([
+        pagoFixture({ id: 63, concepto: 'Honorarios', categoria: 'Otros', idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' }),
+      ]),
+    })
+    apiPutMock.mockResolvedValueOnce({ id: 63 })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Honorarios' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await userEvent.selectOptions(d.getByLabelText('Categoría'), 'Sueldos')
+
+    expect(d.getByLabelText('Proveedor (opcional)')).toHaveValue('1')
+    expect(d.queryByLabelText('Empleado (opcional)')).not.toBeInTheDocument()
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalled())
+    const cuerpo = apiPutMock.mock.calls[0][1] as Record<string, unknown>
+    expect(cuerpo.categoria).toBe('Sueldos')
+    expect(cuerpo.idProveedor).toBe(1)
+    expect(cuerpo).not.toHaveProperty('idPersonal')
+  })
+
   it('un rechazo del servidor se muestra dentro del modal y no lo cierra', async () => {
     mockearRutas({ personal: empleados, pagina: paginaFixture([sueldo()]) })
     apiPutMock.mockRejectedValueOnce(new ErrorApi(404, 'no_encontrado', 'No existe el personal 13.'))

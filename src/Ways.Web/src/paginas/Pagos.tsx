@@ -268,7 +268,7 @@ export function Pagos() {
     }
   }, [])
 
-  // El personal es de solo lectura y solo lo usa el alta de sueldos: si falla no frena el resto de la pantalla.
+  // El personal es de solo lectura y lo usan el alta de sueldos y la edición de un pago: si falla no frena el resto de la pantalla.
   useEffect(() => {
     let vigente = true
 
