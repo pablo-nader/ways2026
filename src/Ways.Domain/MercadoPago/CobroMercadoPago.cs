@@ -13,7 +13,8 @@ public static class TiposDeCobroMercadoPago
 /// <summary>
 /// Estado de un cobro de Ways frente a Mercado Pago (<c>cobros_mercadopago.estado</c>). Solo <see cref="Creando"/> y
 /// <see cref="Pendiente"/> cambian: <see cref="Aprobado"/> es final en esta etapa y <see cref="Devuelto"/> solo se observa mientras el cobro
-/// estaba pendiente (una devolución posterior a la aprobación es de la conciliación, E6).
+/// estaba pendiente (una devolución posterior a la aprobación es de la conciliación, E6). <see cref="SinVenta"/> es el cobro aprobado
+/// que el cajero apartó porque su venta no se pudo cerrar: ya no ocupa el número y lo resuelve la conciliación.
 /// </summary>
 public static class EstadosDeCobroMercadoPago
 {
@@ -34,6 +35,13 @@ public static class EstadosDeCobroMercadoPago
 
     /// <summary>Mercado Pago informó <c>refunded</c> mientras el cobro seguía pendiente; la devolución de un cobro ya aprobado no se observa acá.</summary>
     public const string Devuelto = "devuelto";
+
+    /// <summary>
+    /// Un cobro aprobado que ninguna venta usó y que el dispositivo apartó (<c>POST …/apartar</c>): el dinero entró, pero esa venta no
+    /// se cerró. No es vivo (libera el número y el medio), no paga ninguna venta (solo <see cref="Aprobado"/> la paga) y queda listado
+    /// para la conciliación (E6). Es final.
+    /// </summary>
+    public const string SinVenta = "sin_venta";
 
     /// <summary>Los estados que ocupan el número de venta: a lo sumo un cobro por número (<c>ux_cobros_mercadopago_vivo_numero</c>).</summary>
     public static bool EsVivo(string estado) => estado is Creando or Pendiente or Aprobado;
@@ -104,6 +112,9 @@ public class CobroMercadoPago : EntidadTenant
     public DateTimeOffset? FechaUltimaConsulta { get; set; }
 
     public DateTimeOffset? FechaAprobacion { get; set; }
+
+    /// <summary>Cuándo el dispositivo apartó el cobro aprobado (<see cref="EstadosDeCobroMercadoPago.SinVenta"/>); nulo en cualquier otro estado.</summary>
+    public DateTimeOffset? FechaApartado { get; set; }
 
     /// <summary>
     /// La primera vez que Mercado Pago informó la orden <c>processed</c> sin un pago con importe e id legibles: el cliente ya pagó, pero

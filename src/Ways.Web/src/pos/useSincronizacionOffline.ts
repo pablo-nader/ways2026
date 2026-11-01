@@ -47,12 +47,15 @@ import {
 } from './outboxOffline'
 import {
   agregarCobroSinVenta,
+  apartadoPendienteDeSincronizar,
   borrarReservaDeCobro,
   conCandadoDeReserva,
+  contarApartadosPendientes,
   esLaMismaReserva,
   guardarReservaDeCobro,
   leerCobrosSinVenta,
   leerReservaDeCobro,
+  marcarCobroSinVentaSincronizado,
   nuevoDuenoDeReserva,
   reservaEsElProximoDelBloque,
   reservaYaSeVendio,
@@ -67,6 +70,7 @@ import { mensajeDeRechazoDeAjusteManualAlDrenar } from '../api/ajusteManual'
 import { clienteDePos } from '../api/pos'
 import { clienteDeFacturacionFiscal } from '../api/facturacionFiscal'
 import { clienteDeVentas } from '../api/ventas'
+import { clienteDeCobrosMercadoPago } from '../api/cobrosMercadoPago'
 import { clienteDeClientes } from '../api/clientes'
 import { consumoCuentaCorriente, superaLimiteDeCredito } from '../api/pagos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -157,7 +161,8 @@ export type ParametrosDeSincronizacionOffline = {
  * `necesitaLote` si alguna de esas respuestas dejó una facturación por procesar (`ventaNecesitaElLote`). */
 type PruebaDeServidor = { respondio: boolean; necesitaLote: boolean }
 
-export type EstadoDeColaLocal = { pendientes: number; conError: number }
+/** `apartadosSinSincronizar`: cobros de Mercado Pago apartados en este dispositivo que el servidor todavía no marcó `sin_venta`. */
+export type EstadoDeColaLocal = { pendientes: number; conError: number; apartadosSinSincronizar: number }
 
 export type ResultadoDeSincronizacionOffline = {
   instantanea: InstantaneaDePos | null
@@ -256,6 +261,12 @@ export type ResultadoDeSincronizacionOffline = {
   apartarCobroSinVenta: (datos: { numero: number; dueno?: string; cobro: Omit<CobroSinVenta, 'apartadoEn'> }) => Promise<boolean>
   /** La lista durable de cobros apartados sin venta. */
   leerCobrosSinVenta: () => Promise<CobroSinVenta[]>
+  /** Cuántos cobros apartados esperan que el servidor los marque `sin_venta` (se apartaron sin conexión o la llamada falló). Mientras
+   * haya alguno no se inician cobros con Mercado Pago ni se cierra el turno. */
+  apartadosSinSincronizar: number
+  /** Reintenta en el servidor el apartado de cada cobro pendiente (también lo hace cada ciclo de sincronización) y devuelve cuántos
+   * siguen pendientes. Una sola corrida a la vez. */
+  sincronizarApartados: () => Promise<number>
   /** La reserva guardada, para retomarla tras una recarga; `null` si no hay o si su venta ya se encoló. `fueraDeBloque` avisa que su
    * número ya no es el próximo del bloque (el bloque cambió): la venta ya no puede llevarlo. */
   leerReservaDeCobro: () => Promise<ReservaLeida | null>
@@ -351,6 +362,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   // refresco condicional y lo que se vuelve a persistir con la hora nueva tras un `304`.
   const instantaneaLocalRef = useRef<InstantaneaLocal | null>(null)
   const [outboxCount, setOutboxCount] = useState(0)
+  const [apartadosSinSincronizar, setApartadosSinSincronizar] = useState(0)
   const [ventasConError, setVentasConError] = useState<VentaRechazada[]>([])
   const [enLinea, setEnLinea] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
   // Los timers y el drenado leen la conexión vigente, no la del render que los creó.
@@ -694,12 +706,14 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
           hasta: reservado.hasta,
           proximo: reservado.desde,
         }
-        // Persistido de inmediato y bajo el candado (serializado con el encolado, que mueve el mismo
-        // bloque): si la app se reinicia antes de usarlo, el rango reservado sobrevive.
-        await encolarOperacion(async () => {
+        // La lectura de la reserva, la decisión y la escritura del bloque van juntas bajo el candado de la reserva (y serializadas con el
+        // encolado, que mueve el mismo bloque): una reserva que apareció durante las llamadas de red no se pisa nunca, porque el número
+        // apartado dejaría de ser el próximo del bloque. Persistido de inmediato: si la app se reinicia antes de usarlo, el rango sobrevive.
+        await encolarOperacion(() => conCandadoDeReserva(async () => {
+          if ((await leerReservaDeCobro(almacenRef.current)) !== null) return
           bloqueRef.current = bloqueNuevo
           await guardarBloque(almacenRef.current, bloqueNuevo)
-        })
+        }))
       } catch {
         // Sin señal, tope vencido o el servidor rechazó — se reintenta en el próximo drenado o
         // ciclo; el bloque en uso sigue disponible tal cual estaba.
@@ -750,6 +764,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         if (conSenal) {
           // Reconexión sin ventas por drenar: el drenado no pudo pedir el lote (seguía sin conexión) y el refresco prueba que la hay.
           if (!estabaEnLinea && !loteYaPedido && montadoRef.current) dispararLoteDeFacturacion(idPv, { servidorAlcanzable: true })
+          await sincronizarApartados()
           await reponerBloque(idPv)
         }
         // Último paso del ciclo: lo que se declara tiene que reflejar el outbox YA drenado y el
@@ -771,16 +786,23 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
   async function leerEstadoDeColaLocal(): Promise<EstadoDeColaLocal> {
     return encolarOperacion(async () => {
-      const [outbox, rechazadas] = await Promise.all([leerOutbox(almacenRef.current), leerRechazadas(almacenRef.current)])
+      const [outbox, rechazadas, apartados] = await Promise.all([
+        leerOutbox(almacenRef.current),
+        leerRechazadas(almacenRef.current),
+        leerCobrosSinVenta(almacenRef.current),
+      ])
+      const sinSincronizar = contarApartadosPendientes(apartados)
       setOutboxCount(outbox.length)
       setVentasConError(rechazadas)
-      return { pendientes: outbox.length, conError: rechazadas.length }
+      setApartadosSinSincronizar(sinSincronizar)
+      return { pendientes: outbox.length, conError: rechazadas.length, apartadosSinSincronizar: sinSincronizar }
     })
   }
 
   async function drenarAhora(): Promise<EstadoDeColaLocal> {
     if (!activo || idPuntoVenta === null) return leerEstadoDeColaLocal()
     await drenarOutbox(false)
+    await sincronizarApartados()
     const despuesDelDrenado = await leerEstadoDeColaLocal()
     // Recién drenado es cuando el outbox está vacío y la reposición puede rotar el bloque sin
     // congelar ventas pendientes en el que abandona (ver `reponerBloque`).
@@ -823,7 +845,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       leerOutbox(almacenRef.current),
       leerBloque(almacenRef.current),
       leerRechazadas(almacenRef.current),
-    ]).then(([instantaneaGuardada, outboxGuardado, bloqueGuardado, rechazadasGuardadas]) => {
+      leerCobrosSinVenta(almacenRef.current),
+    ]).then(([instantaneaGuardada, outboxGuardado, bloqueGuardado, rechazadasGuardadas, apartadosGuardados]) => {
       if (!vigente) return
       // Si el ciclo de arranque ya trajo una instantánea fresca, la persistida (más vieja) no la
       // pisa.
@@ -834,6 +857,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       }
       if (instantaneaGuardada?.instantanea.idPuntoVenta === idPuntoVenta) liberarArranqueConCopiaLocalRef.current?.()
       setOutboxCount(outboxGuardado.length)
+      actualizarApartadosSinSincronizar(contarApartadosPendientes(apartadosGuardados))
       bloqueRef.current = bloqueRef.current ?? (bloqueGuardado?.idPuntoVenta === idPuntoVenta ? bloqueGuardado : null)
       setVentasConError(rechazadasGuardadas)
       setCopiaLocalLeida(true)
@@ -1135,13 +1159,63 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }))
   }
 
+  /** `true` si el servidor dejó el cobro fuera de juego (`sin_venta`, o ya no vivo) o respondió algo definitivo (404 de otro punto de
+   * venta, o una venta que ya lo usó): no hay nada más que sincronizar. Cualquier otro fallo (sin red, 5xx, 409 transitorio) es `false`. */
+  async function confirmarApartadoEnElServidor(idCobro: number): Promise<boolean> {
+    try {
+      const respuesta = await conTiempoLimite(() => clienteDeCobrosMercadoPago.apartar(idCobro))
+      return respuesta.estado !== 'aprobado' && respuesta.estado !== 'pendiente' && respuesta.estado !== 'creando'
+    } catch (e) {
+      return e instanceof ErrorApi && (e.estado === 404 || e.codigo === 'cobro_mercadopago_ya_usado')
+    }
+  }
+
+  const apartadosEnCursoRef = useRef<Promise<number> | null>(null)
+  const apartadosSinSincronizarRef = useRef(0)
+  function actualizarApartadosSinSincronizar(cantidad: number) {
+    apartadosSinSincronizarRef.current = cantidad
+    if (montadoRef.current) setApartadosSinSincronizar(cantidad)
+  }
+
+  /** Reintenta el apartado en el servidor de cada cobro de la lista que todavía no está sincronizado y devuelve cuántos siguen pendientes
+   * (el último valor conocido si el almacén no se pudo leer). Una sola corrida a la vez. Sin conexión no llama al servidor. */
+  function sincronizarApartados(): Promise<number> {
+    if (apartadosEnCursoRef.current) return apartadosEnCursoRef.current
+    const corrida = (async () => {
+      try {
+        const lista = await leerCobrosSinVenta(almacenRef.current)
+        for (const cobro of lista.filter(apartadoPendienteDeSincronizar)) {
+          if (!montadoRef.current || !enLineaRef.current) break
+          if (!(await confirmarApartadoEnElServidor(cobro.idCobro))) continue
+          await encolarOperacion(() =>
+            conCandadoDeReserva(() => marcarCobroSinVentaSincronizado(almacenRef.current, cobro.idCobro, new Date().toISOString())),
+          )
+        }
+        actualizarApartadosSinSincronizar(contarApartadosPendientes(await leerCobrosSinVenta(almacenRef.current)))
+      } catch {
+        // El almacén no se pudo leer o escribir: queda lo que se sabía y se reintenta en el próximo ciclo.
+      } finally {
+        apartadosEnCursoRef.current = null
+      }
+      return apartadosSinSincronizarRef.current
+    })()
+    apartadosEnCursoRef.current = corrida
+    return corrida
+  }
+
+  /** Aparta el cobro: primero le avisa al servidor (sin red o con un fallo transitorio queda pendiente de sincronizar y se reintenta), y
+   * recién después lo anota en la lista durable y suelta la reserva (el número nunca se consumió: no hay hueco). */
   async function apartarCobroSinVenta(datos: { numero: number; dueno?: string; cobro: Omit<CobroSinVenta, 'apartadoEn'> }): Promise<boolean> {
+    const confirmado = enLineaRef.current && (await confirmarApartadoEnElServidor(datos.cobro.idCobro))
     return encolarOperacion(() => conCandadoDeReserva(async () => {
       try {
         const reserva = await leerReservaDeCobro(almacenRef.current)
         // Una reserva de otro cobro (u otra pestaña) no se toca: el cobro apartado ya no es el que la tenía.
         if (reserva !== null && (!esLaMismaReserva(reserva, datos.numero, duenoDe(datos.numero, datos.dueno)) || reserva.idCobro !== datos.cobro.idCobro)) return false
-        if (!(await agregarCobroSinVenta(almacenRef.current, { ...datos.cobro, apartadoEn: new Date().toISOString() }))) return false
+        const ahora = new Date().toISOString()
+        if (!(await agregarCobroSinVenta(almacenRef.current, { ...datos.cobro, apartadoEn: ahora }))) return false
+        if (confirmado) await marcarCobroSinVentaSincronizado(almacenRef.current, datos.cobro.idCobro, ahora)
+        actualizarApartadosSinSincronizar(contarApartadosPendientes(await leerCobrosSinVenta(almacenRef.current)))
         if (reserva === null) return true
         const borrada = await borrarReservaDeCobro(almacenRef.current)
         if (borrada) duenosPropiosRef.current.delete(datos.numero)
@@ -1255,6 +1329,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     consumirReservaDeCobro,
     apartarCobroSinVenta,
     leerCobrosSinVenta: () => leerCobrosSinVenta(almacenRef.current),
+    apartadosSinSincronizar,
+    sincronizarApartados,
     leerReservaDeCobro: leerReservaVigenteDeCobro,
     esperarRespuesta,
     consumoPendienteDeCuentaCorriente,

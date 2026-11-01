@@ -96,6 +96,7 @@ describe('ModalDeCobroMercadoPago', () => {
     ['expirado', /venció sin pagarse/],
     ['cancelado', /se canceló/],
     ['devuelto', /devolvió el cobro/],
+    ['sin_venta', /se apartó sin venta/],
   ] as const)('un cobro %s se resuelve sin aprobar', async (estado, texto) => {
     const consultar = vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro({ estado, qrData: null }))
     const { onResuelto } = montar({ consultar })

@@ -46,8 +46,20 @@ public class ReglaDeCobroEnVentaTests
     [InlineData(EstadosDeCobroMercadoPago.Cancelado)]
     [InlineData(EstadosDeCobroMercadoPago.Expirado)]
     [InlineData(EstadosDeCobroMercadoPago.Devuelto)]
+    [InlineData(EstadosDeCobroMercadoPago.SinVenta)]
     public void UnCobroQueNoEstaAprobadoNoSirve(string estado) =>
         AssertError(() => Exigir(Cobro(estado: estado)), CodigosDePagoConMercadoPago.NoAprobado, 409);
+
+    [Theory]
+    [InlineData(EstadosDeCobroMercadoPago.Creando, true)]
+    [InlineData(EstadosDeCobroMercadoPago.Pendiente, true)]
+    [InlineData(EstadosDeCobroMercadoPago.Aprobado, true)]
+    [InlineData(EstadosDeCobroMercadoPago.Cancelado, false)]
+    [InlineData(EstadosDeCobroMercadoPago.Expirado, false)]
+    [InlineData(EstadosDeCobroMercadoPago.Devuelto, false)]
+    [InlineData(EstadosDeCobroMercadoPago.SinVenta, false)]
+    public void SoloLosEstadosVivosOcupanElNumero(string estado, bool vivo) =>
+        Assert.Equal(vivo, EstadosDeCobroMercadoPago.EsVivo(estado));
 
     [Fact]
     public void UnCobroYaLigadoAUnaVentaNoSirve() =>

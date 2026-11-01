@@ -11,7 +11,7 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 /// <summary>
 /// Mapea <see cref="CobroMercadoPago"/>: cada orden que el POS pidió a Mercado Pago para cobrar un número de venta. A lo sumo un
 /// cobro vivo (creando, pendiente o aprobado) por punto de venta y número (<c>ux_cobros_mercadopago_vivo_numero</c>); los cancelados,
-/// vencidos y devueltos quedan como historia y el siguiente intento suma uno a <c>intento</c>.
+/// vencidos, devueltos y apartados (sin venta) quedan como historia y el siguiente intento suma uno a <c>intento</c>.
 /// </summary>
 public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMercadoPago>
 {
@@ -21,7 +21,8 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
         {
             t.HasCheckConstraint("ck_cobros_mercadopago_tipo", "tipo IN ('qr', 'point')");
             t.HasCheckConstraint(
-                "ck_cobros_mercadopago_estado", "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto')");
+                "ck_cobros_mercadopago_estado",
+                "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto', 'sin_venta')");
             t.HasCheckConstraint("ck_cobros_mercadopago_importe", "importe > 0");
             t.HasCheckConstraint("ck_cobros_mercadopago_importe_pagado", "importe_pagado IS NULL OR importe_pagado >= 0");
             t.HasCheckConstraint("ck_cobros_mercadopago_intento", "intento >= 1");
@@ -32,6 +33,9 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
                 "ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
             t.HasCheckConstraint(
                 "ck_cobros_mercadopago_aprobado_con_pago", "estado <> 'aprobado' OR id_pago_mercadopago IS NOT NULL");
+            t.HasCheckConstraint(
+                "ck_cobros_mercadopago_sin_venta",
+                "estado <> 'sin_venta' OR (fecha_apartado IS NOT NULL AND id_comprobante_venta IS NULL AND id_pago_mercadopago IS NOT NULL)");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_cobros_mercadopago");
@@ -61,6 +65,7 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
         builder.Property(c => c.ExpiraEn).HasColumnName("expira_en").IsRequired();
         builder.Property(c => c.FechaUltimaConsulta).HasColumnName("fecha_ultima_consulta");
         builder.Property(c => c.FechaAprobacion).HasColumnName("fecha_aprobacion");
+        builder.Property(c => c.FechaApartado).HasColumnName("fecha_apartado");
         builder.Property(c => c.FechaProcesadaMercadoPago).HasColumnName("fecha_procesada_mercadopago");
 
         builder.Property(c => c.IdComprobanteVenta).HasColumnName("id_comprobante_venta");

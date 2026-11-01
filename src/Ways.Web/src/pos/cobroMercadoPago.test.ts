@@ -77,7 +77,7 @@ describe('vistaDelCobro', () => {
     expect(vistaDelCobro(cobro({ estado: 'aprobado', importePagado: 1500, importeDistinto: true })).tipo).toBe('importe_distinto')
   })
 
-  it.each(['cancelado', 'expirado', 'devuelto'] as const)('un cobro %s vuelve al pago', (estado) => {
+  it.each(['cancelado', 'expirado', 'devuelto', 'sin_venta'] as const)('un cobro %s vuelve al pago', (estado) => {
     expect(vistaDelCobro(cobro({ estado, qrData: null }))).toEqual({ tipo: 'sin_aprobar', estado })
   })
 

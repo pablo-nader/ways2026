@@ -19,7 +19,7 @@ import type { CobroSinVenta, ReservaDeCobro, ReservaLeida } from './reservaDeCob
 
 export type ReservaDeCobroEnPos = Pick<
   ResultadoDeSincronizacionOffline,
-  'reservarNumeroParaCobro' | 'anotarCobroEnCurso' | 'soltarReservaDeCobro' | 'consumirReservaDeCobro' | 'leerReservaDeCobro'
+  'reservarNumeroParaCobro' | 'anotarCobroEnCurso' | 'soltarReservaDeCobro' | 'consumirReservaDeCobro' | 'leerReservaDeCobro' | 'sincronizarApartados'
 >
 
 export type DependenciasDeCobroMercadoPago = {
@@ -96,6 +96,9 @@ const MENSAJE_POR_MOTIVO_DE_RESERVA = {
   error_al_guardar: 'No se pudo reservar el número de la venta en este dispositivo. Probá de nuevo.',
   cobro_en_curso: 'Hay un cobro de Mercado Pago sin cerrar en este dispositivo. Resolvelo antes de iniciar otro.',
 } as const
+
+export const MENSAJE_CON_APARTADOS_SIN_SINCRONIZAR =
+  'Hay cobros de Mercado Pago apartados que todavía no se avisaron al servidor. Se reintenta solo cuando hay conexión: hasta entonces no se pueden iniciar cobros con Mercado Pago.'
 
 const detenido = (mensaje: string, apartable?: CobroAAPartar): ResultadoDeCobroEnPos => ({
   tipo: 'detenido',
@@ -236,6 +239,9 @@ export async function cobrarConMercadoPago(
   if (!deps.enLinea) return detenido(MENSAJE_SIN_CONEXION_PARA_COBRAR)
   const clientes = deps.clienteDeCobros ?? clienteDeCobrosMercadoPago
   const { reserva } = deps
+
+  // Un cobro apartado que el servidor todavía tiene aprobado seguiría ocupando su número: primero se sincroniza y, si no se puede, no se cobra.
+  if ((await reserva.sincronizarApartados()) > 0) return detenido(MENSAJE_CON_APARTADOS_SIN_SINCRONIZAR)
 
   const previa = await reserva.leerReservaDeCobro()
   if (previa !== null && previa.idCobro !== undefined) {
