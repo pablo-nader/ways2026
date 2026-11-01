@@ -988,8 +988,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
     /// <summary>
     /// stage-6-turnos-caja (Slice 1, design: Table Shapes — write path B): <see cref="MovimientoCaja"/>
-    /// es un ledger append-only, no hereda <see cref="EntidadTenant"/> (ver el comentario de la
-    /// clase) — necesita la variante escrita a mano, mismo criterio que
+    /// no hereda <see cref="EntidadTenant"/> (ver el comentario de la clase) — necesita la variante
+    /// escrita a mano, mismo criterio que
     /// <see cref="AplicarFiltroDeTenantEnMovimientoStock"/>.
     /// </summary>
     private void AplicarFiltroDeTenantEnMovimientoCaja(ModelBuilder modelBuilder)
@@ -1001,6 +1001,17 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);
+
+        // No hereda de EntidadBase, así que AplicarFiltroDeBajaLogica no lo alcanza: un retiro dado de baja deja de contar
+        // para el arqueo, el resumen, el detalle del turno y el libro de tesorería.
+        var parametroDeBaja = Expression.Parameter(typeof(MovimientoCaja), "e");
+        entidad.SetQueryFilter(
+            "BajaLogica",
+            Expression.Lambda(
+                Expression.Equal(
+                    Expression.Property(parametroDeBaja, nameof(MovimientoCaja.DeletedAt)),
+                    Expression.Constant(null, typeof(DateTimeOffset?))),
+                parametroDeBaja));
     }
 
     /// <summary>

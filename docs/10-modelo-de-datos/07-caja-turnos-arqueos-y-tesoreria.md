@@ -48,7 +48,9 @@ movimientos_caja (            -- [operativa]  — plata física fuera de la vent
     id_movimiento_caja, id_turno_caja,
     tipo tipo_movimiento_caja,               -- enum: retiro | refuerzo | apertura_cajon
     importe numeric(14,2),                   -- 0 en apertura_cajon (el F12 del legacy, auditado)
-    motivo text, id_empleado, creado_el
+    motivo text, id_empleado, creado_el,
+    es_retiro_de_cierre boolean DEFAULT false,  -- el retiro que inserta el cierre por retiro
+    deleted_at timestamptz NULL                 -- baja lógica administrativa de un retiro
 );
 
 arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PAGO
@@ -59,6 +61,17 @@ arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PA
     importe_esperado_original numeric(14,2) NULL  -- esperado del cierre, si un recálculo lo cambió
 );
 ```
+
+> **Corrección administrativa de retiros.** Los refuerzos y las aperturas de cajón son
+> append-only; un retiro manual lo puede corregir un Admin (`PUT`/`DELETE /api/caja/retiros/{id}`)
+> con el turno abierto o cerrado, mientras el cierre del turno no esté conciliado. La edición
+> actualiza `importe` y `motivo` en el lugar (la auditoría `retiro.edicion` lleva los valores
+> anteriores) y la baja es lógica (`deleted_at`, auditada como `retiro.baja`): todo lector de
+> `movimientos_caja` excluye las bajas por el filtro de EF. El retiro del cierre por retiro
+> (`es_retiro_de_cierre`) no se corrige. Con el turno cerrado se recalcula el arqueo como abajo y
+> la cadena de `movimientos_tesoreria` recibe un `ajuste` por la diferencia, porque el cierre
+> acreditó la suma de los retiros. Backfill (migración `EdicionDeRetiros`): se marcan los retiros
+> con el motivo fijo del cierre y `creado_el` igual a la `fecha_cierre` del turno.
 
 > **Recálculo administrativo del arqueo (DB CHANGE GATE aprobado).** Un admin puede editar o dar
 > de baja un pago de caja de un turno ya cerrado. En la misma transacción se recalcula

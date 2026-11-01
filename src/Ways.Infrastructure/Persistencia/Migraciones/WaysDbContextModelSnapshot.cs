@@ -848,6 +848,16 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("creado_el");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<bool>("EsRetiroDeCierre")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("es_retiro_de_cierre");
+
                     b.Property<int>("IdEmpleado")
                         .HasColumnType("integer")
                         .HasColumnName("id_empleado");

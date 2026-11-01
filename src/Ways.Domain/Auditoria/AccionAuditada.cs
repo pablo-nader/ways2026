@@ -193,7 +193,15 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// desde administración. <c>valor_anterior</c> y <c>valor_nuevo</c> llevan los cobros vivos antes y después.</summary>
     public static readonly AccionAuditada VentaCambioDeMedios = new("venta.medios", "comprobante_venta");
 
-    /// <summary>Las 30 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// <summary>Edición administrativa del importe o el motivo de un retiro de caja — <c>Caja/ServicioDeRetiros.cs</c>.
+    /// <c>valor_anterior</c> y <c>valor_nuevo</c> llevan importe y motivo, y el nuevo el turno cuyo arqueo se recalculó.</summary>
+    public static readonly AccionAuditada RetiroEdicion = new("retiro.edicion", "movimiento_caja");
+
+    /// <summary>Baja lógica administrativa de un retiro de caja — <c>Caja/ServicioDeRetiros.cs</c>. Mismos campos que
+    /// <see cref="RetiroEdicion"/>, con <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
+    public static readonly AccionAuditada RetiroBaja = new("retiro.baja", "movimiento_caja");
+
+    /// <summary>Las acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
@@ -239,6 +247,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         PuntoVentaSucursal,
         SucursalFusion,
         SucursalMercadoPago,
-        VentaCambioDeMedios
+        VentaCambioDeMedios,
+        RetiroEdicion,
+        RetiroBaja
     ];
 }
