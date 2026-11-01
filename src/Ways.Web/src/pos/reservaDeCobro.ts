@@ -1,34 +1,36 @@
 /**
- * Número de venta reservado para un cobro con QR de Mercado Pago, persistido en el almacén durable del POS.
+ * Número de venta apartado para un cobro con QR de Mercado Pago, persistido en el almacén durable del POS.
  *
- * El cobro se crea en el servidor con el número que la venta va a llevar (`numeroPreasignado`), así que el número se
- * toma del bloque local ANTES de encolar la venta. Ese número ya salió del bloque (`entregadoHasta` de la rendición lo
- * cuenta como entregado): si se perdiera, el cierre de turno quedaría esperando una venta que nunca llega. Por eso la
- * reserva vive en el almacén y tiene dos estados:
- * - `libre`: el número está tomado pero sin cobro vivo (se reservó, o el cobro se canceló o venció). La próxima venta del
- *   dispositivo lo usa antes de tomar uno nuevo — la misma venta si el cajero reintenta, o la siguiente si se fue.
- * - `en_curso`: hay un cobro creado en el servidor con ese número. Ninguna otra venta lo usa mientras tanto; al recargar,
- *   el POS ofrece retomarlo o cancelarlo.
+ * El cobro se crea en el servidor con el número que la venta va a llevar (`numeroPreasignado`). Apartar el número NO lo saca del
+ * bloque: es el `proximo` del bloque y la reserva solo anota "este número es del cobro X". El bloque avanza recién cuando la venta
+ * se encola con ese número (`encolarVentaOffline`) o se emite online con él (`consumirReservaDeCobro`). Así un cobro cancelado o
+ * vencido no deja un hueco que bloquee el cierre del turno (`entregadoHasta` = `proximo - 1`).
+ *
+ * Mientras la reserva existe ninguna otra venta del dispositivo corre: ninguna puede tomar ese número ni dejarlo atrás.
  */
 import type { AlmacenClaveValor } from './almacenPos'
-import type { VentaEnCola, VentaRechazada } from './outboxOffline'
+import type { BloqueDeNumeracionLocal, VentaEnCola, VentaRechazada } from './outboxOffline'
 
 const CLAVE_RESERVA = 'reservaDeCobroMercadoPago'
 
 export type ReservaDeCobro = {
   idPuntoVenta: number
   numero: number
-  estado: 'libre' | 'en_curso'
-  /** Solo `en_curso`. */
+  estado: 'en_curso'
+  /** Ausente solo entre apartar el número y crear el cobro en el servidor. */
   idCobro?: number
   idMedioPago?: number
   importe?: number
   creadoEn: string
 }
 
+/** La reserva guardada más si su número sigue siendo el próximo del bloque vivo del mismo punto de venta. */
+export type ReservaLeida = ReservaDeCobro & { fueraDeBloque: boolean }
+
 export async function leerReservaDeCobro(almacen: AlmacenClaveValor): Promise<ReservaDeCobro | null> {
   const reserva = await almacen.leer<ReservaDeCobro>(CLAVE_RESERVA)
-  return reserva ?? null
+  // Una reserva de una versión anterior (`libre`) ya no significa nada: su número salió del bloque y no se recupera.
+  return reserva !== null && reserva !== undefined && reserva.estado === 'en_curso' ? reserva : null
 }
 
 /** `true` si la reserva quedó escrita y releída tal cual: una reserva que no se pudo confirmar no se da por tomada. */
@@ -50,7 +52,7 @@ export function reservaYaSeVendio(reserva: ReservaDeCobro, outbox: readonly Vent
   return outbox.some(coincide) || rechazadas.some(coincide)
 }
 
-/** La reserva que una venta del punto de venta puede consumir sin tomar un número nuevo: solo una `libre`. */
-export function reservaLibreDelPuntoDeVenta(reserva: ReservaDeCobro | null, idPuntoVenta: number): ReservaDeCobro | null {
-  return reserva !== null && reserva.estado === 'libre' && reserva.idPuntoVenta === idPuntoVenta ? reserva : null
+/** `true` si el número de la reserva es el próximo del bloque vivo de su punto de venta: la única forma en que la venta puede llevarlo. */
+export function reservaEsElProximoDelBloque(reserva: ReservaDeCobro, bloque: BloqueDeNumeracionLocal | null): boolean {
+  return bloque !== null && bloque.idPuntoVenta === reserva.idPuntoVenta && bloque.proximo === reserva.numero && reserva.numero <= bloque.hasta
 }

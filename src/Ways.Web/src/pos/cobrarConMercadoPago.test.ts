@@ -3,7 +3,7 @@ import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { clienteDeCobrosMercadoPago, CobroMercadoPago } from '../api/cobrosMercadoPago'
 import { cobrarConMercadoPago, resolverResultadoDelCobro, type ReservaDeCobroEnPos } from './cobrarConMercadoPago'
 import type { ResultadoDelCobro } from './ModalDeCobroMercadoPago'
-import type { ReservaDeCobro } from './reservaDeCobro'
+import type { ReservaLeida } from './reservaDeCobro'
 
 function cobro(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
   return {
@@ -16,6 +16,7 @@ function cobro(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
     importeDistinto: false,
     verificandoPago: false,
     pagoInformadoSinDatos: false,
+    usadoEnVenta: false,
     ...sobrescribir,
   }
 }
@@ -24,26 +25,32 @@ const aprobado = cobro({ estado: 'aprobado', qrData: null, importePagado: 1500 }
 
 type Crear = Mock<typeof clienteDeCobrosMercadoPago.crear>
 type Consultar = Mock<typeof clienteDeCobrosMercadoPago.consultar>
+type Cancelar = Mock<typeof clienteDeCobrosMercadoPago.cancelar>
 
-function armar(opciones: { previa?: ReservaDeCobro | null; resultado?: ResultadoDelCobro; consultar?: Consultar; crear?: Crear } = {}) {
+function armar(
+  opciones: { previa?: ReservaLeida | null; resultado?: ResultadoDelCobro; consultar?: Consultar; crear?: Crear; cancelar?: Cancelar; confirmar?: boolean } = {},
+) {
   const reserva = {
-    reservarNumeroParaCobro: vi.fn().mockResolvedValue({ ok: true, numero: 500, reutilizado: false }),
+    reservarNumeroParaCobro: vi.fn().mockResolvedValue({ ok: true, numero: 500 }),
     anotarCobroEnCurso: vi.fn().mockResolvedValue(true),
     soltarReservaDeCobro: vi.fn().mockResolvedValue(true),
+    consumirReservaDeCobro: vi.fn().mockResolvedValue(true),
     leerReservaDeCobro: vi.fn().mockResolvedValue(opciones.previa ?? null),
   } satisfies ReservaDeCobroEnPos
   const clienteDeCobros = {
     crear: opciones.crear ?? vi.fn<typeof clienteDeCobrosMercadoPago.crear>().mockResolvedValue(cobro()),
     consultar: opciones.consultar ?? vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro()),
+    cancelar: opciones.cancelar ?? vi.fn<typeof clienteDeCobrosMercadoPago.cancelar>().mockResolvedValue(cobro({ estado: 'cancelado', qrData: null })),
   }
   const esperarCobro = vi.fn().mockResolvedValue(opciones.resultado ?? { tipo: 'aprobado', cobro: aprobado })
-  const deps = { enLinea: true, idPuntoVenta: 7, reserva, clienteDeCobros, esperarCobro }
-  return { deps, reserva, clienteDeCobros, esperarCobro }
+  const confirmarReuso = vi.fn().mockResolvedValue(opciones.confirmar ?? true)
+  const deps = { enLinea: true, idPuntoVenta: 7, reserva, clienteDeCobros, esperarCobro, confirmarReuso }
+  return { deps, reserva, clienteDeCobros, esperarCobro, confirmarReuso }
 }
 
 const PAGO = { idMedioPago: 4, importe: 1500 }
 
-const enCurso = (sobrescribir: Partial<ReservaDeCobro> = {}): ReservaDeCobro => ({
+const enCurso = (sobrescribir: Partial<ReservaLeida> = {}): ReservaLeida => ({
   idPuntoVenta: 7,
   numero: 500,
   estado: 'en_curso',
@@ -51,6 +58,7 @@ const enCurso = (sobrescribir: Partial<ReservaDeCobro> = {}): ReservaDeCobro => 
   idMedioPago: 4,
   importe: 1500,
   creadoEn: 'x',
+  fueraDeBloque: false,
   ...sobrescribir,
 })
 
@@ -65,12 +73,12 @@ describe('cobrarConMercadoPago', () => {
     expect(clienteDeCobros.crear).not.toHaveBeenCalled()
   })
 
-  it('reserva el número, crea el cobro con ese número y devuelve aprobado con el MISMO número', async () => {
+  it('aparta el número, crea el cobro con ese número y devuelve aprobado con el MISMO número y lo cobrado', async () => {
     const { deps, reserva, clienteDeCobros, esperarCobro } = armar()
 
     const resultado = await cobrarConMercadoPago(deps, PAGO)
 
-    expect(resultado).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31 })
+    expect(resultado).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31, importe: 1500 })
     expect(reserva.reservarNumeroParaCobro).toHaveBeenCalledWith(7)
     expect(clienteDeCobros.crear).toHaveBeenCalledWith({ idMedioPago: 4, numeroPreasignado: 500, importe: 1500 })
     expect(reserva.anotarCobroEnCurso).toHaveBeenCalledWith({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 1500 })
@@ -80,7 +88,7 @@ describe('cobrarConMercadoPago', () => {
   it('el orden es reservar, crear, anotar, esperar', async () => {
     const orden: string[] = []
     const { deps, reserva, clienteDeCobros, esperarCobro } = armar()
-    reserva.reservarNumeroParaCobro.mockImplementation(async () => (orden.push('reservar'), { ok: true, numero: 500, reutilizado: false }))
+    reserva.reservarNumeroParaCobro.mockImplementation(async () => (orden.push('reservar'), { ok: true, numero: 500 }))
     clienteDeCobros.crear.mockImplementation(async () => (orden.push('crear'), cobro()))
     reserva.anotarCobroEnCurso.mockImplementation(async () => (orden.push('anotar'), true))
     esperarCobro.mockImplementation(async () => (orden.push('esperar'), { tipo: 'aprobado', cobro: aprobado }))
@@ -104,13 +112,14 @@ describe('cobrarConMercadoPago', () => {
     expect(clienteDeCobros.crear).not.toHaveBeenCalled()
   })
 
-  it('si el servidor rechaza crear el cobro, el número queda libre (no se anota) y se muestra el motivo', async () => {
+  it('si el servidor rechaza crear el cobro, la reserva se suelta (no se anota) y se muestra el motivo', async () => {
     const crear = vi.fn<typeof clienteDeCobrosMercadoPago.crear>().mockRejectedValue(new ErrorApi(409, 'mercadopago_caja_no_registrada', 'x'))
     const { deps, reserva, esperarCobro } = armar({ crear })
 
     const resultado = await cobrarConMercadoPago(deps, PAGO)
 
     expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('caja de Mercado Pago') })
+    expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
     expect(reserva.anotarCobroEnCurso).not.toHaveBeenCalled()
     expect(esperarCobro).not.toHaveBeenCalled()
   })
@@ -125,45 +134,116 @@ describe('cobrarConMercadoPago', () => {
     expect(reserva.anotarCobroEnCurso).not.toHaveBeenCalled()
   })
 
-  it('un cobro vencido deja el número libre y el segundo intento reutiliza el MISMO número', async () => {
+  // F2: sin el registro local no se abre el modal y el cobro recién creado se cancela en el servidor.
+  it.each([
+    ['devuelve false', (r: { anotarCobroEnCurso: Mock }) => r.anotarCobroEnCurso.mockResolvedValue(false)],
+    ['lanza', (r: { anotarCobroEnCurso: Mock }) => r.anotarCobroEnCurso.mockRejectedValue(new Error('disco lleno'))],
+  ])('si anotar el cobro %s, cancela el cobro creado, suelta la reserva y no abre el modal', async (_caso, fallar) => {
+    const { deps, reserva, clienteDeCobros, esperarCobro } = armar()
+    fallar(reserva)
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(clienteDeCobros.cancelar).toHaveBeenCalledWith(31)
+    expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
+    expect(esperarCobro).not.toHaveBeenCalled()
+    expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('se canceló el cobro') })
+  })
+
+  it('si anotar falla y tampoco se puede cancelar, lo dice con el id del cobro y no abre el modal', async () => {
+    const cancelar = vi.fn<typeof clienteDeCobrosMercadoPago.cancelar>().mockRejectedValue(new ErrorDeRed(new TypeError('x')))
+    const { deps, reserva, esperarCobro } = armar({ cancelar })
+    reserva.anotarCobroEnCurso.mockResolvedValue(false)
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('cobro 31') })
+    expect(esperarCobro).not.toHaveBeenCalled()
+  })
+
+  it('si anotar falla y el cobro ya se había aprobado, lo informa para resolverlo a mano', async () => {
+    const cancelar = vi.fn<typeof clienteDeCobrosMercadoPago.cancelar>().mockResolvedValue(aprobado)
+    const { deps, reserva } = armar({ cancelar })
+    reserva.anotarCobroEnCurso.mockResolvedValue(false)
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('ya lo aprobó') })
+  })
+
+  it('un cobro vencido suelta la reserva y el segundo intento aparta el MISMO número (el bloque no avanzó)', async () => {
     const { deps, reserva, clienteDeCobros, esperarCobro } = armar()
     esperarCobro.mockResolvedValueOnce({ tipo: 'sin_aprobar', estado: 'expirado', cobro: cobro({ estado: 'expirado', qrData: null }) })
-    reserva.reservarNumeroParaCobro
-      .mockResolvedValueOnce({ ok: true, numero: 500, reutilizado: false })
-      .mockResolvedValueOnce({ ok: true, numero: 500, reutilizado: true })
 
     const primero = await cobrarConMercadoPago(deps, PAGO)
     const segundo = await cobrarConMercadoPago(deps, PAGO)
 
     expect(primero).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('venció') })
     expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
-    expect(segundo).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31 })
+    expect(segundo).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31, importe: 1500 })
     expect(clienteDeCobros.crear.mock.calls.map(([solicitud]) => solicitud.numeroPreasignado)).toEqual([500, 500])
   })
 
-  it('con un importe distinto no cierra la venta y el cobro sigue vivo (no se suelta el número)', async () => {
+  // F7: el importe distinto no es un callejón sin salida.
+  it('con un importe distinto no cierra la venta, el cobro sigue vivo y dice cómo seguir', async () => {
     const distinto = cobro({ estado: 'aprobado', qrData: null, importePagado: 1400, importeDistinto: true })
     const { deps, reserva } = armar({ resultado: { tipo: 'importe_distinto', cobro: distinto } })
 
     const resultado = await cobrarConMercadoPago(deps, PAGO)
 
     expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringMatching(/aprobó .*1\.400,00 y la venta pide .*1\.500,00/) })
+    expect(resultado).toMatchObject({ mensaje: expect.stringMatching(/ajustá la fila de Mercado Pago a .*1\.400,00.*volvé a cobrar/) })
     expect(reserva.soltarReservaDeCobro).not.toHaveBeenCalled()
   })
 
   describe('con un cobro vivo de antes (recarga o error tras aprobarse)', () => {
-    it('aprobado y con el mismo medio e importe: se usa tal cual, sin crear otro cobro ni reservar otro número', async () => {
-      const { deps, reserva, clienteDeCobros, esperarCobro } = armar({
+    it('aprobado y con el mismo medio e importe: pide confirmación y, si la dan, se usa sin crear otro cobro ni abrir el modal', async () => {
+      const { deps, reserva, clienteDeCobros, esperarCobro, confirmarReuso } = armar({
         previa: enCurso(),
         consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(aprobado),
       })
 
       const resultado = await cobrarConMercadoPago(deps, PAGO)
 
-      expect(resultado).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31 })
+      expect(confirmarReuso).toHaveBeenCalledWith(aprobado, '0007-00000500')
+      expect(resultado).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31, importe: 1500 })
       expect(clienteDeCobros.crear).not.toHaveBeenCalled()
       expect(reserva.reservarNumeroParaCobro).not.toHaveBeenCalled()
-      expect(esperarCobro).toHaveBeenCalledTimes(1)
+      expect(esperarCobro).not.toHaveBeenCalled()
+    })
+
+    it('si el cajero no confirma el reuso, se detiene y el cobro aprobado se conserva', async () => {
+      const { deps, reserva } = armar({
+        previa: enCurso(),
+        consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(aprobado),
+        confirmar: false,
+      })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('No se usó el cobro aprobado') })
+      expect(reserva.soltarReservaDeCobro).not.toHaveBeenCalled()
+      expect(reserva.consumirReservaDeCobro).not.toHaveBeenCalled()
+    })
+
+    it('un aprobado con importe distinto se reutiliza cuando la fila vale lo realmente cobrado', async () => {
+      const distinto = cobro({ estado: 'aprobado', qrData: null, importePagado: 1400, importeDistinto: true })
+      const { deps, confirmarReuso } = armar({ previa: enCurso(), consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(distinto) })
+
+      const resultado = await cobrarConMercadoPago(deps, { idMedioPago: 4, importe: 1400 })
+
+      expect(confirmarReuso).toHaveBeenCalledTimes(1)
+      expect(resultado).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31, importe: 1400 })
+    })
+
+    it('un aprobado con importe distinto y la fila sin ajustar dice qué importe poner y no pide confirmación', async () => {
+      const distinto = cobro({ estado: 'aprobado', qrData: null, importePagado: 1400, importeDistinto: true })
+      const { deps, confirmarReuso } = armar({ previa: enCurso(), consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(distinto) })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringMatching(/ajustá la fila de Mercado Pago a .*1\.400,00/) })
+      expect(confirmarReuso).not.toHaveBeenCalled()
     })
 
     it('pendiente y con el mismo medio e importe: vuelve a mostrar el modal con ese cobro', async () => {
@@ -194,7 +274,7 @@ describe('cobrarConMercadoPago', () => {
       expect(resultado.tipo).toBe('detenido')
     })
 
-    it('cerrado sin pagarse: suelta el número y crea un cobro nuevo con él', async () => {
+    it('cerrado sin pagarse: suelta la reserva y crea un cobro nuevo con el mismo número', async () => {
       const { deps, reserva, clienteDeCobros } = armar({
         previa: enCurso(),
         consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro({ estado: 'expirado', qrData: null })),
@@ -204,7 +284,7 @@ describe('cobrarConMercadoPago', () => {
 
       expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
       expect(clienteDeCobros.crear).toHaveBeenCalledTimes(1)
-      expect(resultado).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31 })
+      expect(resultado).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31, importe: 1500 })
     })
 
     it('si no se puede consultar el cobro vivo, no crea otro encima', async () => {
@@ -216,8 +296,75 @@ describe('cobrarConMercadoPago', () => {
       expect(clienteDeCobros.crear).not.toHaveBeenCalled()
     })
 
-    it('una reserva libre no es un cobro vivo: se crea normalmente', async () => {
-      const { deps, clienteDeCobros } = armar({ previa: { idPuntoVenta: 7, numero: 500, estado: 'libre', creadoEn: 'x' } })
+    // F4: una reserva vieja de un cobro que una venta ya usó se descarta sola y deja el número atrás.
+    it('si el cobro ya lo usó una venta, consume la reserva (el bloque deja atrás el número) y sigue con un cobro nuevo', async () => {
+      const { deps, reserva, clienteDeCobros } = armar({
+        previa: enCurso(),
+        consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro({ estado: 'aprobado', qrData: null, importePagado: 1500, usadoEnVenta: true })),
+      })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(reserva.consumirReservaDeCobro).toHaveBeenCalledWith(500)
+      expect(deps.confirmarReuso).not.toHaveBeenCalled()
+      expect(clienteDeCobros.crear).toHaveBeenCalledTimes(1)
+      expect(resultado).toMatchObject({ tipo: 'aprobado' })
+    })
+
+    // F3: una reserva de otro punto de venta no se reutiliza.
+    it('de otro punto de venta y pendiente: se cancela en el servidor, se suelta y se sigue con uno nuevo del punto de venta actual', async () => {
+      const { deps, reserva, clienteDeCobros, esperarCobro } = armar({ previa: enCurso({ idPuntoVenta: 9 }) })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(clienteDeCobros.cancelar).toHaveBeenCalledWith(31)
+      expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
+      expect(reserva.reservarNumeroParaCobro).toHaveBeenCalledWith(7)
+      expect(esperarCobro).toHaveBeenCalledTimes(1)
+      expect(resultado).toMatchObject({ tipo: 'aprobado' })
+    })
+
+    it('de otro punto de venta y aprobado: se conserva, no se reutiliza ni se pide confirmación y se dice dónde resolverlo', async () => {
+      const { deps, reserva, clienteDeCobros, confirmarReuso } = armar({
+        previa: enCurso({ idPuntoVenta: 9 }),
+        consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(aprobado),
+      })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('otro punto de venta') })
+      expect(confirmarReuso).not.toHaveBeenCalled()
+      expect(clienteDeCobros.cancelar).not.toHaveBeenCalled()
+      expect(reserva.soltarReservaDeCobro).not.toHaveBeenCalled()
+      expect(clienteDeCobros.crear).not.toHaveBeenCalled()
+    })
+
+    // F1: el bloque cambió y el número ya no es el próximo.
+    it('con el número fuera del bloque y pendiente: cancela el cobro y sigue con uno nuevo', async () => {
+      const { deps, reserva, clienteDeCobros } = armar({ previa: enCurso({ fueraDeBloque: true }) })
+
+      await cobrarConMercadoPago(deps, PAGO)
+
+      expect(clienteDeCobros.cancelar).toHaveBeenCalledWith(31)
+      expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
+      expect(clienteDeCobros.crear).toHaveBeenCalledTimes(1)
+    })
+
+    it('con el número fuera del bloque y aprobado: lo muestra como cobro aprobado sin venta con el id del cobro', async () => {
+      const { deps, reserva, confirmarReuso } = armar({
+        previa: enCurso({ fueraDeBloque: true }),
+        consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(aprobado),
+      })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringMatching(/aprobado sin venta.*cobro 31/) })
+      expect(confirmarReuso).not.toHaveBeenCalled()
+      expect(reserva.soltarReservaDeCobro).not.toHaveBeenCalled()
+    })
+
+    it('una reserva sin cobro creado no es un cobro vivo: se crea normalmente', async () => {
+      const { deps, clienteDeCobros } = armar({ previa: enCurso({ idCobro: undefined }) })
 
       await cobrarConMercadoPago(deps, PAGO)
 
@@ -227,7 +374,7 @@ describe('cobrarConMercadoPago', () => {
 })
 
 describe('resolverResultadoDelCobro', () => {
-  it('cancelado también libera el número', async () => {
+  it('cancelado también suelta la reserva', async () => {
     const soltar = vi.fn().mockResolvedValue(true)
 
     const resultado = await resolverResultadoDelCobro(

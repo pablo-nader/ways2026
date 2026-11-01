@@ -18,6 +18,8 @@ export type CobroMercadoPago = {
   importeDistinto: boolean
   verificandoPago: boolean
   pagoInformadoSinDatos: boolean
+  /** Una venta ya quedó ligada al cobro: la reserva local de su número ya no tiene nada que proteger. */
+  usadoEnVenta: boolean
 }
 
 export type SolicitudDeCobroMercadoPago = { idMedioPago: number; numeroPreasignado: number; importe: number }

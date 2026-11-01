@@ -26,6 +26,7 @@ function cobro(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
     importeDistinto: false,
     verificandoPago: false,
     pagoInformadoSinDatos: false,
+    usadoEnVenta: false,
     ...sobrescribir,
   }
 }

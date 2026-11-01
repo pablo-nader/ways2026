@@ -92,6 +92,12 @@ export const TEXTO_POR_CIERRE_SIN_APROBAR: Record<'cancelado' | 'expirado' | 'de
   devuelto: 'Mercado Pago devolvió el cobro. Podés intentarlo de nuevo o cobrar con otro medio.',
 }
 
+/** Qué hacer con un cobro aprobado por un importe distinto del pedido: nunca se cierra solo, pero tampoco queda sin salida. */
 export function mensajeDeImporteDistinto(importe: number, importePagado: number, formatear: (valor: number) => string): string {
-  return `Mercado Pago aprobó ${formatear(importePagado)} y la venta pide ${formatear(importe)}. La venta no se cerró: revisá el cobro con un supervisor antes de seguir.`
+  return `Mercado Pago aprobó ${formatear(importePagado)} y la venta pide ${formatear(importe)}. La venta no se cerró. ${indicacionDeCobroAprobado(importePagado, formatear)}`
+}
+
+/** El cobro aprobado se conserva: la fila de Mercado Pago tiene que valer lo que se cobró y se vuelve a cobrar, que lo reutiliza. */
+export function indicacionDeCobroAprobado(importePagado: number, formatear: (valor: number) => string): string {
+  return `El cobro aprobado se conserva: ajustá la fila de Mercado Pago a ${formatear(importePagado)} (lo que se cobró) y volvé a cobrar; se usa ese cobro.`
 }

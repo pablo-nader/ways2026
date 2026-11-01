@@ -141,7 +141,13 @@ import {
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, LIMITE_DE_ESPERA_DEL_TURNO_MS } from '../pos/turnoConfirmadoLocal'
-import { construirNumeroVisible, mensajeDeRechazoOffline, rechazoOfflineEsDefinitivo, type MotivoRechazoOffline } from '../pos/outboxOffline'
+import {
+  construirNumeroVisible,
+  MENSAJE_DE_COBRO_EN_CURSO,
+  mensajeDeRechazoOffline,
+  rechazoOfflineEsDefinitivo,
+  type MotivoRechazoOffline,
+} from '../pos/outboxOffline'
 import { clienteAdmitidoOffline, medioAdmitidoOffline } from '../pos/reglasOffline'
 import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
 import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
@@ -150,10 +156,11 @@ import type { EstadoDeAccionesDePos } from '../pos/AccionesDePosContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { clienteDeCobrosMercadoPago, mensajeDeErrorDeCobroMercadoPago } from '../api/cobrosMercadoPago'
-import { MENSAJE_DE_VARIOS_COBROS, planDeCobroMercadoPago } from '../pos/cobroMercadoPago'
+import { indicacionDeCobroAprobado, MENSAJE_DE_VARIOS_COBROS, planDeCobroMercadoPago } from '../pos/cobroMercadoPago'
 import { cobrarConMercadoPago, resolverResultadoDelCobro } from '../pos/cobrarConMercadoPago'
 import type { ReservaDeCobro } from '../pos/reservaDeCobro'
 import { useModalDeCobroMercadoPago } from '../pos/useModalDeCobroMercadoPago'
+import { useConfirmacionDeReusoDeCobro } from '../pos/useConfirmacionDeReusoDeCobro'
 import { conFiscalSoloSiSeguroSeFactura, ESPERA_DE_LA_FACTURA_MS, ventaSeguroSeFactura } from '../pos/facturacionAlCobrar'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { pluralizar } from '../formato/pluralizar'
@@ -1132,9 +1139,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         }
       : undefined,
   )
+  const confirmacionDeReuso = useConfirmacionDeReusoDeCobro()
   // Un cobro de Mercado Pago que quedó vivo al recargar la pantalla: se ofrece retomarlo o cancelarlo.
   const [cobroDeRecarga, setCobroDeRecarga] = useState<ReservaDeCobro | null>(null)
   const copiaLocalLeida = sincronizacionOffline.copiaLocalLeida
+  const hayCobroEnCursoRef = useRef(false)
   const leerReservaDeCobroRef = useRef(sincronizacionOffline.leerReservaDeCobro)
   useEffect(() => {
     leerReservaDeCobroRef.current = sincronizacionOffline.leerReservaDeCobro
@@ -1145,7 +1154,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     let vigente = true
     void leerReservaDeCobroRef.current()
       .then((reserva) => {
-        if (vigente && reserva !== null && reserva.estado === 'en_curso' && reserva.idCobro !== undefined) setCobroDeRecarga(reserva)
+        if (!vigente) return
+        hayCobroEnCursoRef.current = reserva !== null
+        if (reserva !== null && reserva.estado === 'en_curso' && reserva.idCobro !== undefined) setCobroDeRecarga(reserva)
       })
       .catch(() => undefined)
     return () => {
@@ -3369,6 +3380,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setErrorCobro('')
     const inicioDelCobro = Date.now()
     const forzarFactura = !modoPresupuesto && facturar
+    // Se declara afuera para que el `catch` también sepa que hay un cobro aprobado que se conserva.
+    let cobroDeMercadoPago: { idFila: number; idCobro: number; numero: number; importe: number } | null = null
 
     try {
       // stage-17-presupuestos-y-remitos (Slice 7, design: Web composition — "post {
@@ -3379,7 +3392,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // Cobro con QR de Mercado Pago: se resuelve ANTES de armar la venta. La pantalla sigue inerte (`cobrando`) mientras el
       // modal espera, y la venta se encola recién con el cobro aprobado y el número que ya se reservó para él.
       const planDeMercadoPago = planDeCobroMercadoPago(pagosConVuelto, medioPorId)
-      let cobroDeMercadoPago: { idFila: number; idCobro: number; numero: number } | null = null
+      if (planDeMercadoPago.tipo === 'ninguno' && !modoPresupuesto) {
+        // Con un cobro de Mercado Pago apartado ninguna otra venta corre. La lectura es síncrona (un ref que se refresca al terminar
+        // cada cobro y al leer el almacén): el POST de una venta común no espera a ninguna lectura. La venta local lo vuelve a verificar
+        // contra el almacén (`cobro_en_curso`).
+        if (hayCobroEnCursoRef.current) {
+          setErrorCobro(MENSAJE_DE_COBRO_EN_CURSO)
+          return
+        }
+      }
       if (planDeMercadoPago.tipo === 'varios') {
         setErrorCobro(MENSAJE_DE_VARIOS_COBROS)
         return
@@ -3393,8 +3414,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           {
             enLinea: sincronizacionOffline.enLinea,
             idPuntoVenta: puntoVentaSeleccionada.id,
-            reserva: sincronizacionOffline,
+            reserva: reservaConAviso,
             esperarCobro: modalDeCobroMercadoPago.esperarCobro,
+            confirmarReuso: confirmacionDeReuso.confirmar,
           },
           { idMedioPago: planDeMercadoPago.pago.idMedioPago, importe: planDeMercadoPago.pago.importe },
         )
@@ -3403,7 +3425,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           setErrorCobro(resultadoDelCobro.mensaje)
           return
         }
-        cobroDeMercadoPago = { idFila: planDeMercadoPago.pago.idFila, idCobro: resultadoDelCobro.idCobro, numero: resultadoDelCobro.numero }
+        cobroDeMercadoPago = {
+          idFila: planDeMercadoPago.pago.idFila,
+          idCobro: resultadoDelCobro.idCobro,
+          numero: resultadoDelCobro.numero,
+          importe: resultadoDelCobro.importe,
+        }
       }
       const pagosDeLaVenta = aPagosDeVenta(pagosConVuelto).map((pago, indice) =>
         cobroDeMercadoPago !== null && pagosConVuelto[indice].idFila === cobroDeMercadoPago.idFila
@@ -3491,6 +3518,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         return { tipo: 'encolada', idLocal: resultado.idLocal, comprobante, avisoLimiteDeCredito }
       }
 
+      /** Un cobro aprobado nunca se pierde por una venta que no se cerró: se le dice al cajero cómo seguir. */
+      const conGuiaDeCobroAprobado = (mensaje: string) =>
+        cobroDeMercadoPago === null
+          ? mensaje
+          : `${mensaje} ${indicacionDeCobroAprobado(cobroDeMercadoPago.importe, (valor) => formatearMoneda(valor))}`
+
       /** Comprobante a mostrar (del servidor o sintético) o `null` si ya se informó por qué no
        * hay venta (o la respuesta quedó vieja). */
       const emitirOEncolar = async (): Promise<{
@@ -3502,7 +3535,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // plano — el cajero nunca lo espera.
         const resolverEncolado = async (local: Awaited<ReturnType<typeof encolarLocal>>) => {
           if (local.tipo === 'rechazada') {
-            setErrorCobro(mensajeDeRechazoOffline(local.motivo))
+            setErrorCobro(conGuiaDeCobroAprobado(mensajeDeRechazoOffline(local.motivo)))
             return null
           }
           void sincronizacionOffline.drenarAhora().catch(() => undefined)
@@ -3549,7 +3582,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         if (instantaneaDeLaPrevia !== null) {
           const local = await encolarLocal(instantaneaDeLaPrevia)
           if (generacionCobroRef.current !== miGeneracion) return null
-          if (local.tipo !== 'rechazada' || rechazoOfflineEsDefinitivo(local.motivo)) return await resolverEncolado(local)
+          // Sin conexión la copia local vieja (sin `proveedor`) no deja vender con medios electrónicos y el camino online tampoco existe.
+          const sinSalidaOnline = local.tipo === 'rechazada' && local.motivo === 'instantanea_sin_integracion' && !sincronizacionOffline.enLinea
+          if (local.tipo !== 'rechazada' || rechazoOfflineEsDefinitivo(local.motivo) || sinSalidaOnline) return await resolverEncolado(local)
         }
 
         try {
@@ -3557,7 +3592,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           const emitidoOnline = await clienteDeVentas.emitir(
             cobroDeMercadoPago !== null ? { ...solicitud, numeroPreasignado: cobroDeMercadoPago.numero } : solicitud,
           )
-          if (cobroDeMercadoPago !== null) void sincronizacionOffline.consumirReservaDeCobro(cobroDeMercadoPago.numero).catch(() => undefined)
+          // El bloque tiene que dejar atrás el número del cobro antes de seguir: una baja que se pierde dejaría a otra venta tomarlo.
+          if (cobroDeMercadoPago !== null) await sincronizacionOffline.consumirReservaDeCobro(cobroDeMercadoPago.numero).catch(() => false)
           // Esta venta no pasó por el outbox, así que ninguna pasada de drenado va a pedir su facturación; solo se pide si la respuesta la dejó pendiente.
           sincronizacionOffline.procesarFacturaciones(emitidoOnline.fiscal)
           return { emitido: conFiscalSoloSiSeguroSeFactura(emitidoOnline, seguroSeFactura), pendienteDeSincronizar: false, avisoLimiteDeCredito: null }
@@ -3662,18 +3698,48 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         aplicarTurnoConfirmado(null)
         setGateTurno(true)
       } else {
-        setErrorCobro(
+        const mensaje =
           copiaDeArticuloNoVendible(e) ??
-            (e instanceof ErrorApi
-              ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? mensajeDeRechazoDeEnvio(e.codigo) ?? e.message)
-              : 'No se pudo registrar la venta.'),
+          (e instanceof ErrorApi
+            ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? mensajeDeRechazoDeEnvio(e.codigo) ?? e.message)
+            : 'No se pudo registrar la venta.')
+        setErrorCobro(
+          cobroDeMercadoPago === null ? mensaje : `${mensaje} ${indicacionDeCobroAprobado(cobroDeMercadoPago.importe, (valor) => formatearMoneda(valor))}`,
         )
       }
     } finally {
       if (generacionCobroRef.current === miGeneracion) {
         cobrandoRef.current = false
         setCobrando(false)
+        void sincronizarConLaReservaDeCobro()
       }
+    }
+  }
+
+  /** La reserva del hook, avisando a la pantalla cada vez que la suelta o la consume para que el aviso de "retomar" no sobreviva. */
+  const reservaConAviso = {
+    ...sincronizacionOffline,
+    soltarReservaDeCobro: async (numero: number) => {
+      const soltada = await sincronizacionOffline.soltarReservaDeCobro(numero)
+      void sincronizarConLaReservaDeCobro()
+      return soltada
+    },
+    consumirReservaDeCobro: async (numero: number) => {
+      const consumida = await sincronizacionOffline.consumirReservaDeCobro(numero)
+      void sincronizarConLaReservaDeCobro()
+      return consumida
+    },
+  }
+
+  /** Relee la reserva del almacén: el bloqueo de otras ventas y el aviso de "cobro retomable" solo valen mientras su reserva siga
+   * viva. Si la venta la consumió, se canceló o se resolvió por cualquier camino (incluido `cobrar()`), el aviso desaparece. */
+  async function sincronizarConLaReservaDeCobro() {
+    try {
+      const vigente = await sincronizacionOffline.leerReservaDeCobro()
+      hayCobroEnCursoRef.current = vigente !== null
+      setCobroDeRecarga((aviso) => (aviso !== null && (vigente === null || vigente.numero !== aviso.numero) ? null : aviso))
+    } catch {
+      // Sin poder leer el almacén todo se queda como estaba: afirmar que el cobro se resolvió sin verificarlo sería peor.
     }
   }
 
@@ -3724,7 +3790,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setCobroDeRecarga(null)
       setErrorCobro(
         final.tipo === 'aprobado'
-          ? `El cobro de Mercado Pago de ${formatearMoneda(reserva.importe ?? 0)} quedó aprobado. Cargá la venta y cobrala con Mercado Pago por ese importe: se usa este cobro.`
+          ? `El cobro de Mercado Pago de ${formatearMoneda(final.importe)} quedó aprobado. Cargá la venta y cobrala con Mercado Pago por ese importe: se usa este cobro.`
           : final.mensaje,
       )
     } catch (e) {
@@ -3733,6 +3799,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       if (generacionCobroRef.current === miGeneracion) {
         cobrandoRef.current = false
         setCobrando(false)
+        void sincronizarConLaReservaDeCobro()
       }
     }
   }
@@ -4667,6 +4734,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           `true` a la vez — sin este conjunct, ambos modales se dibujaban superpuestos en ese
           instante. */}
       {modalDeCobroMercadoPago.modal}
+      {confirmacionDeReuso.modal}
 
       {confirmandoCobro && !ventaFinalizada && (
         <ConfirmacionDeCobro

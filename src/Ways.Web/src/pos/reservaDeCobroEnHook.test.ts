@@ -1,5 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { clienteDePos } from '../api/pos'
+import { clienteDeVentas } from '../api/ventas'
 import { useSincronizacionOffline } from './useSincronizacionOffline'
 import { agregarAOutbox, guardarBloque, leerBloque, leerOutbox, type BloqueDeNumeracionLocal } from './outboxOffline'
 import { guardarInstantaneaLocal } from './instantaneaOffline'
@@ -111,8 +113,10 @@ beforeEach(() => {
   reiniciarLotesDeFacturacionParaTests()
 })
 
-describe('reservarNumeroParaCobro', () => {
-  it('toma el próximo número del bloque, avanza el puntero y deja la reserva libre en el almacén', async () => {
+const reservaEnCurso = { idPuntoVenta: 7, numero: 500, estado: 'en_curso' as const, idCobro: 31, idMedioPago: 4, importe: 100, creadoEn: 'x' }
+
+describe('reservarNumeroParaCobro (aparta el próximo número SIN consumirlo)', () => {
+  it('aparta el próximo del bloque, deja el puntero donde estaba y guarda la reserva', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
 
@@ -121,12 +125,12 @@ describe('reservarNumeroParaCobro', () => {
       reserva = await result.current.reservarNumeroParaCobro(7)
     })
 
-    expect(reserva).toEqual({ ok: true, numero: 500, reutilizado: false })
-    expect((await leerBloque(almacen))?.proximo).toBe(501)
-    expect(await leerReservaDeCobro(almacen)).toMatchObject({ idPuntoVenta: 7, numero: 500, estado: 'libre' })
+    expect(reserva).toEqual({ ok: true, numero: 500 })
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
+    expect(await leerReservaDeCobro(almacen)).toMatchObject({ idPuntoVenta: 7, numero: 500, estado: 'en_curso' })
   })
 
-  it('reservar de nuevo con la reserva libre devuelve el MISMO número y no consume otro del bloque', async () => {
+  it('apartar de nuevo un intento que no llegó a crear el cobro devuelve el MISMO número', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
@@ -138,11 +142,11 @@ describe('reservarNumeroParaCobro', () => {
       segunda = await result.current.reservarNumeroParaCobro(7)
     })
 
-    expect(segunda).toEqual({ ok: true, numero: 500, reutilizado: true })
-    expect((await leerBloque(almacen))?.proximo).toBe(501)
+    expect(segunda).toEqual({ ok: true, numero: 500 })
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
   })
 
-  it('con un cobro en curso no reserva otro número', async () => {
+  it('con un cobro en curso no aparta otro número', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
@@ -156,10 +160,10 @@ describe('reservarNumeroParaCobro', () => {
     })
 
     expect(intento).toEqual({ ok: false, motivo: 'cobro_en_curso' })
-    expect((await leerBloque(almacen))?.proximo).toBe(501)
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
   })
 
-  it('sin números en el bloque no reserva nada', async () => {
+  it('sin números en el bloque no aparta nada', async () => {
     const almacen = await preparar({ bloque: { proximo: 600 } })
     const { result } = await montar(almacen)
 
@@ -185,8 +189,60 @@ describe('reservarNumeroParaCobro', () => {
   })
 })
 
-describe('encolarVentaOffline con el número reservado', () => {
-  it('encola con ESE número, no toma otro del bloque y da de baja la reserva', async () => {
+describe('sin huecos: un número apartado y nunca vendido no se consume', () => {
+  it('cobro cancelado y después una venta común: la venta lleva el MISMO número y lo declarado coincide con lo vendido', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+      await result.current.soltarReservaDeCobro(500)
+    })
+
+    let encolado
+    await act(async () => {
+      encolado = await result.current.encolarVentaOffline(ventaEfectivo())
+    })
+
+    expect(encolado).toMatchObject({ ok: true, numero: 500 })
+    const bloqueFinal = await leerBloque(almacen)
+    const vendidos = (await leerOutbox(almacen)).map((v) => v.numeroPreasignado)
+    expect(vendidos).toEqual([500])
+    // `entregadoHasta` de la rendición es `proximo - 1`: tiene que ser el número más alto realmente vendido.
+    expect((bloqueFinal?.proximo ?? 0) - 1).toBe(Math.max(...vendidos))
+  })
+
+  it('cobro cancelado sin ninguna venta posterior: el puntero no se movió, no hay número entregado que no exista', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.soltarReservaDeCobro(500)
+    })
+
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+  })
+
+  it('con un bloque a punto de agotarse y una reserva viva, no se repone (el número apartado quedaría fuera del bloque)', async () => {
+    const almacen = await preparar({ bloque: { proximo: 595 } })
+    await guardarReservaDeCobro(almacen, { ...reservaEnCurso, numero: 595 })
+    vi.mocked(clienteDeVentas.reservarNumeracion).mockClear()
+    vi.mocked(clienteDePos.obtenerInstantanea).mockResolvedValue({ modificada: false } as never)
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(clienteDePos.obtenerInstantanea).toHaveBeenCalled())
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+
+    expect(clienteDeVentas.reservarNumeracion).not.toHaveBeenCalled()
+    vi.mocked(clienteDePos.obtenerInstantanea).mockRejectedValue(new Error('sin red'))
+  })
+})
+
+describe('encolarVentaOffline con el número apartado', () => {
+  it('encola con ESE número, avanza el puntero una sola vez y da de baja la reserva', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
@@ -208,7 +264,7 @@ describe('encolarVentaOffline con el número reservado', () => {
     expect(await leerReservaDeCobro(almacen)).toBeNull()
   })
 
-  it('un número reservado que no coincide con la reserva guardada rechaza sin encolar ni consumir', async () => {
+  it('un número que no coincide con la reserva guardada rechaza sin encolar ni consumir', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
@@ -222,7 +278,7 @@ describe('encolarVentaOffline con el número reservado', () => {
 
     expect(encolado).toEqual({ ok: false, motivo: 'reserva_de_cobro_perdida' })
     expect(await leerOutbox(almacen)).toEqual([])
-    expect((await leerBloque(almacen))?.proximo).toBe(501)
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
     expect(await leerReservaDeCobro(almacen)).toMatchObject({ numero: 500 })
   })
 
@@ -239,25 +295,30 @@ describe('encolarVentaOffline con el número reservado', () => {
     expect((await leerBloque(almacen))?.proximo).toBe(500)
   })
 
-  it('un número libre (cobro cancelado) lo usa la próxima venta del dispositivo antes de tomar uno nuevo', async () => {
+  it('si el bloque cambió y el número ya no es el próximo, no encola con un número ajeno al bloque', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
       await result.current.reservarNumeroParaCobro(7)
-      await result.current.soltarReservaDeCobro(500)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
     })
+    // Un bloque nuevo (otro rango) reemplaza al vivo: la reserva ya no apunta a un número de él.
+    await act(async () => {
+      await guardarBloque(almacen, bloque({ desde: 900, hasta: 999, proximo: 900 }))
+    })
+    const { result: rehecho } = await montar(almacen)
 
     let encolado
     await act(async () => {
-      encolado = await result.current.encolarVentaOffline(ventaEfectivo())
+      encolado = await rehecho.current.encolarVentaOffline(ventaMp(500))
     })
 
-    expect(encolado).toMatchObject({ ok: true, numero: 500 })
-    expect((await leerBloque(almacen))?.proximo).toBe(501)
-    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    expect(encolado).toEqual({ ok: false, motivo: 'reserva_de_cobro_perdida' })
+    expect(await leerOutbox(almacen)).toEqual([])
+    expect((await leerBloque(almacen))?.proximo).toBe(900)
   })
 
-  it('un número con cobro en curso NO lo toma otra venta: esa toma el siguiente del bloque', async () => {
+  it('mientras hay un cobro apartado ninguna otra venta corre: no toma ese número ni lo deja atrás', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
@@ -270,17 +331,19 @@ describe('encolarVentaOffline con el número reservado', () => {
       encolado = await result.current.encolarVentaOffline(ventaEfectivo())
     })
 
-    expect(encolado).toMatchObject({ ok: true, numero: 501 })
+    expect(encolado).toEqual({ ok: false, motivo: 'cobro_en_curso' })
+    expect(await leerOutbox(almacen)).toEqual([])
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
     expect(await leerReservaDeCobro(almacen)).toMatchObject({ numero: 500, estado: 'en_curso' })
   })
 
-  it('la venta con número reservado se encola aunque el bloque ya no tenga números', async () => {
+  it('la venta con número apartado se encola aunque sea el último del bloque', async () => {
     const almacen = await preparar({ bloque: { proximo: 599, hasta: 599 } })
     const { result } = await montar(almacen)
     await act(async () => {
       await result.current.reservarNumeroParaCobro(7)
     })
-    expect((await leerBloque(almacen))?.proximo).toBe(600)
+    expect((await leerBloque(almacen))?.proximo).toBe(599)
 
     let encolado
     await act(async () => {
@@ -288,11 +351,12 @@ describe('encolarVentaOffline con el número reservado', () => {
     })
 
     expect(encolado).toMatchObject({ ok: true, numero: 599 })
+    expect((await leerBloque(almacen))?.proximo).toBe(600)
   })
 })
 
 describe('soltar, consumir y leer la reserva', () => {
-  it('soltar deja libre el número y conserva su fecha; es idempotente con otro número', async () => {
+  it('soltar da de baja la reserva solo si el número coincide; el puntero no se toca', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
@@ -306,12 +370,11 @@ describe('soltar, consumir y leer la reserva', () => {
       await result.current.soltarReservaDeCobro(500)
     })
 
-    const libre = await leerReservaDeCobro(almacen)
-    expect(libre).toMatchObject({ numero: 500, estado: 'libre' })
-    expect(libre).not.toHaveProperty('idCobro')
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
   })
 
-  it('consumir (venta registrada online) da de baja la reserva y el número no vuelve a ofrecerse', async () => {
+  it('consumir (venta emitida online con ese número) avanza el puntero más allá del número y da de baja la reserva', async () => {
     const almacen = await preparar()
     const { result } = await montar(almacen)
     await act(async () => {
@@ -319,17 +382,18 @@ describe('soltar, consumir y leer la reserva', () => {
       await result.current.consumirReservaDeCobro(500)
     })
 
-    let reserva
+    expect((await leerBloque(almacen))?.proximo).toBe(501)
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    let siguiente
     await act(async () => {
-      reserva = await result.current.reservarNumeroParaCobro(7)
+      siguiente = await result.current.reservarNumeroParaCobro(7)
     })
-
-    expect(reserva).toEqual({ ok: true, numero: 501, reutilizado: false })
+    expect(siguiente).toEqual({ ok: true, numero: 501 })
   })
 
   it('leerReservaDeCobro devuelve la reserva en curso para retomarla tras una recarga', async () => {
     const almacen = await preparar()
-    await guardarReservaDeCobro(almacen, { idPuntoVenta: 7, numero: 500, estado: 'en_curso', idCobro: 31, idMedioPago: 4, importe: 100, creadoEn: 'x' })
+    await guardarReservaDeCobro(almacen, reservaEnCurso)
     const { result } = await montar(almacen)
 
     let reserva
@@ -337,12 +401,39 @@ describe('soltar, consumir y leer la reserva', () => {
       reserva = await result.current.leerReservaDeCobro()
     })
 
-    expect(reserva).toMatchObject({ numero: 500, estado: 'en_curso', idCobro: 31 })
+    expect(reserva).toMatchObject({ numero: 500, estado: 'en_curso', idCobro: 31, fueraDeBloque: false })
+  })
+
+  it('avisa fueraDeBloque cuando el número ya no es el próximo del bloque', async () => {
+    const almacen = await preparar({ bloque: { proximo: 501 } })
+    await guardarReservaDeCobro(almacen, reservaEnCurso)
+    const { result } = await montar(almacen)
+
+    let reserva
+    await act(async () => {
+      reserva = await result.current.leerReservaDeCobro()
+    })
+
+    expect(reserva).toMatchObject({ numero: 500, fueraDeBloque: true })
+  })
+
+  it('una reserva sin cobro creado (un intento que se cortó) se descarta al leer', async () => {
+    const almacen = await preparar()
+    await guardarReservaDeCobro(almacen, { idPuntoVenta: 7, numero: 500, estado: 'en_curso', creadoEn: 'x' })
+    const { result } = await montar(almacen)
+
+    let reserva
+    await act(async () => {
+      reserva = await result.current.leerReservaDeCobro()
+    })
+
+    expect(reserva).toBeNull()
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
   })
 
   it('si la venta de ese número ya está en la cola, la reserva sobrante se descarta', async () => {
     const almacen = await preparar()
-    await guardarReservaDeCobro(almacen, { idPuntoVenta: 7, numero: 500, estado: 'en_curso', idCobro: 31, idMedioPago: 4, importe: 100, creadoEn: 'x' })
+    await guardarReservaDeCobro(almacen, reservaEnCurso)
     await agregarAOutbox(almacen, { idLocal: 'v', numeroPreasignado: 500, idPuntoVenta: 7, creadoEn: 'x', solicitud: solicitud({ numeroPreasignado: 500 }) })
     const { result } = await montar(almacen)
 
@@ -360,11 +451,18 @@ describe('reservaDeCobro (almacén)', () => {
   it('guardar confirma releyendo; una escritura degradada no cuenta como guardada', async () => {
     const buena = almacenFake()
     const rota = almacenFake({ fallarReserva: true })
-    const reserva = { idPuntoVenta: 7, numero: 5, estado: 'libre' as const, creadoEn: 'x' }
+    const reserva = { idPuntoVenta: 7, numero: 5, estado: 'en_curso' as const, creadoEn: 'x' }
 
     await expect(guardarReservaDeCobro(buena, reserva)).resolves.toBe(true)
     await expect(guardarReservaDeCobro(rota, reserva)).resolves.toBe(false)
     await borrarReservaDeCobro(buena)
     await expect(leerReservaDeCobro(buena)).resolves.toBeNull()
+  })
+
+  it('una reserva `libre` de la versión anterior ya no cuenta como reserva', async () => {
+    const almacen = almacenFake()
+    await almacen.escribir('reservaDeCobroMercadoPago', { idPuntoVenta: 7, numero: 5, estado: 'libre', creadoEn: 'x' })
+
+    await expect(leerReservaDeCobro(almacen)).resolves.toBeNull()
   })
 })

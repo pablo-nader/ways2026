@@ -15,6 +15,7 @@ public sealed record SolicitudDeCobroMercadoPago(int IdMedioPago, long NumeroPre
 /// muestra "verificando el pago" en lugar de un QR y vuelve a consultar. <see cref="PagoInformadoSinDatos"/> es verdadero cuando
 /// Mercado Pago informó la orden procesada pero sin un pago legible (importe o id): el cliente ya pagó, el QR no viaja, el cobro no se
 /// puede cancelar y el dispositivo dice "Mercado Pago informa el pago, falta confirmarlo" mientras sigue consultando.
+/// <see cref="UsadoEnVenta"/> es verdadero cuando una venta ya quedó ligada al cobro: el dispositivo descarta su reserva local.
 /// </summary>
 public sealed record CobroDeMercadoPago(
     int IdCobro,
@@ -25,7 +26,8 @@ public sealed record CobroDeMercadoPago(
     decimal? ImportePagado,
     bool ImporteDistinto,
     bool VerificandoPago,
-    bool PagoInformadoSinDatos);
+    bool PagoInformadoSinDatos,
+    bool UsadoEnVenta);
 
 public static class CodigosDeErrorDeCobrosMercadoPago
 {
