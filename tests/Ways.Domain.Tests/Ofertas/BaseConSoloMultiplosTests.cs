@@ -90,13 +90,23 @@ public class BaseConSoloMultiplosTests
         Assert.Equal(3, Base(Linea(3m), Estricta(id: 3, precioUnitario: 3700m), Comun(id: 2)));
     }
 
-    /// <summary>Cláusula: el último desempate, el menor id. A 2 unidades, 2 × 250 = 2 × 250 y el mismo unitario.</summary>
+    /// <summary>Cláusula: con el mismo descuento de línea y unitario, la común le gana a la "solo múltiplos" sea cual sea
+    /// el id. A 2 unidades, 2 × 250 = 2 × 250 y el mismo unitario.</summary>
     [Theory]
-    [InlineData(1, 2, 1)]
-    [InlineData(3, 2, 2)]
-    public void ConElMismoDescuentoDeLineaYUnitarioGanaElMenorId(int idEstricta, int idComun, int ganadora)
+    [InlineData(1, 2)]
+    [InlineData(3, 2)]
+    public void ConElMismoDescuentoDeLineaYUnitarioGanaLaComun(int idEstricta, int idComun)
     {
-        Assert.Equal(ganadora, Base(Linea(2m), Estricta(id: idEstricta), Comun(id: idComun, precioUnitario: 3750m)));
+        Assert.Equal(idComun, Base(Linea(2m), Estricta(id: idEstricta), Comun(id: idComun, precioUnitario: 3750m)));
+    }
+
+    /// <summary>Cláusula: el último desempate, el menor id, entre dos "solo múltiplos" iguales.</summary>
+    [Theory]
+    [InlineData(1, 3, 1)]
+    [InlineData(4, 3, 3)]
+    public void ConTodoIgualGanaElMenorId(int idUna, int idOtra, int ganadora)
+    {
+        Assert.Equal(ganadora, Base(Linea(2m), Estricta(id: idUna), Estricta(id: idOtra)));
     }
 
     /// <summary>Cláusula: la cantidad del umbral para una oferta de familia es la de la familia, no la de la línea. Con

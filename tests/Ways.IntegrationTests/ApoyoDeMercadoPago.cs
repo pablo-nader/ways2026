@@ -56,6 +56,7 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
     {
         private readonly object _candado = new();
         private readonly List<string> _cuerpos = [];
+        private readonly List<PedidoRegistrado> _pedidos = [];
 
         public long IdUsuario { get; } = NuevoIdUsuario();
 
@@ -63,8 +64,23 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
 
         public Func<string, HttpResponseMessage> Responder { get; set; }
 
+        /// <summary>Si está, responde en lugar de <see cref="Responder"/> y ve el método, la URL y los encabezados del pedido (la
+        /// API de Mercado Pago comparte este manejador con el endpoint de tokens).</summary>
+        public Func<PedidoRegistrado, HttpResponseMessage>? ResponderPedido { get; set; }
+
         /// <summary>Se ejecuta antes de responder; permite sincronizar dos pedidos concurrentes.</summary>
         public Func<Task>? AntesDeResponder { get; set; }
+
+        public IReadOnlyList<PedidoRegistrado> Pedidos
+        {
+            get
+            {
+                lock (_candado)
+                {
+                    return [.. _pedidos];
+                }
+            }
+        }
 
         public IReadOnlyList<string> Cuerpos
         {
@@ -80,9 +96,16 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage pedido, CancellationToken ct)
         {
             var cuerpo = pedido.Content is null ? string.Empty : await pedido.Content.ReadAsStringAsync(ct);
+            var registrado = new PedidoRegistrado(
+                pedido.Method,
+                pedido.RequestUri!,
+                pedido.Headers.Authorization?.ToString(),
+                pedido.Headers.TryGetValues("X-Idempotency-Key", out var claves) ? claves.Single() : null,
+                cuerpo);
             lock (_candado)
             {
                 _cuerpos.Add($"{pedido.Method} {pedido.RequestUri} {cuerpo}");
+                _pedidos.Add(registrado);
             }
 
             if (AntesDeResponder is { } antes)
@@ -90,9 +113,11 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
                 await antes();
             }
 
-            return Responder(cuerpo);
+            return ResponderPedido is { } responderPedido ? responderPedido(registrado) : Responder(cuerpo);
         }
     }
+
+    public sealed record PedidoRegistrado(HttpMethod Metodo, Uri Uri, string? Autorizacion, string? ClaveDeIdempotencia, string Cuerpo);
 
     public static HttpResponseMessage Exitoso(string acceso, string renovacion, long idUsuario) =>
         new(HttpStatusCode.OK)
@@ -151,6 +176,8 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
             }
 
             services.AddHttpClient<IClienteOAuthMercadoPago, ClienteOAuthMercadoPago>(http => http.BaseAddress = new Uri("https://api.mp.test/"))
+                .ConfigurePrimaryHttpMessageHandler(() => mercadoPago);
+            services.AddHttpClient<IClienteApiMercadoPago, ClienteApiMercadoPago>(http => http.BaseAddress = new Uri("https://api.mp.test/"))
                 .ConfigurePrimaryHttpMessageHandler(() => mercadoPago);
         }));
 
@@ -263,6 +290,15 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         return anonimo.GetAsync($"{RutaCallback}?{consulta}");
     }
 
+    /// <summary>Cierra la conexión como lo hace la web: POST autenticado con el code y el state del retorno.</summary>
+    public static Task<HttpResponseMessage> CompletarAsync(
+        Contexto ctx, string estado, string codigo = "TG-codigo-de-autorizacion", HttpClient? cliente = null) =>
+        (cliente ?? ctx.Admin).PostAsJsonAsync($"{ctx.Ruta}/completar", new SolicitudDeCompletarConexion(codigo, estado));
+
+    /// <summary>Parsea el fragmento (<c>#a=b&amp;c=d</c>) de la ubicación de una redirección.</summary>
+    public static System.Collections.Specialized.NameValueCollection Fragmento(string ubicacion) =>
+        HttpUtility.ParseQueryString(new Uri(ubicacion).Fragment.TrimStart('#'));
+
     public static string Ubicacion(HttpResponseMessage respuesta)
     {
         Assert.Equal(HttpStatusCode.Redirect, respuesta.StatusCode);
@@ -286,7 +322,10 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         DateTimeOffset AccessExpiraEn,
         int IdUsuarioConecto,
         DateTimeOffset FechaConexion,
-        DateTimeOffset? FechaDesconexion);
+        DateTimeOffset? FechaDesconexion,
+        DateTimeOffset? FechaUltimaRenovacion,
+        DateTimeOffset? FechaRequiereReconexion,
+        DateTimeOffset? FechaUltimoIntentoRenovacion = null);
 
     public async Task<List<FilaDeConexion>> FilasAsync(int? idEmpresa = null)
     {
@@ -296,7 +335,8 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         comando.CommandText =
             "SELECT id_conexion_mercadopago, id_tenant, id_empresa, id_cuenta_tesoreria, id_usuario_mercadopago, estado, " +
             "access_token_cifrado, access_token_nonce, access_token_tag, refresh_token_cifrado, refresh_token_nonce, " +
-            "refresh_token_tag, id_clave_maestra, access_token_expira_en, id_usuario_conecto, fecha_conexion, fecha_desconexion " +
+            "refresh_token_tag, id_clave_maestra, access_token_expira_en, id_usuario_conecto, fecha_conexion, fecha_desconexion, " +
+            "fecha_ultima_renovacion, fecha_requiere_reconexion, fecha_ultimo_intento_renovacion " +
             "FROM conexiones_mercadopago WHERE ($1::int IS NULL OR id_empresa = $1) ORDER BY id_conexion_mercadopago";
         comando.Parameters.Add(new NpgsqlParameter<int?> { TypedValue = idEmpresa });
 
@@ -316,7 +356,10 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
                 lector.GetFieldValue<DateTimeOffset>(13),
                 lector.GetInt32(14),
                 lector.GetFieldValue<DateTimeOffset>(15),
-                lector.IsDBNull(16) ? null : lector.GetFieldValue<DateTimeOffset>(16)));
+                lector.IsDBNull(16) ? null : lector.GetFieldValue<DateTimeOffset>(16),
+                lector.IsDBNull(17) ? null : lector.GetFieldValue<DateTimeOffset>(17),
+                lector.IsDBNull(18) ? null : lector.GetFieldValue<DateTimeOffset>(18),
+                lector.IsDBNull(19) ? null : lector.GetFieldValue<DateTimeOffset>(19)));
         }
 
         return filas;
@@ -338,7 +381,8 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         byte[]? refreshNonce = null,
         byte[]? refreshTag = null,
         DateTimeOffset? fechaDesconexion = null,
-        bool sinMaterial = false)
+        bool sinMaterial = false,
+        DateTimeOffset? fechaRequiereReconexion = null)
     {
         await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
         await using var comando = conexion.CreateCommand();
@@ -346,8 +390,8 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
             "INSERT INTO conexiones_mercadopago (id_tenant, id_empresa, id_cuenta_tesoreria, id_usuario_mercadopago, " +
             "access_token_cifrado, access_token_nonce, access_token_tag, refresh_token_cifrado, refresh_token_nonce, " +
             "refresh_token_tag, id_clave_maestra, access_token_expira_en, estado, id_usuario_conecto, fecha_conexion, " +
-            "fecha_desconexion, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 't1', now(), $11, $12, now(), $13, now(), now()) " +
+            "fecha_desconexion, fecha_requiere_reconexion, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 't1', now(), $11, $12, now(), $13, $14, now(), now()) " +
             "RETURNING id_conexion_mercadopago";
 
         byte[]? Material(byte[]? valor, int largo) => sinMaterial ? null : valor ?? new byte[largo];
@@ -365,6 +409,7 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         comando.Parameters.Add(new NpgsqlParameter { Value = estado });
         comando.Parameters.Add(new NpgsqlParameter { Value = idUsuarioConecto });
         comando.Parameters.Add(new NpgsqlParameter<DateTimeOffset?> { TypedValue = fechaDesconexion });
+        comando.Parameters.Add(new NpgsqlParameter<DateTimeOffset?> { TypedValue = fechaRequiereReconexion });
 
         return (int)(await comando.ExecuteScalarAsync())!;
     }

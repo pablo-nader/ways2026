@@ -73,12 +73,13 @@ una edición que quita el mínimo sin mandar el campo la vuelve común). No hay 
 `ServicioDeOfertas`, que lo valida, y el motor trata una fila con la marca y sin mínimo como oferta común.
 
 - `q` es la cantidad de la línea que cobra la oferta: sin las unidades que consumió un combo. Una oferta de familia
-  cuenta los grupos sobre la suma de las líneas del documento que la llevan y reparte las unidades cubiertas en el
-  orden de las líneas: las que no completan un grupo caen en las últimas.
+  cuenta los grupos sobre la suma de las líneas del documento que la llevan y reparte su descuento (`grupos × d`)
+  en proporción a las unidades de cada línea, en pesos enteros y con el resto en la última (sin cubrir más unidades
+  de las que tiene). Con 1 + 1 + 1 a "2 x 7500": 166, 166 y 168, total 11500.
 - Elección de la base entre no acumulables (T4): primero la mayor `prioridad`; entre las de la misma, el mayor
   descuento de línea a la cantidad del umbral (la de la línea, o la de la familia para una oferta de familia): una común
   vale `d × q`, una "solo múltiplos" `d × N × floor(Q / N)` (para una de familia, su parte proporcional de la familia).
-  Empates: mayor descuento unitario, después menor id. Con 4000, "2 x 7500" estricta y una común de 3800: 3 → la común
+  Empates: mayor descuento unitario, después la común antes que la "solo múltiplos" (cobran lo mismo), después menor id. Con 4000, "2 x 7500" estricta y una común de 3800: 3 → la común
   (11400, 600 contra 500), 4 → la estricta (15000). La comparación usa la cantidad del umbral y no anticipa las unidades
   que consuma un combo ni el reparto de familia entre líneas. Las acumulables no cambian. La detección de combos compara
   contra el descuento unitario completo, así que es conservadora frente a una oferta "solo múltiplos".

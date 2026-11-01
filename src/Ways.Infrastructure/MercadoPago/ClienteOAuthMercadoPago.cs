@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -46,10 +47,11 @@ public sealed class ClienteOAuthMercadoPago(
                 GrantType = "refresh_token",
                 RefreshToken = refreshToken
             },
-            ct);
+            ct,
+            distinguirRechazo: true);
     }
 
-    private async Task<TokensDeMercadoPago> PedirAsync(SolicitudDeToken solicitud, CancellationToken ct)
+    private async Task<TokensDeMercadoPago> PedirAsync(SolicitudDeToken solicitud, CancellationToken ct, bool distinguirRechazo = false)
     {
         HttpResponseMessage respuesta;
         try
@@ -74,6 +76,19 @@ public sealed class ClienteOAuthMercadoPago(
                 log.LogWarning(
                     "Mercado Pago rechazó el pedido de tokens ({GrantType}) con el estado {Estado}.",
                     solicitud.GrantType, (int)respuesta.StatusCode);
+
+                if (distinguirRechazo && respuesta.StatusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError
+                    and not HttpStatusCode.RequestTimeout and not HttpStatusCode.TooManyRequests)
+                {
+                    // Solo un 400 invalid_grant dice que el refresh token de ESA conexión ya no sirve. Cualquier otro 4xx
+                    // (invalid_client, 401, 403, 404) apunta a las credenciales o a la configuración de la plataforma y
+                    // alcanzaría a todas las conexiones por igual.
+                    throw respuesta.StatusCode == HttpStatusCode.BadRequest && await EsInvalidGrantAsync(respuesta, ct)
+                        ? new ErrorDominio(CodigosDeErrorDeMercadoPago.RenovacionRechazada, "Mercado Pago rechazó la renovación del token.", 502)
+                        : new ErrorDominio(
+                            CodigosDeErrorDeMercadoPago.CredencialesRechazadas, "Mercado Pago rechazó las credenciales de la aplicación.", 502);
+                }
+
                 throw Fallido();
             }
 
@@ -92,6 +107,23 @@ public sealed class ClienteOAuthMercadoPago(
 
             log.LogWarning("Mercado Pago devolvió una respuesta de tokens incompleta ({GrantType}).", solicitud.GrantType);
             throw Fallido();
+        }
+    }
+
+    private static async Task<bool> EsInvalidGrantAsync(HttpResponseMessage respuesta, CancellationToken ct)
+    {
+        try
+        {
+            var cuerpo = await respuesta.Content.ReadAsStringAsync(ct);
+            using var json = JsonDocument.Parse(cuerpo);
+            return json.RootElement.ValueKind == JsonValueKind.Object
+                && json.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.String
+                && error.GetString() == "invalid_grant";
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
