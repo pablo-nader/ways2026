@@ -471,7 +471,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
 
   function detalleConEfectivo(importeEsperado: number): DetalleDeTurno {
     const base = detalleFixture()
-    return { ...base, resumen: { ...base.resumen, idMedioAncla: 1, medios: [{ idMedioPago: 1, importeEsperado }] } }
+    return { ...base, resumen: { ...base.resumen, idMedioAncla: 1, medios: [{ idMedioPago: 1, importeEsperado, nombre: 'Medio 1' }] } }
   }
 
   function cajaDeEscritorioFixture(): CajaDeEscritorio {
@@ -1060,7 +1060,7 @@ describe('PagosDelTurno — varios medios', () => {
 
   function detalleConEfectivo(importeEsperado: number, pagos: PagoDeTurno[] = []): DetalleDeTurno {
     const base = detalleFixture(pagos)
-    return { ...base, resumen: { ...base.resumen, idMedioAncla: 1, medios: [{ idMedioPago: 1, importeEsperado }] } }
+    return { ...base, resumen: { ...base.resumen, idMedioAncla: 1, medios: [{ idMedioPago: 1, importeEsperado, nombre: 'Medio 1' }] } }
   }
 
   function pagoConDosMedios(sobrescribir: Partial<PagoDeTurno> = {}): PagoDeTurno {

@@ -52,8 +52,8 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       idTurnoCaja: 501,
       idMedioAncla: 1,
       medios: [
-        { idMedioPago: 1, importeEsperado: 1000 },
-        { idMedioPago: 2, importeEsperado: 500 },
+        { idMedioPago: 1, importeEsperado: 1000, nombre: 'Medio 1' },
+        { idMedioPago: 2, importeEsperado: 500, nombre: 'Medio 2' },
       ],
       cantidadTickets: 1,
       primerTicket: { numero: 1, fecha: '2026-09-16T13:00:00Z', codigo: 'TX' },
@@ -62,7 +62,7 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       egresos: { porCategoria: [], porArea: [], retiros: 100 },
     },
     tickets: [
-      { id: 1, numero: 1, numeroVisible: '0007-00000001', estado: 'Emitido', fecha: '2026-09-16T13:00:00Z', idPuntoVenta: 7, idCliente: 1, total: 750 },
+      { id: 1, numero: 1, numeroVisible: '0007-00000001', estado: 'Emitido', fecha: '2026-09-16T13:00:00Z', idCliente: 1, nombreCliente: 'Cliente 1', total: 750, descuentoManualTotal: 0, recargoManualTotal: 0, mediosDePago: [], estadoNotaDeCredito: null },
     ],
     gastos: [
       { id: 9, idPuntoVenta: 7, fecha: '2026-09-16T14:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 501, turnoAbierto: false, idProveedor: null, idArea: null, concepto: 'Pago', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
