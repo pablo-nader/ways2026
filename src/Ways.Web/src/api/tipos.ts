@@ -2011,7 +2011,8 @@ export type SolicitudDeEdicionDePago = {
 }
 
 /** Cuerpo de `PUT /api/pagos/administracion/{id}` — espejo de `SolicitudDeEdicionDePagoConLineas`: reemplaza el
- * conjunto de líneas del pago. */
+ * conjunto de líneas del pago. Con `idPersonal` el pago de sueldos común pasa a ser un pago de ese empleado: el concepto
+ * viaja vacío (lo genera el servidor) y no lleva proveedor. */
 export type SolicitudDeEdicionDePagoConLineas = {
   categoria: CategoriaPago
   idProveedor: number | null
@@ -2020,6 +2021,7 @@ export type SolicitudDeEdicionDePagoConLineas = {
   detalle: string | null
   numeroFactura: string | null
   lineas: LineaDePagoSolicitud[]
+  idPersonal?: number
 }
 
 /** Página de resultados de `GET /api/pagos/administracion` — espejo de

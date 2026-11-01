@@ -56,7 +56,20 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
   fails with the guard disabled (mutation killed, guard restored). F3 offline the employee select stays enabled, only the
   employee options are disabled, so "Sin empleado" remains selectable for a plain Sueldos pago; no auto-reset.
 - [ ] T3 — Edit: convert a plain Sueldos payment into a pago de personal (backend transaction +
-  web picker in the edit modal). Route: delegated writer. Branch stacked on T2 or main.
+  web picker in the edit modal). Route: delegated writer. Branch `pnader/sueldo-personal-edicion`, stacked on T2 (#606).
+  Evidence (writer, uncommitted): no new route and no migration: `idPersonal` is an optional field of the two existing edit
+  bodies (`PUT /api/pagos/administracion/{id}` and `PUT /api/pagos/{id}`), so one transaction both edits and converts.
+  `ServicioDePagos.ConvertirEnPagoDePersonalAsync` (inside `EjecutarEscrituraAsync`, after the pago lock and its guards)
+  debits the employee with the same raw `UPDATE ... RETURNING` + `InsertarMovimientoAsync` pair as `ServicioDePagoDePersonal`,
+  links `IdMovimientoPersonal`, sets the concepto `Pago de personal: {nombre}` and the matching treasury row text; the pago,
+  items, origin, turno and fecha are untouched, so arqueo and treasury balances do not move. Guards: 404 for pago then employee
+  before any 400; `pago_personal_requiere_sueldos` / `pago_personal_sin_proveedor` / `concepto_de_pago_de_personal` (the concepto
+  is server generated so a non-blank one is rejected, not dropped); `gasto_de_pago_de_personal` 409 re-checked under the pago
+  lock (the conversion is now the one writer of `id_movimiento_personal` after creation). POS keeps its rules (open turno,
+  `gasto_turno_cerrado`) and its response (`PagoRegistrado`) has no balance. Tests: `PagoDeSueldoConvertidoEnPersonalTests` (8)
+  RED 7 failed -> GREEN; mutation: Sueldos guard disabled -> killed, under-lock re-check removed -> killed by the concurrent
+  conversion test. Web: `ModalDeEdicionDePago` shows `Empleado (opcional)` for Sueldos (`personal` prop), POS reads
+  `GET /api/pos/personal/opciones`, offline disables the options only. Results: dotnet build ok; Application.Tests 1638, Domain.Tests 2322 passed; integration (new class, PagosEdicion*, PagoDePersonal*, PagosConLineas/ApiConLineas, SuperficieDeAutorizacion, AislamientoDeTenant, OpenApi, ConciliacionDeTesoreria) 173 passed; vitest 308 files / 9428 tests passed; tsc -b ok; lint 0 errors.
 
 ## Checks
 

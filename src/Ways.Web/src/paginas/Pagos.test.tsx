@@ -1617,3 +1617,113 @@ describe('Pagos (administración) — sueldos a un empleado', () => {
     expect(within(dialogo()).getByRole('option', { name: 'Sin empleado' })).toBeInTheDocument()
   })
 })
+
+describe('Pagos (administración) — asignar un empleado a un sueldo común al editar', () => {
+  const empleados = [
+    { id: 12, nombre: 'Marta Gómez', idEmpresa: null },
+    { id: 13, nombre: 'Ana Pérez', idEmpresa: 1 },
+  ] as PersonalListado[]
+
+  const sueldo = () => pagoFixture({ id: 61, concepto: 'Sueldo suelto', categoria: 'Sueldos', importe: 1000 })
+
+  function dialogo() {
+    return screen.getByRole('dialog', { name: 'Editar pago' })
+  }
+
+  async function abrirEdicionDelSueldo() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Sueldo suelto' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await d.findByRole('option', { name: 'Ana Pérez' }) // espera al dato: el personal llega después del modal
+    return d
+  }
+
+  it('un sueldo común ofrece el empleado en lugar del proveedor, con "Sin empleado" preseleccionado', async () => {
+    mockearRutas({ personal: empleados, pagina: paginaFixture([sueldo()]) })
+    renderPagos()
+
+    const d = await abrirEdicionDelSueldo()
+
+    expect(d.getByLabelText('Empleado (opcional)')).toHaveValue('')
+    expect(d.getByRole('option', { name: 'Sin empleado' })).toBeInTheDocument()
+    expect(d.queryByLabelText('Proveedor (opcional)')).not.toBeInTheDocument()
+  })
+
+  it('con una categoría distinta de Sueldos sigue el proveedor y no hay empleado', async () => {
+    mockearRutas({ personal: empleados, pagina: paginaFixture([pagoFixture({ id: 62, concepto: 'Alquiler' })]) })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Alquiler' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+
+    expect(d.getByLabelText('Proveedor (opcional)')).toBeInTheDocument()
+    expect(d.queryByLabelText('Empleado (opcional)')).not.toBeInTheDocument()
+  })
+
+  it('guardar con un empleado manda idPersonal, concepto vacío y sin proveedor a PUT /pagos/administracion/{id}', async () => {
+    mockearRutas({ personal: empleados, pagina: paginaFixture([sueldo()]) })
+    apiPutMock.mockResolvedValueOnce({ id: 61 })
+    renderPagos()
+
+    const d = await abrirEdicionDelSueldo()
+    await userEvent.selectOptions(d.getByLabelText('Empleado (opcional)'), 'Ana Pérez')
+    expect(d.getByLabelText('Concepto')).toBeDisabled()
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/pagos/administracion/61',
+        expect.objectContaining({
+          categoria: 'Sueldos',
+          concepto: '',
+          idProveedor: null,
+          idPersonal: 13,
+          lineas: [{ idMedioPago: 1, importe: 1000, referencia: null }],
+        }),
+      ),
+    )
+    await toastDeExito('Pago actualizado.')
+  })
+
+  it('con "Sin empleado" guarda la edición común, sin idPersonal', async () => {
+    mockearRutas({ personal: empleados, pagina: paginaFixture([sueldo()]) })
+    apiPutMock.mockResolvedValueOnce({ id: 61 })
+    renderPagos()
+
+    const d = await abrirEdicionDelSueldo()
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalled())
+    const cuerpo = apiPutMock.mock.calls[0][1] as Record<string, unknown>
+    expect(cuerpo).not.toHaveProperty('idPersonal')
+    expect(cuerpo.concepto).toBe('Sueldo suelto')
+  })
+
+  it('cambiar la categoría fuera de Sueldos descarta el empleado elegido', async () => {
+    mockearRutas({ personal: empleados, pagina: paginaFixture([sueldo()]) })
+    apiPutMock.mockResolvedValueOnce({ id: 61 })
+    renderPagos()
+
+    const d = await abrirEdicionDelSueldo()
+    await userEvent.selectOptions(d.getByLabelText('Empleado (opcional)'), 'Ana Pérez')
+    await userEvent.selectOptions(d.getByLabelText('Categoría'), 'Otros')
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalled())
+    const cuerpo = apiPutMock.mock.calls[0][1] as Record<string, unknown>
+    expect(cuerpo).not.toHaveProperty('idPersonal')
+    expect(cuerpo.categoria).toBe('Otros')
+  })
+
+  it('un rechazo del servidor se muestra dentro del modal y no lo cierra', async () => {
+    mockearRutas({ personal: empleados, pagina: paginaFixture([sueldo()]) })
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(404, 'no_encontrado', 'No existe el personal 13.'))
+    renderPagos()
+
+    const d = await abrirEdicionDelSueldo()
+    await userEvent.selectOptions(d.getByLabelText('Empleado (opcional)'), 'Ana Pérez')
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await d.findByText('No existe el personal 13.')).toBeInTheDocument()
+    expect(dialogo()).toBeInTheDocument()
+  })
+})

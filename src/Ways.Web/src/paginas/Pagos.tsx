@@ -1008,6 +1008,8 @@ export function Pagos() {
           proveedores={proveedores ?? []}
           areas={areas ?? []}
           ligadoACompra={edicion.idComprobanteCompra !== null}
+          personal={personal ?? []}
+          errorDePersonal={errorDePersonal}
           advertencias={advertenciasDePagoDeAdministracion(edicion)}
           guardando={guardandoEdicion}
           error={errorEdicion}
