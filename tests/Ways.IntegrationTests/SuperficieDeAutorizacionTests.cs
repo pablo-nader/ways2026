@@ -143,6 +143,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Vendedor y el 403 del Supervisor con origen tesorería (la regla va en el servicio, no en la política)
         // están en PagoDePersonalTests.
         ("POST", "/api/personal/{id:int}/pagos"),
+        // Pago de personal desde el POS: OperacionDePos sin GestionDeCatalogo (el Vendedor es quien lo usa); la restricción a
+        // cajón del turno y sin descuento de cuenta corriente la aplica el servicio (403 prohibido), probada en
+        // PagoDePersonalDelPosTests.
+        ("POST", "/api/pos/personal/{id:int}/pagos"),
         // stage-17-presupuestos-y-remitos (Slice 2, design decisión 17/proposal decisión 10):
         // /api/presupuestos agrupa SOLO bajo OperacionDePos, nada apilado — a diferencia de
         // /api/ordenes-compra, que SÍ apila GestionDeCatalogo. Un Vendedor tiene que poder

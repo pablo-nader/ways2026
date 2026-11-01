@@ -50,6 +50,26 @@ public static class CuentaDePersonalEndpoints
         .RequireAuthorization(Politicas.GestionDeCuentaDePersonal)
         .WithSummary("Registra un pago al personal: descuento de la cuenta corriente del cliente vinculado y líneas de dinero, en una sola transacción.");
 
+        // Superficie del POS, aparte a propósito: el cajero (Vendedor) no tiene GestionDeCuentaDePersonal ni
+        // LecturaDePersonal. Solo ve id y nombre y solo paga del cajón del turno, sin descontar cuenta corriente.
+        app.MapGet("/api/pos/personal/opciones", (ServicioDePersonal servicio, CancellationToken ct) =>
+            servicio.ListarOpcionesAsync(ct))
+        .WithTags("CuentaDePersonal")
+        .RequireAuthorization(Politicas.OperacionDePos)
+        .WithSummary("Proyección mínima (id y nombre) del personal vivo, para el selector de sueldos del POS.");
+
+        app.MapPost("/api/pos/personal/{id:int}/pagos", async (
+            ServicioDePagoDePersonal servicio, int id, SolicitudDePagoDePersonal solicitud, CancellationToken ct) =>
+        {
+            var movimiento = await servicio.PagarDesdeElPosAsync(id, solicitud, ct);
+            return Results.Created($"/api/personal/{id}/cuenta", movimiento);
+        })
+        .WithTags("CuentaDePersonal")
+        .RequireAuthorization(Politicas.OperacionDePos)
+        .WithSummary(
+            "Pago de personal desde el POS: solo del cajón del turno abierto (origenFondos CajaTurno) y sin descuento de " +
+            "cuenta corriente; cualquier otro origen o descuento responde 403 prohibido.");
+
         return app;
     }
 }

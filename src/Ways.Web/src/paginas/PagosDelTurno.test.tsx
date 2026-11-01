@@ -7,7 +7,16 @@ import { pulsoDeCajon } from '../impresion/plantillas'
 import { PagosDelTurno } from './PagosDelTurno'
 import { Toaster } from '../toasts/Toaster'
 import type { CajaDeEscritorio } from './Pos'
-import type { AreaListado, DetalleDeTurno, PagoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
+import type {
+  AreaListado,
+  DetalleDeTurno,
+  PagoDeTurno,
+  MedioPagoListado,
+  OpcionDePersonal,
+  OpcionDeProveedor,
+  PuntoVentaListado,
+  TurnoResumen,
+} from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 /** Las pantallas avisan el resultado con toasts: el `Toaster` va siempre junto a la pantalla. */
@@ -188,6 +197,8 @@ function mockearRutas(opciones: {
   errorProveedores?: unknown
   errorDetalle?: unknown
   areas?: AreaListado[]
+  personal?: OpcionDePersonal[]
+  errorPersonal?: unknown
 }) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta.startsWith('/caja/turnos/abierto')) {
@@ -202,6 +213,10 @@ function mockearRutas(opciones: {
     if (ruta === '/proveedores/opciones') {
       if (opciones.errorProveedores) return Promise.reject(opciones.errorProveedores)
       return Promise.resolve(opciones.proveedores ?? [proveedorFixture()])
+    }
+    if (ruta === '/pos/personal/opciones') {
+      if (opciones.errorPersonal) return Promise.reject(opciones.errorPersonal)
+      return Promise.resolve(opciones.personal ?? [])
     }
     if (ruta.startsWith('/caja/turnos/') && ruta.endsWith('/detalle')) {
       if (opciones.errorDetalle) return Promise.reject(opciones.errorDetalle)
@@ -1320,5 +1335,151 @@ describe('PagosDelTurno — varios medios', () => {
         }),
       ),
     )
+  })
+})
+
+describe('PagosDelTurno — sueldos con empleado', () => {
+  const empleados: OpcionDePersonal[] = [
+    { id: 12, nombre: 'Ana' },
+    { id: 13, nombre: 'Beto' },
+  ]
+
+  async function elegirSueldosYCargarImporte() {
+    await screen.findByLabelText('Importe de la línea 1')
+    await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Sueldos')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+  }
+
+  it('Sueldos cambia el proveedor por "Empleado (opcional)" con "Sin empleado" y esconde área y origen', async () => {
+    mockearRutas({ personal: empleados })
+    render(<PagosDelTurno />)
+
+    await screen.findByLabelText('Importe de la línea 1')
+    expect(screen.getByLabelText('Proveedor (opcional)')).toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Sueldos')
+
+    const selector = await screen.findByLabelText('Empleado (opcional)')
+    await waitFor(() => expect(within(selector).getByRole('option', { name: 'Ana' })).toBeInTheDocument())
+    expect(within(selector).getByRole('option', { name: 'Sin empleado' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Proveedor (opcional)')).not.toBeInTheDocument()
+
+    await userEvent.selectOptions(selector, 'Ana')
+    expect(screen.queryByLabelText('Área')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Pagado desde')).not.toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Servicios')
+    expect(screen.getByLabelText('Proveedor (opcional)')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Empleado (opcional)')).not.toBeInTheDocument()
+  })
+
+  it('con un empleado elegido registra el pago de personal del POS y no un pago común', async () => {
+    mockearRutas({ personal: empleados })
+    apiPostMock.mockResolvedValueOnce({ idMovimiento: 1 })
+    render(<PagosDelTurno />)
+
+    await elegirSueldosYCargarImporte()
+    const selector = await screen.findByLabelText('Empleado (opcional)')
+    await waitFor(() => expect(within(selector).getByRole('option', { name: 'Beto' })).toBeInTheDocument())
+    await userEvent.selectOptions(selector, 'Beto')
+    await userEvent.type(screen.getByLabelText('Observaciones (opcional)'), ' adelanto ')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [ruta, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(ruta).toBe('/pos/personal/13/pagos')
+    expect(cuerpo).toMatchObject({
+      idPuntoVenta: 7,
+      origenFondos: 'CajaTurno',
+      detalle: 'adelanto',
+      lineas: [{ idMedioPago: 1, importe: 500 }],
+    })
+    expect(cuerpo).not.toHaveProperty('descuentoDeCuentaCorriente')
+    expect(cuerpo).not.toHaveProperty('idEmpresa')
+    await toastDeExito('Pago registrado.')
+  })
+
+  it('"Sin empleado" conserva el pago común de categoría Sueldos y sin proveedor', async () => {
+    mockearRutas({ personal: empleados })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<PagosDelTurno />)
+
+    await elegirSueldosYCargarImporte()
+    await screen.findByLabelText('Empleado (opcional)')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ categoria: 'Sueldos', idProveedor: null })),
+    )
+  })
+
+  it('entrar a Sueldos descarta el proveedor ya elegido', async () => {
+    mockearRutas({ personal: empleados })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<PagosDelTurno />)
+
+    await screen.findByLabelText('Importe de la línea 1')
+    await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
+    await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Sueldos')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ categoria: 'Sueldos', idProveedor: null })),
+    )
+  })
+
+  it('sin conexión deshabilita el empleado, explica por qué y no pide el personal', async () => {
+    const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      mockearRutas({ personal: empleados })
+      render(<PagosDelTurno />)
+
+      await screen.findByLabelText('Importe de la línea 1')
+      await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Sueldos')
+
+      expect(await screen.findByLabelText('Empleado (opcional)')).toBeDisabled()
+      expect(screen.getByText(/Sin conexión: pagar a un empleado necesita conexión/)).toBeInTheDocument()
+      expect(apiGetMock.mock.calls.some(([ruta]) => ruta === '/pos/personal/opciones')).toBe(false)
+    } finally {
+      enLinea.mockRestore()
+    }
+  })
+
+  it('si se pierde la conexión con un empleado elegido, no se puede registrar ni se encola', async () => {
+    mockearRutas({ personal: empleados })
+    render(<PagosDelTurno />)
+
+    await elegirSueldosYCargarImporte()
+    const selector = await screen.findByLabelText('Empleado (opcional)')
+    await waitFor(() => expect(within(selector).getByRole('option', { name: 'Ana' })).toBeInTheDocument())
+    await userEvent.selectOptions(selector, 'Ana')
+    expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled()
+
+    const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      act(() => {
+        window.dispatchEvent(new Event('offline'))
+      })
+
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled())
+      expect(screen.getByText(/Sin conexión: pagar a un empleado necesita conexión/)).toBeInTheDocument()
+      expect(apiPostMock).not.toHaveBeenCalled()
+    } finally {
+      enLinea.mockRestore()
+    }
+  })
+
+  it('si el personal no carga lo avisa y deja registrar el sueldo común', async () => {
+    mockearRutas({ errorPersonal: new Error('boom') })
+    render(<PagosDelTurno />)
+
+    await screen.findByLabelText('Importe de la línea 1')
+    await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Sueldos')
+
+    expect(await screen.findByText('No se pudo cargar el personal.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled()
   })
 })

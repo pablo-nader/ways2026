@@ -4028,6 +4028,13 @@ export type SolicitudDePagoDePersonal = {
   detalle?: string
 }
 
+/** Espejo de `Ways.Application.Plantel.OpcionDePersonal` (`GET /api/pos/personal/opciones`, `OperacionDePos`): solo id y
+ * nombre, nunca saldo, valor hora ni documento. */
+export type OpcionDePersonal = {
+  id: number
+  nombre: string
+}
+
 /** Espejo de `Ways.Application.Plantel.DatosDePersonal`: cuerpo del alta y de la edición. */
 export type DatosDePersonal = {
   nombre: string

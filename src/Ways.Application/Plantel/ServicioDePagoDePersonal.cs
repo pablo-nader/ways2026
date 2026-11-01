@@ -48,8 +48,22 @@ public sealed class ServicioDePagoDePersonal(
     IWaysDbContext db, ServicioDePagos servicioDePagos, ServicioDeTurnos servicioDeTurnos, IRelojDelSistema reloj,
     IContextoDeUsuario contexto)
 {
-    public async Task<MovimientoDePersonal> PagarAsync(
-        int idPersonal, SolicitudDePagoDePersonal solicitud, CancellationToken ct = default)
+    public Task<MovimientoDePersonal> PagarAsync(
+        int idPersonal, SolicitudDePagoDePersonal solicitud, CancellationToken ct = default) =>
+        PagarAsync(idPersonal, solicitud, delPos: false, ct);
+
+    /// <summary>
+    /// Pago de personal desde el POS (<c>OperacionDePos</c>, que incluye al Vendedor): el cajero solo paga del cajón del
+    /// turno abierto y no descuenta cuenta corriente. Es el mismo camino de escritura que el back office, con la
+    /// restricción decidida acá y para cualquier rol que llegue por la ruta del POS; el personal inexistente responde 404
+    /// antes que estos 403.
+    /// </summary>
+    public Task<MovimientoDePersonal> PagarDesdeElPosAsync(
+        int idPersonal, SolicitudDePagoDePersonal solicitud, CancellationToken ct = default) =>
+        PagarAsync(idPersonal, solicitud, delPos: true, ct);
+
+    private async Task<MovimientoDePersonal> PagarAsync(
+        int idPersonal, SolicitudDePagoDePersonal solicitud, bool delPos, CancellationToken ct)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var nombre = await db.Personal
@@ -57,6 +71,11 @@ public sealed class ServicioDePagoDePersonal(
             .Select(p => p.Nombre)
             .FirstOrDefaultAsync(ct)
             ?? throw SinPersonal(idPersonal);
+
+        if (delPos)
+        {
+            ExigirSoloCajonSinDescuento(solicitud);
+        }
 
         // Pagar de la tesorería es de Admin, igual que el alta administrativa de pagos
         // (GestionDeCatalogo): el Supervisor de GestionDeCuentaDePersonal paga del cajón o descuenta de la cuenta
@@ -162,6 +181,19 @@ public sealed class ServicioDePagoDePersonal(
         return new MovimientoDePersonal(
             idMovimiento, fecha, TipoMovimientoPersonal.Pago, Horas: null, ValorHora: null, -plan.Total, personal.Saldo,
             plan.Detalle, momento, new DesgloseDePago(plan.DescuentoDeCuentaCorriente, lineas));
+    }
+
+    private static void ExigirSoloCajonSinDescuento(SolicitudDePagoDePersonal solicitud)
+    {
+        if (solicitud.OrigenFondos != OrigenFondosPago.CajaTurno)
+        {
+            throw ErrorDominio.Prohibido("Desde el POS solo se paga al personal del cajón del turno.");
+        }
+
+        if (solicitud.DescuentoDeCuentaCorriente is not null)
+        {
+            throw ErrorDominio.Prohibido("Descontar la cuenta corriente del personal no se hace desde el POS.");
+        }
     }
 
     /// <summary>Un cliente dado de baja se trata como sin vincular.</summary>
