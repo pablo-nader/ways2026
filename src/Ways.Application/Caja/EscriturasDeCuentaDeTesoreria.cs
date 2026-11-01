@@ -7,7 +7,7 @@ namespace Ways.Application.Caja;
 
 /// <summary>
 /// Acredita al cierre de un turno lo cobrado con cada medio electrónico en su cuenta de tesorería, neto de comisión y
-/// retenciones (doc 10 §7). Es el único escritor del libro <c>movimientos_cuenta</c> por esta vía y corre dentro de la
+/// retenciones (doc 10 §7). Es el único escritor de las filas de cierre de <c>movimientos_cuenta</c> y corre dentro de la
 /// transacción del cierre, ya con el lock exclusivo del turno y con el lock de empresa de la tesorería de efectivo.
 ///
 /// Orden de locks: turno (exclusivo) → empresa (advisory) → medios <c>FOR SHARE</c> por id ascendente → cuentas de la
@@ -18,13 +18,13 @@ namespace Ways.Application.Caja;
 /// acredite la misma cuenta, que es lo que serializa su cadena, pero no con el <c>FOR KEY SHARE</c> de los chequeos de FK, así
 /// que insertar un movimiento o asignar la cuenta a un medio no queda bloqueado. Ninguno de esos escritores forma un ciclo
 /// con este: el ABM de cuentas solo lee los medios, el guardado de un medio pide <c>FOR KEY SHARE</c> sobre la cuenta (que no
-/// choca) y los pagos solo toman el lock de empresa. El saldo de partida se lee de la fila de la cuenta ya bloqueada y la
+/// choca) y los débitos de pago (<see cref="DebitosDePagoEnCuenta"/>) toman los mismos locks en el mismo orden. El saldo de partida se lee de la fila de la cuenta ya bloqueada y la
 /// cola de la cadena después, nunca antes.
 ///
 /// Que el medio sea electrónico no se vuelve a chequear: <c>ck_medios_pago_cuenta_solo_electronico</c> impide que un
 /// medio de otro comportamiento tenga cuenta, así que "tiene cuenta" ya implica "es electrónico".
 ///
-/// Fechas monótonas: la <c>fecha</c> de toda fila que se agrega a una cuenta, de este escritor o del ajuste manual, es
+/// Fechas monótonas: la <c>fecha</c> de toda fila que se agrega a una cuenta, de este escritor, del ajuste manual o de un débito de pago, es
 /// <c>max(hora propia, fecha del último movimiento de la cuenta)</c> (<see cref="FechaMonotona"/>), leída junto con el
 /// <c>final</c> bajo el lock. Cada escritor fija su hora antes de esperar ese lock, así que sin esto un cierre podía comitear un id
 /// mayor con una fecha anterior. Con la regla, para cada cuenta que solo tuvo estos escritores el orden por fecha (con empates) es el orden por id, y el libro por
@@ -35,10 +35,10 @@ namespace Ways.Application.Caja;
 /// movimiento de una cuenta tiene fecha futura (reloj desfasado o una fila mal cargada), toda fila posterior de esa cuenta lleva esa
 /// fecha hasta que la hora real la alcance; se cura sola y no se detecta (la pantalla avisa si el ajuste cae fuera del rango mostrado).
 ///
-/// Lo que el libro todavía NO refleja: (a) una devolución por nota de crédito de una venta cobrada con un medio digital
-/// no descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta
-/// un ajuste manual; (b) un pago pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
-/// cuenta. El soporte de un bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún
+/// Lo que el libro todavía NO refleja: una devolución por nota de crédito de una venta cobrada con un medio digital no
+/// descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
+/// ajuste manual. Un pago con un medio digital sí debita su cuenta, con filas <c>pago</c> que escribe
+/// <see cref="DebitosDePagoEnCuenta"/>. El soporte de un bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún
 /// camino actual ejerce: los importes de pago nunca son negativos y <c>ValidadorDePagos</c> rechaza los pagos en una nota de
 /// crédito.
 /// </summary>

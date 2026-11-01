@@ -308,16 +308,51 @@ public class MovimientosCuentaEsquemaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Empty(await sesionB.MovimientosCuenta.ToListAsync());
     }
 
-    [Fact]
-    public async Task ElEnumDeclaraLosNueveTipos()
+    // ---- ck_movimientos_cuenta_pago y fk_movimientos_cuenta_pago ------------------------------
+
+    private Task<ComandoDeSiembra> InsertarConPagoAsync(SiembraDeCuentas s, string tipo, int? idPago) =>
+        ComandoAsync(
+            s.IdTenantA,
+            "INSERT INTO movimientos_cuenta (id_tenant, id_cuenta_tesoreria, fecha, tipo, id_pago, concepto, inicio, ingreso, " +
+            $"egreso, final, id_empleado) VALUES ($1, $2, now(), '{tipo}', {Id(idPago)}, 'prueba', 0, 0, 10, -10, $3)",
+            s.IdTenantA, s.IdCuentaA, s.IdUsuarioA);
+
+    [Theory]
+    [InlineData("pago", null)]
+    [InlineData("ajuste", 999999)]
+    public async Task UnaFilaDePagoSinPagoOUnaDeOtroTipoConPagoViolaLaCheckDePago(string tipo, int? idPago)
     {
-        var s = await SembrarAsync(nameof(ElEnumDeclaraLosNueveTipos));
+        var s = await SembrarAsync(nameof(UnaFilaDePagoSinPagoOUnaDeOtroTipoConPagoViolaLaCheckDePago) + tipo);
+
+        await using var comando = await InsertarConPagoAsync(s, tipo, idPago);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_movimientos_cuenta_pago", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnaFilaDePagoConUnPagoInexistenteViolaLaFkDelPago()
+    {
+        var s = await SembrarAsync(nameof(UnaFilaDePagoConUnPagoInexistenteViolaLaFkDelPago));
+
+        await using var comando = await InsertarConPagoAsync(s, "pago", 999999);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_movimientos_cuenta_pago", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task ElEnumDeclaraLosDiezTipos()
+    {
+        var s = await SembrarAsync(nameof(ElEnumDeclaraLosDiezTipos));
 
         await using var comando = await ComandoAsync(
             s.IdTenantA, "SELECT string_agg(e::text, ',' ORDER BY e) FROM unnest(enum_range(NULL::tipo_movimiento_cuenta)) e");
 
         Assert.Equal(
-            "ajuste,cobro,comision,deposito,retencion_ganancias,retencion_iibb,retencion_iva,retiro,transferencia",
+            "ajuste,cobro,comision,deposito,retencion_ganancias,retencion_iibb,retencion_iva,retiro,transferencia,pago",
             await comando.ExecuteScalarAsync());
     }
 }

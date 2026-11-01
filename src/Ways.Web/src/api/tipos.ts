@@ -2044,6 +2044,7 @@ export type TipoMovimientoCuenta =
   | 'Transferencia'
   | 'Deposito'
   | 'Retiro'
+  | 'Pago'
 
 /** Movimiento de una cuenta tal como lo devuelve el ajuste manual. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
  * usuario dados de baja: el id distingue los dos casos. */

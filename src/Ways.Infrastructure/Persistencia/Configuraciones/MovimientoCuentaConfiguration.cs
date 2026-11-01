@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Pagos;
 using Ways.Domain.Usuarios;
 
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
@@ -20,6 +21,8 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
             t.HasCheckConstraint("ck_movimientos_cuenta_cadena", "final = inicio + ingreso - egreso");
             t.HasCheckConstraint("ck_movimientos_cuenta_importes_no_negativos", "ingreso >= 0 AND egreso >= 0");
             t.HasCheckConstraint("ck_movimientos_cuenta_un_solo_lado", "ingreso = 0 OR egreso = 0");
+            // Una fila de tipo pago siempre nombra su pago, y ninguna otra lo nombra.
+            t.HasCheckConstraint("ck_movimientos_cuenta_pago", "(tipo = 'pago') = (id_pago IS NOT NULL)");
         });
 
         builder.HasKey(m => m.Id).HasName("pk_movimientos_cuenta");
@@ -39,6 +42,7 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
 
         builder.Property(m => m.IdTurnoCaja).HasColumnName("id_turno_caja");
         builder.Property(m => m.IdMedioPago).HasColumnName("id_medio_pago");
+        builder.Property(m => m.IdPago).HasColumnName("id_pago");
 
         builder.Property(m => m.Concepto).HasColumnName("concepto").HasColumnType("text").IsRequired();
 
@@ -63,6 +67,7 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
         builder.HasIndex(m => new { m.IdTurnoCaja, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_turno");
         builder.HasIndex(m => new { m.IdMedioPago, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_medio_pago");
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_cuenta_empleado");
+        builder.HasIndex(m => new { m.IdPago, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_pago");
 
         // Respaldo de idempotencia de las filas que escribe el cierre de turno (cobro, comisión y
         // retenciones): un turno no puede escribir dos veces el mismo tipo para el mismo medio de pago.
@@ -97,6 +102,14 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
             .HasForeignKey(m => new { m.IdMedioPago, m.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
             .HasConstraintName("fk_movimientos_cuenta_medio_pago")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Un pago con débitos no se borra físicamente: su baja es lógica y deja las filas con la reversa.
+        builder.HasOne<Pago>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdPago, m.IdTenant })
+            .HasPrincipalKey(p => new { p.Id, p.IdTenant })
+            .HasConstraintName("fk_movimientos_cuenta_pago")
             .OnDelete(DeleteBehavior.Restrict);
 
         // id_empleado: FK simple, mismo criterio que fk_movimientos_tesoreria_empleado.

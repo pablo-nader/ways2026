@@ -21,6 +21,9 @@ public class MovimientoCuenta
     /// <summary>Medio de pago que originó la fila; <c>null</c> para movimientos sin medio.</summary>
     public int? IdMedioPago { get; set; }
 
+    /// <summary>Pago que originó la fila; solo y siempre en las de tipo <see cref="TipoMovimientoCuenta.Pago"/>.</summary>
+    public int? IdPago { get; set; }
+
     public required string Concepto { get; set; }
 
     public decimal Inicio { get; set; }
