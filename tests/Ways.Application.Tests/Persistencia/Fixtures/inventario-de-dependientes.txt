@@ -35,6 +35,7 @@ Empresa | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | pagos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | pagos | id_empresa,id_tenant | marcado
 Empresa | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | parametros via sucursales | id_sucursal,id_empresa,id_tenant | marcado
 Empresa | parametros | id_empresa,id_tenant | marcado
 Empresa | personal | id_empresa,id_tenant | marcado
 Empresa | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
@@ -109,6 +110,7 @@ Sucursal | numeraciones_fiscales via puntos_venta | id_punto_venta,id_tenant | s
 Sucursal | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | pagos via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | parametros | id_sucursal,id_empresa,id_tenant | marcado
 Sucursal | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | puntos_venta | id_sucursal,id_empresa,id_tenant | marcado
 Sucursal | remitos via puntos_venta | id_punto_venta,id_tenant | marcado

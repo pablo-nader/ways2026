@@ -91,6 +91,8 @@ public partial class ServicioDeOrganizacion
                 caja.UpdatedAt = momento;
             }
 
+            await FusionarParametrosAsync(origen.Id, destino.Id, momento, ct);
+
             origen.IdSucursalFusion = destino.Id;
             Marcar(origen, momento);
 
@@ -104,6 +106,34 @@ public partial class ServicioDeOrganizacion
 
             return await LeerSucursalAsync(destino.Id, ct);
         }, ct);
+    }
+
+    /// <summary>Los parámetros de sucursal (zona horaria, lotes, días de alerta): el destino conserva los suyos y toma los
+    /// del origen solo donde no tiene fila para esa clave; las del origen que el destino ya tenía se dan de baja. Una sola
+    /// lectura, después de los locks de las dos sucursales, que son los que serializan esta fusión.</summary>
+    private async Task FusionarParametrosAsync(int idOrigen, int idDestino, DateTimeOffset momento, CancellationToken ct)
+    {
+        var filas = await db.Parametros
+            .Where(p => p.IdSucursal == idOrigen || p.IdSucursal == idDestino)
+            .ToListAsync(ct);
+
+        var clavesDelDestino = filas
+            .Where(p => p.IdSucursal == idDestino)
+            .Select(p => p.Clave)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var fila in filas.Where(p => p.IdSucursal == idOrigen))
+        {
+            if (clavesDelDestino.Contains(fila.Clave))
+            {
+                Marcar(fila, momento);
+            }
+            else
+            {
+                fila.IdSucursal = idDestino;
+                fila.UpdatedAt = momento;
+            }
+        }
     }
 
     /// <summary>Ninguna de las dos sucursales tiene cajas vivas: no hay caja que firme los asientos, así que solo se

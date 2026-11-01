@@ -55,9 +55,8 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// <paramref name="idPuntoVenta"/> sigue aceptándose (la web y el POS empaquetado lo mandan) y se resuelve a la
     /// sucursal de esa caja. Exactamente uno de los dos. Una sucursal dada de baja se trata como inexistente (404),
     /// también cuando se llega a ella por una caja que todavía la referencia: el reporte nunca nombra una sucursal
-    /// que el resto del sistema ya no ve. Con <paramref name="idSucursal"/> los parámetros por caja
-    /// (zona horaria, días de alerta) salen de la caja de menor id de la sucursal, hasta que esos parámetros
-    /// pasen a ser de la sucursal.</summary>
+    /// que el resto del sistema ya no ve. La zona horaria y los días de alerta, rotación y cobertura son parámetros de la
+    /// sucursal: salen de su fila (o de la de la empresa), sea cual sea la caja con la que se llegó a ella.</summary>
     public async Task<AlcanceDeStock> ResolverAlcanceAsync(int? idPuntoVenta, int? idSucursal, CancellationToken ct = default)
     {
         if (idPuntoVenta is not null && idSucursal is not null)
@@ -80,7 +79,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
                 .FirstOrDefaultAsync(ct)
                 ?? throw ErrorDominio.NoEncontrado($"No existe la sucursal del punto de venta {idCaja}.");
 
-            return new AlcanceDeStock(caja.IdSucursal, nombre, caja.IdEmpresa, idCaja);
+            return new AlcanceDeStock(caja.IdSucursal, nombre, caja.IdEmpresa);
         }
 
         if (idSucursal is not { } id)
@@ -95,13 +94,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
             .FirstOrDefaultAsync(ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la sucursal {id}.");
 
-        var referencia = await db.PuntosVenta
-            .Where(pv => pv.IdSucursal == id)
-            .OrderBy(pv => pv.Id)
-            .Select(pv => (int?)pv.Id)
-            .FirstOrDefaultAsync(ct);
-
-        return new AlcanceDeStock(id, sucursal.Nombre, sucursal.IdEmpresa, referencia);
+        return new AlcanceDeStock(id, sucursal.Nombre, sucursal.IdEmpresa);
     }
 
     public async Task<Existencias> ObtenerExistenciasAsync(AlcanceDeStock alcance, CancellationToken ct = default)
@@ -132,7 +125,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
 
     /// <summary>Lotes con saldo positivo de la sucursal, clasificados en la zona horaria de su caja de
     /// referencia — sin paginar (task 13.1). <paramref name="dias"/> ausente ⇒ se resuelve
-    /// <c>dias_alerta_vencimiento</c> (PV → empresa → default).</summary>
+    /// <c>dias_alerta_vencimiento</c> (sucursal → empresa → default).</summary>
     public async Task<Vencimientos> ObtenerVencimientosAsync(
         AlcanceDeStock alcance, int? dias, CancellationToken ct = default)
     {
@@ -379,15 +372,15 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
             .ToList();
 
     /// <summary>"hoy" es el ÚNICO valor sensible a zona del reporte (design decisión 15) —
-    /// <c>reloj.Ahora</c> (instante absoluto) se convierte a la zona de la caja de referencia ANTES de tomar el
+    /// <c>reloj.Ahora</c> (instante absoluto) se convierte a la zona de la sucursal ANTES de tomar el
     /// <c>DateOnly</c>. Mutation target (task 13.5): reemplazar la conversión por
     /// <c>reloj.Ahora.UtcDateTime</c> directo tiene que hacer fallar el test de zona (spec: "'Hoy'
     /// Is Resolved In The Punto De Venta's Own Zona Horaria, Not UTC" — vinculante), mismo
     /// precedente que el fix de <c>/stock/existencias/export</c> (commit 08e7707).</summary>
     private async Task<(string ZonaId, DateOnly Hoy)> ResolverContextoAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var resuelto = await parametros.ResolverAsync(
-            ParametroConocido.ZonaHoraria.Clave, alcance.IdEmpresa, alcance.IdPuntoVentaDeReferencia, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.ZonaHoraria.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         var zonaId = JsonSerializer.Deserialize<string>(resuelto.Valor)!;
         var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
 
@@ -398,16 +391,16 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
 
     private async Task<int> ResolverDiasAlertaAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var resuelto = await parametros.ResolverAsync(
-            ParametroConocido.DiasAlertaVencimiento.Clave, alcance.IdEmpresa, alcance.IdPuntoVentaDeReferencia, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.DiasAlertaVencimiento.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 
     /// <summary>Slice 4 — mismo patrón que <see cref="ResolverDiasAlertaAsync"/>.</summary>
     private async Task<int> ResolverDiasRotacionAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var resuelto = await parametros.ResolverAsync(
-            ParametroConocido.DiasRotacion.Clave, alcance.IdEmpresa, alcance.IdPuntoVentaDeReferencia, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.DiasRotacion.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 
@@ -419,8 +412,8 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// minimoSugerido, never minimo directly").</summary>
     private async Task<int> ResolverDiasCoberturaAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var resuelto = await parametros.ResolverAsync(
-            ParametroConocido.DiasCoberturaObjetivo.Clave, alcance.IdEmpresa, alcance.IdPuntoVentaDeReferencia, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.DiasCoberturaObjetivo.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 

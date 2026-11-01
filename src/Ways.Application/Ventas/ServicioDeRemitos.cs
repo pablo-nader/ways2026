@@ -920,14 +920,8 @@ public class ServicioDeRemitos(
 
     private async Task<bool> ResolverLotesHabilitadoAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        var clave = ParametroConocido.LotesHabilitado.Clave;
-
-        var candidatos = await db.Parametros
-            .Where(p => p.Clave == clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
-            .ToListAsync(ct);
-
-        var resuelto = ResolucionDeParametros.Resolver(clave, candidatos, idPuntoVenta);
+        var resuelto = await ConsultaDeParametros.ResolverDePuntoVentaAsync(
+            db, ParametroConocido.LotesHabilitado.Clave, idEmpresa, idPuntoVenta, ct);
         return JsonSerializer.Deserialize<bool>(resuelto);
     }
 
