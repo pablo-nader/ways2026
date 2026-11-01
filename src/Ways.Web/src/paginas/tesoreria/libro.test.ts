@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { DesgloseDeMedioDelLibro, FilaDelLibro, LibroDeTesoreria } from '../../api/tipos'
 import {
   CLASE_DE_IMPORTE_NEGATIVO,
+  CLASE_DE_IMPORTE_POSITIVO,
   claseDeImporte,
+  claseDeDiferencia,
   columnasDeCuentas,
+  destinoDelDetalle,
+  entradasDelLibro,
   detalleDeAjuste,
   estaConciliada,
   etiquetaDeCaja,
@@ -152,5 +156,47 @@ describe('estaConciliada', () => {
   it('sin marca nada está congelado, y una fecha ilegible tampoco', () => {
     expect(estaConciliada('2020-01-01T00:00:00Z', null)).toBe(false)
     expect(estaConciliada('no-es-fecha', marca)).toBe(false)
+  })
+})
+
+describe('entradasDelLibro', () => {
+  it('conserva el orden y numera cada fila con su posición original', () => {
+    const a = fila({ fecha: '2026-10-28T10:00:00Z' })
+    const b = fila({ fecha: '2026-10-29T10:00:00Z' })
+    expect(entradasDelLibro([a, b])).toEqual([
+      { fila: a, indice: 0 },
+      { fila: b, indice: 1 },
+    ])
+    expect(entradasDelLibro([])).toEqual([])
+  })
+})
+
+describe('color de la diferencia del arqueo', () => {
+  it('el faltante usa la clase roja', () => {
+    expect(claseDeDiferencia(-200)).toBe(CLASE_DE_IMPORTE_NEGATIVO)
+  })
+
+  it('el sobrante usa la clase verde', () => {
+    expect(claseDeDiferencia(1300)).toBe(CLASE_DE_IMPORTE_POSITIVO)
+  })
+
+  it('la diferencia cero o que redondea a cero no se pinta', () => {
+    expect(claseDeDiferencia(0)).toBe('')
+    expect(claseDeDiferencia(0.001)).toBe('')
+  })
+})
+
+describe('destinoDelDetalle', () => {
+  const caja = fila({ tipo: 'Caja', caja: { idTurnoCaja: 9 } as FilaDelLibro['caja'] })
+  const pago = fila({ tipo: 'Pago', pago: { idPago: 7 } as FilaDelLibro['pago'] })
+
+  it('la caja va al Z del turno y el pago a /pagos solo si se puede abrir', () => {
+    expect(destinoDelDetalle(caja, false)).toBe('/caja/turnos/9/z')
+    expect(destinoDelDetalle(pago, true)).toBe('/pagos?id=7')
+    expect(destinoDelDetalle(pago, false)).toBeNull()
+  })
+
+  it('el ajuste no tiene destino', () => {
+    expect(destinoDelDetalle(fila({ tipo: 'AjusteEfectivo' }), true)).toBeNull()
   })
 })

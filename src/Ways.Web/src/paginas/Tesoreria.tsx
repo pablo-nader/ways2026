@@ -158,14 +158,6 @@ export function Tesoreria() {
                 type="button"
                 className="btn btn-sm btn-outline-light text-nowrap"
                 disabled={modalAbierto}
-                onClick={() => setAjustandoEfectivo(true)}
-              >
-                Ajustar efectivo
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-outline-light text-nowrap"
-                disabled={modalAbierto}
                 onClick={() => setConciliando(true)}
               >
                 Conciliar
@@ -264,7 +256,13 @@ export function Tesoreria() {
                     <p className="libro-conciliacion small mb-2" role="status" data-conciliado={libro.conciliadoHasta !== null}>
                       {libro.conciliadoHasta !== null ? `Conciliado hasta ${fechaHoraATexto(libro.conciliadoHasta)}` : 'Sin conciliar'}
                     </p>
-                    <ResumenDeLiquidez libro={libro} esAdmin={esAdmin} deshabilitado={modalAbierto} onAjustarCuenta={setCuentaAAjustar} />
+                    <ResumenDeLiquidez
+                      libro={libro}
+                      esAdmin={esAdmin}
+                      deshabilitado={modalAbierto}
+                      onAjustarEfectivo={() => setAjustandoEfectivo(true)}
+                      onAjustarCuenta={setCuentaAAjustar}
+                    />
                     <TablaDelLibro libro={libro} puedeAbrirPagos={esAdmin} />
                   </>
                 )}
