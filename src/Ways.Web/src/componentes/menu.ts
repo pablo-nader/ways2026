@@ -147,6 +147,7 @@ const MODELO: EntradaDelModelo[] = [
         titulo: 'Organización',
         enlaces: [
           enlace(rootOAdmin, 'Empresas', '/organizacion/empresas'),
+          enlace(rootOAdmin, 'Sucursales', '/organizacion/sucursales'),
           enlace(rootOAdmin, 'Puntos de venta', '/organizacion/puntos-venta'),
           enlace(puedeGestionarCatalogos, 'Equipos POS', '/organizacion/equipos-pos'),
           enlace(rootOAdmin, 'Vitrina', '/organizacion/vitrina'),

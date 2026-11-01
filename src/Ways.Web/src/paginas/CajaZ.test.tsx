@@ -7,7 +7,7 @@ import { CajaZ } from './CajaZ'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { cierreDeTurno } from '../impresion/plantillas'
 import { ROL } from '../api/tipos'
-import type { DetalleDeTurno, ResumenDeCierrePorRetiro, ResumenDeTurno, TurnoResumen, UsuarioAutenticado } from '../api/tipos'
+import type { ComprobanteEmitido, DetalleDeTurno, ResumenDeCierrePorRetiro, ResumenDeTurno, TurnoResumen, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiDescargarMock = vi.fn()
@@ -65,8 +65,8 @@ function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTu
     idTurnoCaja: 412,
     idMedioAncla: 1,
     medios: [
-      { idMedioPago: 1, importeEsperado: 1000 },
-      { idMedioPago: 2, importeEsperado: 500 },
+      { idMedioPago: 1, importeEsperado: 1000, nombre: 'Efectivo' },
+      { idMedioPago: 2, importeEsperado: 500, nombre: 'Tarjeta' },
     ],
     cantidadTickets: 2,
     primerTicket: { numero: 1, fecha: '2026-08-05T08:30:00Z', codigo: 'TX' },
@@ -81,8 +81,8 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
   return {
     resumen: resumenFixture(),
     tickets: [
-      { id: 1, numero: 1, numeroVisible: '0003-00000001', estado: 'Emitido', fecha: '2026-08-05T08:30:00Z', idPuntoVenta: 10, idCliente: 1, total: 750 },
-      { id: 2, numero: 2, numeroVisible: '0003-00000002', estado: 'Anulado', fecha: '2026-08-05T19:30:00Z', idPuntoVenta: 10, idCliente: 2, total: 250 },
+      { id: 1, numero: 1, numeroVisible: '0003-00000001', estado: 'Emitido', fecha: '2026-08-05T08:30:00Z', idCliente: 1, nombreCliente: 'Cliente 1', total: 750, descuentoManualTotal: 0, recargoManualTotal: 0, mediosDePago: [], estadoNotaDeCredito: null },
+      { id: 2, numero: 2, numeroVisible: '0003-00000002', estado: 'Anulado', fecha: '2026-08-05T19:30:00Z', idCliente: 2, nombreCliente: 'Cliente 2', total: 250, descuentoManualTotal: 0, recargoManualTotal: 0, mediosDePago: [], estadoNotaDeCredito: null },
     ],
     gastos: [
       { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Pago', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
@@ -160,16 +160,16 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     expect(screen.getByText('$ 100,00')).toBeInTheDocument() // retiros
 
     // mutation-proof-tests rule 6: dos filas con valores DISTINTOS por columna.
-    const filaMedioUno = screen.getByRole('row', { name: /Medio #1/ })
+    const filaMedioUno = screen.getByRole('row', { name: /Efectivo/ })
     expect(within(filaMedioUno).getByText('$ 1.000,00')).toBeInTheDocument()
-    const filaMedioDos = screen.getByRole('row', { name: /Medio #2/ })
+    const filaMedioDos = screen.getByRole('row', { name: /Tarjeta/ })
     expect(within(filaMedioDos).getByText('$ 500,00')).toBeInTheDocument()
 
     const filaTicketUno = screen.getByRole('row', { name: /0003-00000001/ })
-    expect(within(filaTicketUno).getByText('Emitido')).toBeInTheDocument()
+    expect(within(filaTicketUno).getByText('Emitida')).toBeInTheDocument()
     expect(within(filaTicketUno).getByText('$ 750,00')).toBeInTheDocument()
     const filaTicketDos = screen.getByRole('row', { name: /0003-00000002/ })
-    expect(within(filaTicketDos).getByText('Anulado')).toBeInTheDocument()
+    expect(within(filaTicketDos).getByText('Anulada')).toBeInTheDocument()
     expect(within(filaTicketDos).getByText('$ 250,00')).toBeInTheDocument()
 
     const filaPagoUno = screen.getByRole('row', { name: /Sueldos/ })
@@ -203,7 +203,7 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     renderCajaZ()
 
     // Se espera al dato (la fila de medios) antes de afirmar la ausencia.
-    await screen.findByRole('row', { name: /Medio #1/ })
+    await screen.findByRole('row', { name: /Efectivo/ })
     expect(screen.queryByText('Recalculado')).not.toBeInTheDocument()
   })
 
@@ -465,7 +465,7 @@ describe('CajaZ — reimpresión del ticket de cierre', () => {
     mockearRutasDeCierre({ turno: turnoFixture({ estado: 'Abierto', fechaCierre: null }) })
     renderCajaZ()
 
-    await screen.findByRole('row', { name: /Medio #1/ })
+    await screen.findByRole('row', { name: /Efectivo/ })
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/412'))
     expect(screen.queryByRole('button', { name: BOTON_CIERRE })).not.toBeInTheDocument()
     expect(apiGetMock).not.toHaveBeenCalledWith('/caja/turnos/412/resumen-de-cierre')
@@ -669,7 +669,7 @@ describe('CajaZ — orden de las tablas', () => {
     const esperado = within(medios).getByRole('columnheader', { name: /Esperado/ })
     await userEvent.click(within(esperado).getByRole('button'))
     expect(esperado).toHaveAttribute('aria-sort', 'ascending')
-    expect(primerasCeldas(medios)).toEqual(['Medio #2', 'Medio #1'])
+    expect(primerasCeldas(medios)).toEqual(['Tarjeta', 'Efectivo'])
 
     const total = within(tickets).getByRole('columnheader', { name: /Total/ })
     await userEvent.click(within(total).getByRole('button'))
@@ -682,5 +682,260 @@ describe('CajaZ — orden de las tablas', () => {
     expect(importe).toHaveAttribute('aria-sort', 'ascending')
     expect(within(pagos).getAllByRole('row')[1]).toHaveTextContent('Viaticos')
     expect(within(pagos).getAllByRole('row')[2]).toHaveTextContent('Sueldos')
+  })
+})
+
+function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): ComprobanteEmitido {
+  return {
+    id: 1,
+    numero: 1,
+    numeroVisible: '0003-00000001',
+    estado: 'Emitido',
+    fecha: '2026-08-05T08:30:00Z',
+    idPuntoVenta: 10,
+    idCliente: 1,
+    idComprobanteAsociado: null,
+    subtotal: 750,
+    descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
+    total: 750,
+    direccionEntrega: null,
+    observaciones: null,
+    items: [
+      {
+        orden: 1,
+        idArticulo: 1,
+        descripcion: 'Coca Cola 1L',
+        codigoBarra: null,
+        idArea: 1,
+        idListaPrecio: 1,
+        idOferta: null,
+        idAlicuotaIva: 1,
+        porcentajeIva: 21,
+        cantidad: 1,
+        precioUnitario: 750,
+        descuento: 0,
+        total: 750,
+        idLote: null,
+        codigoLote: null,
+        loteVencido: false,
+        ajusteManualPorcentaje: null,
+        ajusteManual: 0,
+      },
+    ],
+    pagos: [{ idMedioPago: 1, importe: 750, referencia: null, vuelto: 0 }],
+    idPresupuestoOrigen: null,
+    ...sobrescribir,
+  }
+}
+
+function mockearRutasDeTickets(ventas: Record<number, ComprobanteEmitido> = { 1: comprobanteFixture(), 2: comprobanteFixture({ id: 2, estado: 'Anulado' }) }) {
+  apiGetMock.mockImplementation((ruta: string) => {
+    if (ruta === '/caja/turnos/412/detalle') return Promise.resolve(detalleFixture())
+    if (ruta === '/caja/turnos/412') return Promise.resolve(turnoFixture())
+    if (ruta === '/caja/turnos/412/resumen-de-cierre') return Promise.resolve(resumenDeCierreFixture())
+    if (ruta === '/puntos-venta') return Promise.resolve([{ id: 10, razonSocialEmpresa: 'Empresa Demo', nombreTenant: 'Tenant Demo' }])
+    if (ruta === '/medios-pago') return Promise.resolve([])
+    const venta = /^\/ventas\/(\d+)$/.exec(ruta)
+    if (venta && ventas[Number(venta[1])]) return Promise.resolve(ventas[Number(venta[1])])
+    return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+  })
+}
+
+function renderCajaZConReimpresion(props: React.ComponentProps<typeof CajaZ> = {}) {
+  return render(<CajaZ {...props} />, {
+    wrapper: ({ children }) => (
+      <MemoryRouter initialEntries={['/caja/turnos/412/z']}>
+        <Routes>
+          <Route path="/caja/turnos/:id/z" element={children} />
+        </Routes>
+      </MemoryRouter>
+    ),
+  })
+}
+
+/** Tickets del turno cerrado: las mismas columnas que "Ventas del turno" del POS y dos acciones
+ * por fila, ver detalle y reimprimir; anular no existe en esta pantalla. */
+describe('CajaZ — tickets del turno', () => {
+  it('lista las columnas de Ventas del turno y los medios del detalle por nombre', async () => {
+    mockearRutasDeTickets()
+    renderCajaZConReimpresion()
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    const tabla = within(fila.closest('table') as HTMLElement)
+    expect(tabla.getAllByRole('columnheader').map((h) => h.textContent?.replace(/[↕↑↓]/g, ''))).toEqual([
+      'Número', 'Fecha', 'Cliente', 'Total', 'Medios de pago', 'Estado', 'Acciones',
+    ])
+    expect(within(fila).getByText('Cliente 1')).toBeInTheDocument()
+    expect(within(fila).getByText('Emitida')).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /Efectivo/ })).toBeInTheDocument()
+    expect(screen.queryByText(/Medio #/)).not.toBeInTheDocument()
+  })
+
+  it('nunca ofrece anular, ni en la fila ni en el detalle', async () => {
+    mockearRutasDeTickets()
+    const usuario = userEvent.setup()
+    renderCajaZConReimpresion({ alReimprimirVenta: vi.fn() })
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    expect(screen.queryByRole('button', { name: /anular/i })).not.toBeInTheDocument()
+    await usuario.click(within(fila).getByRole('button', { name: 'Detalle' }))
+    await screen.findByText('Coca Cola 1L')
+    expect(screen.queryByRole('button', { name: /anular/i })).not.toBeInTheDocument()
+  })
+
+  it('Ver detalle pide la venta y abre el mismo modal de detalle', async () => {
+    mockearRutasDeTickets()
+    const usuario = userEvent.setup()
+    renderCajaZConReimpresion()
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    await usuario.click(within(fila).getByRole('button', { name: 'Detalle' }))
+
+    const modal = await screen.findByRole('dialog')
+    expect(await within(modal).findByText('Coca Cola 1L')).toBeInTheDocument()
+    expect(within(modal).getByText('Detalle de la venta 0003-00000001')).toBeInTheDocument()
+    expect(apiGetMock).toHaveBeenCalledWith('/ventas/1')
+  })
+
+  it('una venta anulada no ofrece Reimprimir y una emitida sí', async () => {
+    mockearRutasDeTickets()
+    renderCajaZConReimpresion()
+
+    const emitida = await screen.findByRole('row', { name: /0003-00000001/ })
+    const anulada = screen.getByRole('row', { name: /0003-00000002/ })
+    expect(within(emitida).getByRole('button', { name: 'Reimprimir' })).toBeInTheDocument()
+    expect(within(anulada).queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+  })
+
+  it('web: reimprimir arma el ticket de la venta con la marca de reimpresión y abre el diálogo del navegador', async () => {
+    mockearRutasDeTickets()
+    const imprimirSpy = vi.fn()
+    window.print = imprimirSpy
+    const usuario = userEvent.setup()
+    renderCajaZConReimpresion()
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    await usuario.click(within(fila).getByRole('button', { name: 'Reimprimir' }))
+
+    const vista = await screen.findByTestId('vista-de-ticket')
+    expect(within(vista).getByText('*** REIMPRESION ***')).toBeInTheDocument()
+    expect(within(vista).getByText('PV 10 — Local Centro')).toBeInTheDocument()
+    expect(within(vista).getByText(/Coca Cola 1L/)).toBeInTheDocument()
+    expect(within(vista).getByText('Cajero: jperez')).toBeInTheDocument()
+    expect(within(vista).queryByText('Cajero: vendedor')).not.toBeInTheDocument()
+    expect(imprimirSpy).toHaveBeenCalledTimes(1)
+    expect(imprimirMock).not.toHaveBeenCalled()
+    expect(document.body).toHaveClass('imprimiendo-ticket')
+  })
+
+  it('escritorio: reimprimir encola el ticket por la térmica y no abre el diálogo del navegador', async () => {
+    mockearRutasDeTickets()
+    escritorioMock = true
+    const imprimirSpy = vi.fn()
+    window.print = imprimirSpy
+    const alReimprimirVenta = vi.fn()
+    const usuario = userEvent.setup()
+    renderCajaZConReimpresion({ contextoDeImpresion: { ...CONTEXTO_DE_IMPRESION, cajero: 'quien-reimprime' }, alReimprimirVenta })
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    await usuario.click(within(fila).getByRole('button', { name: 'Reimprimir' }))
+
+    await waitFor(() => expect(alReimprimirVenta).toHaveBeenCalledTimes(1))
+    expect(alReimprimirVenta.mock.calls[0][0]).toMatchObject({ id: 1, numeroVisible: '0003-00000001' })
+    expect(alReimprimirVenta.mock.calls[0][2]).toEqual({ ...CONTEXTO_DE_IMPRESION, cajero: 'jperez' })
+    expect(imprimirSpy).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('vista-de-ticket')).not.toBeInTheDocument()
+  })
+
+  it('si al reimprimir la venta ya figura anulada no imprime nada y lo avisa en la fila', async () => {
+    mockearRutasDeTickets({ 1: comprobanteFixture({ estado: 'Anulado' }) })
+    const imprimirSpy = vi.fn()
+    window.print = imprimirSpy
+    const alReimprimirVenta = vi.fn()
+    escritorioMock = true
+    const usuario = userEvent.setup()
+    renderCajaZConReimpresion({ contextoDeImpresion: CONTEXTO_DE_IMPRESION, alReimprimirVenta })
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    await usuario.click(within(fila).getByRole('button', { name: 'Reimprimir' }))
+
+    expect(await screen.findByText('La venta fue anulada, no se puede reimprimir.')).toBeInTheDocument()
+    expect(alReimprimirVenta).not.toHaveBeenCalled()
+    expect(imprimirSpy).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(within(screen.getByRole('row', { name: /0003-00000001/ })).queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('una reimpresión que termina después de cambiar de turno no imprime el ticket del turno anterior', async () => {
+    let resolver: (r: ResumenDeCierrePorRetiro) => void = () => {}
+    const pendiente = new Promise<ResumenDeCierrePorRetiro>((resolve) => (resolver = resolve))
+    apiGetMock.mockImplementation((ruta: string) => {
+      const turno = /^\/caja\/turnos\/(\d+)(\/.*)?$/.exec(ruta)
+      if (turno?.[2] === '/detalle') return Promise.resolve(detalleFixture())
+      if (turno && !turno[2]) return Promise.resolve(turnoFixture({ id: Number(turno[1]) }))
+      if (ruta === '/caja/turnos/412/resumen-de-cierre') return pendiente
+      if (ruta === '/puntos-venta') return Promise.resolve([])
+      if (ruta === '/medios-pago') return Promise.resolve([])
+      if (ruta === '/ventas/1') return Promise.resolve(comprobanteFixture())
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const imprimirSpy = vi.fn()
+    window.print = imprimirSpy
+    escritorioMock = true
+    const alReimprimirVenta = vi.fn()
+
+    function Navegar() {
+      const navegar = useNavigate()
+      return <button onClick={() => navegar('/caja/turnos/413/z')}>ir al 413</button>
+    }
+    render(
+      <MemoryRouter initialEntries={['/caja/turnos/412/z']}>
+        <Routes>
+          <Route
+            path="/caja/turnos/:id/z"
+            element={
+              <>
+                <Navegar />
+                <CajaZ contextoDeImpresion={CONTEXTO_DE_IMPRESION} alReimprimirVenta={alReimprimirVenta} />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    await userEvent.click(within(fila).getByRole('button', { name: 'Reimprimir' }))
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/412/resumen-de-cierre'))
+    await userEvent.click(screen.getByText('ir al 413'))
+    await screen.findByText('Caja Z — turno #413')
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/413/detalle'))
+
+    await act(async () => {
+      resolver(resumenDeCierreFixture())
+    })
+
+    expect(alReimprimirVenta).not.toHaveBeenCalled()
+    expect(imprimirSpy).not.toHaveBeenCalled()
+  })
+
+  it('dos clics sincrónicos en Reimprimir piden la venta una sola vez', async () => {
+    mockearRutasDeTickets()
+    escritorioMock = true
+    const alReimprimirVenta = vi.fn()
+    renderCajaZConReimpresion({ contextoDeImpresion: CONTEXTO_DE_IMPRESION, alReimprimirVenta })
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    const boton = within(fila).getByRole('button', { name: 'Reimprimir' })
+    await act(async () => {
+      boton.click()
+      boton.click()
+    })
+
+    await waitFor(() => expect(alReimprimirVenta).toHaveBeenCalledTimes(1))
+    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/ventas/1')).toHaveLength(1)
   })
 })

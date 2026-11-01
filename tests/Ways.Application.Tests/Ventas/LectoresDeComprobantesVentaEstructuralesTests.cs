@@ -67,14 +67,26 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Caja/LectorDeContenidoDeResumen.cs",
                 "db.ComprobantesVenta,")] =
                 (1, PorTurno),
-            [("Ways.Application/Caja/LectorDeLineasDelTurno.cs",
-                "var crudos = await db.ComprobantesVenta")] =
+            [("Ways.Application/Caja/LectorDeFacturadoPorTurno.cs",
+                "var comprobantes = await db.ComprobantesVenta.AsNoTracking()")] =
                 (1, PorTurno),
+            [("Ways.Application/Caja/LectorDeFacturadoPorTurno.cs",
+                ": await db.ComprobantesVenta.AsNoTracking()")] =
+                (1, "Turno y venta original de las notas de crédito ya listadas, por id: un espejo no es la venta que corrige una nota."),
+            [("Ways.Application/Caja/LectorDeFacturadoPorTurno.cs",
+                ": await db.Cobros.AsNoTracking()")] =
+                (1, "Cobros de los ids de comprobante ya traídos (los del turno y los originales de sus notas de crédito), que no son espejos."),
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
                 "var pagosDelTurno = db.Cobros")] =
                 (1, PorTurno),
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
                 "db.ComprobantesVenta,")] =
+                (1, PorTurno),
+            [("Ways.Application/Caja/ServicioDeReconstruccionDeCuentas.cs",
+                "from p in db.Cobros")] =
+                (1, PorTurno),
+            [("Ways.Application/Caja/ServicioDeReconstruccionDeCuentas.cs",
+                "join c in db.ComprobantesVenta on p.IdComprobanteVenta equals c.Id")] =
                 (1, PorTurno),
             [("Ways.Application/Caja/LectorDeRendicionDeDispositivos.cs",
                 "FROM comprobantes_venta cv")] =

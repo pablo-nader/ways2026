@@ -16,10 +16,10 @@ public class StockLoteConfiguration : IEntityTypeConfiguration<StockLote>
     {
         builder.ToTable("stock_lotes");
 
-        builder.HasKey(s => new { s.IdArticulo, s.IdPuntoVenta, s.IdLote }).HasName("pk_stock_lotes");
+        builder.HasKey(s => new { s.IdArticulo, s.IdSucursal, s.IdLote }).HasName("pk_stock_lotes");
 
         builder.Property(s => s.IdArticulo).HasColumnName("id_articulo").ValueGeneratedNever();
-        builder.Property(s => s.IdPuntoVenta).HasColumnName("id_punto_venta").ValueGeneratedNever();
+        builder.Property(s => s.IdSucursal).HasColumnName("id_sucursal").ValueGeneratedNever();
         builder.Property(s => s.IdLote).HasColumnName("id_lote").ValueGeneratedNever();
 
         builder.Property(s => s.IdTenant)
@@ -35,8 +35,8 @@ public class StockLoteConfiguration : IEntityTypeConfiguration<StockLote>
         builder.HasIndex(s => s.IdTenant).HasDatabaseName("ix_stock_lotes_tenant");
 
         // Ruta de acceso del reporte de vencimientos (slice 13) — mismo shape que
-        // ix_stock_punto_venta.
-        builder.HasIndex(s => new { s.IdPuntoVenta, s.IdTenant }).HasDatabaseName("ix_stock_lotes_punto_venta");
+        // ix_stock_sucursal.
+        builder.HasIndex(s => new { s.IdSucursal, s.IdTenant }).HasDatabaseName("ix_stock_lotes_sucursal");
 
         // Soporte de fk_stock_lotes_lote (evita el índice implícito PascalCase de EF).
         builder.HasIndex(s => new { s.IdLote, s.IdArticulo, s.IdTenant }).HasDatabaseName("ix_stock_lotes_lote");
@@ -56,11 +56,11 @@ public class StockLoteConfiguration : IEntityTypeConfiguration<StockLote>
             .HasConstraintName("fk_stock_lotes_lote")
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne<PuntoVenta>()
+        builder.HasOne<Sucursal>()
             .WithMany()
-            .HasForeignKey(s => new { s.IdPuntoVenta, s.IdTenant })
+            .HasForeignKey(s => new { s.IdSucursal, s.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
-            .HasConstraintName("fk_stock_lotes_punto_venta")
+            .HasConstraintName("fk_stock_lotes_sucursal")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

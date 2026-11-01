@@ -9,14 +9,12 @@ import { api } from './cliente'
 import type {
   ArticuloDeReporte,
   Comisiones,
-  CuentasDeLaEmpresa,
   Existencias,
   Granularidad,
-  LibroDeCuenta,
+  LibroDeTesoreria,
   LibroIva,
   PaginaDe,
   PaginaDeHistoricoDeCajas,
-  PaginaDeMovimientosTesoreria,
   Rentabilidad,
   Reposicion,
   ResumenDePagos,
@@ -144,34 +142,30 @@ export const clienteDeReportes = {
     api.get<Comisiones>(`/reportes/comisiones${construirQueryDeBreakdownConPv(filtros)}`),
   historicoDeCajas: (filtros: FiltrosDeHistoricoDeCajas, orden: OrdenDeHistoricoDeCajas = null) =>
     api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros, orden)}`),
-  tesoreria: (filtros: FiltrosDeTesoreria, orden: OrdenDeTesoreria = null) =>
-    api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros, orden)}`),
-  cuentasDeTesoreria: (idEmpresa: number) =>
-    api.get<CuentasDeLaEmpresa>(`/reportes/tesoreria/cuentas?idEmpresa=${idEmpresa}`),
-  libroDeCuenta: (idCuenta: number, filtros: FiltrosDeLibroDeCuenta) =>
-    api.get<LibroDeCuenta>(`/reportes/tesoreria/cuentas/${idCuenta}/libro${construirQueryDeLibroDeCuenta(filtros)}`),
-  existencias: (idPuntoVenta: number) =>
-    api.get<Existencias>(`/reportes/stock/existencias?idPuntoVenta=${idPuntoVenta}`),
+  libroDeTesoreria: (filtros: FiltrosDeLibroDeTesoreria) =>
+    api.get<LibroDeTesoreria>(`/reportes/libro-tesoreria${construirQueryDeLibroDeTesoreria(filtros)}`),
+  existencias: (idSucursal: number) =>
+    api.get<Existencias>(`/reportes/stock/existencias?idSucursal=${idSucursal}`),
   /** stage-12-lotes-vencimientos (Slice 15): `dias` es opcional — omitido, el servidor resuelve
-   * `dias_alerta_vencimiento` (PV → empresa → default), mismo criterio que el resto de los
+   * `dias_alerta_vencimiento` (sucursal → empresa → default), mismo criterio que el resto de los
    * parámetros del backend con default declarado (dto-contract-honesty: no se manda un valor
    * inventado del lado del cliente cuando el servidor ya sabe resolverlo). */
-  vencimientos: (idPuntoVenta: number, dias: number | null) =>
+  vencimientos: (idSucursal: number, dias: number | null) =>
     api.get<Vencimientos>(
-      `/reportes/stock/vencimientos?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`,
+      `/reportes/stock/vencimientos?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}`,
     ),
   vencimientosResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeVencimientos>(`/reportes/stock/vencimientos/resumen?idPuntoVenta=${idPuntoVenta}`),
   /** stage-13-stock-inteligente (Slice 6): mismo criterio opcional de `dias` que `vencimientos` —
-   * omitido, el servidor resuelve `dias_rotacion` (PV → empresa → default). */
-  reposicion: (idPuntoVenta: number, dias: number | null) =>
+   * omitido, el servidor resuelve `dias_rotacion` (sucursal → empresa → default). */
+  reposicion: (idSucursal: number, dias: number | null) =>
     api.get<Reposicion>(
-      `/reportes/stock/reposicion?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`,
+      `/reportes/stock/reposicion?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}`,
     ),
   /** stage-13-stock-inteligente (Slice 6): feed independiente de `minimoSugerido`, mismo criterio
    * opcional de `dias`. */
-  rotacion: (idPuntoVenta: number, dias: number | null) =>
-    api.get<Rotacion>(`/reportes/stock/rotacion?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`),
+  rotacion: (idSucursal: number, dias: number | null) =>
+    api.get<Rotacion>(`/reportes/stock/rotacion?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}`),
   /** stage-13-stock-inteligente (Slice 7): tile de Tablero, mismo criterio que `vencimientosResumen`. */
   reposicionResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeReposicion>(`/reportes/stock/reposicion/resumen?idPuntoVenta=${idPuntoVenta}`),
@@ -263,78 +257,14 @@ export function construirQueryDeHistoricoDeCajas(
   return `?${parametros.toString()}`
 }
 
-/** Filtro de `GET /api/reportes/tesoreria` — `idEmpresa` es OBLIGATORIO (stage-tesoreria-por-
- * empresa, PR5: la cadena inicio/final es por empresa, doc 10 §7); `idPuntoVenta` es OPCIONAL,
- * un filtro adicional sobre esa misma cadena — a diferencia de antes de este PR, acá SÍ existe la
- * opción "Todos" (`idPuntoVenta: null`), porque mezclar empresas nunca fue el riesgo (design
- * decisión 11 protegía contra mezclar puntos de venta de la MISMA empresa, algo que ya no aplica
- * porque la cadena nunca fue por punto de venta). Un `idPuntoVenta` puntual muestra un
- * subconjunto de la cadena de la empresa, no una cadena propia. */
-export type FiltrosDeTesoreria = {
-  idEmpresa: number
-  idPuntoVenta: number | null
-  desde: string
-  hasta: string
-  pagina: number
-  tamanio: number
-}
+/** Filtro del libro de tesorería: `desde` y `hasta` son obligatorios y viajan como límites inclusivos del día con el offset local. */
+export type FiltrosDeLibroDeTesoreria = { idEmpresa: number; desde: string; hasta: string }
 
-function construirQueryDeAlcanceDeTesoreria(
-  filtros: { idEmpresa: number; idPuntoVenta: number | null; desde: string; hasta: string },
-): string {
+export function construirQueryDeLibroDeTesoreria(filtros: FiltrosDeLibroDeTesoreria): string {
   const parametros = new URLSearchParams()
   parametros.set('idEmpresa', String(filtros.idEmpresa))
-  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
-  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
-  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
-  return `?${parametros.toString()}`
-}
-
-/** Claves de `orden` que acepta `GET /api/reportes/tesoreria`: una por cada columna de datos del libro. */
-export const COLUMNAS_ORDENABLES_DE_TESORERIA = [
-  'tipo',
-  'inicio',
-  'ingreso',
-  'egreso',
-  'final',
-  'concepto',
-  'puntoVenta',
-  'empleado',
-  'fecha',
-] as const
-
-export type ColumnaOrdenableDeTesoreria = (typeof COLUMNAS_ORDENABLES_DE_TESORERIA)[number]
-
-export type OrdenDeTesoreria = OrdenDeServidor<ColumnaOrdenableDeTesoreria>
-
-export function esColumnaOrdenableDeTesoreria(columna: string): columna is ColumnaOrdenableDeTesoreria {
-  return (COLUMNAS_ORDENABLES_DE_TESORERIA as readonly string[]).includes(columna)
-}
-
-/** Sin `orden` el libro llega en su orden de cadena (id ascendente). Con `orden`, cada fila conserva el
- * inicio y el final que el servidor persistió: ordenar no recalcula saldos. */
-export function construirQueryDeTesoreria(filtros: FiltrosDeTesoreria, orden: OrdenDeTesoreria = null): string {
-  const parametros = new URLSearchParams(construirQueryDeAlcanceDeTesoreria(filtros).slice(1))
-  agregarOrdenAlQuery(parametros, orden)
-  parametros.set('pagina', String(filtros.pagina))
-  parametros.set('tamanio', String(filtros.tamanio))
-  return `?${parametros.toString()}`
-}
-
-/** Filtro del libro de una cuenta de tesorería: mismos límites inclusivos y mismo offset local que el libro de efectivo. */
-export type FiltrosDeLibroDeCuenta = {
-  desde: string
-  hasta: string
-  pagina: number
-  tamanio: number
-}
-
-export function construirQueryDeLibroDeCuenta(filtros: FiltrosDeLibroDeCuenta): string {
-  const parametros = new URLSearchParams()
-  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
-  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
-  parametros.set('pagina', String(filtros.pagina))
-  parametros.set('tamanio', String(filtros.tamanio))
+  parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   return `?${parametros.toString()}`
 }
 
@@ -357,21 +287,18 @@ export const rutasDeExportacion = {
    * de Slice 3). `pagina`/`tamanio` no viajan — el export no pagina. */
   historicoDeCajas: (filtros: { idPuntoVenta: number | null; desde: string; hasta: string }) =>
     `/reportes/cajas/export${construirQueryDeAlcanceDeCajas(filtros)}&formato=xlsx`,
-  /** `desde`/`hasta` OBLIGATORIOS en `/tesoreria/export`, mismo criterio que `historicoDeCajas`. */
-  tesoreria: (filtros: { idEmpresa: number; idPuntoVenta: number | null; desde: string; hasta: string }) =>
-    `/reportes/tesoreria/export${construirQueryDeAlcanceDeTesoreria(filtros)}&formato=xlsx`,
   /** Sin `desde`/`hasta`: el stock no tiene rango, el nombre de archivo se fecha con el día del
    * servidor (mismo criterio que la ruta JSON hermana). */
-  existencias: (idPuntoVenta: number) => `/reportes/stock/existencias/export?idPuntoVenta=${idPuntoVenta}&formato=xlsx`,
+  existencias: (idSucursal: number) => `/reportes/stock/existencias/export?idSucursal=${idSucursal}&formato=xlsx`,
   /** stage-12-lotes-vencimientos (Slice 15): mismo query string que la ruta JSON hermana +
    * `formato=xlsx`, mismo criterio que `existencias`. */
-  vencimientos: (idPuntoVenta: number, dias: number | null) =>
-    `/reportes/stock/vencimientos/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
+  vencimientos: (idSucursal: number, dias: number | null) =>
+    `/reportes/stock/vencimientos/export?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
   /** stage-13-stock-inteligente (Slice 6): mismo query string que la ruta JSON hermana +
    * `formato=xlsx`, mismo criterio que `vencimientos`. Sin sibling propio para `/rotacion` — esa
    * ruta no tiene export (`ReportesEndpoints.cs`). */
-  reposicion: (idPuntoVenta: number, dias: number | null) =>
-    `/reportes/stock/reposicion/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
+  reposicion: (idSucursal: number, dias: number | null) =>
+    `/reportes/stock/reposicion/export?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
   /** Reusa el mismo builder de alcance que `clienteDeReportes.articulos` (sin `pagina`/`tamanio`,
    * el export no pagina) — un builder separado desincronizó una vez la descarga del listado
    * (lección del proyecto), así que acá se reconstruye el query completo y se le recorta la

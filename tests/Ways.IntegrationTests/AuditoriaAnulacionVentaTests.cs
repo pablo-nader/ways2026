@@ -47,7 +47,7 @@ public class AuditoriaAnulacionVentaTests(WaysApiFixture fixture) : IClassFixtur
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, HttpClient Admin, int IdArea, int IdAlicuotaIva,
         int IdListaPrecio, int IdMedioEfectivo, int IdMedioCuentaCorriente, int IdCliente, int IdTipoComprobanteTx,
-        int IdEmpleadoAdmin, string MailAdmin, string PasswordAdmin);
+        int IdEmpleadoAdmin, string MailAdmin, string PasswordAdmin, int IdSucursal);
 
     private long _numeroSecuencial = 500_000;
 
@@ -124,10 +124,12 @@ public class AuditoriaAnulacionVentaTests(WaysApiFixture fixture) : IClassFixtur
 
         var idTipoComprobanteTx = await db.TiposComprobante.Where(t => t.Codigo == "TX").Select(t => t.Id).FirstAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, resultado.IdPuntoVenta);
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
             lista.Id, idMedioEfectivo, medioCc.Id, idCliente, idTipoComprobanteTx, resultado.IdUsuarioAdmin,
-            mailAdmin, resultado.PasswordTemporal);
+            mailAdmin, resultado.PasswordTemporal, idSucursal);
     }
 
     private async Task<int> SembrarArticuloConPrecioAsync(Contexto ctx, string nombre, decimal precio)
@@ -313,11 +315,11 @@ public class AuditoriaAnulacionVentaTests(WaysApiFixture fixture) : IClassFixtur
 
         await using var dbAntes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var stockAAntes = await dbAntes.Stock
-            .Where(s => s.IdArticulo == idArticuloA && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+            .Where(s => s.IdArticulo == idArticuloA && s.IdSucursal == ctx.IdSucursal).Select(s => s.Cantidad).FirstAsync();
         var stockBAntes = await dbAntes.Stock
-            .Where(s => s.IdArticulo == idArticuloB && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+            .Where(s => s.IdArticulo == idArticuloB && s.IdSucursal == ctx.IdSucursal).Select(s => s.Cantidad).FirstAsync();
         var stockCAntes = await dbAntes.Stock
-            .Where(s => s.IdArticulo == idArticuloC && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+            .Where(s => s.IdArticulo == idArticuloC && s.IdSucursal == ctx.IdSucursal).Select(s => s.Cantidad).FirstAsync();
 
         await RevocarAsync("auditoria", "INSERT");
         HttpResponseMessage respuesta;
@@ -345,11 +347,11 @@ public class AuditoriaAnulacionVentaTests(WaysApiFixture fixture) : IClassFixtur
             0, await db.Auditoria.CountAsync(a => a.IdEntidad == emitido.Id && a.Accion == "venta.anulacion"));
 
         var stockADespues = await db.Stock
-            .Where(s => s.IdArticulo == idArticuloA && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+            .Where(s => s.IdArticulo == idArticuloA && s.IdSucursal == ctx.IdSucursal).Select(s => s.Cantidad).FirstAsync();
         var stockBDespues = await db.Stock
-            .Where(s => s.IdArticulo == idArticuloB && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+            .Where(s => s.IdArticulo == idArticuloB && s.IdSucursal == ctx.IdSucursal).Select(s => s.Cantidad).FirstAsync();
         var stockCDespues = await db.Stock
-            .Where(s => s.IdArticulo == idArticuloC && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+            .Where(s => s.IdArticulo == idArticuloC && s.IdSucursal == ctx.IdSucursal).Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(stockAAntes, stockADespues);
         Assert.Equal(stockBAntes, stockBDespues);
         Assert.Equal(stockCAntes, stockCDespues);

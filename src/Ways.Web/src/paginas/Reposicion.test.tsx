@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Reposicion } from './Reposicion'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { FilaDeReposicion, PuntoVentaListado, Reposicion as ReposicionRespuesta, UsuarioAutenticado } from '../api/tipos'
+import type { FilaDeReposicion, PuntoVentaListado, SucursalListado, Reposicion as ReposicionRespuesta, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiDescargarMock = vi.fn()
@@ -49,11 +49,24 @@ vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
+const sucursalCentro: SucursalListado = {
+  id: 20,
+  idTenant: 1,
+  idEmpresa: 1,
+  nombre: 'Sucursal Centro',
+  razonSocialEmpresa: 'Empresa Demo',
+  cantidadPuntosVenta: 1,
+}
+
+const sucursalNorte: SucursalListado = { ...sucursalCentro, id: 21, nombre: 'Sucursal Norte' }
+
 const puntoVentaCentro: PuntoVentaListado = {
   id: 10,
   idTenant: 1,
   idEmpresa: 1,
   nombre: 'PV Centro',
+  idSucursal: 20,
+  nombreSucursal: 'Sucursal Centro',
   domicilio: null,
   horario: null,
   whatsapp: null,
@@ -70,6 +83,8 @@ const puntoVentaNorte: PuntoVentaListado = {
   idTenant: 1,
   idEmpresa: 1,
   nombre: 'PV Norte',
+  idSucursal: 21,
+  nombreSucursal: 'Sucursal Norte',
   domicilio: null,
   horario: null,
   whatsapp: null,
@@ -98,12 +113,13 @@ function filaFixture(sobrescribir: Partial<FilaDeReposicion> = {}): FilaDeReposi
 }
 
 function reposicionFixture(filas: FilaDeReposicion[], idPuntoVenta = 10): ReposicionRespuesta {
-  return { idPuntoVenta, hoy: '2026-08-14', diasDeRotacion: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', hoy: '2026-08-14', diasDeRotacion: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
 }
 
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaCentro, puntoVentaNorte])
+    if (ruta === '/sucursales') return Promise.resolve([sucursalCentro, sucursalNorte])
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -155,20 +171,20 @@ beforeEach(() => {
 })
 
 describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
-  it('arranca con el primer punto de venta cargado, sin ?dias= en la consulta', async () => {
+  it('arranca con la primera sucursal cargada, sin ?dias= en la consulta', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))
       return undefined
     })
     renderReposicion()
 
-    await screen.findByLabelText('Punto de venta')
-    expect(screen.getByLabelText('Punto de venta')).toHaveValue('10')
+    await screen.findByLabelText('Sucursal')
+    expect(screen.getByLabelText('Sucursal')).toHaveValue('20')
     // La consulta del reporte la dispara un efecto POSTERIOR a que el punto de venta quede
     // seleccionado: leer `mock.calls` en el mismo tick encuentra la lista todavía sin esa llamada.
     await waitFor(() => {
       const llamada = apiGetMock.mock.calls.find((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/reposicion?'))
-      expect(llamada?.[0]).toBe('/reportes/stock/reposicion?idPuntoVenta=10')
+      expect(llamada?.[0]).toBe('/reportes/stock/reposicion?idSucursal=20')
     })
   })
 
@@ -271,7 +287,7 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
   })
 
-  it('el botón de descarga apunta a /reportes/stock/reposicion/export con el idPuntoVenta elegido', async () => {
+  it('el botón de descarga apunta a /reportes/stock/reposicion/export con el idSucursal elegido', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))
       return undefined
@@ -282,7 +298,7 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     await screen.findByText('Yerba mate 1kg')
     await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
 
-    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/reposicion\/export\?idPuntoVenta=10/)
+    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/reposicion\/export\?idSucursal=20/)
   })
 
   it('sin filas bajo el mínimo muestra un estado vacío', async () => {
@@ -292,7 +308,7 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     })
     renderReposicion()
 
-    expect(await screen.findByText('No hay artículos bajo el mínimo para este punto de venta.')).toBeInTheDocument()
+    expect(await screen.findByText('No hay artículos bajo el mínimo para esta sucursal.')).toBeInTheDocument()
   })
 
   it('una respuesta desactualizada nunca pisa la más reciente (generación)', async () => {
@@ -313,9 +329,9 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
 
     const usuario = userEvent.setup()
     renderReposicion()
-    await screen.findByLabelText('Punto de venta')
+    await screen.findByLabelText('Sucursal')
 
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '21')
     expect(await screen.findByText('segunda-respuesta')).toBeInTheDocument()
 
     // El flush del microtask va DENTRO de act (mutation-proof-tests regla 7): un waitFor solo

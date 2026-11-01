@@ -6,7 +6,7 @@ import { ErrorApi } from '../api/cliente'
 import { ETIQUETA_SIN_DUENIO } from '../api/organizacion'
 import { ROL } from '../api/tipos'
 import { Toaster } from '../toasts/Toaster'
-import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type { PuntoVentaListado, SucursalListado, UsuarioAutenticado } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.11 y 2.13) y slice 5 (5.5, 5.7, 5.8).
@@ -38,6 +38,14 @@ vi.mock('../api/cliente', () => ({
 function botonDeModo() {
   const boton = screen.getAllByRole('button', { name: 'Modo' }).find((b) => b.closest('tbody'))
   if (!boton) throw new Error('No hay botón Modo en el cuerpo de la tabla')
+
+  return boton
+}
+
+/** El encabezado de la columna también es un botón "Sucursal": el de la fila es el que vive en el cuerpo de la tabla. */
+function botonDeSucursal() {
+  const boton = screen.getAllByRole('button', { name: 'Sucursal' }).find((b) => b.closest('tbody'))
+  if (!boton) throw new Error('No hay botón Sucursal en el cuerpo de la tabla')
 
   return boton
 }
@@ -76,6 +84,8 @@ function pvFixture(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaLis
     nombreTenant: 'Comercio Sur',
     razonSocialEmpresa: 'Sur SRL',
     modo: 'Web',
+    idSucursal: 500,
+    nombreSucursal: 'Sucursal Sur',
     ...sobrescribir,
   }
 }
@@ -114,6 +124,18 @@ beforeEach(() => {
   estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 })
 
+function sucursalFixture(sobrescribir: Partial<SucursalListado> = {}): SucursalListado {
+  return {
+    id: 500,
+    idTenant: 2,
+    idEmpresa: 20,
+    nombre: 'Sucursal Sur',
+    razonSocialEmpresa: 'Sur SRL',
+    cantidadPuntosVenta: 1,
+    ...sobrescribir,
+  }
+}
+
 function montar(items: PuntoVentaListado[] = [pvSurCentro, pvSurAnexo, pvEste]) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve(items)
@@ -130,6 +152,12 @@ function nombresVisibles() {
     .getAllByRole('row')
     .slice(2)
     .map((f) => within(f).getAllByRole('cell')[3]?.textContent ?? '')
+}
+
+function opcionesDeSelect(select: HTMLElement) {
+  return within(select)
+    .getAllByRole('option')
+    .map((o) => o.textContent)
 }
 
 function opcionesDe(etiqueta: string) {
@@ -840,6 +868,133 @@ describe('PuntosVenta — flip de modo', () => {
   })
 })
 
+describe('PuntosVenta — mover la caja de sucursal', () => {
+  const sucursalActual = sucursalFixture()
+  const sucursalHermana = sucursalFixture({ id: 501, nombre: 'Depósito Sur' })
+  const sucursalDeOtraEmpresa = sucursalFixture({ id: 600, idEmpresa: 30, nombre: 'Sucursal Este', razonSocialEmpresa: 'Este SRL' })
+
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  function montarConSucursales(items: PuntoVentaListado[] = [pvFixture()]) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve(items)
+      if (ruta === '/sucursales') return Promise.resolve([sucursalActual, sucursalHermana, sucursalDeOtraEmpresa])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    return render(<><PuntosVenta /><Toaster /></>)
+  }
+
+  /** Abre el modal y espera al DATO (las sucursales), no al elemento: el select existe antes de que lleguen. */
+  async function abrirMovimiento(usuario: ReturnType<typeof userEvent.setup>) {
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+    await usuario.click(botonDeSucursal())
+    await waitFor(() => expect(screen.getByLabelText('Sucursal', { selector: 'select' })).toBeEnabled())
+  }
+
+  it('rinde la sucursal de la caja en su columna', async () => {
+    montarConSucursales([pvFixture({ nombreSucursal: 'Sucursal Sur' })])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    const celdas = within(screen.getByRole('row', { name: /PV Centro/ })).getAllByRole('cell')
+    expect(celdas[4]).toHaveTextContent('Sucursal Sur')
+  })
+
+  /** Cláusula bajo prueba: `delaEmpresa` en `ModalDeSucursalDePuntoVenta` — solo las sucursales de la empresa de la caja
+   * (el servidor rechazaría las demás con 409) — y el POST dedicado con el id elegido. */
+  it('ofrece solo las sucursales de su empresa y mueve la caja con el endpoint dedicado', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(pvFixture({ idSucursal: 501, nombreSucursal: 'Depósito Sur' }))
+    montarConSucursales()
+    await abrirMovimiento(usuario)
+
+    const selector = screen.getByLabelText('Sucursal', { selector: 'select' })
+    expect(opcionesDeSelect(selector)).toEqual(['Sucursal Sur', 'Depósito Sur'])
+    expect(selector).toHaveValue('500')
+    // Sin cambiar la sucursal no hay nada que guardar.
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+
+    await usuario.selectOptions(selector, '501')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/puntos-venta/100/sucursal', { idSucursal: 501 }))
+    await waitFor(() => expect(screen.getByText('Se movió "PV Centro" de sucursal.')).toBeInTheDocument())
+    expect(screen.queryByLabelText('Sucursal', { selector: 'select' })).not.toBeInTheDocument()
+  })
+
+  it('un segundo click sobre "Guardar" en vuelo se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    montarConSucursales()
+    await abrirMovimiento(usuario)
+    await usuario.selectOptions(screen.getByLabelText('Sucursal', { selector: 'select' }), '501')
+
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('un 409 rinde el mensaje del servidor sin cerrar el formulario', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockRejectedValue(
+      new ErrorApi(
+        409,
+        'sucursal_en_uso',
+        'No se puede mover la caja: su sucursal quedaría sin cajas y todavía tiene stock.',
+      ),
+    )
+    montarConSucursales()
+    await abrirMovimiento(usuario)
+
+    await usuario.selectOptions(screen.getByLabelText('Sucursal', { selector: 'select' }), '501')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('No se puede mover la caja: su sucursal quedaría sin cajas y todavía tiene stock.'),
+      ).toBeInTheDocument(),
+    )
+    expect(screen.getByLabelText('Sucursal', { selector: 'select' })).toBeInTheDocument()
+  })
+
+  it('si no cargan las sucursales lo dice y no deja guardar', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([pvFixture()])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    render(<><PuntosVenta /><Toaster /></>)
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(botonDeSucursal())
+
+    expect(await screen.findByText('No se pudieron cargar las sucursales.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+  })
+
+  it('cancelar cierra el formulario sin llamar a la API', async () => {
+    const usuario = userEvent.setup()
+    montarConSucursales()
+    await abrirMovimiento(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByLabelText('Sucursal', { selector: 'select' })).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('PuntosVenta — alta', () => {
   const empresaSur = {
     id: 20,
@@ -859,6 +1014,10 @@ describe('PuntosVenta — alta', () => {
     usuarioActual = usuarioFixture()
   })
 
+  const sucursalSur = sucursalFixture()
+  const sucursalSurDos = sucursalFixture({ id: 501, nombre: 'Depósito Sur' })
+  const sucursalEste = sucursalFixture({ id: 600, idTenant: 3, idEmpresa: 30, nombre: 'Sucursal Este', razonSocialEmpresa: 'Este SRL' })
+
   function montarConEmpresas(
     items: PuntoVentaListado[] = [pvSurCentro],
     empresas: unknown[] = [empresaSur, empresaEste],
@@ -866,6 +1025,7 @@ describe('PuntosVenta — alta', () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/puntos-venta') return Promise.resolve(items)
       if (ruta === '/empresas') return Promise.resolve(empresas)
+      if (ruta === '/sucursales') return Promise.resolve([sucursalSur, sucursalSurDos, sucursalEste])
 
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
@@ -887,6 +1047,44 @@ describe('PuntosVenta — alta', () => {
     await usuario.type(screen.getByLabelText('Nombre'), 'PV Norte')
     await usuario.selectOptions(screen.getByLabelText('Modo'), 'Web')
   }
+
+  /** Cláusula bajo prueba: el filtro de sucursales por la empresa elegida (`ModalDeAltaDePuntoVenta`) y el
+   * `idSucursal` del POST. Sin elegir, el cuerpo manda `null` (la caja nace con una sucursal propia); elegida,
+   * manda su id; cambiar de empresa descarta la sucursal de la anterior. */
+  it('ofrece solo las sucursales de la empresa elegida y manda la elegida (o null) en el alta', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(pvFixture({ id: 201, nombre: 'PV Norte' }))
+    montarConEmpresas()
+    await abrirAlta(usuario)
+    await waitFor(() => expect(screen.getByLabelText('Empresa destino')).toBeEnabled())
+
+    expect(screen.getByLabelText('Sucursal', { selector: 'select' })).toBeDisabled()
+
+    await usuario.selectOptions(screen.getByLabelText('Empresa destino'), '20')
+    const selector = screen.getByLabelText('Sucursal', { selector: 'select' })
+    expect(opcionesDeSelect(selector)).toEqual(['Una nueva, con el nombre del punto de venta', 'Sucursal Sur', 'Depósito Sur'])
+
+    await usuario.selectOptions(selector, '501')
+    await usuario.selectOptions(screen.getByLabelText('Empresa destino'), '30')
+    expect(screen.getByLabelText('Sucursal', { selector: 'select' })).toHaveValue('')
+    expect(opcionesDeSelect(screen.getByLabelText('Sucursal', { selector: 'select' }))).toEqual([
+      'Una nueva, con el nombre del punto de venta',
+      'Sucursal Este',
+    ])
+
+    await usuario.selectOptions(screen.getByLabelText('Empresa destino'), '20')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal', { selector: 'select' }), '501')
+    await usuario.type(screen.getByLabelText('Nombre'), 'PV Norte')
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Web')
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith(
+        '/puntos-venta',
+        expect.objectContaining({ idEmpresa: 20, idSucursal: 501, nombre: 'PV Norte' }),
+      ),
+    )
+  })
 
   it('Root ve el botón de alta', async () => {
     montarConEmpresas()
@@ -954,6 +1152,7 @@ describe('PuntosVenta — alta', () => {
     await waitFor(() =>
       expect(apiPostMock).toHaveBeenCalledWith('/puntos-venta', {
         idEmpresa: 30,
+        idSucursal: null,
         nombre: 'PV Norte',
         modo: 'Escritorio',
         domicilio: 'Calle 1',
@@ -1823,9 +2022,9 @@ describe('PuntosVenta — filtros por columna y orden', () => {
     expect(columnaVisible(0)).toEqual(['0009', '0020', '0100'])
 
     await usuario.click(screen.getByRole('button', { name: 'Domicilio' }))
-    expect(columnaVisible(4)).toEqual(['Calle 900', 'Calle 1500', '—'])
+    expect(columnaVisible(5)).toEqual(['Calle 900', 'Calle 1500', '—'])
     await usuario.click(screen.getByRole('button', { name: 'Domicilio' }))
-    expect(columnaVisible(4)).toEqual(['Calle 1500', 'Calle 900', '—'])
+    expect(columnaVisible(5)).toEqual(['Calle 1500', 'Calle 900', '—'])
 
     await usuario.click(screen.getByRole('button', { name: 'Empresa' }))
     expect(columnaVisible(2)).toEqual(['Alpha SA', 'Beta SA', 'Sur SRL'])
@@ -1835,7 +2034,7 @@ describe('PuntosVenta — filtros por columna y orden', () => {
 
     // El primer botón "Modo" es el del encabezado; los siguientes son los de cada fila.
     await usuario.click(screen.getAllByRole('button', { name: 'Modo' })[0])
-    expect(columnaVisible(5)).toEqual(['Escritorio', 'Web', 'Web'])
+    expect(columnaVisible(6)).toEqual(['Escritorio', 'Web', 'Web'])
   })
 
   /** Mutación registrada: pasar `alcanzados` sin filtrar a `useOrdenamiento` deja todas las filas con un filtro puesto. */
@@ -1913,8 +2112,8 @@ describe('PuntosVenta — filtros por columna y orden', () => {
     montar(ENTREGADOS)
     await esperarFilas()
     const filas = screen.getAllByRole('row')
-    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(7)
-    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(7)
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(8)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(8)
   })
 
   it('un admin de tenant tiene los filtros por columna, sin el de tenant, y su estado vacío usa el span correcto', async () => {
@@ -1924,8 +2123,8 @@ describe('PuntosVenta — filtros por columna y orden', () => {
     await esperarFilas()
 
     const filas = screen.getAllByRole('row')
-    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(6)
-    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(6)
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(7)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(7)
     expect(screen.queryByLabelText('Filtrar por tenant')).not.toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
@@ -1934,7 +2133,7 @@ describe('PuntosVenta — filtros por columna y orden', () => {
     expect(columnaVisible(2)).toEqual(['Zona Norte'])
 
     await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zzz')
-    expect(screen.getByText('Ningún registro coincide con los filtros.')).toHaveAttribute('colspan', '6')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toHaveAttribute('colspan', '7')
   })
 
   it('un punto de venta huérfano se rotula "—" y en el orden por empresa va al final', async () => {

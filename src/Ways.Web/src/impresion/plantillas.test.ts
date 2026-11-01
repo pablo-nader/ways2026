@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, notaDeCreditoDeVenta, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, lineasDeTicketDeVenta, notaDeCreditoDeVenta, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -629,7 +629,7 @@ describe('reporteZ', () => {
       resumen: {
         idTurnoCaja: 8,
         idMedioAncla: 1,
-        medios: [{ idMedioPago: 1, importeEsperado: 3000 }],
+        medios: [{ idMedioPago: 1, importeEsperado: 3000, nombre: 'Medio 1' }],
         cantidadTickets: 4,
         primerTicket: null,
         ultimoTicket: null,
@@ -763,6 +763,25 @@ function lineasDeTexto(bytes: Uint8Array): string[] {
   }
   return texto.split('\n')
 }
+
+describe('lineasDeTicketDeVenta', () => {
+  it('es el mismo contenido que ticketDeVenta manda a la térmica, con la marca de reimpresión', () => {
+    const comprobante = comprobanteFixture()
+    const medios = [medioFixture()]
+
+    const lineasDelNavegador = lineasDeTicketDeVenta(comprobante, CONTEXTO, medios, { reimpresion: true }).map((l) =>
+      l.texto.replace(/[^\x20-\x7e]/g, ''),
+    )
+    const textoDeLaTermica = textoPlano(ticketDeVenta(comprobante, CONTEXTO, medios, { reimpresion: true }))
+
+    expect(lineasDelNavegador.length).toBeGreaterThan(5)
+    for (const linea of lineasDelNavegador.filter((l) => l.trim() !== '')) {
+      expect(textoDeLaTermica).toContain(linea.trim())
+    }
+    expect(lineasDelNavegador.some((l) => l.includes('REIMPRESION'))).toBe(true)
+    expect(lineasDelNavegador.some((l) => l.includes(comprobante.numeroVisible))).toBe(true)
+  })
+})
 
 describe('lineasDeCierreDeTurno', () => {
   it('es el mismo contenido que cierreDeTurno manda a la térmica, línea por línea', () => {

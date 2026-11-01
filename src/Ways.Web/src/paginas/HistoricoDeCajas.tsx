@@ -33,8 +33,8 @@ function formatearFechaHora(iso: string): string {
 
 /**
  * Histórico de cajas (stage-11-exportacion-reportes, Slice 6a, design: Web Composition) — G2:
- * turnos CERRADOS únicamente, con totales ya sumados de sus `arqueos_turno` persistidos (nunca
- * re-derivados) y descarga XLSX. Misma política que `/tablero` (`Politicas.LecturaDeReportes`:
+ * turnos CERRADOS únicamente, con lo facturado del turno (ventas y notas de crédito) repartido en digitales,
+ * efectivo y cuenta corriente y descarga XLSX. Misma política que `/tablero` (`Politicas.LecturaDeReportes`:
  * Supervisor + Admin) — es la vista de gestión sobre turnos ajenos; el cajero ve su propio cierre
  * en `/caja` (spec historico-de-cajas: Role Split).
  *
@@ -210,15 +210,10 @@ export function HistoricoDeCajas() {
                     <EncabezadoOrdenable columna="cierre" orden={orden} onAlternar={alternarOrden}>
                       Cierre
                     </EncabezadoOrdenable>
-                    <EncabezadoOrdenable columna="esperado" orden={orden} onAlternar={alternarOrden} className="text-end">
-                      Esperado
-                    </EncabezadoOrdenable>
-                    <EncabezadoOrdenable columna="declarado" orden={orden} onAlternar={alternarOrden} className="text-end">
-                      Declarado
-                    </EncabezadoOrdenable>
-                    <EncabezadoOrdenable columna="diferencia" orden={orden} onAlternar={alternarOrden} className="text-end">
-                      Diferencia
-                    </EncabezadoOrdenable>
+                    <th className="text-end">Digitales</th>
+                    <th className="text-end">Efectivo</th>
+                    <th className="text-end">Cta. cte.</th>
+                    <th className="text-end">Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -231,14 +226,15 @@ export function HistoricoDeCajas() {
                       <td>{puntoVentaPorId[f.idPuntoVenta]?.nombre ?? `PV #${f.idPuntoVenta}`}</td>
                       <td>{formatearFechaHora(f.fechaApertura)}</td>
                       <td>{formatearFechaHora(f.fechaCierre)}</td>
-                      <td className="text-end">{formatearMoneda(f.esperado)}</td>
-                      <td className="text-end">{formatearMoneda(f.declarado)}</td>
-                      <td className="text-end">{formatearMoneda(f.diferencia)}</td>
+                      <td className="text-end">{formatearMoneda(f.digitales)}</td>
+                      <td className="text-end">{formatearMoneda(f.efectivo)}</td>
+                      <td className="text-end">{formatearMoneda(f.cuentaCorriente)}</td>
+                      <td className="text-end">{formatearMoneda(f.totalFacturado)}</td>
                     </tr>
                   ))}
                   {pagina.items.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="text-center text-muted py-4">
+                      <td colSpan={8} className="text-center text-muted py-4">
                         No hay turnos cerrados que coincidan con los filtros.
                       </td>
                     </tr>

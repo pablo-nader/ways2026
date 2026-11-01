@@ -240,14 +240,14 @@ function comisionesFixture(sobrescribir: Partial<Comisiones> = {}): Comisiones {
 }
 
 function vencimientosResumenFixture(sobrescribir: Partial<ResumenDeVencimientos> = {}): ResumenDeVencimientos {
-  return { idPuntoVenta: 10, vencidos: 2, porVencer: 5, sinFecha: 1, ...sobrescribir }
+  return { idSucursal: 10, nombreSucursal: 'Sucursal central', vencidos: 2, porVencer: 5, sinFecha: 1, ...sobrescribir }
 }
 
 // stage-13-stock-inteligente (Slice 7): tres conteos DISTINTOS entre sí (mismo criterio que
 // vencimientosResumenFixture) — ningún swap entre bajoMinimo/sinStock/sinProveedor pasa
 // desapercibido si un test lee el testid equivocado.
 function reposicionResumenFixture(sobrescribir: Partial<ResumenDeReposicion> = {}): ResumenDeReposicion {
-  return { idPuntoVenta: 10, bajoMinimo: 7, sinStock: 3, sinProveedor: 1, ...sobrescribir }
+  return { idSucursal: 10, nombreSucursal: 'Sucursal central', bajoMinimo: 7, sinStock: 3, sinProveedor: 1, ...sobrescribir }
 }
 
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {

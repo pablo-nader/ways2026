@@ -45,6 +45,7 @@ import { clienteDeClientes } from '../api/clientes'
 import { esSaldoEstimado, nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
 import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
+import { PrecioUnitarioDeLinea } from '../pos/PrecioUnitarioDeLinea'
 import { importeDeEnvioAplicado, importeDeEnvioVigente, mensajeDeRechazoDeEnvio, motivoDeEnvioPendiente } from '../pos/envio'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
@@ -4213,26 +4214,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                               {previa.precioUnitario === null ? (
                                 '—'
                               ) : (
-                                <>
-                                  {tieneDescuento && (
-                                    <div className="text-decoration-line-through text-muted small">
-                                      {formatearMoneda(resultado.precioOriginal as number)}
-                                    </div>
-                                  )}
-                                  <div>
-                                    {formatearMoneda(previa.precioUnitario)}
-                                    {tieneDescuento && resultado.aplicadas.length > 0 && (
-                                      <span
-                                        className="badge bg-success ms-1"
-                                        title={resultado.aplicadas.map((a) => a.nombre).join(', ')}
-                                      >
-                                        {resultado.aplicadas.length === 1
-                                          ? resultado.aplicadas[0].nombre
-                                          : `${resultado.aplicadas[0].nombre} +${resultado.aplicadas.length - 1}`}
-                                      </span>
-                                    )}
-                                  </div>
-                                </>
+                                <PrecioUnitarioDeLinea
+                                  cantidad={l.cantidad}
+                                  resultado={resultado}
+                                  precioUnitario={previa.precioUnitario}
+                                  tieneDescuento={tieneDescuento}
+                                />
                               )}
                             </td>
                             <td>

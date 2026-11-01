@@ -66,8 +66,10 @@ public sealed record SolicitudDeCierre(
 
 /// <summary>Una línea de <see cref="ResumenDeTurno"/> — proyección de
 /// <see cref="Ways.Domain.Caja.LineaDeArqueo"/>, la misma derivación que el cierre va a
-/// persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre).</summary>
-public sealed record LineaDeResumen(int IdMedioPago, decimal ImporteEsperado);
+/// persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre). <see cref="Nombre"/> es el del medio del
+/// catálogo vigente: las líneas salen de los medios vigentes, así que <c>"?"</c> solo aparece si el medio se da de baja
+/// entre las dos lecturas.</summary>
+public sealed record LineaDeResumen(int IdMedioPago, decimal ImporteEsperado, string Nombre);
 
 /// <summary>Un ticket límite del turno (legacy D6: "primer y último ticket") — número visible,
 /// fecha de emisión y el código del tipo de comprobante (<c>TX</c>, <c>RC</c>, …) del
@@ -160,7 +162,11 @@ public sealed record TurnoConArqueos(
 /// With Totals From Persisted Arqueos) — un turno <c>cerrado</c> con sus totales sumados de las
 /// filas YA PERSISTIDAS de <see cref="ArqueoTurno"/> (nunca <c>CalculadorDeArqueo</c>), más
 /// <see cref="Egresos"/> con la MISMA definición que <see cref="ResumenDeTurno.Egresos"/>, y la
-/// marca del último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).</summary>
+/// marca del último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).
+/// <see cref="Digitales"/>/<see cref="Efectivo"/>/<see cref="CuentaCorriente"/> reparten lo FACTURADO en el turno (ventas
+/// y notas de crédito emitidas, sin recibos de cobranza) con la clasificación del ticket de cierre, prorrateando el total
+/// de cada comprobante según lo cobrado; <see cref="TotalFacturado"/> es su suma, igual a Σ total de esos comprobantes. No
+/// dependen del arqueo: <see cref="Esperado"/>/<see cref="Declarado"/>/<see cref="Diferencia"/> siguen aparte.</summary>
 public sealed record FilaDeHistoricoDeCajas(
     int IdTurnoCaja,
     int IdPuntoVenta,
@@ -171,7 +177,11 @@ public sealed record FilaDeHistoricoDeCajas(
     decimal Diferencia,
     EgresosDeTurno Egresos,
     DateTimeOffset? FechaRecalculo,
-    int? IdEmpleadoRecalculo);
+    int? IdEmpleadoRecalculo,
+    decimal Digitales,
+    decimal Efectivo,
+    decimal CuentaCorriente,
+    decimal TotalFacturado);
 
 /// <summary>Página de <c>GET /api/reportes/cajas</c> — mismo shape que
 /// <see cref="PaginaDeTurnos"/>.</summary>
@@ -181,56 +191,15 @@ public sealed record PaginaDeHistoricoDeCajas(
 /// <summary>Respuesta de <c>GET /api/caja/turnos/{id}/detalle</c> (spec: G2 Detail Reuses
 /// ResumenDeTurno Plus Ticket And Pago Listings) — el MISMO <see cref="ResumenDeTurno"/> que
 /// <c>/resumen</c> devuelve, sin tocarlo, más las dos listas que <see cref="LectorDeLineasDelTurno"/>
-/// lee: los tickets del turno (<see cref="Ways.Application.Ventas.ComprobanteListado"/>, anulados
-/// excluidos) y sus pagos (<see cref="Ways.Application.Pagos.PagoListado"/>), más la marca del
+/// lee: los tickets del turno (<see cref="Ways.Application.Ventas.VentaDeTurnoListado"/>, la misma
+/// fila que la pantalla "Ventas del turno" del POS, anulados incluidos con su estado) y sus pagos (<see cref="Ways.Application.Pagos.PagoListado"/>), más la marca del
 /// último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).</summary>
 public sealed record DetalleDeTurno(
     ResumenDeTurno Resumen,
-    IReadOnlyList<Ways.Application.Ventas.ComprobanteListado> Tickets,
+    IReadOnlyList<Ways.Application.Ventas.VentaDeTurnoListado> Tickets,
     [property: JsonPropertyName("gastos")] IReadOnlyList<Ways.Application.Pagos.PagoListado> Pagos,
     DateTimeOffset? FechaRecalculo,
     int? IdEmpleadoRecalculo);
-
-// ---- stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
-// MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec tesoreria:
-// Tesorería Book Has A Read/Listing Endpoint): G3, el libro encadenado ----
-
-/// <summary>Fila de <c>GET /api/reportes/tesoreria</c> — proyección de
-/// <see cref="MovimientoTesoreria"/> SIN <c>IdTenant</c> (nunca expuesto en una respuesta, doc 09),
-/// mismo criterio "mirror the entity's real columns" que <see cref="FilaDeHistoricoDeCajas"/>. Cero
-/// derivación: <see cref="Inicio"/>/<see cref="Final"/> ya vienen calculados y persistidos por
-/// <see cref="ServicioDeTurnos"/> al cierre (design decisión 6 de stage-6-turnos-caja) — este
-/// contrato solo los transporta.
-///
-/// stage-tesoreria-por-empresa (PR5): agrega <see cref="IdEmpresa"/> (la cadena es por empresa,
-/// no por punto de venta), <see cref="NombrePuntoVenta"/> (dangling-fk-read-models: <c>null</c>
-/// tanto sin punto de venta como con uno dado de baja lógica — mismo predicado, nunca dos) y,
-/// cuando <see cref="IdPago"/> está seteado, <see cref="PagoCategoria"/>/<see cref="PagoConcepto"/>
-/// resueltos del pago de origen (para que el libro sea legible sin una segunda consulta) — ambos
-/// <c>null</c> cuando la fila no es de tipo <see cref="TipoMovimientoTesoreria.Pago"/> o el pago
-/// referenciado ya no es visible.</summary>
-public sealed record MovimientoTesoreriaListado(
-    int Id,
-    int IdEmpresa,
-    int? IdPuntoVenta,
-    string? NombrePuntoVenta,
-    DateTimeOffset Fecha,
-    TipoMovimientoTesoreria Tipo,
-    int? IdTurnoCaja,
-    [property: JsonPropertyName("idGasto")] int? IdPago,
-    [property: JsonPropertyName("gastoCategoria")] CategoriaPago? PagoCategoria,
-    [property: JsonPropertyName("gastoConcepto")] string? PagoConcepto,
-    string Concepto,
-    decimal Inicio,
-    decimal Ingreso,
-    decimal Egreso,
-    decimal Final,
-    int IdEmpleado);
-
-/// <summary>Página de <c>GET /api/reportes/tesoreria</c> — mismo shape que
-/// <see cref="PaginaDeHistoricoDeCajas"/>.</summary>
-public sealed record PaginaDeMovimientosTesoreria(
-    IReadOnlyList<MovimientoTesoreriaListado> Items, int Total, int Pagina, int Tamanio);
 
 // ---- cierre por retiro (práctica del dueño: retira el efectivo contado y deja el fondo inicial
 // en el cajón; nada se cuenta al cierre — spec arqueo-de-cierre: Cierre Por Retiro) ----

@@ -937,15 +937,16 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
     /// <summary>
     /// U8 (task 4.23, BO-R5) y el cierre del alcance de task 4.12: un dependiente SIN marca
-    /// temporal bloquea por EXISTENCIA, sin comparación de instantes — <c>stock</c> no tiene
-    /// columna <c>created_at</c>, así que no hay nada que comparar y la rama pregunta solo si la
-    /// fila existe.
+    /// temporal bloquea por EXISTENCIA, sin comparación de instantes — <c>movimientos_stock</c> no
+    /// tiene columna <c>created_at</c>, así que no hay nada que comparar y la rama pregunta solo si
+    /// la fila existe. Desde sucursales T2 el saldo de <c>stock</c> cuelga de la sucursal: lo que liga
+    /// el stock a la caja es su movimiento.
     ///
     /// La primera mitad afirma el alcance honesto: el artículo tenant-wide, que sí bloquea al
-    /// tenant, NO bloquea al punto de venta. La segunda, que una sola fila de stock sí.
+    /// tenant, NO bloquea al punto de venta. La segunda, que un solo movimiento de stock sí.
     /// </summary>
     [Fact]
-    public async Task UnArticuloNoBloqueaAlPuntoDeVentaYUnaFilaDeStockSi()
+    public async Task UnArticuloNoBloqueaAlPuntoDeVentaYUnMovimientoDeStockSi()
     {
         var sembrado = await AprovisionarAsync("pv-stock");
         var despues = sembrado.Ancla.AddMinutes(1);
@@ -955,33 +956,27 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         var articulo = await SembrarArticuloAsync(sembrado.IdTenant, despues);
 
-        // La rama de stock del ancla PuntoVenta es SinMarca por definición del inventario: no usa
-        // el ancla, así que no puede haber comparación de created_at sobre ella.
+        // Las ramas de movimientos_stock del ancla PuntoVenta son SinMarca por definición del
+        // inventario: no usan el ancla, así que no puede haber comparación de created_at sobre ellas.
         await using (var db = ContextoDePlataforma())
         {
-            var ramaDeStock = Assert.Single(
-                InventarioDeDependientes.Construir(db.Model, typeof(PuntoVenta)),
-                rama => rama.Tabla == "stock");
+            var ramas = InventarioDeDependientes.Construir(db.Model, typeof(PuntoVenta))
+                .Where(rama => rama.Tabla == "movimientos_stock")
+                .ToList();
 
-            Assert.Equal(ClasificacionDeDependiente.SinMarca, ramaDeStock.Clasificacion);
-            Assert.False(ramaDeStock.UsaAncla);
+            Assert.NotEmpty(ramas);
+            Assert.All(ramas, rama =>
+            {
+                Assert.Equal(ClasificacionDeDependiente.SinMarca, rama.Clasificacion);
+                Assert.False(rama.UsaAncla);
+            });
         }
 
         // Con el artículo cargado (y nada más), el punto de venta sigue prístino.
         await ConServicioAsync(null, servicio => servicio.EliminarPuntoVentaAsync(segundo.Id));
         Assert.NotNull((await LeerPuntoVentaAsync(segundo.Id)).DeletedAt);
 
-        await using (var db = ContextoDePlataforma())
-        {
-            db.Stock.Add(new Stock
-            {
-                IdTenant = sembrado.IdTenant,
-                IdPuntoVenta = sembrado.IdPuntoVenta,
-                IdArticulo = articulo.Id,
-                Cantidad = 3m
-            });
-            await db.SaveChangesAsync();
-        }
+        await SembrarAjusteDeStockAsync(sembrado.IdTenant, sembrado.IdPuntoVenta, articulo.Id, sembrado.IdAdmin, despues);
 
         var tercero = await SembrarPuntoVentaAsync(
             sembrado.IdTenant, sembrado.IdEmpresa, "Local 3", despues);
@@ -996,6 +991,121 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         Assert.Null((await LeerPuntoVentaAsync(sembrado.IdPuntoVenta)).DeletedAt);
         Assert.Null((await LeerPuntoVentaAsync(tercero.Id)).DeletedAt);
+    }
+
+    /// <summary>Un ajuste de stock de la caja: el movimiento la referencia por <c>id_punto_venta</c> y el saldo vive en
+    /// su sucursal.</summary>
+    private async Task SembrarAjusteDeStockAsync(
+        int idTenant, int idPuntoVenta, int idArticulo, int idEmpleado, DateTimeOffset momento)
+    {
+        await using var db = ContextoDePlataforma();
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
+        db.MovimientosStock.Add(new MovimientoStock
+        {
+            IdTenant = idTenant, IdArticulo = idArticulo, IdPuntoVenta = idPuntoVenta, IdSucursal = idSucursal,
+            Cantidad = 3m, Motivo = MotivoStock.Ajuste, IdEmpleado = idEmpleado, CreadoEl = momento
+        });
+        db.Stock.Add(new Stock { IdTenant = idTenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = 3m });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Una fila de stock SIN movimientos (solo mínimos de reposición) en la sucursal de la caja: el uso que
+    /// solo se ve desde la sucursal.</summary>
+    private async Task<int> SembrarMinimosSinMovimientosAsync(int idTenant, int idPuntoVenta, int idArticulo)
+    {
+        await using var db = ContextoDePlataforma();
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
+        db.Stock.Add(new Stock
+        {
+            IdTenant = idTenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = 0m, Minimo = 5m, Reposicion = 10m
+        });
+        await db.SaveChangesAsync();
+        return idSucursal;
+    }
+
+    /// <summary>
+    /// Cláusula: el segundo puente de la empresa, <c>sucursales</c> (sucursales T2). El stock cuelga de la sucursal y
+    /// una fila de mínimos no tiene ningún movimiento que la ligue a una caja: sin ese puente la empresa leía prístina
+    /// y se daba de baja con stock vivo.
+    /// </summary>
+    [Fact]
+    public async Task UnaEmpresaConStockSinMovimientosEnSuSucursalNoSePuedeDarDeBaja()
+    {
+        var sembrado = await AprovisionarAsync("empresa-stock-sucursal");
+        var despues = sembrado.Ancla.AddMinutes(1);
+
+        var segunda = await SembrarEmpresaAsync(sembrado.IdTenant, "Segunda con stock SRL", despues);
+        var caja = await SembrarPuntoVentaAsync(sembrado.IdTenant, segunda.Id, "Local de la segunda", despues);
+        var articulo = await SembrarArticuloAsync(sembrado.IdTenant, despues);
+        await SembrarMinimosSinMovimientosAsync(sembrado.IdTenant, caja.Id, articulo.Id);
+
+        await ConServicioAsync(null, async servicio =>
+        {
+            var error = await ErrorDeAsync(() => servicio.EliminarEmpresaAsync(segunda.Id));
+
+            Assert.Equal("empresa_en_uso", error.Codigo);
+            Assert.Contains("stock", error.Message, StringComparison.Ordinal);
+        });
+
+        Assert.Null((await LeerEmpresaAsync(segunda.Id)).DeletedAt);
+        Assert.Null((await LeerPuntoVentaAsync(caja.Id)).DeletedAt);
+    }
+
+    /// <summary>
+    /// Cláusula: la baja de la ÚLTIMA caja viva de una sucursal se lleva la sucursal, así que pregunta también por el
+    /// uso propio de la sucursal. Su stock (sin movimientos de esta caja) bloquea con <c>punto_venta_en_uso</c> y no
+    /// se da de baja nada.
+    /// </summary>
+    [Fact]
+    public async Task LaUltimaCajaDeUnaSucursalConStockNoSePuedeDarDeBaja()
+    {
+        var sembrado = await AprovisionarAsync("ultima-caja-con-stock");
+        var despues = sembrado.Ancla.AddMinutes(1);
+
+        var caja = await SembrarPuntoVentaAsync(sembrado.IdTenant, sembrado.IdEmpresa, "Local 2", despues);
+        var articulo = await SembrarArticuloAsync(sembrado.IdTenant, despues);
+        var idSucursal = await SembrarMinimosSinMovimientosAsync(sembrado.IdTenant, caja.Id, articulo.Id);
+
+        await ConServicioAsync(null, async servicio =>
+        {
+            var error = await ErrorDeAsync(() => servicio.EliminarPuntoVentaAsync(caja.Id));
+
+            Assert.Equal("punto_venta_en_uso", error.Codigo);
+            Assert.Contains("stock", error.Message, StringComparison.Ordinal);
+        });
+
+        Assert.Null((await LeerPuntoVentaAsync(caja.Id)).DeletedAt);
+        Assert.Null((await LeerSucursalAsync(idSucursal)).DeletedAt);
+    }
+
+    /// <summary>
+    /// Cláusula: con otra caja viva en la sucursal, la baja NO se lleva la sucursal y su stock no bloquea: el saldo
+    /// sigue siendo de la caja que queda.
+    /// </summary>
+    [Fact]
+    public async Task UnaCajaConOtraVivaEnSuSucursalSeDaDeBajaAunqueLaSucursalTengaStock()
+    {
+        var sembrado = await AprovisionarAsync("caja-con-hermana");
+        var despues = sembrado.Ancla.AddMinutes(1);
+
+        var caja = await SembrarPuntoVentaAsync(sembrado.IdTenant, sembrado.IdEmpresa, "Local 2", despues);
+        var hermana = await SembrarPuntoVentaAsync(sembrado.IdTenant, sembrado.IdEmpresa, "Local 3", despues);
+        var articulo = await SembrarArticuloAsync(sembrado.IdTenant, despues);
+        var idSucursal = await SembrarMinimosSinMovimientosAsync(sembrado.IdTenant, caja.Id, articulo.Id);
+
+        await using (var db = ContextoDePlataforma())
+        {
+            Assert.Equal(
+                1,
+                await db.PuntosVenta.Where(p => p.Id == hermana.Id)
+                    .ExecuteUpdateAsync(p => p.SetProperty(x => x.IdSucursal, idSucursal)));
+        }
+
+        await ConServicioAsync(null, servicio => servicio.EliminarPuntoVentaAsync(caja.Id));
+
+        Assert.NotNull((await LeerPuntoVentaAsync(caja.Id)).DeletedAt);
+        Assert.Null((await LeerPuntoVentaAsync(hermana.Id)).DeletedAt);
+        Assert.Null((await LeerSucursalAsync(idSucursal)).DeletedAt);
     }
 
     /// <summary>
@@ -1271,7 +1381,9 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
                 IdTenant = sembrado.IdTenant,
                 IdArticulo = articulo.Id,
                 IdPuntoVenta = origen.Id,
+                IdSucursal = await SucursalDePrueba.DeAsync(db, origen.Id),
                 IdPuntoVentaDestino = sembrado.IdPuntoVenta,
+                IdSucursalDestino = await SucursalDePrueba.DeAsync(db, sembrado.IdPuntoVenta),
                 Cantidad = 2m,
                 Motivo = MotivoStock.Transferencia,
                 IdEmpleado = sembrado.IdAdmin,
@@ -1388,10 +1500,11 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         await using (var db = ContextoDePlataforma())
         {
+            var idSucursal = await SucursalDePrueba.DeAsync(db, sembrado.IdPuntoVenta);
             db.Stock.Add(new Stock
             {
                 IdTenant = sembrado.IdTenant,
-                IdPuntoVenta = sembrado.IdPuntoVenta,
+                IdSucursal = idSucursal,
                 IdArticulo = articulo.Id,
                 Cantidad = 1m
             });
@@ -1461,17 +1574,7 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         await SembrarArticuloAsync(bajoLaApi.IdTenant, despues, idEmpresaHabilitada: bajoLaApi.IdEmpresa);
 
         var articulo = await SembrarArticuloAsync(bajoLaApi.IdTenant, despues);
-        await using (var db = ContextoDePlataforma())
-        {
-            db.Stock.Add(new Stock
-            {
-                IdTenant = bajoLaApi.IdTenant,
-                IdPuntoVenta = bajoLaApi.IdPuntoVenta,
-                IdArticulo = articulo.Id,
-                Cantidad = 1m
-            });
-            await db.SaveChangesAsync();
-        }
+        await SembrarAjusteDeStockAsync(bajoLaApi.IdTenant, bajoLaApi.IdPuntoVenta, articulo.Id, bajoLaApi.IdAdmin, despues);
 
         await ConServicioAsync(null, async servicio =>
         {

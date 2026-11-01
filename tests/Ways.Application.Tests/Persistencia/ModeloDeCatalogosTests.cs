@@ -114,7 +114,7 @@ public class ModeloDeCatalogosTests
     }
 
     [Fact]
-    public void ParametrosMapeaLosDosIndicesUnicosParcialesDeAdr13()
+    public void ParametrosMapeaLosTresIndicesUnicosParcialesDeAdr13()
     {
         using var db = CrearContexto();
 
@@ -123,10 +123,14 @@ public class ModeloDeCatalogosTests
 
         var deLaEmpresa = indices.Single(i => i.GetDatabaseName() == "ux_parametros_empresa");
         Assert.True(deLaEmpresa.IsUnique);
-        Assert.Equal("id_punto_venta IS NULL AND deleted_at IS NULL", deLaEmpresa.GetFilter());
+        Assert.Equal("id_punto_venta IS NULL AND id_sucursal IS NULL AND deleted_at IS NULL", deLaEmpresa.GetFilter());
 
         var delPuntoVenta = indices.Single(i => i.GetDatabaseName() == "ux_parametros_punto_venta");
         Assert.True(delPuntoVenta.IsUnique);
         Assert.Equal("id_punto_venta IS NOT NULL AND deleted_at IS NULL", delPuntoVenta.GetFilter());
+
+        var delaSucursal = indices.Single(i => i.GetDatabaseName() == "ux_parametros_sucursal");
+        Assert.True(delaSucursal.IsUnique);
+        Assert.Equal("id_sucursal IS NOT NULL AND deleted_at IS NULL", delaSucursal.GetFilter());
     }
 }

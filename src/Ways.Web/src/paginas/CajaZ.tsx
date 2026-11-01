@@ -3,7 +3,7 @@ import { useParams } from 'react-router'
 import { clienteDeCaja, rutasDeExportacionDeCaja } from '../api/caja'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import type { DetalleDeTurno, ResumenDeCierrePorRetiro, TurnoResumen } from '../api/tipos'
+import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoResumen } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { toast } from '../toasts/toasts'
@@ -15,7 +15,7 @@ import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { VistaDeTicket } from '../componentes/VistaDeTicket'
 import type { LineaDeTicket } from '../impresion/escpos'
 import { enEscritorio, imprimir } from '../impresion/impresora'
-import { cierreDeTurno, lineasDeCierreDeTurno } from '../impresion/plantillas'
+import { cierreDeTurno, lineasDeCierreDeTurno, lineasDeTicketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { formatearImporte } from '../formato/importes'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -46,12 +46,17 @@ function formatearMoneda(valor: number): string {
  * el diálogo de impresión del navegador con solo el ticket en el papel. Solo se ofrece con el
  * turno cerrado.
  */
-type PropsCajaZ = { contextoDeImpresion?: ContextoDeImpresion }
+type PropsCajaZ = {
+  contextoDeImpresion?: ContextoDeImpresion
+  /** Reimpresión de un ticket por la cola FIFO de la térmica del POS de escritorio (la misma de
+   * "Ventas del turno"). Sin ella —app web— el ticket sale por el diálogo de impresión del navegador. */
+  alReimprimirVenta?: (comprobante: ComprobanteEmitido, medios: MedioPagoListado[], contexto: ContextoDeImpresion) => void
+}
 
 type MedioDelResumen = DetalleDeTurno['resumen']['medios'][number]
 
 const COLUMNAS_DE_MEDIOS: ColumnasOrdenables<MedioDelResumen> = {
-  medio: { valor: (m) => `Medio #${m.idMedioPago}` },
+  medio: { valor: (m) => m.nombre },
   esperado: { valor: (m) => m.importeEsperado },
 }
 
@@ -74,7 +79,7 @@ function TablaDeMediosEsperados({ medios }: { medios: MedioDelResumen[] }) {
         <tbody>
           {filas.map((m) => (
             <tr key={m.idMedioPago}>
-              <td>Medio #{m.idMedioPago}</td>
+              <td>{m.nombre}</td>
               <td className="text-end">{formatearMoneda(m.importeEsperado)}</td>
             </tr>
           ))}
@@ -91,7 +96,7 @@ function TablaDeMediosEsperados({ medios }: { medios: MedioDelResumen[] }) {
   )
 }
 
-export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
+export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {}) {
   const { id } = useParams<{ id: string }>()
   const idTurno = id !== undefined ? Number(id) : Number.NaN
   const idTurnoValido = Number.isFinite(idTurno)
@@ -102,6 +107,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const generacionRef = useRef(0)
+  const [generacionDelDetalle, setGeneracionDelDetalle] = useState(0)
 
   const [errorImpresion, setErrorImpresion] = useState('')
 
@@ -152,6 +158,23 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
     }
   }
 
+  /** Reimprime un ticket de venta del turno: por la térmica en el POS de escritorio; en la web, con
+   * las líneas del mismo ticket y el diálogo del navegador. El cajero del ticket es el del turno, no
+   * quien reimprime. Si mientras tanto se cargó otro turno, no imprime nada. Los errores suben a la
+   * fila del ticket. */
+  async function reimprimirTicket(comprobante: ComprobanteEmitido, medios: MedioPagoListado[]) {
+    const deEsteDetalle = generacionDelDetalle
+    const resumen = await clienteDeCaja.obtenerResumenDeCierre(idTurno)
+    const base = contextoDeImpresion ?? (await contextoDeLaWeb(resumen))
+    if (generacionRef.current !== deEsteDetalle) return
+    const contexto = { ...base, cajero: resumen.vendedor }
+    if (enTermica && alReimprimirVenta) {
+      alReimprimirVenta(comprobante, medios, contexto)
+      return
+    }
+    setLineasAImprimir(lineasDeTicketDeVenta(comprobante, contexto, medios, { reimpresion: true }))
+  }
+
   useEffect(() => {
     if (!lineasAImprimir) return
     const terminar = () => setLineasAImprimir(null)
@@ -190,6 +213,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setDetalle(datos)
+        setGeneracionDelDetalle(miGeneracion)
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
@@ -305,7 +329,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
             <h6>Medios de pago (esperado)</h6>
             <TablaDeMediosEsperados medios={detalle.resumen.medios} />
 
-            <DetalleDeTurnoListas tickets={detalle.tickets} pagos={detalle.gastos} />
+            <DetalleDeTurnoListas tickets={detalle.tickets} pagos={detalle.gastos} alReimprimir={reimprimirTicket} />
           </>
         )}
       </Box>

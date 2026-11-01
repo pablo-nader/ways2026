@@ -13,7 +13,9 @@ namespace Ways.Application.Caja;
 /// Sin reintento: la transacción toma <c>FOR NO KEY UPDATE</c> sobre la fila de la cuenta, el mismo lock con el que el cierre
 /// de turno serializa su cadena (<see cref="EscriturasDeCuentaDeTesoreria.BloquearYLeerColaAsync"/>), y lee la cola de la
 /// cadena DESPUÉS del lock. En el modo "saldo objetivo" la diferencia se calcula con ese saldo bajo lock, no con el que la
-/// pantalla mostraba. Como el precedente del ajuste manual de cuenta corriente, no hay clave de idempotencia: un reenvío
+/// pantalla mostraba. El lock compartido de conciliación es el primero de la transacción y, bajo él, un ajuste fechado en o antes
+/// de la marca de la empresa responde 409 <c>periodo_conciliado</c> (solo alcanzable si la marca se confirma entre el reloj y el
+/// commit). Como el precedente del ajuste manual de cuenta corriente, no hay clave de idempotencia: un reenvío
 /// del mismo importe escribiría dos filas (un reenvío del mismo saldo objetivo no, porque la segunda diferencia da cero y
 /// responde 409 <c>ajuste_sin_diferencia</c>); la protección es la guarda de re-entrada de la pantalla.
 /// </summary>
@@ -28,10 +30,10 @@ public class ServicioDeAjusteDeCuentaDeTesoreria(IWaysDbContext db, IContextoDeU
                 "ServicioDeAjusteDeCuentaDeTesoreria requiere un actor de tenant; la política de la ruta no admite plataforma.");
         var idEmpleado = contexto.UsuarioId;
 
-        if (!await db.CuentasTesoreria.AnyAsync(c => c.Id == idCuenta, ct))
-        {
-            throw SinCuenta(idCuenta);
-        }
+        var idEmpresa = await db.CuentasTesoreria
+            .Where(c => c.Id == idCuenta)
+            .Select(c => (int?)c.IdEmpresa)
+            .FirstOrDefaultAsync(ct) ?? throw SinCuenta(idCuenta);
 
         var concepto = ReglasDeAjusteDeCuentaTesoreria.NormalizarConcepto(solicitud.Concepto);
         ReglasDeAjusteDeCuentaTesoreria.ValidarSolicitud(solicitud.Importe, solicitud.SaldoObjetivo);
@@ -42,6 +44,10 @@ public class ServicioDeAjusteDeCuentaDeTesoreria(IWaysDbContext db, IContextoDeU
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
+            // Primer lock de la transacción (ver GuardaDeConciliacion): una marca que se confirma entre el reloj y el commit
+            // no puede dejar un ajuste fechado en o antes de ella.
+            await GuardaDeConciliacion.TomarCompartidoAsync(db, idTenant, idEmpresa, ct);
+
             var conexion = db.Database.GetDbConnection();
             var transaccionCruda = transaccion.GetDbTransaction();
 
@@ -50,11 +56,14 @@ public class ServicioDeAjusteDeCuentaDeTesoreria(IWaysDbContext db, IContextoDeU
 
             var ajuste = ReglasDeAjusteDeCuentaTesoreria.Resolver(cola.Saldo, solicitud.Importe, solicitud.SaldoObjetivo);
 
+            var fecha = EscriturasDeCuentaDeTesoreria.FechaMonotona(reloj.Ahora, cola.Fecha);
+            await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, idEmpresa, fecha, ct);
+
             var fila = new MovimientoCuenta
             {
                 IdTenant = idTenant,
                 IdCuentaTesoreria = idCuenta,
-                Fecha = EscriturasDeCuentaDeTesoreria.FechaMonotona(reloj.Ahora, cola.Fecha),
+                Fecha = fecha,
                 Tipo = TipoMovimientoCuenta.Ajuste,
                 Concepto = concepto,
                 Inicio = ajuste.Inicio,

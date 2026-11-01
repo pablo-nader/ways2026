@@ -1,24 +1,23 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
-import { Toaster } from '../toasts/Toaster'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tesoreria } from './Tesoreria'
-import { RutaProtegida } from '../auth/RutaProtegida'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
-import type { EmpresaListado, MovimientoTesoreriaListado, PaginaDeMovimientosTesoreria, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type { EmpresaListado, FilaDelLibro, LibroDeTesoreria, UsuarioAutenticado } from '../api/tipos'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const apiGetMock = vi.fn()
-const apiDescargarMock = vi.fn()
+const apiPostMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
-    post: vi.fn(),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
     put: vi.fn(),
     delete: vi.fn(),
-    descargar: (...args: unknown[]) => apiDescargarMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -31,655 +30,783 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
-function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
-  return {
-    id: 9,
-    usuario: 'supervisor',
-    mail: 'supervisor@ways.test',
-    rolId: ROL.Supervisor,
-    rol: 'Supervisor',
-    ultimaConexion: null,
-    idTenant: 1,
-    ...sobrescribir,
-  }
+function usuarioFixture(rolId: number): UsuarioAutenticado {
+  return { id: 9, usuario: 'usuario', mail: 'u@ways.test', rolId, rol: 'Rol', ultimaConexion: null, idTenant: 1 }
 }
 
-let usuarioActual: UsuarioAutenticado | null = usuarioFixture()
+let usuarioActual: UsuarioAutenticado | null = usuarioFixture(ROL.Admin)
 
 vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
-const empresaUnica: EmpresaListado = {
-  id: 1,
-  idTenant: 1,
-  razonSocial: 'Empresa Demo',
-  nombreFantasia: null,
-  cuit: null,
-  nombreTenant: 'Tenant Demo',
-  alicuotaPercepcionIibb: null,
-  alicuotaPercepcionIva: null,
-}
+afterEach(cleanup)
 
-const empresaOtra: EmpresaListado = {
-  id: 2,
-  idTenant: 1,
-  razonSocial: 'Otra Empresa',
-  nombreFantasia: null,
-  cuit: null,
-  nombreTenant: 'Tenant Demo',
-  alicuotaPercepcionIibb: null,
-  alicuotaPercepcionIva: null,
-}
-
-const puntoVentaCentro: PuntoVentaListado = {
-  id: 10,
-  idTenant: 1,
-  idEmpresa: 1,
-  nombre: 'PV Centro',
-  domicilio: null,
-  horario: null,
-  whatsapp: null,
-  instagram: null,
-  facebook: null,
-  web: null,
-  nombreTenant: 'Tenant Demo',
-  razonSocialEmpresa: 'Empresa Demo',
-  modo: 'Web',
-}
-
-const puntoVentaNorte: PuntoVentaListado = {
-  id: 11,
-  idTenant: 1,
-  idEmpresa: 1,
-  nombre: 'PV Norte',
-  domicilio: null,
-  horario: null,
-  whatsapp: null,
-  instagram: null,
-  facebook: null,
-  web: null,
-  nombreTenant: 'Tenant Demo',
-  razonSocialEmpresa: 'Empresa Demo',
-  modo: 'Web',
-}
-
-function movimientoFixture(sobrescribir: Partial<MovimientoTesoreriaListado> = {}): MovimientoTesoreriaListado {
+function empresa(id: number, razonSocial: string): EmpresaListado {
   return {
-    id: 60,
-    idEmpresa: 1,
-    idPuntoVenta: 10,
-    nombrePuntoVenta: 'PV Centro',
-    fecha: '2026-08-05T08:00:00Z',
-    tipo: 'Deposito',
-    idTurnoCaja: 412,
-    idGasto: null,
-    gastoCategoria: null,
-    gastoConcepto: null,
-    concepto: 'Apertura de turno',
-    inicio: 0,
-    ingreso: 60,
-    egreso: 0,
-    final: 60,
-    idEmpleado: 4,
+    id,
+    idTenant: 1,
+    razonSocial,
+    nombreFantasia: null,
+    cuit: null,
+    nombreTenant: 'Tenant Demo',
+    alicuotaPercepcionIibb: null,
+    alicuotaPercepcionIva: null,
+  }
+}
+
+const empresaUnica = empresa(1, 'Empresa Demo')
+
+function diferido<T>() {
+  let resolver!: (valor: T) => void
+  let rechazar!: (motivo: unknown) => void
+  const promesa = new Promise<T>((res, rej) => {
+    resolver = res
+    rechazar = rej
+  })
+  return { promesa, resolver, rechazar }
+}
+
+const FECHA_APERTURA = '2026-10-28T12:00:00Z'
+const FECHA_CIERRE = '2026-10-28T20:00:00Z'
+
+function filaDeCaja(sobrescribir: Partial<FilaDelLibro> = {}): FilaDelLibro {
+  return {
+    fecha: FECHA_CIERRE,
+    tipo: 'Caja',
+    efectivo: 3000,
+    cuentas: [{ idCuentaTesoreria: 1, importe: 950 }],
+    sinCuenta: null,
+    caja: {
+      idTurnoCaja: 137,
+      numero: 137,
+      fechaApertura: FECHA_APERTURA,
+      fechaCierre: FECHA_CIERRE,
+      idPuntoVenta: 7,
+      puntoVenta: 'Local Centro',
+      diferenciaArqueo: -1500,
+      desglose: [
+        {
+          idCuentaTesoreria: 1,
+          neto: 950,
+          medios: [
+            { idMedioPago: 4, medio: 'Tarjeta', importe: 1000, comision: 50, retenciones: 0, neto: 950 },
+            { idMedioPago: 5, medio: 'Billetera', importe: 200, comision: 0, retenciones: 0, neto: 200 },
+          ],
+        },
+      ],
+    },
+    pago: null,
+    ajuste: null,
     ...sobrescribir,
   }
 }
 
-function paginaFixture(items: MovimientoTesoreriaListado[] = [movimientoFixture()], sobrescribir: Partial<PaginaDeMovimientosTesoreria> = {}): PaginaDeMovimientosTesoreria {
-  return { items, total: items.length, pagina: 1, tamanio: 25, ...sobrescribir }
+const filaDePago: FilaDelLibro = {
+  fecha: '2026-10-29T10:00:00Z',
+  tipo: 'Pago',
+  efectivo: -400,
+  cuentas: [],
+  sinCuenta: null,
+  caja: null,
+  pago: { idPago: 7, detalle: 'Proveedor: Flete', categoria: 'Proveedor', origenFondos: 'Tesoreria', idTurnoCaja: null },
+  ajuste: null,
 }
 
-function renderTesoreria() {
-  return render(<Tesoreria />, { wrapper: ({ children }) => (
-      <MemoryRouter>
-        {children}
-        <Toaster />
-      </MemoryRouter>
-    ) })
+const filaDeAjusteDeEfectivo: FilaDelLibro = {
+  fecha: '2026-10-29T11:00:00Z',
+  tipo: 'AjusteEfectivo',
+  efectivo: 200,
+  cuentas: [],
+  sinCuenta: null,
+  caja: null,
+  pago: null,
+  ajuste: { concepto: 'Conteo' },
 }
 
-/** Monta detrás del mismo gate de rol que `App.tsx` usa para `/caja/tesoreria`
- * (`Politicas.LecturaDeReportes`). */
-function renderTesoreriaProtegido() {
-  return render(
-    <MemoryRouter initialEntries={['/caja/tesoreria']}>
-      <Routes>
-        <Route
-          path="/caja/tesoreria"
-          element={
-            <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
-              <Tesoreria />
-            </RutaProtegida>
-          }
-        />
-        <Route path="/" element={<div>Inicio (redirigido)</div>} />
-      </Routes>
-    </MemoryRouter>,
-  )
+const filaDeAjusteDeCuenta: FilaDelLibro = {
+  fecha: '2026-10-29T12:00:00Z',
+  tipo: 'AjusteCuenta',
+  efectivo: null,
+  cuentas: [{ idCuentaTesoreria: 2, importe: -300 }],
+  sinCuenta: null,
+  caja: null,
+  pago: null,
+  ajuste: { concepto: 'Comisión bancaria' },
 }
 
-function mockearRutasBase(
-  sobrescribir?: (ruta: string) => Promise<unknown> | undefined,
-  empresas: EmpresaListado[] = [empresaUnica],
+function libroFixture(sobrescribir: Partial<LibroDeTesoreria> = {}): LibroDeTesoreria {
+  return {
+    idEmpresa: 1,
+    desde: '2026-10-25T00:00:00-03:00',
+    hasta: '2026-10-31T23:59:59.999-03:00',
+    cuentas: [
+      { idCuentaTesoreria: 1, nombre: 'Mercado Pago', activo: true },
+      { idCuentaTesoreria: 2, nombre: 'Banco', activo: true },
+    ],
+    saldoAnterior: { efectivo: 10000, porCuenta: [{ idCuentaTesoreria: 1, importe: 500 }] },
+    saldoActual: {
+      efectivo: 8500,
+      porCuenta: [
+        { idCuentaTesoreria: 1, importe: 2000 },
+        { idCuentaTesoreria: 2, importe: -300 },
+      ],
+    },
+    filas: [filaDeCaja(), filaDePago, filaDeAjusteDeEfectivo, filaDeAjusteDeCuenta],
+    conciliadoHasta: null,
+    ...sobrescribir,
+  }
+}
+
+function mockearRutas(
+  opciones: {
+    empresas?: EmpresaListado[]
+    libro?: (ruta: string) => Promise<LibroDeTesoreria>
+  } = {},
 ) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/empresas') return Promise.resolve(empresas)
-    if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaCentro, puntoVentaNorte])
-    const propia = sobrescribir?.(ruta)
-    if (propia) return propia
-    if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture())
-    if (ruta.startsWith('/reportes/tesoreria/cuentas?')) {
-      return Promise.resolve({ idEmpresa: 1, cuentas: [], mediosSinCuenta: [] })
-    }
+    if (ruta === '/empresas') return Promise.resolve(opciones.empresas ?? [empresaUnica])
+    if (ruta.startsWith('/reportes/libro-tesoreria?')) return (opciones.libro ?? (() => Promise.resolve(libroFixture())))(ruta)
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
 
-/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
-async function toastDeErrorDeDescarga(texto: string) {
+function renderTesoreria() {
+  return render(
+    <MemoryRouter>
+      <Tesoreria />
+      <Toaster />
+    </MemoryRouter>,
+  )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
   const aviso = await screen.findByText(texto)
-  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
-  expect(document.body.querySelector('.alert-danger')).toBeNull()
-  expect(screen.getAllByText(texto)).toHaveLength(1)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
+
+/** La marca de conciliación de la pantalla; los toasts también son `status` y se excluyen. */
+function marcaDeConciliacion(): HTMLElement {
+  const marcas = screen.getAllByRole('status').filter((e) => !e.closest('.ws-toaster'))
+  expect(marcas).toHaveLength(1)
+  return marcas[0]
+}
+
+function llamadasAlLibro(): string[] {
+  return apiGetMock.mock.calls.map((c) => c[0] as string).filter((r) => r.startsWith('/reportes/libro-tesoreria?'))
+}
+
+function celdasDeLaFila(fila: HTMLElement): HTMLElement[] {
+  return within(fila).getAllByRole('cell')
+}
+
+/** Espera al DATO: la tarjeta de efectivo solo existe cuando el libro llegó. */
+async function esperarElLibro() {
+  await screen.findByRole('group', { name: 'Efectivo' })
 }
 
 beforeEach(() => {
   apiGetMock.mockReset()
-  apiDescargarMock.mockReset()
-  apiDescargarMock.mockResolvedValue(undefined)
-  usuarioActual = usuarioFixture()
+  apiPostMock.mockReset()
+  usuarioActual = usuarioFixture(ROL.Admin)
 })
 
-describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)', () => {
-  it('la sección de cuentas pide las cuentas de la empresa elegida y avisa si todavía no hay empresa', async () => {
-    mockearRutasBase(undefined, [empresaUnica, empresaOtra])
-    const usuario = userEvent.setup()
+describe('Tesoreria — libro: carga y filtros', () => {
+  it('con empresa única la preselecciona y pide el libro con el rango de siete días y el offset local', async () => {
+    mockearRutas()
     renderTesoreria()
 
-    await screen.findByText('Elegí una empresa para ver sus cuentas.')
-    expect(apiGetMock.mock.calls.some((call: unknown[]) => (call[0] as string).startsWith('/reportes/tesoreria/cuentas'))).toBe(false)
-
-    await usuario.selectOptions(screen.getByLabelText('Empresa'), String(empresaOtra.id))
-
-    await screen.findByText('Esta empresa todavía no tiene cuentas de tesorería.')
-    expect(apiGetMock).toHaveBeenCalledWith(`/reportes/tesoreria/cuentas?idEmpresa=${empresaOtra.id}`)
-  })
-
-  it('empresa única: se preselecciona y el punto de venta arranca en "Todos"', async () => {
-    mockearRutasBase()
-    renderTesoreria()
-
-    await screen.findByLabelText('Punto de venta')
-    expect(screen.getByLabelText('Empresa')).toHaveValue(String(empresaUnica.id))
-    expect(screen.getByLabelText('Punto de venta')).toHaveValue('')
-    expect(screen.getByLabelText('Punto de venta')).not.toBeDisabled()
-  })
-
-  it('más de una empresa: no se preselecciona ninguna, el libro no se pide hasta elegir', async () => {
-    mockearRutasBase(undefined, [empresaUnica, empresaOtra])
-    renderTesoreria()
-
-    await screen.findByLabelText('Empresa')
-    expect(screen.getByLabelText('Empresa')).toHaveValue('')
-    expect(screen.getByText('Elegí una empresa para ver su libro de tesorería.')).toBeInTheDocument()
-    expect(apiGetMock.mock.calls.some((call: unknown[]) => (call[0] as string).startsWith('/reportes/tesoreria?'))).toBe(false)
-  })
-
-  it('elegir una empresa dispara la primera consulta con idEmpresa y sin idPuntoVenta ("Todos")', async () => {
-    mockearRutasBase(undefined, [empresaUnica, empresaOtra])
-    const usuario = userEvent.setup()
-    renderTesoreria()
-
-    await screen.findByLabelText('Empresa')
-    await usuario.selectOptions(screen.getByLabelText('Empresa'), String(empresaUnica.id))
-
-    await waitFor(() => {
-      const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/tesoreria?'))
-      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes(`idEmpresa=${empresaUnica.id}`))).toBe(true)
-      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idPuntoVenta='))).toBe(false)
-    })
-  })
-
-  it('un libro vacío muestra un estado vacío, no un re-query', async () => {
-    mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture([]))
-      return undefined
-    })
-    renderTesoreria()
-
-    expect(await screen.findByText('No hay movimientos que coincidan con los filtros.')).toBeInTheDocument()
-    const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/tesoreria?'))
-    expect(llamadas).toHaveLength(1)
-  })
-
-  // Las filas se renderizan en el MISMO orden que llegan del backend (OrderBy(m => m.Id), spec
-  // tesoreria: Book Preserves Chain Order) — sin ningún sort del lado del cliente. Tres filas
-  // encadenadas con `final` values 60, 100, 145 (mismo fixture que el test de backend).
-  it('renderiza las filas en el orden de cadena que devuelve el backend, con cada columna', async () => {
-    // stage-gastos-origen-fondos-pos (PR2): `concepto` se elige DISTINTO de toda etiqueta de
-    // `Tipo` ("Retiro de caja"/"Depósito"/"Pago"/"Ajuste") — la columna Tipo nueva reusa esas
-    // mismas palabras, así que un concepto homónimo sería ambiguo para `getByText`.
-    const filaUno = movimientoFixture({ id: 60, inicio: 5, ingreso: 55, egreso: 0, final: 60, concepto: 'Apertura de caja', idEmpleado: 4 })
-    const filaDos = movimientoFixture({ id: 61, inicio: 60, ingreso: 40, egreso: 0, final: 100, concepto: 'Carga de fondos', idEmpleado: 5 })
-    const filaTres = movimientoFixture({ id: 62, inicio: 100, ingreso: 0, egreso: 45, final: 55, concepto: 'Retiro físico', idEmpleado: 4 })
-    mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture([filaUno, filaDos, filaTres]))
-      return undefined
-    })
-    renderTesoreria()
-
-    await screen.findByText('Apertura de caja')
-    const filas = screen.getAllByRole('row').slice(1) // sin la fila de encabezado
-    expect(within(filas[0]).getByText('Apertura de caja')).toBeInTheDocument()
-    expect(within(filas[0]).getByText('$ 60,00')).toBeInTheDocument()
-    expect(within(filas[1]).getByText('Carga de fondos')).toBeInTheDocument()
-    expect(within(filas[1]).getByText('$ 100,00')).toBeInTheDocument()
-    expect(within(filas[2]).getByText('Retiro físico')).toBeInTheDocument()
-    expect(within(filas[2]).getByText('$ 55,00')).toBeInTheDocument()
-  })
-
-  // Cláusula bajo prueba: `etiquetaDeTipoMovimiento` — mapea las cuatro variantes de
-  // `TipoMovimientoTesoreria` a su etiqueta en español (stage-gastos-origen-fondos-pos, PR2: la
-  // columna Tipo empieza a mostrarse; antes se traía pero nunca se renderizaba).
-  it('la columna Tipo muestra la etiqueta en español de cada TipoMovimientoTesoreria', async () => {
-    const filaRetiro = movimientoFixture({ id: 70, tipo: 'RetiroCaja', concepto: 'Cierre de turno' })
-    const filaDeposito = movimientoFixture({ id: 71, tipo: 'Deposito', concepto: 'Ingreso manual' })
-    const filaPago = movimientoFixture({ id: 72, tipo: 'Gasto', concepto: 'Flete de mercadería' })
-    const filaAjuste = movimientoFixture({ id: 73, tipo: 'Ajuste', concepto: 'Ajuste manual' })
-    mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) {
-        return Promise.resolve(paginaFixture([filaRetiro, filaDeposito, filaPago, filaAjuste]))
-      }
-      return undefined
-    })
-    renderTesoreria()
-
-    const filaDeRetiro = await screen.findByRole('row', { name: /Cierre de turno/ })
-    expect(within(filaDeRetiro).getByText('Retiro de caja')).toBeInTheDocument()
-
-    expect(within(screen.getByRole('row', { name: /Ingreso manual/ })).getByText('Depósito')).toBeInTheDocument()
-    expect(within(screen.getByRole('row', { name: /Flete de mercadería/ })).getByText('Pago')).toBeInTheDocument()
-    expect(within(screen.getByRole('row', { name: /Ajuste manual/ })).getByText('Ajuste')).toBeInTheDocument()
-  })
-
-  // stage-tesoreria-por-empresa (PR5): una fila `Pago` muestra la categoría/concepto del pago de
-  // origen en la columna Concepto, no el `concepto` genérico del movimiento.
-  it('una fila de tipo Pago muestra la categoría y el concepto del pago de origen', async () => {
-    const filaPago = movimientoFixture({
-      id: 80,
-      tipo: 'Gasto',
-      idPuntoVenta: null,
-      nombrePuntoVenta: null,
-      idGasto: 500,
-      gastoCategoria: 'Otros',
-      gastoConcepto: 'Alquiler de depósito',
-      concepto: 'Pago de administración',
-    })
-    mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture([filaPago]))
-      return undefined
-    })
-    renderTesoreria()
-
-    const fila = await screen.findByRole('row', { name: /Alquiler de depósito/ })
-    expect(within(fila).getByText('—')).toBeInTheDocument() // sin punto de venta
-    expect(within(fila).queryByText('Pago de administración')).not.toBeInTheDocument()
-  })
-
-  it('el punto de venta dado de baja lógica (nombrePuntoVenta null) se muestra como "(no disponible)"', async () => {
-    const fila = movimientoFixture({ id: 90, idPuntoVenta: 10, nombrePuntoVenta: null, concepto: 'Cierre de turno' })
-    mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture([fila]))
-      return undefined
-    })
-    renderTesoreria()
-
-    const filaRenderizada = await screen.findByRole('row', { name: /Cierre de turno/ })
-    expect(within(filaRenderizada).getByText('(no disponible)')).toBeInTheDocument()
-  })
-
-  it('cambiar el punto de venta dispara una nueva consulta con el idPuntoVenta elegido', async () => {
-    mockearRutasBase()
-    const usuario = userEvent.setup()
-    renderTesoreria()
-
-    await screen.findByText('Apertura de turno')
-    apiGetMock.mockClear()
-    mockearRutasBase()
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
-
-    await waitFor(() => {
-      const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/tesoreria?'))
-      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idPuntoVenta=11'))).toBe(true)
-    })
-  })
-
-  // stage-tesoreria-por-empresa (PR5): un filtro puntual de PV muestra un SUBCONJUNTO de la
-  // cadena de la empresa — la pantalla avisa que los saldos pertenecen a la cadena completa.
-  it('elegir un punto de venta puntual muestra la nota de subconjunto; "Todos" no', async () => {
-    mockearRutasBase()
-    const usuario = userEvent.setup()
-    renderTesoreria()
-
-    await screen.findByText('Apertura de turno')
-    expect(screen.queryByText(/cadena completa de la empresa/)).not.toBeInTheDocument()
-
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
-    expect(await screen.findByText(/cadena completa de la empresa/)).toBeInTheDocument()
-
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '')
-    await waitFor(() => expect(screen.queryByText(/cadena completa de la empresa/)).not.toBeInTheDocument())
-  })
-
-  it('el botón de descarga apunta a /reportes/tesoreria/export con idEmpresa y sin idPuntoVenta por defecto', async () => {
-    mockearRutasBase()
-    apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
-    const usuario = userEvent.setup()
-    renderTesoreria()
-
-    await screen.findByText('Apertura de turno')
-    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
-
-    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
-    const ruta = apiDescargarMock.mock.calls[0][0] as string
-    expect(ruta).toMatch(/^\/reportes\/tesoreria\/export\?idEmpresa=1/)
-    expect(ruta).not.toContain('idPuntoVenta=')
-  })
-
-  // judgment-day PR5, hallazgo #5 (react-async-state): deseleccionar la empresa mientras un
-  // fetch sigue en vuelo tiene que bumpear la generación. El síntoma NO es visible con la empresa
-  // en null (la sección de tabla queda gateada por `filtros === null` de todos modos) — el síntoma
-  // real es que el estado `pagina` queda contaminado con la respuesta vieja, y esa contaminación
-  // se filtra a la SIGUIENTE selección de empresa (aparece un instante antes de que la fetch nueva
-  // resuelva). Por eso el assert decisivo es DESPUÉS de volver a elegir una empresa, con la
-  // segunda fetch todavía sin resolver.
-  it('deseleccionar la empresa con un fetch en vuelo no contamina la siguiente selección', async () => {
-    let resolverPrimera: (valor: PaginaDeMovimientosTesoreria) => void = () => {}
-    const primera = new Promise<PaginaDeMovimientosTesoreria>((resolve) => {
-      resolverPrimera = resolve
-    })
-    const segunda = new Promise<PaginaDeMovimientosTesoreria>(() => {}) // nunca resuelve en este test
-    let cantidadDeLlamadas = 0
-
-    mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) {
-        cantidadDeLlamadas += 1
-        return cantidadDeLlamadas === 1 ? primera : segunda
-      }
-      return undefined
-    })
-
-    const usuario = userEvent.setup()
-    renderTesoreria()
-
-    await screen.findByLabelText('Punto de venta')
-    // El fetch inicial (disparado por la preselección de empresa única) sigue en vuelo acá.
-
-    await usuario.selectOptions(screen.getByLabelText('Empresa'), '')
-    expect(screen.getByText('Elegí una empresa para ver su libro de tesorería.')).toBeInTheDocument()
-
-    resolverPrimera(paginaFixture([movimientoFixture({ id: 777, concepto: 'respuesta-tardia-tras-deseleccionar' })]))
-    await waitFor(() => expect(screen.queryByText('respuesta-tardia-tras-deseleccionar')).not.toBeInTheDocument())
-
-    // Vuelve a elegir la empresa: dispara la SEGUNDA fetch, que queda pendiente para siempre en
-    // este test. Sin el fix, la fila de la respuesta vieja ya vive en `pagina` desde el paso
-    // anterior y aparece ACÁ, antes de que la segunda fetch resuelva.
-    await usuario.selectOptions(screen.getByLabelText('Empresa'), String(empresaUnica.id))
-    expect(screen.queryByText('respuesta-tardia-tras-deseleccionar')).not.toBeInTheDocument()
-  })
-
-  it('una respuesta de listado desactualizada nunca pisa la más reciente (generación)', async () => {
-    let resolverPrimera: (valor: PaginaDeMovimientosTesoreria) => void = () => {}
-    const primera = new Promise<PaginaDeMovimientosTesoreria>((resolve) => {
-      resolverPrimera = resolve
-    })
-    let cantidadDeLlamadas = 0
-
-    mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) {
-        cantidadDeLlamadas += 1
-        if (cantidadDeLlamadas === 1) return primera
-        return Promise.resolve(paginaFixture([movimientoFixture({ id: 999, concepto: 'segunda-respuesta' })]))
-      }
-      return undefined
-    })
-
-    const usuario = userEvent.setup()
-    renderTesoreria()
-    await screen.findByLabelText('Punto de venta')
-
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
-    expect(await screen.findByText('segunda-respuesta')).toBeInTheDocument()
-
-    resolverPrimera(paginaFixture([movimientoFixture({ id: 1, concepto: 'primera-respuesta-vieja' })]))
-    await waitFor(() => expect(screen.queryByText('primera-respuesta-vieja')).not.toBeInTheDocument())
-    expect(screen.getByText('segunda-respuesta')).toBeInTheDocument()
-  })
-})
-
-describe('Tesoreria — role gating (spec: A Supervisor Reads The G2 Listing And The G3 Book)', () => {
-  it('un Supervisor llega a /caja/tesoreria', async () => {
-    mockearRutasBase()
-    renderTesoreriaProtegido()
-
-    await screen.findByText('Apertura de turno')
-    expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
-  })
-
-  it('un Vendedor nunca llega a /caja/tesoreria: redirige a Inicio', async () => {
-    usuarioActual = usuarioFixture({ id: 4, usuario: 'vendedor', rolId: ROL.Vendedor, rol: 'Vendedor' })
-    mockearRutasBase()
-
-    renderTesoreriaProtegido()
-
-    expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
-    await waitFor(() => expect(screen.queryByText('Tesorería')).not.toBeInTheDocument())
-  })
-})
-
-describe('Tesoreria — orden en el servidor', () => {
-  function consultasDelLibro(): string[] {
-    return apiGetMock.mock.calls.map((c) => c[0] as string).filter((ruta) => ruta.startsWith('/reportes/tesoreria?'))
-  }
-
-  function parametrosDeLaUltimaConsulta(): URLSearchParams {
-    return new URLSearchParams(consultasDelLibro().at(-1)!.split('?')[1])
-  }
-
-  async function cargada() {
-    renderTesoreria()
-    await screen.findByText('Apertura de turno')
-  }
-
-  /**
-   * Cláusula bajo prueba: cada encabezado de dato manda su propia clave en `orden`. Mutation-proof-
-   * tests: cruzar dos claves (por ejemplo `inicio` en la columna Final) rompe el caso de esa columna.
-   */
-  it.each([
-    ['Tipo', 'tipo'],
-    ['Inicio', 'inicio'],
-    ['Ingreso', 'ingreso'],
-    ['Egreso', 'egreso'],
-    ['Final', 'final'],
-    ['Concepto', 'concepto'],
-    ['Punto de venta', 'puntoVenta'],
-    ['Empleado', 'empleado'],
-    ['Fecha', 'fecha'],
-  ])('el encabezado "%s" pide orden=%s ascendente', async (titulo, clave) => {
-    mockearRutasBase()
-    await cargada()
-
-    const encabezado = screen.getByRole('columnheader', { name: new RegExp(`^${titulo}`) })
-    await userEvent.click(within(encabezado).getByRole('button'))
-
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe(clave))
-    expect(parametrosDeLaUltimaConsulta().get('direccion')).toBe('ascendente')
-  })
-
-  /** El libro llega en orden de cadena mientras nadie pida otro: sin `orden` ni `direccion` en la consulta. */
-  it('sin pedir un orden, la consulta no lleva orden ni dirección', async () => {
-    mockearRutasBase()
-    await cargada()
-
-    expect(parametrosDeLaUltimaConsulta().has('orden')).toBe(false)
-    expect(parametrosDeLaUltimaConsulta().has('direccion')).toBe(false)
-    expect(screen.getByRole('columnheader', { name: /^Fecha/ })).toHaveAttribute('aria-sort', 'none')
-  })
-
-  it('el clic recorre ascendente, descendente y vuelve al orden de cadena, con aria-sort en cada paso', async () => {
-    mockearRutasBase()
-    await cargada()
-    const encabezado = screen.getByRole('columnheader', { name: /^Final/ })
-    const boton = within(encabezado).getByRole('button')
-
-    await userEvent.click(boton)
-    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'ascending'))
-    expect(parametrosDeLaUltimaConsulta().get('direccion')).toBe('ascendente')
-
-    await userEvent.click(boton)
-    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'descending'))
-    expect(parametrosDeLaUltimaConsulta().get('direccion')).toBe('descendente')
-
-    await userEvent.click(boton)
-    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'none'))
-    expect(parametrosDeLaUltimaConsulta().has('orden')).toBe(false)
-    expect(parametrosDeLaUltimaConsulta().has('direccion')).toBe(false)
-  })
-
-  /**
-   * Cláusula bajo prueba: `pagina: 1` al cambiar el orden y los filtros conservados. Mutation-proof-
-   * tests: quitar el reseteo deja `pagina=2` en la consulta; reiniciar los filtros pierde `idPuntoVenta`.
-   */
-  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
-    mockearRutasBase((ruta) =>
-      ruta.startsWith('/reportes/tesoreria?') ? Promise.resolve(paginaFixture([movimientoFixture()], { total: 60 })) : undefined,
+    await esperarElLibro()
+    expect(screen.getByLabelText('Empresa')).toHaveValue('1')
+    const ruta = decodeURIComponent(llamadasAlLibro()[0])
+    expect(ruta).toMatch(
+      /^\/reportes\/libro-tesoreria\?idEmpresa=1&desde=\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{2}:\d{2}&hasta=\d{4}-\d{2}-\d{2}T23:59:59\.999[+-]\d{2}:\d{2}$/,
     )
-    await cargada()
-    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), String(puntoVentaNorte.id))
-    await userEvent.click(await screen.findByRole('button', { name: 'Siguiente' }))
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('2'))
-
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
-    expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('1')
-    expect(parametrosDeLaUltimaConsulta().get('idPuntoVenta')).toBe(String(puntoVentaNorte.id))
   })
 
-  it('un cambio de orden dispara una sola consulta', async () => {
-    mockearRutasBase((ruta) =>
-      ruta.startsWith('/reportes/tesoreria?') ? Promise.resolve(paginaFixture([movimientoFixture()], { total: 60 })) : undefined,
-    )
-    await cargada()
-    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('2'))
-    const antes = consultasDelLibro().length
+  it('con varias empresas no pide nada hasta elegir una', async () => {
+    mockearRutas({ empresas: [empresaUnica, empresa(2, 'Otra Empresa')] })
+    renderTesoreria()
 
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+    await screen.findByText('Elegí una empresa para ver su libro de tesorería.')
+    expect(llamadasAlLibro()).toHaveLength(0)
 
-    expect(consultasDelLibro().length - antes).toBe(1)
+    await userEvent.selectOptions(screen.getByLabelText('Empresa'), '2')
+    await esperarElLibro()
+    expect(llamadasAlLibro()[0]).toContain('idEmpresa=2')
   })
 
-  it('el orden se conserva al cambiar un filtro', async () => {
-    mockearRutasBase()
-    await cargada()
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+  it('un rango invertido avisa y no consulta', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const antes = llamadasAlLibro().length
 
-    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), String(puntoVentaNorte.id))
+    const desde = screen.getByLabelText('Desde')
+    await userEvent.clear(desde)
+    await userEvent.type(desde, '31/12/2099')
 
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('idPuntoVenta')).toBe(String(puntoVentaNorte.id)))
-    expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto')
+    expect(await screen.findByText(/no puede ser posterior/)).toBeInTheDocument()
+    expect(llamadasAlLibro()).toHaveLength(antes)
+    expect(screen.queryByRole('group', { name: 'Efectivo' })).not.toBeInTheDocument()
   })
 
-  it('el export no lleva el orden: sale siempre en orden de cadena', async () => {
-    mockearRutasBase()
-    await cargada()
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
-
-    await userEvent.click(screen.getByRole('button', { name: 'Descargar' }))
-
-    const rutaDescargada = apiDescargarMock.mock.calls[0][0] as string
-    expect(rutaDescargada).not.toContain('orden=')
-    expect(rutaDescargada).not.toContain('direccion=')
-  })
-
-  /**
-   * Cláusula bajo prueba: el gateo de generación frente a un cambio de orden. Mutation-proof-tests:
-   * sacar el `if (generacionRef.current !== miGeneracion) return` del `.then` deja que la respuesta
-   * del orden viejo, que llega tarde, pise las filas del orden vigente.
-   */
-  it('la respuesta de un orden viejo que llega tarde nunca pisa a la del orden vigente', async () => {
-    let resolverPrimera: (valor: PaginaDeMovimientosTesoreria) => void = () => {}
-    const primera = new Promise<PaginaDeMovimientosTesoreria>((resolve) => {
-      resolverPrimera = resolve
-    })
-    let llamadas = 0
-    mockearRutasBase((ruta) => {
-      if (!ruta.startsWith('/reportes/tesoreria?')) return undefined
-      llamadas += 1
-      if (llamadas === 1) return Promise.resolve(paginaFixture([movimientoFixture({ concepto: 'Apertura de turno' })]))
-      if (llamadas === 2) return primera
-      return Promise.resolve(paginaFixture([movimientoFixture({ id: 2, concepto: 'Orden vigente' })]))
+  it('si la lectura falla muestra el mensaje y Reintentar vuelve a pedir', async () => {
+    let intento = 0
+    mockearRutas({
+      libro: () =>
+        ++intento === 1
+          ? Promise.reject(new ErrorApi(400, 'rango_invalido', 'El rango es demasiado grande.'))
+          : Promise.resolve(libroFixture()),
     })
     renderTesoreria()
-    await screen.findByText('Apertura de turno')
 
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-    await screen.findByText('Orden vigente')
-
-    resolverPrimera(paginaFixture([movimientoFixture({ id: 3, concepto: 'Orden viejo' })]))
-    await waitFor(() => expect(screen.queryByText('Orden viejo')).not.toBeInTheDocument())
-    expect(screen.getByText('Orden vigente')).toBeInTheDocument()
-  })
-
-  /**
-   * Decisión del patrón de S5c: si la consulta de un orden nuevo falla, la tabla se va con su encabezado
-   * (no queda un encabezado declarando un orden que las filas no tienen) y Reintentar repite ese mismo
-   * orden. Mutation-proof-tests: dejar `setPagina` sin vaciar en el `.catch` deja las filas del orden
-   * anterior bajo un encabezado del nuevo.
-   */
-  it('si falla la consulta de un orden nuevo, no queda un encabezado que mienta y Reintentar repite ese orden', async () => {
-    let llamadas = 0
-    mockearRutasBase((ruta) => {
-      if (!ruta.startsWith('/reportes/tesoreria?')) return undefined
-      llamadas += 1
-      return llamadas === 2
-        ? Promise.reject(new ErrorApi(400, 'orden_invalido', 'orden no válido.'))
-        : Promise.resolve(paginaFixture())
-    })
-    await cargada()
-
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-
-    expect(await screen.findByText('orden no válido.')).toBeInTheDocument()
-    expect(screen.queryByRole('columnheader', { name: /^Concepto/ })).not.toBeInTheDocument()
-    expect(screen.queryByText('Apertura de turno')).not.toBeInTheDocument()
-
+    expect(await screen.findByText('El rango es demasiado grande.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
 
-    const encabezado = await screen.findByRole('columnheader', { name: /^Concepto/ })
-    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
-    expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto')
-    expect(screen.getByText('Apertura de turno')).toBeInTheDocument()
+    await esperarElLibro()
+    expect(screen.queryByText('El rango es demasiado grande.')).not.toBeInTheDocument()
   })
 
-  it('el orden elegido sigue vigente al cambiar de empresa', async () => {
-    mockearRutasBase(undefined, [empresaUnica, empresaOtra])
+  it('una respuesta tardía de otra empresa no pisa la de la empresa elegida después', async () => {
+    const primera = diferido<LibroDeTesoreria>()
+    const segunda = diferido<LibroDeTesoreria>()
+    mockearRutas({
+      empresas: [empresaUnica, empresa(2, 'Otra Empresa')],
+      libro: (ruta) => (ruta.includes('idEmpresa=1&') ? primera.promesa : segunda.promesa),
+    })
     renderTesoreria()
-    await userEvent.selectOptions(await screen.findByLabelText('Empresa'), String(empresaUnica.id))
-    await screen.findByText('Apertura de turno')
-    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+    await screen.findByRole('option', { name: 'Otra Empresa' })
 
-    await userEvent.selectOptions(screen.getByLabelText('Empresa'), String(empresaOtra.id))
+    await userEvent.selectOptions(screen.getByLabelText('Empresa'), '1')
+    await waitFor(() => expect(llamadasAlLibro()).toHaveLength(1))
+    await userEvent.selectOptions(screen.getByLabelText('Empresa'), '2')
+    await waitFor(() => expect(llamadasAlLibro()).toHaveLength(2))
 
-    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('idEmpresa')).toBe(String(empresaOtra.id)))
-    expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto')
-    expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('1')
+    await act(async () => {
+      segunda.resolver(libroFixture({ idEmpresa: 2, saldoActual: { efectivo: 222, porCuenta: [] }, cuentas: [] }))
+    })
+    expect(within(await screen.findByRole('group', { name: 'Efectivo' })).getByText('$ 222,00')).toBeInTheDocument()
+
+    await act(async () => {
+      primera.resolver(libroFixture({ idEmpresa: 1, saldoActual: { efectivo: 111, porCuenta: [] }, cuentas: [] }))
+    })
+
+    expect(within(screen.getByRole('group', { name: 'Efectivo' })).getByText('$ 222,00')).toBeInTheDocument()
+    expect(screen.queryByText('$ 111,00')).not.toBeInTheDocument()
+  })
+
+  it('cambiar de empresa limpia el libro anterior mientras llega el nuevo', async () => {
+    const pendiente = diferido<LibroDeTesoreria>()
+    mockearRutas({
+      empresas: [empresaUnica, empresa(2, 'Otra Empresa')],
+      libro: (ruta) => (ruta.includes('idEmpresa=2&') ? pendiente.promesa : Promise.resolve(libroFixture())),
+    })
+    renderTesoreria()
+    await screen.findByRole('option', { name: 'Otra Empresa' })
+    await userEvent.selectOptions(screen.getByLabelText('Empresa'), '1')
+    await esperarElLibro()
+
+    await userEvent.selectOptions(screen.getByLabelText('Empresa'), '2')
+
+    expect(screen.queryByRole('group', { name: 'Efectivo' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+})
+
+describe('Tesoreria — libro: liquidez y saldo anterior', () => {
+  it('muestra una tarjeta por efectivo y por cuenta con su saldo actual, y pinta de rojo el negativo', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const efectivo = screen.getByRole('group', { name: 'Efectivo' })
+    expect(within(efectivo).getByText('$ 8.500,00')).not.toHaveClass('libro-importe--negativo')
+    expect(within(efectivo).getByText('Disponible ahora')).toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: 'Mercado Pago' })).getByText('$ 2.000,00')).toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: 'Banco' })).getByText('-$ 300,00')).toHaveClass('libro-importe--negativo')
+  })
+
+  it('la primera fila de la tabla es el saldo anterior por columna, con cero para la cuenta que no figura', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const encabezados = within(screen.getByRole('table'))
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent)
+    expect(encabezados).toEqual(['Fecha', 'Detalle', 'Efectivo', 'Mercado Pago', 'Banco'])
+
+    const primera = screen.getByRole('table').querySelector('tbody tr') as HTMLElement
+    const celdas = celdasDeLaFila(primera).map((c) => c.textContent)
+    expect(celdas[1]).toBe('Saldo anterior')
+    expect(celdas[2]).toMatch(/^\$\s10\.000,00$/)
+    expect(celdas[3]).toMatch(/^\$\s500,00$/)
+    expect(celdas[4]).toMatch(/^\$\s0,00$/)
+  })
+
+  it('la columna "Sin cuenta" solo aparece cuando alguna fila trae importe sin cuenta', async () => {
+    mockearRutas()
+    const { unmount } = renderTesoreria()
+    await esperarElLibro()
+    expect(screen.queryByRole('columnheader', { name: 'Sin cuenta' })).not.toBeInTheDocument()
+    unmount()
+
+    apiGetMock.mockReset()
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [{ ...filaDePago, efectivo: null, sinCuenta: -80 }] })) })
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(screen.getByRole('columnheader', { name: 'Sin cuenta' })).toBeInTheDocument()
+    const fila = screen.getByText('Proveedor: Flete').closest('tr') as HTMLElement
+    const celdas = celdasDeLaFila(fila)
+    expect(celdas[celdas.length - 1]).toHaveTextContent(/-\$\s80,00/)
+    expect(within(celdas[celdas.length - 1]).getByText(/-\$\s80,00/)).toHaveClass('libro-importe--negativo')
+  })
+})
+
+describe('Tesoreria — libro: filas', () => {
+  it('Caja: enlace al Z en pestaña nueva con la diferencia del arqueo, y celdas vacías donde la fila no toca', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const enlace = screen.getByRole('link', { name: 'Caja #137 ($ -1.500)' })
+    expect(enlace).toHaveAttribute('href', '/caja/turnos/137/z')
+    expect(enlace).toHaveAttribute('target', '_blank')
+    expect(enlace).toHaveAttribute('rel', 'noopener noreferrer')
+
+    const celdas = celdasDeLaFila(enlace.closest('tr') as HTMLElement)
+    expect(celdas[2]).toHaveTextContent(/^\$\s3\.000,00$/)
+    expect(celdas[3]).toHaveTextContent(/^\$\s950,00$/)
+    expect(celdas[4].textContent).toBe('')
+  })
+
+  it('Caja: la diferencia positiva lleva signo y sin diferencia se muestra solo el número', async () => {
+    const sinDiferencia = filaDeCaja()
+    sinDiferencia.caja = { ...sinDiferencia.caja!, numero: 150, idTurnoCaja: 150, diferenciaArqueo: null }
+    const sobrante = filaDeCaja()
+    sobrante.caja = { ...sobrante.caja!, numero: 151, idTurnoCaja: 151, diferenciaArqueo: 1300 }
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [sinDiferencia, sobrante] })) })
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(screen.getByRole('link', { name: 'Caja #150' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Caja #151 ($ +1.300)' })).toBeInTheDocument()
+  })
+
+  it('Caja: el tooltip muestra apertura, cierre y punto de venta con el mouse y con el foco, y se cierra con Escape', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+    const enlace = screen.getByRole('link', { name: /Caja #137/ })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+
+    await usuario.hover(enlace)
+    const globo = await screen.findByRole('tooltip')
+    expect(globo).toHaveTextContent(`Apertura: ${fechaHoraATexto(FECHA_APERTURA)}`)
+    expect(globo).toHaveTextContent(`Cierre: ${fechaHoraATexto(FECHA_CIERRE)}`)
+    expect(globo).toHaveTextContent('Punto de venta: Local Centro')
+    expect(enlace).toHaveAttribute('aria-describedby', globo.id)
+
+    await usuario.keyboard('{Escape}')
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+
+    await usuario.unhover(enlace)
+    act(() => enlace.focus())
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Punto de venta: Local Centro')
+    act(() => enlace.blur())
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('Caja: el importe de una cuenta muestra Medio | Importe | Comisión | Neto por medio, sin Retenciones si no hay', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+    const celda = celdasDeLaFila(screen.getByRole('link', { name: /Caja #137/ }).closest('tr') as HTMLElement)[3]
+
+    await usuario.hover(within(celda).getByText(/950,00/))
+
+    const globo = await screen.findByRole('tooltip')
+    const tabla = within(globo).getByRole('table')
+    expect(
+      within(tabla)
+        .getAllByRole('columnheader')
+        .map((h) => h.textContent),
+    ).toEqual(['Medio', 'Importe', 'Comisión', 'Neto'])
+    const filas = within(tabla).getAllByRole('row').slice(1)
+    expect(filas).toHaveLength(2)
+    expect(filas[0].textContent).toMatch(/^Tarjeta\$\s1\.000,00\$\s50,00\$\s950,00$/)
+    expect(filas[1].textContent).toMatch(/^Billetera\$\s200,00\$\s0,00\$\s200,00$/)
+  })
+
+  it('Caja: agrega la columna Retenciones solo cuando algún medio las tiene', async () => {
+    const fila = filaDeCaja()
+    fila.caja!.desglose[0].medios[0] = { idMedioPago: 4, medio: 'Tarjeta', importe: 1000, comision: 50, retenciones: 30, neto: 920 }
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [fila] })) })
+    renderTesoreria()
+    await esperarElLibro()
+    const celda = celdasDeLaFila(screen.getByRole('link', { name: /Caja #137/ }).closest('tr') as HTMLElement)[3]
+
+    act(() =>
+      (
+        within(celda)
+          .getByText(/950,00/)
+          .closest('[tabindex]') as HTMLElement
+      ).focus(),
+    )
+
+    const tabla = within(await screen.findByRole('tooltip')).getByRole('table')
+    expect(
+      within(tabla)
+        .getAllByRole('columnheader')
+        .map((h) => h.textContent),
+    ).toEqual(['Medio', 'Importe', 'Comisión', 'Retenciones', 'Neto'])
+    expect(within(tabla).getAllByRole('row')[1].textContent).toMatch(/^Tarjeta\$\s1\.000,00\$\s50,00\$\s30,00\$\s920,00$/)
+  })
+
+  it('Pago: el detalle es un enlace a /pagos?id=N en pestaña nueva solo para el Admin', async () => {
+    mockearRutas()
+    const { unmount } = renderTesoreria()
+    await esperarElLibro()
+
+    const enlace = screen.getByRole('link', { name: 'Proveedor: Flete' })
+    expect(enlace).toHaveAttribute('href', '/pagos?id=7')
+    expect(enlace).toHaveAttribute('target', '_blank')
+    expect(enlace).toHaveAttribute('rel', 'noopener noreferrer')
+    unmount()
+
+    usuarioActual = usuarioFixture(ROL.Supervisor)
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(screen.getByText('Proveedor: Flete')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Proveedor: Flete' })).not.toBeInTheDocument()
+  })
+
+  it('Pago: el efectivo negativo lleva la clase de rojo y el positivo no', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const filaPago = screen.getByText('Proveedor: Flete').closest('tr') as HTMLElement
+    expect(within(celdasDeLaFila(filaPago)[2]).getByText(/-\$\s400,00/)).toHaveClass('libro-importe--negativo')
+
+    const filaAjuste = screen.getByText('Ajuste: Conteo').closest('tr') as HTMLElement
+    expect(within(celdasDeLaFila(filaAjuste)[2]).getByText(/200,00/)).not.toHaveClass('libro-importe--negativo')
+  })
+
+  it('los ajustes se rotulan "Ajuste: concepto" y el de cuenta cae en su columna', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const fila = screen.getByText('Ajuste: Comisión bancaria').closest('tr') as HTMLElement
+    const celdas = celdasDeLaFila(fila)
+    expect(celdas[2].textContent).toBe('')
+    expect(within(celdas[4]).getByText(/-\$\s300,00/)).toHaveClass('libro-importe--negativo')
+  })
+
+  it('sin movimientos en el rango deja el saldo anterior y lo avisa', async () => {
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [] })) })
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(screen.getByText('Saldo anterior')).toBeInTheDocument()
+    expect(screen.getByText('No hay movimientos en el rango elegido.')).toBeInTheDocument()
+  })
+})
+
+describe('Tesoreria — libro: ajustes (Admin)', () => {
+  it('el Supervisor no ve ningún botón de ajuste', async () => {
+    usuarioActual = usuarioFixture(ROL.Supervisor)
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(screen.queryByRole('button', { name: 'Ajustar efectivo' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Ajustar Mercado Pago/ })).not.toBeInTheDocument()
+  })
+
+  it('ajustar efectivo manda el POST, cierra el modal, confirma y recarga el libro', async () => {
+    let lecturas = 0
+    mockearRutas({
+      libro: () =>
+        Promise.resolve(++lecturas === 1 ? libroFixture() : libroFixture({ saldoActual: { efectivo: 9999, porCuenta: [] }, cuentas: [] })),
+    })
+    apiPostMock.mockResolvedValue({ idMovimiento: 3, fecha: '2026-10-31T10:00:00Z', concepto: 'Conteo', importe: 1499 })
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: 'Ajustar efectivo' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Ajustar efectivo' }))
+    await usuario.type(dialogo.getByLabelText(/Importe/), '1499')
+    await usuario.type(dialogo.getByLabelText('Concepto'), 'Conteo')
+    await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
+
+    await toastDeExito('Ajuste de efectivo registrado.')
+    expect(apiPostMock).toHaveBeenCalledWith('/tesoreria/efectivo/ajustes', { idEmpresa: 1, concepto: 'Conteo', importe: 1499 })
+    expect(screen.queryByRole('dialog', { name: 'Ajustar efectivo' })).not.toBeInTheDocument()
+    expect(await screen.findByText('$ 9.999,00')).toBeInTheDocument()
+    expect(llamadasAlLibro()).toHaveLength(2)
+  })
+
+  it('un resultado incierto cierra el modal, recarga y pide verificar antes de reintentar', async () => {
+    mockearRutas()
+    apiPostMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'x'))
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: 'Ajustar efectivo' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Ajustar efectivo' }))
+    await usuario.type(dialogo.getByLabelText(/Importe/), '100')
+    await usuario.type(dialogo.getByLabelText('Concepto'), 'Conteo')
+    await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(await screen.findByText(/No se pudo confirmar el ajuste de efectivo/)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Ajustar efectivo' })).not.toBeInTheDocument()
+    await waitFor(() => expect(llamadasAlLibro()).toHaveLength(2))
+  })
+
+  it('cada tarjeta de cuenta ofrece "Ajustar" y abre el modal de ajuste de esa cuenta', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ajustar Mercado Pago' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Ajustar saldo de Mercado Pago' })).toBeInTheDocument()
+  })
+
+  it('ajustar una cuenta desde el libro manda un importe con signo, sin saldoObjetivo ni releer la cadena, y recarga el libro', async () => {
+    let lecturas = 0
+    mockearRutas({
+      libro: () =>
+        Promise.resolve(
+          ++lecturas === 1
+            ? libroFixture()
+            : libroFixture({ saldoActual: { efectivo: 8500, porCuenta: [{ idCuentaTesoreria: 1, importe: 1940 }] } }),
+        ),
+    })
+    apiPostMock.mockResolvedValue({ saldoActual: 1940, movimiento: {} })
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: 'Ajustar Mercado Pago' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Ajustar saldo de Mercado Pago' }))
+    expect(dialogo.queryByRole('radio')).not.toBeInTheDocument()
+    expect(dialogo.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 2.000,00')
+    await usuario.type(dialogo.getByLabelText(/Importe/), '-60')
+    await usuario.type(dialogo.getByLabelText('Concepto'), 'Retiro')
+    await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
+
+    await toastDeExito('Ajuste de Mercado Pago registrado.')
+    expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/1/ajustes', { concepto: 'Retiro', importe: -60 })
+    expect(apiGetMock.mock.calls.every((c) => c[0] === '/empresas' || (c[0] as string).startsWith('/reportes/libro-tesoreria?'))).toBe(true)
+    expect(await screen.findByText('$ 1.940,00')).toBeInTheDocument()
+    expect(llamadasAlLibro()).toHaveLength(2)
+  })
+
+  it('mientras un modal está abierto no se puede abrir otro ajuste', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ajustar efectivo' }))
+    await screen.findByRole('dialog', { name: 'Ajustar efectivo' })
+
+    expect(screen.getByRole('button', { name: 'Ajustar efectivo', hidden: true })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Ajustar Banco', hidden: true })).toBeDisabled()
+  })
+})
+
+describe('Tesoreria — libro: conciliación', () => {
+  const MARCA = '2026-10-29T10:00:00Z'
+
+  function filasDeLaTabla(): HTMLElement[] {
+    return Array.from(screen.getByRole('table').querySelectorAll<HTMLElement>('tbody tr'))
+  }
+
+  async function abrirConciliar(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(screen.getByRole('button', { name: 'Conciliar' }))
+    return within(await screen.findByRole('dialog', { name: 'Conciliar tesorería' }))
+  }
+
+  it('sin marca muestra "Sin conciliar" y ninguna fila lleva candado', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(marcaDeConciliacion()).toHaveTextContent('Sin conciliar')
+    expect(screen.queryByRole('img', { name: 'Conciliado' })).not.toBeInTheDocument()
+  })
+
+  it('con marca muestra "Conciliado hasta" con la fecha y la hora locales', async () => {
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ conciliadoHasta: MARCA })) })
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(marcaDeConciliacion()).toHaveTextContent(`Conciliado hasta ${fechaHoraATexto(MARCA)}`)
+  })
+
+  it('congela con candado las filas hasta la marca inclusive y el saldo anterior si el rango empieza antes', async () => {
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ conciliadoHasta: MARCA })) })
+    renderTesoreria()
+    await esperarElLibro()
+
+    const [saldo, caja, pago, ajusteEfectivo, ajusteCuenta] = filasDeLaTabla()
+    for (const congelada of [saldo, caja, pago]) {
+      expect(within(congelada).getByRole('img', { name: 'Conciliado' })).toBeInTheDocument()
+      expect(congelada).toHaveClass('libro-fila--conciliada')
+    }
+    for (const abierta of [ajusteEfectivo, ajusteCuenta]) {
+      expect(within(abierta).queryByRole('img', { name: 'Conciliado' })).not.toBeInTheDocument()
+      expect(abierta).not.toHaveClass('libro-fila--conciliada')
+    }
+  })
+
+  it('una marca un segundo antes de la fila la deja abierta; una marca anterior al rango no congela nada', async () => {
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ conciliadoHasta: '2026-10-29T09:59:59Z' })) })
+    const { unmount } = renderTesoreria()
+    await esperarElLibro()
+    const [, , pago] = filasDeLaTabla()
+    expect(within(pago).queryByRole('img', { name: 'Conciliado' })).not.toBeInTheDocument()
+    unmount()
+
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ conciliadoHasta: '2026-10-24T00:00:00Z' })) })
+    renderTesoreria()
+    await esperarElLibro()
+    expect(screen.queryByRole('img', { name: 'Conciliado' })).not.toBeInTheDocument()
+  })
+
+  it('el botón Conciliar es solo del Admin', async () => {
+    usuarioActual = usuarioFixture(ROL.Supervisor)
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    expect(screen.queryByRole('button', { name: 'Conciliar' })).not.toBeInTheDocument()
+  })
+
+  it('conciliar manda el POST, cierra el modal, confirma y recarga el libro con la marca nueva', async () => {
+    let lecturas = 0
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ conciliadoHasta: ++lecturas === 1 ? null : MARCA })) })
+    apiPostMock.mockResolvedValue({ idConciliacion: 1, idEmpresa: 1, hasta: MARCA, nota: null, creadoEl: MARCA, idUsuario: 9 })
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    const dialogo = await abrirConciliar(usuario)
+    await usuario.click(dialogo.getByLabelText('Entiendo que no se puede deshacer'))
+    await usuario.click(dialogo.getByRole('button', { name: 'Conciliar' }))
+
+    await toastDeExito('Conciliación registrada.')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock.mock.calls[0][0]).toBe('/tesoreria/conciliaciones')
+    expect(apiPostMock.mock.calls[0][1]).toMatchObject({ idEmpresa: 1 })
+    expect(screen.queryByRole('dialog', { name: 'Conciliar tesorería' })).not.toBeInTheDocument()
+    await waitFor(() => expect(marcaDeConciliacion()).toHaveTextContent('Conciliado hasta'))
+    expect(llamadasAlLibro()).toHaveLength(2)
+  })
+
+  it('el rechazo por una fecha anterior nombra la marca que mostraba el libro y no recarga', async () => {
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ conciliadoHasta: MARCA })) })
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'conciliacion_anterior', 'x'))
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    const dialogo = await abrirConciliar(usuario)
+    await usuario.click(dialogo.getByLabelText('Entiendo que no se puede deshacer'))
+    await usuario.click(dialogo.getByRole('button', { name: 'Conciliar' }))
+
+    expect(await dialogo.findByText(`Ya está conciliado hasta ${fechaHoraATexto(MARCA)}; elegí un instante posterior.`)).toBeInTheDocument()
+    expect(llamadasAlLibro()).toHaveLength(1)
+  })
+
+  it('un resultado incierto cierra el modal, recarga y pide verificar antes de reintentar', async () => {
+    mockearRutas()
+    apiPostMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'x'))
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    const dialogo = await abrirConciliar(usuario)
+    await usuario.click(dialogo.getByLabelText('Entiendo que no se puede deshacer'))
+    await usuario.click(dialogo.getByRole('button', { name: 'Conciliar' }))
+
+    expect(await screen.findByText(/No se pudo confirmar la conciliación/)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Conciliar tesorería' })).not.toBeInTheDocument()
+    await waitFor(() => expect(llamadasAlLibro()).toHaveLength(2))
+  })
+
+  it('un doble clic en Conciliar manda un solo POST', async () => {
+    const pendiente = diferido<unknown>()
+    mockearRutas()
+    apiPostMock.mockReturnValue(pendiente.promesa)
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    const dialogo = await abrirConciliar(usuario)
+    await usuario.click(dialogo.getByLabelText('Entiendo que no se puede deshacer'))
+    await usuario.dblClick(dialogo.getByRole('button', { name: 'Conciliar' }))
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      pendiente.resolver({})
+    })
+    await screen.findByText('Conciliación registrada.')
+  })
+
+  it('mientras el modal de conciliación está abierto no se ofrece otro ajuste', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Conciliar' }))
+    await screen.findByRole('dialog', { name: 'Conciliar tesorería' })
+
+    expect(screen.getByRole('button', { name: 'Ajustar efectivo', hidden: true })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Ajustar Banco', hidden: true })).toBeDisabled()
+  })
+
+  it('un ajuste de efectivo sobre un período conciliado muestra el mensaje del servidor y deja el modal abierto', async () => {
+    mockearRutas()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'periodo_conciliado', 'El período ya está conciliado.'))
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: 'Ajustar efectivo' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Ajustar efectivo' }))
+    await usuario.type(dialogo.getByLabelText(/Importe/), '100')
+    await usuario.type(dialogo.getByLabelText('Concepto'), 'Conteo')
+    await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(await dialogo.findByText('El período ya está conciliado.')).toBeInTheDocument()
+  })
+
+  it('un ajuste de cuenta sobre un período conciliado muestra el mensaje del servidor y deja el modal abierto', async () => {
+    mockearRutas()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'periodo_conciliado', 'El período ya está conciliado.'))
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: 'Ajustar Banco' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Ajustar saldo de Banco' }))
+    await usuario.type(dialogo.getByLabelText(/Importe/), '100')
+    await usuario.type(dialogo.getByLabelText('Concepto'), 'Conteo')
+    await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(await dialogo.findByText('El período ya está conciliado.')).toBeInTheDocument()
   })
 })

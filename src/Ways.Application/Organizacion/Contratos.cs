@@ -91,7 +91,9 @@ public record PuntoVentaListado(
     string? NombreTenant,
     string? RazonSocialEmpresa,
     ModoPuntoVenta Modo,
-    bool EnvioPorDefecto);
+    bool EnvioPorDefecto,
+    int IdSucursal = 0,
+    string? NombreSucursal = null);
 
 /// <summary>Cuerpo de <c>POST /api/puntos-venta/{id}/modo</c> (stage-desktop-pos, gate aprobado):
 /// el único campo editable acá es el modo — no comparte forma con <see cref="PuntoVentaEdicion"/>
@@ -118,7 +120,8 @@ public record PuntoVentaAlta(
     string? Whatsapp = null,
     string? Instagram = null,
     string? Facebook = null,
-    string? Web = null);
+    string? Web = null,
+    int? IdSucursal = null);
 
 /// <summary><see cref="PuntoVentaListado.IdEmpresa"/> no es editable acá: es estructural
 /// (a qué empresa pertenece), no descriptivo — moverlo de empresa queda fuera de esta
@@ -132,3 +135,28 @@ public record PuntoVentaEdicion(
     string? Facebook,
     string? Web,
     bool EnvioPorDefecto = false);
+
+/// <summary>Una sucursal viva con la cantidad de cajas vivas que tiene. <paramref name="RazonSocialEmpresa"/> es
+/// nullable por el mismo criterio que <see cref="PuntoVentaListado.RazonSocialEmpresa"/>.</summary>
+public record SucursalListado(
+    int Id,
+    int IdTenant,
+    int IdEmpresa,
+    string Nombre,
+    string? RazonSocialEmpresa,
+    int CantidadPuntosVenta);
+
+/// <summary>Cuerpo de <c>POST /api/sucursales</c>. <paramref name="IdEmpresa"/> es <c>nullable</c> a propósito (un body
+/// que lo omite ligaría <c>0</c> y daría un 404 engañoso en vez del <c>400 empresa_requerida</c>).</summary>
+public record SucursalAlta(int? IdEmpresa, string Nombre);
+
+/// <summary>Cuerpo de <c>PUT /api/sucursales/{id}</c>: el nombre es lo único editable; la empresa es estructural.</summary>
+public record SucursalEdicion(string Nombre);
+
+/// <summary>Cuerpo de <c>POST /api/puntos-venta/{id}/sucursal</c>: la sucursal destino de la caja. <c>Nullable</c> por la
+/// misma razón que <see cref="PuntoVentaModoEdicion"/>: omitido no puede ligarse a <c>0</c>.</summary>
+public record PuntoVentaSucursalEdicion(int? IdSucursal);
+
+/// <summary>Cuerpo de <c>POST /api/sucursales/{id}/fusionar</c>: la sucursal que absorbe a la del id. <c>Nullable</c> por
+/// la misma razón que <see cref="PuntoVentaSucursalEdicion"/>.</summary>
+public record SucursalFusion(int? IdSucursalDestino);

@@ -94,6 +94,10 @@ function filaFixture(sobrescribir: Partial<FilaDeHistoricoDeCajas> = {}): FilaDe
     egresos: { porCategoria: [], porArea: [], retiros: 0 },
     fechaRecalculo: null,
     idEmpleadoRecalculo: null,
+    digitales: 300,
+    efectivo: 500,
+    cuentaCorriente: 200,
+    totalFacturado: 1000,
     ...sobrescribir,
   }
 }
@@ -171,24 +175,26 @@ describe('HistoricoDeCajas — listado (stage-11-exportacion-reportes, Slice 6a)
 
   // mutation-proof-tests rule 6: dos filas con valores DISTINTOS en cada columna — una fila
   // rotada tiene que fallar esta prueba.
-  it('renderiza cada columna de cada fila (PV, apertura, cierre, esperado, declarado, diferencia)', async () => {
+  it('renderiza cada columna de cada fila (PV, apertura, cierre, digitales, efectivo, cta. cte., total)', async () => {
     const filaUno = filaFixture({
       idTurnoCaja: 100,
       idPuntoVenta: 10,
       fechaApertura: '2026-08-05T08:00:00Z',
       fechaCierre: '2026-08-05T20:00:00Z',
-      esperado: 1000,
-      declarado: 950,
-      diferencia: -50,
+      digitales: 111,
+      efectivo: 222,
+      cuentaCorriente: 333,
+      totalFacturado: 666,
     })
     const filaDos = filaFixture({
       idTurnoCaja: 101,
       idPuntoVenta: 11,
       fechaApertura: '2026-08-06T08:00:00Z',
       fechaCierre: '2026-08-06T20:00:00Z',
-      esperado: 2500,
-      declarado: 2550,
-      diferencia: 50,
+      digitales: 1000,
+      efectivo: 2000,
+      cuentaCorriente: 3000,
+      totalFacturado: 6000,
     })
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/cajas?')) return Promise.resolve(paginaFixture([filaUno, filaDos]))
@@ -199,15 +205,21 @@ describe('HistoricoDeCajas — listado (stage-11-exportacion-reportes, Slice 6a)
     await screen.findByText('#100')
     const filaUnoDom = screen.getByRole('row', { name: /#100/ })
     expect(within(filaUnoDom).getByText('PV Centro')).toBeInTheDocument()
-    expect(within(filaUnoDom).getByText('$ 1.000,00')).toBeInTheDocument()
-    expect(within(filaUnoDom).getByText('$ 950,00')).toBeInTheDocument()
-    expect(within(filaUnoDom).getByText('-$ 50,00')).toBeInTheDocument()
+    expect(within(filaUnoDom).getByText('$ 111,00')).toBeInTheDocument()
+    expect(within(filaUnoDom).getByText('$ 222,00')).toBeInTheDocument()
+    expect(within(filaUnoDom).getByText('$ 333,00')).toBeInTheDocument()
+    expect(within(filaUnoDom).getByText('$ 666,00')).toBeInTheDocument()
 
     const filaDosDom = screen.getByRole('row', { name: /#101/ })
     expect(within(filaDosDom).getByText('PV Norte')).toBeInTheDocument()
-    expect(within(filaDosDom).getByText('$ 2.500,00')).toBeInTheDocument()
-    expect(within(filaDosDom).getByText('$ 2.550,00')).toBeInTheDocument()
-    expect(within(filaDosDom).getByText('$ 50,00')).toBeInTheDocument()
+    expect(within(filaDosDom).getByText('$ 1.000,00')).toBeInTheDocument()
+    expect(within(filaDosDom).getByText('$ 2.000,00')).toBeInTheDocument()
+    expect(within(filaDosDom).getByText('$ 3.000,00')).toBeInTheDocument()
+    expect(within(filaDosDom).getByText('$ 6.000,00')).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: /Esperado|Declarado|Diferencia/ })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent?.replace(/[↕↑↓]/g, ''))).toEqual([
+      'Turno', 'Punto de venta', 'Apertura', 'Cierre', 'Digitales', 'Efectivo', 'Cta. cte.', 'Total',
+    ])
   })
 
   it('cada fila enlaza al detalle de SU turno y el enlace navega ahí', async () => {
@@ -340,14 +352,14 @@ describe('HistoricoDeCajas — orden en el servidor', () => {
     await screen.findByText('#100')
     expect(llamadasAlListado().every((ruta) => !ruta.includes('orden='))).toBe(true)
 
-    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
-    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=esperado&direccion=ascendente'))
-    expect(screen.getByRole('columnheader', { name: /Esperado/ })).toHaveAttribute('aria-sort', 'ascending')
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=apertura&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Apertura/ })).toHaveAttribute('aria-sort', 'ascending')
 
-    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
-    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=esperado&direccion=descendente'))
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=apertura&direccion=descendente'))
 
-    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
     await waitFor(() => expect(llamadasAlListado().at(-1)).not.toContain('orden='))
   })
 
@@ -356,9 +368,6 @@ describe('HistoricoDeCajas — orden en el servidor', () => {
     ['Punto de venta', 'puntoVenta'],
     ['Apertura', 'apertura'],
     ['Cierre', 'cierre'],
-    ['Esperado', 'esperado'],
-    ['Declarado', 'declarado'],
-    ['Diferencia', 'diferencia'],
   ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
     mockearRutasBase()
     const usuario = userEvent.setup()
@@ -384,11 +393,11 @@ describe('HistoricoDeCajas — orden en el servidor', () => {
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
     await screen.findByText(/Página 2 de 2/)
 
-    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
 
     await waitFor(() => {
       const ultima = llamadasAlListado().at(-1)!
-      expect(ultima).toContain('orden=esperado&direccion=ascendente')
+      expect(ultima).toContain('orden=apertura&direccion=ascendente')
       expect(ultima).toContain('pagina=1')
       expect(ultima).toContain('idPuntoVenta=11')
     })
@@ -396,14 +405,14 @@ describe('HistoricoDeCajas — orden en el servidor', () => {
   })
 
   it('una respuesta stale de un orden anterior no pisa la del orden más nuevo', async () => {
-    let resolverPorEsperado: (v: PaginaDeHistoricoDeCajas) => void = () => {}
-    let promesaPorEsperado: Promise<PaginaDeHistoricoDeCajas> = Promise.resolve(paginaFixture())
+    let resolverPorApertura: (v: PaginaDeHistoricoDeCajas) => void = () => {}
+    let promesaPorApertura: Promise<PaginaDeHistoricoDeCajas> = Promise.resolve(paginaFixture())
     mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=esperado')) {
-        promesaPorEsperado = new Promise((resolve) => (resolverPorEsperado = resolve))
-        return promesaPorEsperado
+      if (ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=apertura')) {
+        promesaPorApertura = new Promise((resolve) => (resolverPorApertura = resolve))
+        return promesaPorApertura
       }
-      if (ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=declarado')) {
+      if (ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=cierre')) {
         return Promise.resolve(paginaFixture([filaFixture({ idTurnoCaja: 200 })]))
       }
       return undefined
@@ -412,32 +421,32 @@ describe('HistoricoDeCajas — orden en el servidor', () => {
     renderHistoricoDeCajas()
     await screen.findByText('#100')
 
-    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
-    await usuario.click(screen.getByRole('button', { name: /^Declarado/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Cierre/ }))
     await screen.findByText('#200')
 
     await act(async () => {
-      resolverPorEsperado(paginaFixture([filaFixture({ idTurnoCaja: 300 })]))
-      await promesaPorEsperado
+      resolverPorApertura(paginaFixture([filaFixture({ idTurnoCaja: 300 })]))
+      await promesaPorApertura
     })
 
     expect(screen.getByText('#200')).toBeInTheDocument()
     expect(screen.queryByText('#300')).not.toBeInTheDocument()
-    expect(screen.getByRole('columnheader', { name: /Declarado/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(screen.getByRole('columnheader', { name: /Cierre/ })).toHaveAttribute('aria-sort', 'ascending')
   })
 
   it('si la consulta con orden falla, la tabla y su encabezado desaparecen: nunca queda un orden que las filas no tienen', async () => {
     mockearRutasBase((ruta) =>
-      ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=esperado') ? Promise.reject(new Error('caída')) : undefined,
+      ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=apertura') ? Promise.reject(new Error('caída')) : undefined,
     )
     const usuario = userEvent.setup()
     renderHistoricoDeCajas()
     await screen.findByText('#100')
 
-    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
 
     await screen.findByText('No se pudo cargar el histórico de cajas.')
-    expect(screen.queryByRole('columnheader', { name: /Esperado/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: /Apertura/ })).not.toBeInTheDocument()
     expect(screen.queryByText('#100')).not.toBeInTheDocument()
   })
 
@@ -446,8 +455,8 @@ describe('HistoricoDeCajas — orden en el servidor', () => {
     const usuario = userEvent.setup()
     renderHistoricoDeCajas()
     await screen.findByText('#100')
-    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
-    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=esperado'))
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=apertura'))
 
     await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
 

@@ -181,12 +181,14 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
             .ToDictionaryAsync(x => x.IdTurnoCaja, ct);
 
         var egresosPorTurno = await LeerEgresosDeLaPaginaAsync(ids, ct);
+        var facturadoPorTurno = await LectorDeFacturadoPorTurno.LeerAsync(db, ids, ct);
 
         return turnos
             .Select(t =>
             {
                 var totales = totalesPorTurno.GetValueOrDefault(t.Id);
                 var egresos = egresosPorTurno.GetValueOrDefault(t.Id, new EgresosDeTurno([], [], 0m));
+                var facturado = facturadoPorTurno.GetValueOrDefault(t.Id);
 
                 return new FilaDeHistoricoDeCajas(
                     t.Id, t.IdPuntoVenta, t.FechaApertura,
@@ -194,7 +196,8 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
                     // turno cerrado — ConstruirQuery ya exige Estado == Cerrado.
                     t.FechaCierre!.Value,
                     totales?.Esperado ?? 0m, totales?.Declarado ?? 0m, totales?.Diferencia ?? 0m,
-                    egresos, t.FechaRecalculo, t.IdEmpleadoRecalculo);
+                    egresos, t.FechaRecalculo, t.IdEmpleadoRecalculo,
+                    facturado.Digitales, facturado.Efectivo, facturado.CuentaCorriente, facturado.Total);
             })
             .ToList();
     }

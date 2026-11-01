@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cajaDeReferenciaDeSucursal,
+  etiquetaDeSucursal,
   ETIQUETA_OPCION_PLATAFORMA,
   ETIQUETA_PLATAFORMA,
   ETIQUETA_SIN_DUENIO,
@@ -15,7 +17,7 @@ import {
   type FilaConEmpresa,
   type FilaConTenant,
 } from './organizacion'
-import type { EstadoTenant, TenantListado } from './tipos'
+import type { EstadoTenant, PuntoVentaListado, TenantListado } from './tipos'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tarea 2.8) — `web-descriptor-tests`: los
 // cinco helpers puros de `organizacion.ts` con un caso por rama, no un happy path.
@@ -341,5 +343,51 @@ describe('filtrarPorEmpresa', () => {
 
   it('con un id devuelve solo las filas de esa empresa', () => {
     expect(filtrarPorEmpresa(filas, '10')).toEqual([{ idEmpresa: 10 }, { idEmpresa: 10 }])
+  })
+})
+
+describe('cajaDeReferenciaDeSucursal y etiquetaDeSucursal', () => {
+  const caja = (id: number, idSucursal: number | undefined): PuntoVentaListado => ({
+    id,
+    idTenant: 1,
+    idEmpresa: 1,
+    nombre: `Caja ${id}`,
+    domicilio: null,
+    horario: null,
+    whatsapp: null,
+    instagram: null,
+    facebook: null,
+    web: null,
+    nombreTenant: 'T',
+    razonSocialEmpresa: 'E',
+    modo: 'Web',
+    idSucursal,
+  })
+
+  it('elige la caja de menor id de la sucursal, sin importar el orden del listado', () => {
+    const cajas = [caja(30, 7), caja(12, 8), caja(21, 7), caja(40, undefined)]
+
+    expect(cajaDeReferenciaDeSucursal(cajas, 7)?.id).toBe(21)
+    expect(cajaDeReferenciaDeSucursal(cajas, 8)?.id).toBe(12)
+  })
+
+  it('una sucursal sin cajas no tiene caja de referencia', () => {
+    expect(cajaDeReferenciaDeSucursal([caja(1, 7)], 9)).toBeNull()
+  })
+
+  it('no reordena el arreglo recibido', () => {
+    const cajas = [caja(30, 7), caja(21, 7)]
+
+    cajaDeReferenciaDeSucursal(cajas, 7)
+
+    expect(cajas.map((c) => c.id)).toEqual([30, 21])
+  })
+
+  it('aclara la empresa solo cuando hay varias a la vista', () => {
+    const sucursal = { id: 1, idTenant: 1, idEmpresa: 1, nombre: 'Centro', razonSocialEmpresa: 'Sur SRL', cantidadPuntosVenta: 1 }
+
+    expect(etiquetaDeSucursal(sucursal, false)).toBe('Centro')
+    expect(etiquetaDeSucursal(sucursal, true)).toBe('Centro (Sur SRL)')
+    expect(etiquetaDeSucursal({ ...sucursal, razonSocialEmpresa: null }, true)).toBe('Centro')
   })
 })

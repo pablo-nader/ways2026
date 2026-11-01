@@ -176,14 +176,16 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         var idEmpleado = await db.Usuarios.Select(u => u.Id).FirstAsync();
         var ahora = DateTimeOffset.UtcNow;
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         db.MovimientosStock.Add(new MovimientoStock
         {
-            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = idPuntoVenta, Cantidad = -cantidad,
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = idPuntoVenta, IdSucursal = idSucursal, Cantidad = -cantidad,
             Motivo = MotivoStock.Venta, IdEmpleado = idEmpleado, CreadoEl = ahora
         });
         await db.SaveChangesAsync();
 
-        var stock = await db.Stock.FirstAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta);
+        var idSucursal2 = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
+        var stock = await db.Stock.FirstAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal2);
         stock.Cantidad -= cantidad;
         await db.SaveChangesAsync();
     }
@@ -213,11 +215,13 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidadOrigen = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
+        var idSucursalDestino = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaDestino);
         var cantidadDestino = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaDestino)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalDestino)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(12m, cantidadOrigen);
         Assert.Equal(13m, cantidadDestino);
@@ -289,7 +293,7 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
         // Ambas filas de stock ya existen (ON CONFLICT DO UPDATE en las dos, así que revocar
         // UPDATE sobre "stock" garantiza la falla sin importar el orden asc (id_articulo,
-        // id_punto_venta) que decida cuál de las dos claves procesa primero.
+        // id_sucursal) que decida cuál de las dos claves procesa primero.
         await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 20m);
         await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaDestino, idArticulo, 5m);
 
@@ -309,11 +313,13 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Transferencia));
 
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidadOrigen = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
+        var idSucursalDestino = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaDestino);
         var cantidadDestino = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaDestino)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalDestino)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(20m, cantidadOrigen);
         Assert.Equal(5m, cantidadDestino);
@@ -321,7 +327,7 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
     // ---- atomicidad multi-línea con 409 de dominio (judgment-day fix 3) -----------------------------
 
-    /// <summary>Design decisión 9: el orden asc <c>(id_articulo, id_punto_venta)</c> hace que, en
+    /// <summary>Design decisión 9: el orden asc <c>(id_articulo, id_sucursal)</c> hace que, en
     /// una transferencia de tres líneas, el artículo1 (más chico) procese y "tenga éxito" en sus
     /// dos claves ANTES de llegar al artículo2, cuyo origen no alcanza y dispara el 409. Como
     /// las dos claves del artículo1 corrieron dentro de la MISMA transacción todavía sin commit,
@@ -363,10 +369,13 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
             m => (m.IdArticulo == articulo1 || m.IdArticulo == articulo2 || m.IdArticulo == articulo3)
                  && m.Motivo == MotivoStock.Transferencia));
 
-        async Task<decimal> CantidadAsync(int idArticulo, int idPuntoVenta) =>
-            await db.Stock
-                .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta)
+        async Task<decimal> CantidadAsync(int idArticulo, int idPuntoVenta)
+        {
+            var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
+            return await db.Stock
+                .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
                 .Select(s => s.Cantidad).FirstOrDefaultAsync();
+        }
 
         Assert.Equal(20m, await CantidadAsync(articulo1, ctx.IdPuntoVentaOrigen));
         Assert.Equal(0m, await CantidadAsync(articulo1, ctx.IdPuntoVentaDestino));
@@ -393,8 +402,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Transferencia));
 
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidadOrigen = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(5m, cantidadOrigen);
     }
@@ -413,8 +423,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidadOrigen = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(0m, cantidadOrigen);
     }
@@ -434,8 +445,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         await ReducirStockComoVentaAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 8m);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(-3m, cantidad);
     }
@@ -692,8 +704,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
 
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(40m, cantidad);
 
@@ -920,8 +933,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidadOrigen = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         var sumaOrigen = await db.MovimientosStock
             .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
@@ -929,8 +943,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         Assert.Equal(25m, cantidadOrigen);
         Assert.Equal(cantidadOrigen, sumaOrigen);
 
+        var idSucursalDestino = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaDestino);
         var cantidadDestino = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaDestino)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalDestino)
             .Select(s => s.Cantidad).FirstAsync();
         var sumaDestino = await db.MovimientosStock
             .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == ctx.IdPuntoVentaDestino)
@@ -991,8 +1006,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidadOrigen = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         var sumaOrigen = await db.MovimientosStock
             .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
@@ -1061,8 +1077,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
+        var idSucursalOrigen = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVentaOrigen);
         var cantidadFinal = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursalOrigen)
             .Select(s => s.Cantidad).FirstAsync();
 
         // El resultado final siempre coincide con el "contada" de quien ejecutó SEGUNDO bajo el

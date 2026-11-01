@@ -198,8 +198,9 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidadStockLotes = await db.StockLotes
-            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdSucursal == idSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad)
             .FirstAsync();
         var sumaDeMovimientos = await db.MovimientosStock
@@ -235,8 +236,9 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
             1, await db.MovimientosStock.CountAsync(
                 m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Compra && m.IdLote == lote.Id));
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var stockLote = await db.StockLotes
-            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == lote.Id)
+            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdSucursal == idSucursal && sl.IdLote == lote.Id)
             .Select(sl => sl.Cantidad)
             .FirstAsync();
         Assert.Equal(15m, stockLote);
@@ -344,8 +346,9 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         Assert.NotNull(idLoteA);
         Assert.Equal(idLoteA, idLoteB);
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidadStockLotes = await db.StockLotes
-            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteA)
+            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdSucursal == idSucursal && sl.IdLote == idLoteA)
             .Select(sl => sl.Cantidad)
             .FirstAsync();
         Assert.Equal(20m, cantidadStockLotes);
@@ -388,8 +391,9 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         Assert.True(respuestaCheckout.StatusCode == HttpStatusCode.Created, cuerpoCheckout);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         var sumaDeMovimientos = await db.MovimientosStock
             .Where(m => m.IdArticulo == ctx.IdArticuloLote && m.IdPuntoVenta == ctx.IdPuntoVenta)
@@ -588,13 +592,14 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(idLote, movimientoAnulacion.IdLote);
         Assert.Equal(-12m, movimientoAnulacion.Cantidad);
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidadStock = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(0m, cantidadStock);
 
         var cantidadStockLote = await db.StockLotes
-            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdSucursal == idSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).FirstAsync();
         Assert.Equal(0m, cantidadStockLote);
     }
@@ -626,20 +631,23 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
 
         // Venta simulada: 40 unidades salen específicamente del lote 7 (patrón self-heal de
         // ReconciliacionTests task 4.7 — sin escritor de venta lot-aware todavía en esta rama).
+        int idSucursal;
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
             var ahora = DateTimeOffset.UtcNow;
+            idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
             db.MovimientosStock.Add(new MovimientoStock
             {
-                IdTenant = ctx.IdTenant, IdArticulo = ctx.IdArticuloLote, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = -40m,
+                IdTenant = ctx.IdTenant, IdArticulo = ctx.IdArticuloLote, IdPuntoVenta = ctx.IdPuntoVenta,
+                IdSucursal = idSucursal, Cantidad = -40m,
                 Motivo = MotivoStock.Venta, IdLote = idLote7, IdEmpleado = ctx.IdUsuarioAdmin, CreadoEl = ahora
             });
 
-            var stock = await db.Stock.SingleAsync(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta);
+            var stock = await db.Stock.SingleAsync(s => s.IdArticulo == ctx.IdArticuloLote && s.IdSucursal == idSucursal);
             stock.Cantidad -= 40m;
 
             var stockLote7 = await db.StockLotes.SingleAsync(
-                sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote7);
+                sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdSucursal == idSucursal && sl.IdLote == idLote7);
             stockLote7.Cantidad -= 40m;
 
             await db.SaveChangesAsync();
@@ -648,7 +656,7 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         await using (var dbAntes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
             var agregadoAntes = await dbAntes.Stock
-                .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
+                .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdSucursal == idSucursal)
                 .Select(s => s.Cantidad).FirstAsync();
             Assert.Equal(110m, agregadoAntes);
         }
@@ -668,12 +676,12 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
             0, await db2.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == compraLote7.Id && m.Motivo == MotivoStock.Anulacion));
 
         var agregadoDespues = await db2.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(110m, agregadoDespues);
 
         var stockLote7Despues = await db2.StockLotes
-            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote7)
+            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdSucursal == idSucursal && sl.IdLote == idLote7)
             .Select(sl => sl.Cantidad).FirstAsync();
         Assert.Equal(10m, stockLote7Despues);
     }
@@ -713,8 +721,9 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
 
         await using var dbFinal = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(EstadoCompra.Anulada, (await dbFinal.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
+        var idSucursal = await SucursalDePrueba.DeAsync(dbFinal, ctx.IdPuntoVenta);
         var cantidad = await dbFinal.Stock
-            .Where(s => s.IdArticulo == articuloSinLote.Id && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == articuloSinLote.Id && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(0m, cantidad);
     }

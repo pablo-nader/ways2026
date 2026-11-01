@@ -146,7 +146,7 @@ public class ServicioDeReportesDeRentabilidad(IWaysDbContext db, ServicioDeParam
         return await puntosDeLaEmpresa.Select(pv => pv.Id).ToListAsync(ct);
     }
 
-    /// <summary>Misma precedencia PV → empresa → default que cualquier otro parámetro (design
+    /// <summary>Zona horaria de sucursal: la de la caja → empresa → default (design
     /// decisión 5) — la zona se resuelve una única vez, al alcance que pidió el caller.</summary>
     private async Task<(string ZonaId, TimeZoneInfo Zona)> ResolverZonaAsync(int idEmpresa, int? idPuntoVenta, CancellationToken ct)
     {

@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeOrganizacion } from '../api/organizacion'
+import { cajaDeReferenciaDeSucursal, clienteDeOrganizacion, etiquetaDeSucursal } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
 import { aSolicitudDeMinimos, clienteDeStock, reposicionMenorQueMinimo, umbralTextoValido } from '../api/stock'
 import { ROL } from '../api/tipos'
@@ -13,6 +13,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
+import { useSucursales } from '../componentes/useSucursales'
 
 const CANTIDAD_DE_COLUMNAS = 8
 
@@ -118,7 +119,7 @@ function SelectorDeArticuloParaAlta({ disabled, onElegir }: PropsSelectorDeArtic
 
 /**
  * Existencias (stage-11-exportacion-reportes, Slice 9 — web; ampliada en stage-13-stock-inteligente,
- * Slice 3, design: Web Composition; decisiones 15/16) — pantalla del punto de venta: `stock` ⋈
+ * Slice 3, design: Web Composition; decisiones 15/16) — pantalla de la sucursal: `stock` ⋈
  * `articulos`, con edición inline de `minimo`/`reposicion` fila-por-fila y alta de artículos nuevos
  * al grupo gestionado. Misma política que `/tablero` (`Politicas.LecturaDeReportes`: Supervisor +
  * Admin en lectura; `PUT /api/stock/minimos` es Admin-only del lado del servidor) —
@@ -128,10 +129,15 @@ function SelectorDeArticuloParaAlta({ disabled, onElegir }: PropsSelectorDeArtic
 export function Existencias() {
   const { usuario } = useAuth()
   const puedeEscribir = usuario !== null && usuario.rolId === ROL.Admin
-  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
-  const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
-
-  const [idPuntoVenta, setIdPuntoVenta] = useState<number | null>(null)
+  const { sucursales, error: errorSucursales } = useSucursales()
+  const [sucursalElegida, setSucursalElegida] = useState<number | null>(null)
+  // Mientras no se eligió ninguna, la primera: sin efecto que la fije después de la carga.
+  const idSucursal = sucursalElegida ?? sucursales?.[0]?.id ?? null
+  const variasEmpresas = new Set((sucursales ?? []).map((s) => s.idEmpresa)).size > 1
+  // El mínimo y la reposición se escriben contra un punto de venta (`PUT /api/stock/minimos`): la caja de referencia
+  // de la sucursal elegida, que lee y escribe el mismo stock que cualquier otra de la sucursal.
+  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[]>([])
+  const cajaDeReferencia = idSucursal === null ? null : cajaDeReferenciaDeSucursal(puntosVenta, idSucursal)
   const [existencias, setExistencias] = useState<ExistenciasRespuesta | null>(null)
   // stage-13-stock-inteligente, Slice 7 (tarea 7.6): mapa idArticulo → minimoSugerido de
   // `GET /rotacion`, fetcheado JUNTO con el reporte (Promise.all, misma generación) — un artículo
@@ -196,14 +202,10 @@ export function Existencias() {
     clienteDeOrganizacion
       .listarPuntosVenta()
       .then((lista) => {
-        if (!vigente) return
-        setPuntosVenta(lista)
-        if (lista.length > 0) setIdPuntoVenta(lista[0].id)
+        if (vigente) setPuntosVenta(lista)
       })
-      .catch((e) => {
-        if (!vigente) return
-        setPuntosVenta([])
-        setErrorPuntosVenta(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los puntos de venta.')
+      .catch(() => {
+        // Sin puntos de venta cargados no se puede escribir un mínimo; la lectura de existencias no los necesita.
       })
 
     return () => {
@@ -212,9 +214,9 @@ export function Existencias() {
   }, [])
 
   const cargar = useCallback(() => {
-    if (idPuntoVenta === null) return
+    if (idSucursal === null) return
     // Judgment-day round 2 (FINDING 1, MAJOR fix-caused): `cargar` siempre reemplaza la grilla
-    // completa (mount inicial, cambio de punto de venta, botón Reintentar) — el `ref` de la fila
+    // completa (mount inicial, cambio de sucursal, botón Reintentar) — el `ref` de la fila
     // local sin guardar de la carga ANTERIOR queda huérfano si no se limpia acá. Sin este clear,
     // `cancelarEdicion` puede matchear por `idArticulo` una fila PERSISTIDA de la nueva grilla que
     // coincide por casualidad con el `idArticulo` fantasma, y borrarla.
@@ -228,11 +230,11 @@ export function Existencias() {
     // pero con su propio `.catch` — un fallo del feed de sugerencia nunca convierte el load de
     // existencias en un error (degrada a mapa vacío, `—` en toda la columna).
     const cargaSugeridos = clienteDeReportes
-      .rotacion(idPuntoVenta, null)
+      .rotacion(idSucursal, null)
       .then((rotacion) => new Map(rotacion.filas.map((f) => [f.idArticulo, f.minimoSugerido])))
       .catch(() => new Map<number, number>())
 
-    Promise.all([clienteDeReportes.existencias(idPuntoVenta), cargaSugeridos])
+    Promise.all([clienteDeReportes.existencias(idSucursal), cargaSugeridos])
       .then(([datos, mapa]) => {
         if (generacionRef.current !== miGeneracion) return
         setExistencias(datos)
@@ -247,15 +249,15 @@ export function Existencias() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [idPuntoVenta])
+  }, [idSucursal])
 
   useEffect(() => {
     cargar()
   }, [cargar])
 
-  function cambiarPuntoVenta(nuevoId: number) {
+  function cambiarSucursal(nuevoId: number) {
     if (guardandoRef.current !== null) return
-    setIdPuntoVenta(nuevoId)
+    setSucursalElegida(nuevoId)
     setFilaEnEdicion(null)
     setErrorGuardado('')
   }
@@ -287,7 +289,7 @@ export function Existencias() {
 
   async function guardarFila(fila: FilaExistencia) {
     if (guardandoRef.current !== null) return // regla 9: guard de reentrancia de primera línea (doble click)
-    if (idPuntoVenta === null) return
+    if (cajaDeReferencia === null) return
     if (!umbralTextoValido(minimoTexto) || !umbralTextoValido(reposicionTexto)) return
     if (reposicionMenorQueMinimo(minimoTexto, reposicionTexto)) return
 
@@ -297,7 +299,7 @@ export function Existencias() {
     setErrorGuardado('')
 
     try {
-      const solicitud = aSolicitudDeMinimos(idPuntoVenta, fila.idArticulo, minimoTexto, reposicionTexto)
+      const solicitud = aSolicitudDeMinimos(cajaDeReferencia.id, fila.idArticulo, minimoTexto, reposicionTexto)
       const resultado = await clienteDeStock.escribirMinimos(solicitud)
       if (tokenDeEscrituraRef.current !== miToken) return
 
@@ -371,38 +373,38 @@ export function Existencias() {
             </button>
           </div>
         )}
-        {errorPuntosVenta && <div className="alert alert-warning py-1 px-2 small">{errorPuntosVenta}</div>}
+        {errorSucursales && <div className="alert alert-warning py-1 px-2 small">{errorSucursales}</div>}
 
-        {puntosVenta === null ? (
+        {sucursales === null ? (
           <Cargando />
-        ) : puntosVenta.length === 0 ? (
-          <p className="text-muted text-center py-4">No hay puntos de venta visibles para las existencias.</p>
-        ) : idPuntoVenta === null ? (
+        ) : sucursales.length === 0 ? (
+          <p className="text-muted text-center py-4">No hay sucursales visibles para las existencias.</p>
+        ) : idSucursal === null ? (
           <Cargando />
         ) : (
           <>
             <div className="row g-2 align-items-end mb-3">
               <div className="col-md-3">
-                <label className="form-label" htmlFor="existencias-punto-venta">
-                  Punto de venta
+                <label className="form-label" htmlFor="existencias-sucursal">
+                  Sucursal
                 </label>
                 <select
-                  id="existencias-punto-venta"
+                  id="existencias-sucursal"
                   className="form-select"
-                  value={idPuntoVenta}
+                  value={idSucursal}
                   disabled={guardando !== null}
-                  onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
+                  onChange={(e) => cambiarSucursal(Number(e.target.value))}
                 >
-                  {puntosVenta.map((pv) => (
-                    <option key={pv.id} value={pv.id}>
-                      {pv.nombre}
+                  {sucursales.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {etiquetaDeSucursal(s, variasEmpresas)}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="col-auto">
                 <BotonDeDescarga
-                  ruta={rutasDeExportacion.existencias(idPuntoVenta)}
+                  ruta={rutasDeExportacion.existencias(idSucursal)}
                   etiqueta="Descargar"
                   onError={toast.error}
                   disabled={guardando !== null}
@@ -535,7 +537,7 @@ export function Existencias() {
                     {existencias.filas.length === 0 && (
                       <tr>
                         <td colSpan={CANTIDAD_DE_COLUMNAS} className="text-center text-muted py-4">
-                          No hay stock cargado para este punto de venta.
+                          No hay stock cargado para esta sucursal.
                         </td>
                       </tr>
                     )}

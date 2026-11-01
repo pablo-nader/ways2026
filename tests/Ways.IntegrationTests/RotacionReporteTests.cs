@@ -159,9 +159,10 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private async Task SembrarStockAsync(Contexto ctx, int idArticulo, decimal cantidad, decimal? minimo, decimal? reposicion = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.Stock.Add(new Stock
         {
-            IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            IdTenant = ctx.IdTenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = cantidad,
             Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();
@@ -181,9 +182,10 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var idEmpleado = await db.Usuarios.Select(u => u.Id).FirstAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.MovimientosStock.Add(new MovimientoStock
         {
-            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = cantidad,
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdSucursal = idSucursal, Cantidad = cantidad,
             Motivo = motivo, IdEmpleado = idEmpleado, CreadoEl = creadoEl, IdComprobanteCompra = idComprobanteCompra
         });
         await db.SaveChangesAsync();
@@ -192,8 +194,9 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private async Task<decimal?> LeerMinimoPersistidoAsync(Contexto ctx, int idArticulo)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         return await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Minimo)
             .FirstAsync();
     }
@@ -445,10 +448,12 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var servicioDeParametros = new ServicioDeParametros(db, reloj, servicioDeLotes);
         var servicio = new ServicioDeReportesDeStock(db, servicioDeParametros, reloj);
 
-        var reposicion = await servicio.ObtenerReposicionAsync(ctx.IdPuntoVenta, dias: null);
+        var alcance = await servicio.ResolverAlcanceAsync(ctx.IdPuntoVenta, null);
+        var antes = contador.Consultas;
+        var reposicion = await servicio.ObtenerReposicionAsync(alcance, dias: null);
 
         Assert.Empty(reposicion.Filas);
-        Assert.Equal(6, contador.Consultas);
+        Assert.Equal(5, contador.Consultas - antes);
     }
 
     // ---- task 5.15: una cifra de rotación arbitraria nunca bloquea ni destraba la alerta ------------

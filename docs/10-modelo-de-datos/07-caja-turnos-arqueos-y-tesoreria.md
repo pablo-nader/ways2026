@@ -81,8 +81,8 @@ y encadena tesorería. Todo en una transacción.
 ```sql
 movimientos_tesoreria (       -- [operativa] — ex cajaz: el fondo fuera de la caja diaria
     id_movimiento, id_empresa, id_punto_venta, fecha,
-    tipo tipo_movimiento_tesoreria,          -- enum: retiro_caja | deposito | pago | ajuste
-    id_turno_caja NULL, id_pago NULL, concepto,
+    tipo tipo_movimiento_tesoreria,          -- enum: retiro_caja | deposito | pago | ajuste | ajuste_manual
+    id_turno_caja NULL, id_pago NULL, concepto,   -- ajuste = compensación del sistema (edición/baja de un pago); ajuste_manual = ajuste del Admin (POST /api/tesoreria/efectivo/ajustes)
     inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_empresa)
     id_empleado
 );
@@ -120,11 +120,10 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > administración (`ServicioDePagos.RegistrarDeAdministracionAsync`, mismo camino de
 > `EscriturasDeTesoreria` que un pago de origen `tesoreria` del POS): cierre de turno
 > (`tipo = 'retiro_caja'`, `egreso` SIEMPRE 0), pago de origen `tesoreria` desde el POS y pago de
-> administración (ambos `tipo = 'pago'`, `egreso = importe`). La lectura
-> (`ServicioDeTesoreria.ListarAsync`/`GET /api/reportes/tesoreria`) toma `id_empresa` como filtro
-> OBLIGATORIO (ADR-8) y admite `id_punto_venta` como filtro OPCIONAL adicional sobre esa misma
-> cadena — un filtro por punto de venta muestra un SUBCONJUNTO de filas (las originadas ahí), que
-> no se encadenan entre sí porque la cadena entera vive a nivel empresa, nunca por punto de venta.
+> administración (ambos `tipo = 'pago'`, `egreso = importe`). La cadena vive a nivel empresa, nunca
+> por punto de venta. Ya no tiene un reporte propio: el libro de tesorería
+> (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`) se calcula desde las fuentes y de
+> esta tabla solo lee los `ajuste_manual`.
 
 ### Cuentas de tesorería
 
@@ -136,7 +135,7 @@ cuentas_tesoreria (           -- [catálogo por empresa: id_empresa NOT NULL] �
     activo, created_at, updated_at, deleted_at
 );
 
-movimientos_cuenta (          -- [operativa — libro append-only] encadenado por cuenta
+movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ordenado por (fecha, id)]
     id_movimiento_cuenta, id_cuenta_tesoreria, fecha,
     tipo tipo_movimiento_cuenta,             -- enum: cobro | comision | retencion_iibb | retencion_iva |
                                              -- retencion_ganancias | ajuste | transferencia | deposito | retiro
@@ -158,6 +157,11 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > parcial `ux_cuentas_tesoreria_nombre_empresa` `(id_tenant, id_empresa, nombre) WHERE deleted_at IS
 > NULL`, índices `ix_cuentas_tesoreria_tenant` e `ix_cuentas_tesoreria_empresa`. RLS estándar.
 >
+> **Orden de la cadena:** `(fecha, id)`. El cierre y el ajuste agregan al final (su fecha nunca es anterior a la cola), pero la
+> reconstrucción del historial (`POST /api/cuentas-tesoreria/reconstruccion`) inserta filas con la fecha de cierre de turnos viejos
+> y reescribe `inicio`/`final` de las filas posteriores de la cuenta; `ingreso` y `egreso` de cada fila no cambian, así que un ajuste
+> manual conserva su diferencia pero no el saldo objetivo que lo originó.
+>
 > `movimientos_cuenta`: `ck_movimientos_cuenta_cadena` (`final = inicio + ingreso − egreso`, igual
 > que la tesorería de efectivo), más dos CHECK que `movimientos_tesoreria` no tiene:
 > `ck_movimientos_cuenta_importes_no_negativos` (`ingreso` y `egreso` no negativos) y
@@ -165,8 +169,8 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > cero es válida). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
 > `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`; `fk_movimientos_cuenta_empleado`
 > es simple a `usuarios`, como en la tesorería de efectivo. Índices (ninguno implícito `IX_`): `ix_movimientos_cuenta_tenant`;
-> `ix_movimientos_cuenta_cuenta_id` `(id_cuenta_tesoreria, id_tenant, id_movimiento_cuenta)`, que
-> sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro;
+> `ix_movimientos_cuenta_cuenta_fecha_id` `(id_cuenta_tesoreria, id_tenant, fecha, id_movimiento_cuenta)`, que
+> sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro, que se ordenan por `(fecha, id)`;
 > `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago` e `ix_movimientos_cuenta_empleado`
 > como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
 > id_turno_caja, id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL AND tipo IN ('cobro',
@@ -215,13 +219,10 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > escribe dos filas (el del mismo saldo objetivo no, porque la segunda diferencia da cero) y la protección es la guarda de
 > re-entrada de la pantalla; un 5xx no se reintenta solo. Es el camino para corregir lo que el libro todavía no refleja.
 >
-> **Lectura (`GET /api/reportes/tesoreria/cuentas?idEmpresa=` y `.../cuentas/{id}/libro`, Supervisor y Admin).**
-> `ServicioDeLibroDeCuentas`. Las cuentas vivas de la empresa con su saldo (`final` del último movimiento por id, o
-> `saldo_inicial`) y la fecha de ese movimiento, más el aviso de los medios electrónicos activos sin cuenta utilizable (sin cuenta,
-> con una dada de baja o con una de otra empresa: la misma regla con la que el cierre descarta una cuenta). El libro de una cuenta
-> se ordena por id y nunca por fecha, usa el rango inclusivo del libro de efectivo y trae el saldo de apertura (el `final` del
-> último movimiento por id con fecha anterior al rango, o el saldo inicial) y los totales por tipo de TODO el rango. Un medio o un
-> usuario dado de baja deja su nombre en `null` y conserva el id. No hay exportación.
+> **Lectura.** La cadena de cada cuenta ya no tiene un reporte propio. El libro de tesorería
+> (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`, Supervisor y Admin) lee de esta tabla los cobros, las
+> comisiones y las retenciones de cada cierre, agrupados por turno, y los `ajuste` manuales. Su saldo se calcula desde las fuentes,
+> no desde `final`.
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
@@ -274,6 +275,59 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
 > - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
 
+### Conciliación de la tesorería
+
+```sql
+conciliaciones_tesoreria (    -- [operativa — marcas append-only] una fila por conciliación de una empresa
+    id_conciliacion_tesoreria, id_empresa,
+    hasta timestamptz NOT NULL,              -- instante hasta el cual la tesorería está conciliada, inclusive
+    id_usuario,                              -- el Admin que concilió
+    creado_el timestamptz NOT NULL,
+    nota text NULL                           -- hasta 500 caracteres, la valida el servicio
+);
+```
+
+> **Estado (libro de tesorería, T5a).** Un Admin marca que la tesorería de una empresa está revisada hasta un instante; la marca
+> vigente de la empresa es el mayor `hasta`. Todo lo que alimenta el libro de tesorería con fecha menor o igual (inclusive) queda
+> congelado y se corrige con movimientos nuevos (ajustes manuales, pagos nuevos). Las marcas no se editan ni se borran. Tabla de
+> tenant sin baja lógica (como `movimientos_tesoreria`), RLS estándar, FK compuesta `fk_conciliaciones_tesoreria_empresa` y simples
+> `fk_conciliaciones_tesoreria_tenant` y `fk_conciliaciones_tesoreria_usuario`, todas RESTRICT. Índices:
+> `ix_conciliaciones_tesoreria_tenant`, `ix_conciliaciones_tesoreria_empresa_hasta` `(id_empresa, id_tenant, hasta)` (soporte de la FK y
+> lectura del máximo) e `ix_conciliaciones_tesoreria_usuario`. Sin índice único: la monotonía la sostiene el lock del escritor, y
+> ninguna FK recibe un id del cliente sin validar (la empresa se resuelve con 404 antes de escribir).
+>
+> **Endpoint (`POST /api/tesoreria/conciliaciones`, solo Admin).** Cuerpo `{ idEmpresa, hasta, nota? }`, responde 201. Orden: 404 de la
+> empresa, 400 del cuerpo (`hasta_requerido`, `nota_muy_larga`) y 409: `conciliacion_futura` (`hasta` posterior a la hora del
+> servidor), `conciliacion_anterior` (`hasta` menor o igual a la marca vigente) y `conciliacion_con_turno_abierto` (algún turno
+> abierto de la empresa con `fecha_apertura <= hasta`). `GET /api/reportes/libro-tesoreria` trae `conciliadoHasta` (la marca vigente,
+> sin importar el rango pedido; `null` si nunca se concilió).
+>
+> **Qué se congela.** Solo lo que cambia los números del libro: la edición y la baja de un pago (POS o administración) con
+> `fecha` menor o igual a la marca, o cuyo turno cerró en o antes de ella (409 `periodo_conciliado`); el alta de un pago con una fecha
+> menor o igual (el pago de administración con fecha pasada, el pago de una compra, el pago de personal con origen tesorería, y
+> cualquier alta del POS que pierda la carrera contra la marca); el cierre de un turno fechado en o antes de la marca (solo por
+> carrera: la marca no se puede poner con un turno abierto que empezó antes); y el cambio de cuenta o de comportamiento de un medio
+> de pago que tiene líneas de pago o movimientos de cuenta fechados en o antes de la marca de SU empresa; el saldo inicial de una cuenta de
+> tesorería (409 `periodo_conciliado` apenas la empresa tiene alguna marca, porque el libro lo suma a todos los saldos; nombre y estado siguen
+> editables); y los ajustes manuales de efectivo y de cuenta, que van fechados "ahora" y solo pueden chocar si la marca se confirma entre su
+> reloj y su commit. Siguen editables porque no
+> cambian lo que el libro lee: compras (edición y anulación), aplicaciones y desaplicaciones, redondeos, vincular compra, reasignar
+> personal, cobros y ventas. El pago de administración fechado hoy (en la zona de la empresa) toma la hora actual como `fecha` y no la
+> medianoche local: así queda siempre posterior a una marca puesta antes durante el día; las fechas pasadas conservan la medianoche local.
+>
+> **Locks.** `GuardaDeConciliacion`: lock advisory de transacción `pg_advisory_xact_lock(bigint)` sobre una clave de `(tenant, empresa)`
+> (bit alto encendido, distinta del advisory de tesorería y del de familias). El escritor de la marca lo toma EXCLUSIVO y no toma ningún
+> otro; todo escritor protegido lo toma COMPARTIDO como PRIMER lock de su transacción (antes de turno, compra, pago, proveedor y del
+> advisory de tesorería), lee la marca y recién ahí decide. El orden "primero" es obligatorio porque PostgreSQL encola un pedido
+> compartido detrás de un exclusivo que espera: quien pidiera la marca reteniendo otro lock podría cerrar un ciclo con el escritor de la
+> marca. Los escritores cuya empresa no se conoce antes de los locks (pago de una compra, cierre de turno, edición de un pago) la
+> pre-leen sin lock (la empresa de un pago y el punto de venta de un turno no cambian; la de una compra se verifica de nuevo bajo su lock). La edición de un medio de pago toma el compartido de TODAS las empresas del tenant, en id
+> ascendente. La edición de una cuenta de tesorería y los dos ajustes manuales lo toman como primer lock (la edición pre-lee la empresa de la
+> cuenta, que no cambia). La reconstrucción de cuentas (`POST /api/cuentas-tesoreria/reconstruccion` y su vista previa) omite los turnos con
+> `fecha_cierre <=` la marca de la empresa (igual a la marca = congelado) en lugar de rechazar el pedido: la respuesta trae
+> `conciliadoHasta` y `congeladas` (las acreditaciones pendientes omitidas, sin contarlas en `turnos` ni `filas`). La aplicación toma el
+> compartido como PRIMER lock, antes del advisory de tesorería y de los locks de medios y cuentas, y lee la marca una sola vez bajo él.
+
 ### Conexiones con Mercado Pago
 
 ```sql
@@ -285,9 +339,12 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
     refresh_token_cifrado bytea NULL, refresh_token_nonce bytea NULL, refresh_token_tag bytea NULL,
     id_clave_maestra varchar(30) NOT NULL,   -- versión de la clave maestra de Ways:MercadoPago que los cifró
     access_token_expira_en timestamptz NOT NULL,
-    estado text NOT NULL,                    -- 'activa' | 'desconectada' (texto con CHECK, sin enum nativo)
+    estado text NOT NULL,                    -- 'activa' | 'desconectada' | 'requiere_reconexion' (texto con CHECK, sin enum nativo)
     id_usuario_conecto,                      -- usuario de Ways que inició la conexión
     fecha_conexion timestamptz NOT NULL, fecha_desconexion NULL, fecha_ultima_renovacion NULL,
+    id_usuario_desconecto int NULL,          -- usuario de Ways que la desconectó (NULL mientras no se desconecta y en las anteriores a este campo)
+    fecha_requiere_reconexion timestamptz NULL,  -- cuándo la renovación automática la marcó 'requiere_reconexion'
+    fecha_ultimo_intento_renovacion timestamptz NULL,  -- último intento de renovar el token que falló (backoff de la renovación previa al uso)
     created_at, updated_at, deleted_at
 );
 ```
@@ -302,15 +359,16 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > Constraints: FK `fk_conexiones_mercadopago_tenant` (simple), `fk_conexiones_mercadopago_empresa` (compuesta
 > `(id_empresa, id_tenant)`), `fk_conexiones_mercadopago_cuenta_tesoreria` (compuesta `(id_cuenta_tesoreria, id_empresa,
 > id_tenant)` contra la clave alterna nueva `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_empresa_id_tenant`: la base rechaza una
-> cuenta de otra empresa) y `fk_conexiones_mercadopago_usuario_conecto` (simple a `usuarios`); todas RESTRICT. CHECK
-> `ck_conexiones_mercadopago_estado` (solo `activa` o `desconectada`), `ck_conexiones_mercadopago_activa` (activa implica los seis
-> campos de cifrado presentes con nonce de 12 bytes, tag de 16 y blob no vacío, y `fecha_desconexion` nula) y
-> `ck_conexiones_mercadopago_desconectada` (desconectada implica `fecha_desconexion` y los seis campos en `NULL`). Únicos
+> cuenta de otra empresa) y `fk_conexiones_mercadopago_usuario_conecto` y `fk_conexiones_mercadopago_usuario_desconecto` (simples a `usuarios`, la segunda nullable); todas RESTRICT. CHECK
+> `ck_conexiones_mercadopago_estado` (`activa`, `desconectada` o `requiere_reconexion`), `ck_conexiones_mercadopago_activa` (activa implica los seis
+> campos de cifrado presentes con nonce de 12 bytes, tag de 16 y blob no vacío, y `fecha_desconexion` y `fecha_requiere_reconexion` nulas),
+> `ck_conexiones_mercadopago_desconectada` (desconectada implica `fecha_desconexion` y los seis campos en `NULL`) y
+> `ck_conexiones_mercadopago_requiere_reconexion` (implica `fecha_requiere_reconexion`, `fecha_desconexion` nula y los seis campos en `NULL`). Únicos
 > parciales, ambos `WHERE estado = 'activa'`: `ux_conexiones_mercadopago_empresa_activa` `(id_tenant, id_empresa)` y
 > `ux_conexiones_mercadopago_usuario_activa` `(id_usuario_mercadopago)`, SIN `id_tenant`: una cuenta de Mercado Pago está activa en
 > una sola empresa de todo el sistema (los webhooks resuelven la empresa desde ese id). `ManejadorDeErrores` traduce sus 23505 a
-> 409 `mercadopago_ya_conectada` y `mercadopago_cuenta_en_uso`; el callback anónimo los convierte en una redirección. Índices de
-> soporte: `ix_conexiones_mercadopago_tenant`, `_empresa`, `_cuenta` y `_usuario_conecto`. RLS estándar.
+> 409 `mercadopago_ya_conectada` y `mercadopago_cuenta_en_uso`; el endpoint autenticado `.../completar` los devuelve como tales. Índices de
+> soporte: `ix_conexiones_mercadopago_tenant`, `_empresa`, `_cuenta`, `_usuario_conecto` y `_usuario_desconecto`. Se puede desconectar una conexión `activa` o una que `requiere_reconexion` (pasa a `desconectada`, conserva `fecha_requiere_reconexion` como historia y registra `id_usuario_desconecto`). El `Down()` de `RenovacionDeConexionesMercadoPago` convierte las `requiere_reconexion` en `desconectada` (con su fecha de marca como `fecha_desconexion`) antes de restaurar el CHECK de dos valores. RLS estándar.
 >
 > **Efecto sobre `cuentas_tesoreria`:** la baja lógica de una cuenta con cualquier conexión (activa o desconectada) falla con 409
 > `cuenta_tesoreria_en_uso`, porque la guarda de referencias recorre las FK del modelo. El inventario de dependientes de las bajas de
@@ -321,10 +379,43 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > usuario, verificador y el origen del navegador). Orden: 404 de la empresa (inexistente, ajena o dada de baja), 503
 > `mercadopago_no_configurado` si faltan `ClientId`, `ClientSecret`, `RedirectUri` o la clave maestra, 400 `referencia_invalida`
 > (cuenta inexistente o de otro tenant), 409 `cuenta_tesoreria_de_otra_empresa`, 409 `cuenta_tesoreria_inactiva` y 409
-> `mercadopago_ya_conectada`. `GET /api/integraciones/mercadopago/callback?code=&state=` es anónimo: toma el tenant solo del `state`,
-> canjea el código y redirige a `{origen}/organizacion/empresas?mercadopago=<resultado>&empresa=<id>` con `conectado`, `cancelado`
-> (el usuario denegó), `error`, `cuenta_en_uso` o `ya_conectada`; un `state` inválido o vencido da 400 de texto plano, sin redirigir.
+> `mercadopago_ya_conectada`. `GET /api/integraciones/mercadopago/callback?code=&state=` es anónimo y **no canjea nada**: lee el
+> `state` solo para saber el origen y la empresa, y redirige a `{origen}/organizacion/empresas#mercadopago=completar&empresa=<id>&code=<code>&state=<state>`
+> (o `#mercadopago=cancelado&empresa=<id>` si el usuario denegó). Todo va en el **fragmento**, nunca en la consulta: el navegador no lo
+> manda al servidor ni en el `Referer`, así que el `code` no llega a ningún log. Un `state` inválido o vencido, o un retorno sin `code` ni
+> `error`, da 400 de texto plano. El canje lo hace `POST /api/empresas/{idEmpresa}/mercadopago/conexion/completar` con `{ code, state }`
+> (Admin; ambos campos obligatorios y acotados a 512 y 2048 caracteres; cualquier otro campo se ignora por el binding, no se guarda):
+> 404 de la empresa, 400 `solicitud_invalida` (cuerpo), 400 `mercadopago_estado_invalido` (alterado o vencido), 403
+> `mercadopago_estado_ajeno` si la empresa o el usuario del `state` no son los de la ruta y la sesión (la empresa ya se resolvió dentro del tenant de la sesión, así que ata el tenant) (no se llama a Mercado Pago),
+> 503 `mercadopago_no_configurado`, y recién entonces el canje: 200 con el estado de la conexión, 409 `mercadopago_ya_conectada`, 409
+> `mercadopago_cuenta_en_uso` o 502 `mercadopago_intercambio_fallido`. Cierra el login-CSRF: un enlace de autorización reenviado a otra
+> persona vuelve a una sesión que no es la que inició el flujo y se rechaza antes de canjear.
 > `GET /api/empresas/{idEmpresa}/mercadopago/conexion` devuelve `{ conectada, estado, idCuentaTesoreria, nombreCuenta,
-> idUsuarioMercadoPago, fechaConexion, accessTokenExpiraEn }` o `{ conectada: false }`. `DELETE` del mismo recurso pasa la conexión a
+> idUsuarioMercadoPago, fechaConexion, accessTokenExpiraEn }` o `{ conectada: false }`. Sin activa, si la última conexión de la empresa quedó
+> en `requiere_reconexion` responde `{ conectada: false, estado: "requiere_reconexion", idCuentaTesoreria, nombreCuenta,
+> idUsuarioMercadoPago, fechaConexion }` (sin vencimiento) para que la pantalla ofrezca reconectar; una desconexión posterior vuelve al
+> estado vacío. `DELETE` del mismo recurso pasa la conexión a
 > `desconectada` y borra los seis campos de cifrado en un solo `UPDATE` guardado por estado (404 si no hay una activa); no llama a
 > Mercado Pago porque la API de OAuth no documenta una revocación.
+>
+> **Renovación automática (etapa E1, T2).** `RenovacionDeConexionesMercadoPago` (BackgroundService, primera corrida al minuto del
+> arranque y después cada `Ways:MercadoPago:IntervaloRenovacionHoras`, 6 por defecto) llama a
+> `ServicioDeRenovacionDeConexionesMercadoPago`, que toma, en todos los tenants, las conexiones `activa` cuyo
+> `access_token_expira_en` cae dentro de `Ways:MercadoPago:DiasDeAnticipacionRenovacion` (30 por defecto) y renueva cada una en su
+> propia transacción con el contexto de su tenant: `FOR UPDATE`, una sola lectura después del lock (se omite si ya no está activa o ya
+> no le toca), llamada al endpoint de tokens con la fila bloqueada y, con la respuesta, ambos tokens se vuelven a cifrar con nonces
+> nuevos (AAD sin cambios) y se mueven el vencimiento y `fecha_ultima_renovacion`. Un 4xx de Mercado Pago, o un `user_id` distinto
+> del guardado, pasa la conexión a `requiere_reconexion` y borra el material cifrado; un 5xx, un 408/429, un tiempo agotado o un fallo
+> de red no toca nada y se reintenta en la próxima corrida. `requiere_reconexion` no es `activa`: no ocupa los índices únicos
+> parciales y la empresa puede volver a conectar (el inicio solo bloquea ante una `activa`); la fila queda como historia. Sin
+> `ClientId`/`ClientSecret`/`RedirectUri`, o con `Ways:MercadoPago:RenovacionAutomatica` en `false`, el job se registra una vez y no hace nada.
+>
+> **Renovación previa al uso (etapa E2, T1).** Antes de cada llamada a la API de Mercado Pago, un token al que le quedan
+> `Ways:MercadoPago:HorasDeMargenDelToken` (24) horas o menos se renueva primero. Esa renovación **no espera el lock**: toma la fila con
+> `FOR UPDATE SKIP LOCKED` y, si otra renovación la tiene, se usa el token guardado cuando todavía le queda más de un minuto. Un intento que
+> falla (falla de Mercado Pago o de red, credenciales de la aplicación rechazadas, material ilegible o rotación perdida) anota
+> `fecha_ultimo_intento_renovacion`; mientras el token guardado siga siendo utilizable, las llamadas siguientes no vuelven a intentarlo
+> antes de `Ways:MercadoPago:MinutosDeBackoffDeRenovacion` (15; releído bajo el lock). Un token que ya no es utilizable ignora el backoff y
+> reintenta, y si no logra renovarlo responde 503 `mercadopago_no_disponible`. La corrida en segundo plano no respeta el backoff, pero sí lo
+> anota cuando falla. Una excepción inesperada de la renovación previa al uso se registra (sin tokens) y no corta la llamada si el token
+> guardado todavía sirve.

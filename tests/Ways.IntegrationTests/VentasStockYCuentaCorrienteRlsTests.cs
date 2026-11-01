@@ -199,6 +199,7 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
             IdTenant = tenant.Id,
             IdArticulo = articulo.Id,
             IdPuntoVenta = puntoVenta.Id,
+            IdSucursal = puntoVenta.IdSucursal,
             Cantidad = -1m,
             Motivo = MotivoStock.Venta,
             IdComprobanteVenta = comprobante.Id,
@@ -410,8 +411,8 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
                     c.Parameters.Add(new NpgsqlParameter { Value = ahora });
                 }),
             "movimientos_stock" => (
-                "INSERT INTO movimientos_stock (id_tenant, id_articulo, id_punto_venta, cantidad, motivo, " +
-                "id_empleado, creado_el) VALUES ($1, $2, $3, -1, 'venta', $4, $5)",
+                "INSERT INTO movimientos_stock (id_tenant, id_articulo, id_punto_venta, id_sucursal, cantidad, motivo, " +
+                "id_empleado, creado_el) VALUES ($1, $2, $3, " + SucursalDePrueba.Sql("$3") + ", -1, 'venta', $4, $5)",
                 c =>
                 {
                     c.Parameters.Add(new NpgsqlParameter { Value = tenantB.Id });

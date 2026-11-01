@@ -4,6 +4,9 @@ public sealed record SolicitudDeInicioDeConexion(int IdCuentaTesoreria);
 
 public sealed record InicioDeConexion(string UrlAutorizacion);
 
+/// <summary>Lo que el navegador recibió de Mercado Pago en el fragmento de la URL de retorno; ambos campos son obligatorios.</summary>
+public sealed record SolicitudDeCompletarConexion(string Code, string State);
+
 /// <summary>Estado de la conexión de una empresa. Nunca lleva tokens.</summary>
 public sealed record EstadoDeConexionMercadoPago(
     bool Conectada,

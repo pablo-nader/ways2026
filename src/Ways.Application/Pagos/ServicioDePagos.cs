@@ -120,7 +120,7 @@ public partial class ServicioDePagos(
 
         var zona = await ResolverZonaAsync(empresa.Id, solicitud.IdPuntoVenta, ct);
         ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
-        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona);
+        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona, momento);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var pago = await estrategia.ExecuteAsync(async () =>
@@ -177,6 +177,18 @@ public partial class ServicioDePagos(
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
+        // La marca de conciliación es el primer lock y su clave es la empresa, que sale del punto de venta de la compra: se pre-lee
+        // sin lock y se verifica de nuevo contra el punto de venta leído bajo el lock de la compra.
+        var idEmpresaPreLeida = await (
+            from c in db.ComprobantesCompra
+            join pv in db.PuntosVenta on c.IdPuntoVenta equals pv.Id
+            where c.Id == idComprobanteCompra
+            select (int?)pv.IdEmpresa).FirstOrDefaultAsync(ct);
+        if (idEmpresaPreLeida is { } idEmpresaAProteger)
+        {
+            await GuardaDeConciliacion.TomarCompartidoAsync(db, idTenant, idEmpresaAProteger, ct);
+        }
+
         var compra = await BloquearCompraAsync(idComprobanteCompra, idTenant, ct);
 
         var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [idComprobanteCompra], ct))
@@ -185,11 +197,17 @@ public partial class ServicioDePagos(
         ReglaDePagoDeCompra.ExigirPagoValido(plan.Total, saldoPendiente);
 
         var puntoVenta = await ResolverPuntoVentaAsync(compra.IdPuntoVenta, ct);
+        if (puntoVenta.IdEmpresa != idEmpresaPreLeida)
+        {
+            throw PagoCambioConcurrente();
+        }
+
         await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
 
         var zona = await ResolverZonaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
         ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
-        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona);
+        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona, momento);
+        await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, puntoVenta.IdEmpresa, fechaDeNegocio, ct);
 
         concepto ??= await ConceptoPorDefectoDelPagoAsync(idComprobanteCompra, ct);
 
@@ -607,6 +625,10 @@ public partial class ServicioDePagos(
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
+        // La marca de conciliación es el primer lock (ver GuardaDeConciliacion); la empresa del pago es inmutable. La fecha se
+        // decide más abajo, con el pago leído bajo su lock.
+        await GuardaDeConciliacion.TomarCompartidoAsync(db, idTenant, inmutables.IdEmpresa, ct);
+
         TurnoBloqueado? turnoCerrado = null;
         if (inmutables.IdTurnoCaja is { } idTurnoCaja)
         {
@@ -655,6 +677,11 @@ public partial class ServicioDePagos(
         {
             throw PagoCambioConcurrente();
         }
+
+        // El pago cuenta para el libro en su fecha; el cierre de su turno, en la del cierre (normalmente la fecha del pago es
+        // anterior, y la menor de las dos es la que decide).
+        var fechaQueCuentaParaElLibro = turnoCerrado?.FechaCierre is { } cierre && cierre < pago.Fecha ? cierre : pago.Fecha;
+        await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, pago.IdEmpresa, fechaQueCuentaParaElLibro, ct);
 
         // Los ítems vivos se leen UNA vez, después del lock del pago (single-read-under-lock): la edición los reutiliza
         // y la baja los da de baja.
@@ -774,7 +801,7 @@ public partial class ServicioDePagos(
     private static ErrorDominio PagoCambioConcurrente() =>
         new("pago_cambio_concurrente", "El pago cambió mientras se editaba; reintentá.", 409);
 
-    private sealed record TurnoBloqueado(int Id, bool Abierto, int? IdMedioPagoEfectivo);
+    private sealed record TurnoBloqueado(int Id, bool Abierto, int? IdMedioPagoEfectivo, DateTimeOffset? FechaCierre);
 
     /// <summary>POS: <c>FOR SHARE</c>, excluye al cierre sin serializar entre sí las ediciones del
     /// mismo turno. Administración: <c>FOR UPDATE</c>, porque sobre un turno cerrado lo que sigue es
@@ -788,7 +815,7 @@ public partial class ServicioDePagos(
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
         comando.CommandText =
-            "SELECT estado::text, id_medio_pago_efectivo FROM turnos_caja " +
+            "SELECT estado::text, id_medio_pago_efectivo, fecha_cierre FROM turnos_caja " +
             "WHERE id_turno_caja = $1 AND id_tenant = $2 " +
             (modo == ModoDeEscritura.Pos ? "FOR SHARE" : "FOR UPDATE");
         ParametrosDeComando.Agregar(comando, idTurnoCaja);
@@ -802,7 +829,8 @@ public partial class ServicioDePagos(
         }
 
         return new TurnoBloqueado(
-            idTurnoCaja, lector.GetString(0) == "abierto", lector.IsDBNull(1) ? null : lector.GetInt32(1));
+            idTurnoCaja, lector.GetString(0) == "abierto", lector.IsDBNull(1) ? null : lector.GetInt32(1),
+            lector.IsDBNull(2) ? null : lector.GetFieldValue<DateTimeOffset>(2));
     }
 
     /// <summary>Mismos códigos que el alta para un pago ligado a una compra o aplicado a alguna: sigue siendo de
@@ -1274,9 +1302,16 @@ public partial class ServicioDePagos(
     /// las 24:00). El resultado es el <see cref="Pago.Fecha"/> que persiste — la ÚNICA columna
     /// que lleva la fecha de negocio elegida por el admin; los movimientos de ledger (tesorería,
     /// pago a proveedor) llevan <c>momento</c> (ver <see cref="InsertarPagoDeAdministracionAsync"/>),
-    /// nunca esta fecha retroactiva.</summary>
-    private static DateTimeOffset FechaDeNegocioAInstante(DateOnly fecha, TimeZoneInfo zona)
+    /// nunca esta fecha retroactiva. Cuando la fecha elegida es el día de hoy en la zona (el mismo "hoy" de
+    /// <see cref="ExigirFechaNoFutura"/>) el instante es <paramref name="momento"/> y no la medianoche: un pago de hoy
+    /// no puede quedar fechado antes de una marca de conciliación puesta hoy.</summary>
+    private static DateTimeOffset FechaDeNegocioAInstante(DateOnly fecha, TimeZoneInfo zona, DateTimeOffset momento)
     {
+        if (fecha == DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(momento, zona).DateTime))
+        {
+            return momento;
+        }
+
         var local = fecha.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
         var offset = zona.GetUtcOffset(local);
         return new DateTimeOffset(local, offset).ToUniversalTime();
@@ -1380,6 +1415,10 @@ public partial class ServicioDePagos(
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
+        // La marca de conciliación es el primer lock (ver GuardaDeConciliacion). El alta del POS lleva el instante real, así que
+        // solo puede chocar con una marca puesta entre la fijación de `momento` y este punto.
+        await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, idEmpresa, momento, ct);
+
         await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(idTurnoCaja, ct);
 
         var idProveedor = solicitud.IdProveedor;
@@ -1470,6 +1509,8 @@ public partial class ServicioDePagos(
         PlanDeLineasDePago plan, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, idEmpresa, fechaDeNegocio, ct);
 
         var idProveedor = solicitud.IdProveedor;
         CompraBloqueada? compra = null;
@@ -1828,7 +1869,7 @@ public partial class ServicioDePagos(
         ExigirFechaNoFutura(fecha, momento, zona);
 
         return new EntornoDePagoDeSueldo(
-            idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona), nombresDeMedios);
+            idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona, momento), nombresDeMedios);
     }
 
     /// <summary>Un solo pago de categoría sueldos con un ítem por línea de dinero, dentro de la transacción del
