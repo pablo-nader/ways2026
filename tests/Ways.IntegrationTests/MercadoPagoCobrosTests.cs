@@ -1061,8 +1061,8 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         foreach (var cliente in new[] { cajeroDos, ajeno.Cajero })
         {
-            await AssertCodigoAsync(await ConsultarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "no_encontrado");
-            await AssertCodigoAsync(await CancelarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "no_encontrado");
+            await AssertCodigoAsync(await ConsultarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "cobro_mercadopago_inexistente");
+            await AssertCodigoAsync(await CancelarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "cobro_mercadopago_inexistente");
         }
 
         Assert.Empty(Lecturas(e));
@@ -1729,7 +1729,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         foreach (var cliente in new[] { cajeroDos, ajeno.Cajero })
         {
-            await AssertCodigoAsync(await ApartarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "no_encontrado");
+            await AssertCodigoAsync(await ApartarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "cobro_mercadopago_inexistente");
         }
 
         foreach (var web in new[] { e.Ctx.Admin, e.Ctx.Supervisor, e.Ctx.Vendedor })

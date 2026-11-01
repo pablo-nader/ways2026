@@ -653,7 +653,10 @@ public class ServicioDeCobrosMercadoPago(
         await db.CobrosMercadoPago.FirstOrDefaultAsync(c => c.Id == idCobro && c.IdPuntoVenta == idPuntoVenta, ct)
         ?? throw CobroInexistente(idCobro);
 
-    private static ErrorDominio CobroInexistente(int idCobro) => ErrorDominio.NoEncontrado($"No existe el cobro {idCobro}.");
+    /// <summary>404 con código propio: el POS lo distingue de un 404 de ruteo (un servidor sin el endpoint, un proxy) antes de dar
+    /// por resuelto un cobro apartado.</summary>
+    private static ErrorDominio CobroInexistente(int idCobro) =>
+        new("cobro_mercadopago_inexistente", $"No existe el cobro {idCobro}.", 404);
 
     private async Task<T> EnLockAsync<T>(int primeraClave, int segundaClave, Func<Task<T>> operacion, CancellationToken ct)
     {

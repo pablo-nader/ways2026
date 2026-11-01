@@ -1160,13 +1160,17 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   }
 
   /** `true` si el servidor dejó el cobro fuera de juego (`sin_venta`, o ya no vivo) o respondió algo definitivo (404 de otro punto de
-   * venta, o una venta que ya lo usó): no hay nada más que sincronizar. Cualquier otro fallo (sin red, 5xx, 409 transitorio) es `false`. */
+   * venta con el código `cobro_mercadopago_inexistente`, o una venta que ya lo usó): no hay nada más que sincronizar. Cualquier otro fallo
+   * (sin red, 5xx, 409 transitorio, o un 404 sin ese código: un servidor sin el endpoint o un proxy) es `false` y se reintenta. */
   async function confirmarApartadoEnElServidor(idCobro: number): Promise<boolean> {
     try {
       const respuesta = await conTiempoLimite(() => clienteDeCobrosMercadoPago.apartar(idCobro))
       return respuesta.estado !== 'aprobado' && respuesta.estado !== 'pendiente' && respuesta.estado !== 'creando'
     } catch (e) {
-      return e instanceof ErrorApi && (e.estado === 404 || e.codigo === 'cobro_mercadopago_ya_usado')
+      return (
+        e instanceof ErrorApi
+        && ((e.estado === 404 && e.codigo === 'cobro_mercadopago_inexistente') || e.codigo === 'cobro_mercadopago_ya_usado')
+      )
     }
   }
 

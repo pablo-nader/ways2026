@@ -881,7 +881,7 @@ describe('apartarCobroSinVenta avisa primero al servidor (E3-T3b)', () => {
   })
 
   it.each([
-    ['un 404 (el cobro es de otro punto de venta)', new ErrorApi(404, 'no_encontrado', 'no existe')],
+    ['un 404 del cobro (es de otro punto de venta)', new ErrorApi(404, 'cobro_mercadopago_inexistente', 'no existe')],
     ['una venta que ya lo usó', new ErrorApi(409, 'cobro_mercadopago_ya_usado', 'ya usado')],
   ])('%s es una respuesta definitiva: la entrada queda sincronizada', async (_nombre, error) => {
     vi.mocked(clienteDeCobrosMercadoPago.apartar).mockRejectedValue(error)
@@ -892,6 +892,20 @@ describe('apartarCobroSinVenta avisa primero al servidor (E3-T3b)', () => {
     })
 
     expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toEqual(expect.any(String))
+  })
+
+  it.each([
+    ['un 404 de ruteo sin código (servidor sin el endpoint)', new ErrorApi(404, '', 'Not Found')],
+    ['un 404 de otro recurso', new ErrorApi(404, 'no_encontrado', 'no existe')],
+  ])('%s no es definitivo: la entrada queda pendiente de sincronizar', async (_nombre, error) => {
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockRejectedValue(error)
+    const { almacen, result } = await conCobroEnCurso()
+
+    await act(async () => {
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toBeUndefined()
   })
 
   it('un servidor que sigue diciendo aprobado no cuenta como sincronizado', async () => {
