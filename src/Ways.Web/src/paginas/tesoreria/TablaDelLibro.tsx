@@ -6,6 +6,7 @@ import {
   claseDeImporte,
   columnasDeCuentas,
   detalleDeAjuste,
+  estaConciliada,
   etiquetaDeCaja,
   hayFilasSinCuenta,
   hayRetenciones,
@@ -22,6 +23,28 @@ type Props = {
 
 function Importe({ valor }: { valor: number | null | undefined }) {
   return <span className={claseDeImporte(valor)}>{textoDeImporte(valor)}</span>
+}
+
+function MarcaDeConciliado() {
+  return (
+    <span className="libro-candado" role="img" aria-label="Conciliado" title="Conciliado">
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <rect x="5" y="11" width="14" height="10" rx="2" />
+        <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+      </svg>
+    </span>
+  )
 }
 
 function DetalleDeCaja({ caja, id }: { caja: DatosDeCajaDelLibro; id: string }) {
@@ -115,6 +138,7 @@ function Detalle({ fila, indice, puedeAbrirPagos }: { fila: FilaDelLibro; indice
 export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
   const columnas = columnasDeCuentas(libro.cuentas)
   const conSinCuenta = hayFilasSinCuenta(libro)
+  const saldoAnteriorCongelado = estaConciliada(libro.desde, libro.conciliadoHasta)
 
   return (
     <div className="table-responsive">
@@ -139,8 +163,8 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
           </tr>
         </thead>
         <tbody>
-          <tr data-fila="saldo-anterior">
-            <td />
+          <tr data-fila="saldo-anterior" className={saldoAnteriorCongelado ? 'libro-fila--conciliada' : undefined}>
+            <td>{saldoAnteriorCongelado && <MarcaDeConciliado />}</td>
             <td className="libro-detalle fw-semibold">Saldo anterior</td>
             <td className="text-end">
               <Importe valor={libro.saldoAnterior.efectivo} />
@@ -152,27 +176,33 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
             ))}
             {conSinCuenta && <td />}
           </tr>
-          {libro.filas.map((fila, i) => (
-            <tr key={`${fila.tipo}-${i}`}>
-              <td>{fechaHoraATexto(fila.fecha)}</td>
-              <td className="libro-detalle">
-                <Detalle fila={fila} indice={i} puedeAbrirPagos={puedeAbrirPagos} />
-              </td>
-              <td className="text-end">
-                <Importe valor={fila.efectivo} />
-              </td>
-              {columnas.map((c) => (
-                <td className="text-end" key={c.id}>
-                  <CeldaDeCuenta fila={fila} idCuenta={c.id} id={`libro-globo-cuenta-${i}-${c.id}`} />
+          {libro.filas.map((fila, i) => {
+            const congelada = estaConciliada(fila.fecha, libro.conciliadoHasta)
+            return (
+              <tr key={`${fila.tipo}-${i}`} className={congelada ? 'libro-fila--conciliada' : undefined}>
+                <td>
+                  {congelada && <MarcaDeConciliado />}
+                  {fechaHoraATexto(fila.fecha)}
                 </td>
-              ))}
-              {conSinCuenta && (
+                <td className="libro-detalle">
+                  <Detalle fila={fila} indice={i} puedeAbrirPagos={puedeAbrirPagos} />
+                </td>
                 <td className="text-end">
-                  <Importe valor={fila.sinCuenta} />
+                  <Importe valor={fila.efectivo} />
                 </td>
-              )}
-            </tr>
-          ))}
+                {columnas.map((c) => (
+                  <td className="text-end" key={c.id}>
+                    <CeldaDeCuenta fila={fila} idCuenta={c.id} id={`libro-globo-cuenta-${i}-${c.id}`} />
+                  </td>
+                ))}
+                {conSinCuenta && (
+                  <td className="text-end">
+                    <Importe valor={fila.sinCuenta} />
+                  </td>
+                )}
+              </tr>
+            )
+          })}
           {libro.filas.length === 0 && (
             <tr>
               <td colSpan={columnas.length + 3 + (conSinCuenta ? 1 : 0)} className="text-center text-muted py-4">

@@ -5,6 +5,7 @@ import {
   claseDeImporte,
   columnasDeCuentas,
   detalleDeAjuste,
+  estaConciliada,
   etiquetaDeCaja,
   hayFilasSinCuenta,
   hayRetenciones,
@@ -128,5 +129,28 @@ describe('hayRetenciones', () => {
 describe('detalleDeAjuste', () => {
   it('antepone el rótulo al concepto', () => {
     expect(detalleDeAjuste('Conteo de cierre')).toBe('Ajuste: Conteo de cierre')
+  })
+})
+
+describe('estaConciliada', () => {
+  const marca = '2026-10-30T12:00:00Z'
+
+  it('el borde es inclusivo: la fecha igual a la marca está congelada', () => {
+    expect(estaConciliada('2026-10-30T12:00:00Z', marca)).toBe(true)
+  })
+
+  it('un segundo antes está congelada y un segundo después no', () => {
+    expect(estaConciliada('2026-10-30T11:59:59Z', marca)).toBe(true)
+    expect(estaConciliada('2026-10-30T12:00:01Z', marca)).toBe(false)
+  })
+
+  it('compara instantes y no textos: el mismo instante con otro offset también es borde', () => {
+    expect(estaConciliada('2026-10-30T09:00:00-03:00', marca)).toBe(true)
+    expect(estaConciliada('2026-10-30T09:00:01-03:00', marca)).toBe(false)
+  })
+
+  it('sin marca nada está congelado, y una fecha ilegible tampoco', () => {
+    expect(estaConciliada('2020-01-01T00:00:00Z', null)).toBe(false)
+    expect(estaConciliada('no-es-fecha', marca)).toBe(false)
   })
 })

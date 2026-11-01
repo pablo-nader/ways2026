@@ -53,3 +53,11 @@ export function hayFilasSinCuenta(libro: Pick<LibroDeTesoreria, 'filas'>): boole
 export function hayRetenciones(medios: readonly DesgloseDeMedioDelLibro[]): boolean {
   return medios.some((m) => redondearImporte(m.retenciones) !== 0)
 }
+
+/** Una fila queda congelada cuando su instante es igual o anterior a la marca de conciliación (borde inclusivo). */
+export function estaConciliada(fecha: string, conciliadoHasta: string | null): boolean {
+  if (conciliadoHasta === null) return false
+  const instante = Date.parse(fecha)
+  const marca = Date.parse(conciliadoHasta)
+  return !Number.isNaN(instante) && !Number.isNaN(marca) && instante <= marca
+}
