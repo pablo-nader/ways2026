@@ -182,6 +182,23 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void FusionDeSucursalesEsConstruibleYDiceElDestinoLasCajasYLoQueMovio()
+    {
+        var momento = DateTimeOffset.UtcNow;
+        var fusion = PayloadDeAuditoria.FusionDeSucursales(momento, 9, [4, 7], articulos: 3, lotes: 2, movimientos: 10);
+
+        AsumirConstruible(AccionAuditada.SucursalFusion, fusion);
+        Assert.Null(fusion.Anterior!["deleted_at"]);
+        Assert.Equal(momento, fusion.Nuevo["deleted_at"]);
+        Assert.Equal(9, fusion.Nuevo["id_sucursal_destino"]);
+        Assert.Equal(2, fusion.Nuevo["puntos_venta"]);
+        Assert.Equal(new List<int> { 4, 7 }, fusion.Nuevo["ids_puntos_venta"]);
+        Assert.Equal(3, fusion.Nuevo["articulos"]);
+        Assert.Equal(2, fusion.Nuevo["lotes"]);
+        Assert.Equal(10, fusion.Nuevo["movimientos"]);
+    }
+
+    [Fact]
     public void AltaDePuntoVentaEsConstruibleYNoTieneEstadoPrevio()
     {
         var payload = PayloadDeAuditoria.AltaDePuntoVenta(7, "Sucursal Centro", Ways.Domain.Organizacion.ModoPuntoVenta.Web);

@@ -672,14 +672,22 @@ public partial class ServicioDeOrganizacion(
     /// </summary>
     public async Task EliminarPuntoVentaAsync(int id, CancellationToken ct = default)
     {
-        var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
+        // Solo el tenant antes de los locks: la caja se lee una vez, bajo lock (single-read-under-lock). Una lectura
+        // trackeada acá dejaría en el identity map una sucursal vieja si la caja se mueve en el medio.
+        var idTenant = await db.PuntosVenta
+            .Where(p => p.Id == id)
+            .Select(p => (int?)p.IdTenant)
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {id}.");
+
+        PoliticaDeRoles.ValidarAlcanceDeTenant(Actor, idTenant);
 
         await EnUnaTransaccionDeBajaAsync(async () =>
         {
-            await TomarLockDeBajaAsync(puntoVenta.IdTenant, ct);
+            await TomarLockDeBajaAsync(idTenant, ct);
             // El mismo lock de fila que toma el movimiento de sucursal y que los escritores de stock toman en modo
             // compartido al resolver la sucursal: un asiento en vuelo termina antes de que se mire el uso.
-            await TomarLockDePuntoVentaAsync(puntoVenta.Id, ct);
+            await TomarLockDePuntoVentaAsync(id, ct);
 
             var bajo = await BuscarPuntoVentaAsync(id, ct);
 

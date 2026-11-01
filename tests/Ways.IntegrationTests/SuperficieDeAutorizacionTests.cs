@@ -215,6 +215,8 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("POST", "/api/sucursales/"),
         ("PUT", "/api/sucursales/{id:int}"),
         ("DELETE", "/api/sucursales/{id:int}"),
+        // Sucursales (T5): fusionar una sucursal en otra; mismo grupo sin policy, policy por ruta.
+        ("POST", "/api/sucursales/{id:int}/fusionar"),
 
         // ABM de usuarios — GestionDeUsuarios (Root + Admin, sin Vendedor).
         ("POST", "/api/usuarios/"),
@@ -310,6 +312,7 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("POST", "/api/sucursales/", Politicas.GestionDeOrganizacion),
         ("PUT", "/api/sucursales/{id:int}", Politicas.GestionDeOrganizacion),
         ("DELETE", "/api/sucursales/{id:int}", Politicas.GestionDeOrganizacion),
+        ("POST", "/api/sucursales/{id:int}/fusionar", Politicas.GestionDeOrganizacion),
         // Alta de punto de venta: mismo punto ciego, la policy se declara por ruta.
         ("POST", "/api/puntos-venta/", Politicas.GestionDeOrganizacion)
     ];

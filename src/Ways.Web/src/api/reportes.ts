@@ -147,7 +147,7 @@ export const clienteDeReportes = {
   existencias: (idSucursal: number) =>
     api.get<Existencias>(`/reportes/stock/existencias?idSucursal=${idSucursal}`),
   /** stage-12-lotes-vencimientos (Slice 15): `dias` es opcional — omitido, el servidor resuelve
-   * `dias_alerta_vencimiento` (PV → empresa → default), mismo criterio que el resto de los
+   * `dias_alerta_vencimiento` (sucursal → empresa → default), mismo criterio que el resto de los
    * parámetros del backend con default declarado (dto-contract-honesty: no se manda un valor
    * inventado del lado del cliente cuando el servidor ya sabe resolverlo). */
   vencimientos: (idSucursal: number, dias: number | null) =>
@@ -157,7 +157,7 @@ export const clienteDeReportes = {
   vencimientosResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeVencimientos>(`/reportes/stock/vencimientos/resumen?idPuntoVenta=${idPuntoVenta}`),
   /** stage-13-stock-inteligente (Slice 6): mismo criterio opcional de `dias` que `vencimientos` —
-   * omitido, el servidor resuelve `dias_rotacion` (PV → empresa → default). */
+   * omitido, el servidor resuelve `dias_rotacion` (sucursal → empresa → default). */
   reposicion: (idSucursal: number, dias: number | null) =>
     api.get<Reposicion>(
       `/reportes/stock/reposicion?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}`,

@@ -925,7 +925,7 @@ public class ManejadorDeErrores(
     /// nombre — evita repetir un caso por índice para <c>ux_areas_nombre_*</c>,
     /// <c>ux_marcas_nombre_*</c>, <c>ux_grupos_nombre_*</c>, <c>ux_medios_pago_nombre_*</c>,
     /// <c>ux_categorias_nombre_*</c>, <c>ux_alicuotas_iva_nombre</c>,
-    /// <c>ux_condiciones_fiscales_codigo</c>, <c>ux_tipos_comprobante_codigo</c> y las dos de
+    /// <c>ux_condiciones_fiscales_codigo</c>, <c>ux_tipos_comprobante_codigo</c> y las tres de
     /// <c>parametros</c>. <c>ux_parametros_*</c> se resuelve antes que el resto porque no
     /// sigue el patrón "_nombre"/"_codigo".
     ///
@@ -940,7 +940,7 @@ public class ManejadorDeErrores(
     /// 23505, sin race test, hasta que exista un endpoint de alta/edición.</summary>
     private static (string Codigo, string Titulo)? ClasificarUnicidad(string nombreDeIndice)
     {
-        if (nombreDeIndice is "ux_parametros_empresa" or "ux_parametros_punto_venta")
+        if (nombreDeIndice is "ux_parametros_empresa" or "ux_parametros_punto_venta" or "ux_parametros_sucursal")
         {
             return ("parametro_duplicado", "Ya existe un parámetro con esa clave en este alcance.");
         }

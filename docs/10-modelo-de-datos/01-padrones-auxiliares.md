@@ -28,11 +28,14 @@ sucursales (                   -- [operativa] id_tenant + id_empresa, doc 09 (co
     id_tenant     integer NOT NULL,         -- FK compuesta (id_empresa, id_tenant) -> empresas
     id_empresa    integer NOT NULL,
     nombre        citext NOT NULL,          -- varchar(150), mismo tipo y largo que puntos_venta.nombre
+    id_sucursal_fusion integer NULL,        -- la que la absorbió en una fusión (T5); migración FusionDeSucursales
     created_at, updated_at, deleted_at,     -- baja siempre lógica
     UNIQUE (id_sucursal, id_tenant),                 -- ak_sucursales_id_sucursal_id_tenant: FKs de hijos
     UNIQUE (id_sucursal, id_empresa, id_tenant)      -- destino de fk_puntos_venta_sucursal
 );
 -- ix_sucursales_tenant (id_tenant), ix_sucursales_empresa (id_empresa, id_tenant)
+-- FOREIGN KEY (id_sucursal_fusion, id_empresa, id_tenant) REFERENCES sucursales (id_sucursal, id_empresa, id_tenant)
+--   = fk_sucursales_fusion, ON DELETE RESTRICT, con su índice; la que absorbe es de la MISMA empresa y tenant.
 -- RLS: sucursales_tenant (HabilitarRlsDeTenant)
 
 -- puntos_venta gana:
@@ -58,8 +61,28 @@ sucursales (                   -- [operativa] id_tenant + id_empresa, doc 09 (co
   `por_cascada`) salvo que tenga uso: entonces 409 `sucursal_en_uso`. Es la misma regla que la baja de la última
   caja; unir dos sucursales con stock es la fusión (T5), no un movimiento. El stock no se mueve con la caja.
   Auditoría: `sucursal.alta|edicion|baja` (entidad `sucursal`) y `pv.sucursal` (entidad `punto_venta`).
-  Sin constraints nuevas: la FK compuesta `fk_puntos_venta_sucursal` queda cubierta por la validación bajo lock
-  y, ante una escritura cruda, por el backstop genérico de FKs de `ManejadorDeErrores` (400).
+- **Fusión (T5).** `POST /api/sucursales/{id}/fusionar {idSucursalDestino}`: el destino es una sucursal viva de la
+  misma empresa (404 / 409 `sucursal_de_otra_empresa`; mismo id 400 `fusion_misma_sucursal`). Las cajas vivas del
+  origen se reapuntan al destino; cada saldo no nulo del origen (agregado fuera de lotes y cada lote, negativos
+  incluidos) genera un par de `movimientos_stock` con motivo `transferencia`, el egreso en el origen y el ingreso en
+  el destino, ambos con `id_sucursal_destino` = destino (`EscritorDeStock.FusionarSucursalesAsync`). Así
+  `stock = Σ movimientos` y `Σ stock_lotes = stock` siguen valiendo en las dos y el origen queda en cero. Firma los
+  asientos la caja viva de menor id de cada lado (la del otro lado si uno no tiene; sin cajas en ninguna, solo se
+  fusiona un origen sin saldo: 409 `sucursal_sin_puntos_venta`). Umbrales: el destino conserva su par
+  `minimo`/`reposicion`; donde no tiene ninguno de los dos, toma el par del origen. El origen queda con
+  `deleted_at` y un solo rastro `sucursal.fusion` (entidad `sucursal`, id del origen) con `id_sucursal_destino`, las
+  cajas que pasaron y los conteos de artículos, lotes y movimientos, y con `id_sucursal_fusion` = destino. Sin
+  motivo nuevo. `fk_puntos_venta_sucursal` y la nueva `fk_sucursales_fusion` quedan cubiertas por la validación
+  bajo lock y, ante una escritura cruda, por el backstop genérico de FKs de `ManejadorDeErrores` (400): no hay
+  mapeo 23503 nuevo; el SQLSTATE de `fk_sucursales_fusion` se afirma en `SucursalesEsquemaTests`. La columna
+  nace nula, sin backfill.
+- **Reversas después de una fusión.** Una anulación de venta, remito o compra, y la edición de una compra
+  confirmada, asientan en la sucursal guardada en sus movimientos originales seguida por `id_sucursal_fusion` hasta
+  una sin fusión (A→B y después B→C llega a C), nunca en el origen fusionado; el lote vuelve bajo el mismo
+  `id_lote`, que la fusión llevó al destino (`EscritorDeStock.ResolverSucursalesDeReversaAsync`). Orden de locks,
+  sin ciclo: una reversa toma sus cajas y después cada sucursal de la cadena con `FOR SHARE`, antes del stock; la
+  fusión toma el advisory del tenant, las cajas de las dos sucursales y después las dos sucursales con
+  `FOR UPDATE`, antes del stock.
 - **El stock** pasó a la sucursal en T2 (doc 10 §6).
 
 ### Dominios por tenant (rebanada 0 de la tienda online)

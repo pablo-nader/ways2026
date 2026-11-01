@@ -156,3 +156,7 @@ public record SucursalEdicion(string Nombre);
 /// <summary>Cuerpo de <c>POST /api/puntos-venta/{id}/sucursal</c>: la sucursal destino de la caja. <c>Nullable</c> por la
 /// misma razón que <see cref="PuntoVentaModoEdicion"/>: omitido no puede ligarse a <c>0</c>.</summary>
 public record PuntoVentaSucursalEdicion(int? IdSucursal);
+
+/// <summary>Cuerpo de <c>POST /api/sucursales/{id}/fusionar</c>: la sucursal que absorbe a la del id. <c>Nullable</c> por
+/// la misma razón que <see cref="PuntoVentaSucursalEdicion"/>.</summary>
+public record SucursalFusion(int? IdSucursalDestino);

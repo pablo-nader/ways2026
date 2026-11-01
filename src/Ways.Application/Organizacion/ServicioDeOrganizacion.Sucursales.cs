@@ -166,7 +166,7 @@ public partial class ServicioDeOrganizacion
     ///
     /// Si la caja era la última viva de su sucursal, esa sucursal cae con el movimiento, salvo que tenga uso (stock,
     /// lotes o movimientos): entonces el movimiento se rechaza con <c>409 sucursal_en_uso</c>, la misma regla que la baja
-    /// de la última caja. Mover la única caja de una sucursal con historia es una fusión (etapa posterior), no un movimiento.
+    /// de la última caja. Mover la única caja de una sucursal con historia es una fusión (<see cref="FusionarSucursalAsync"/>), no un movimiento.
     ///
     /// Mismo destino que el actual: no hace nada y no deja rastro. Una sucursal de otra empresa es
     /// <c>409 sucursal_de_otra_empresa</c>; una inexistente, dada de baja o de otro tenant es 404.
@@ -210,12 +210,14 @@ public partial class ServicioDeOrganizacion
 
             if (origen is not null)
             {
+                // Los parámetros de la sucursal no son uso: acompañan a su última caja (ver más abajo).
                 await ExigirSinUsoDeSucursalAsync(
                     origen,
                     descripcion => "No se puede mover la caja: su sucursal quedaría sin cajas y todavía tiene " +
                                    $"{descripcion}. Para unir dos sucursales con stock hace falta una fusión.",
                     "sucursal_en_uso",
-                    ct);
+                    ct,
+                    excluirParametros: true);
             }
 
             var momento = reloj.Ahora;
@@ -230,6 +232,9 @@ public partial class ServicioDeOrganizacion
 
             if (origen is not null)
             {
+                // Misma regla que la fusión: la última caja lleva los valores de su sucursal a la nueva solo donde esta
+                // no tiene los suyos; lo que se traslada también rige para las otras cajas del destino.
+                await FusionarParametrosAsync(origen.Id, destino.Id, momento, ct);
                 Marcar(origen, momento);
                 RegistrarBajaDeSucursal(origen, momento, porCascada: true);
             }
@@ -241,7 +246,8 @@ public partial class ServicioDeOrganizacion
     }
 
     private Task ExigirSinUsoDeSucursalAsync(
-        Sucursal sucursal, Func<string, string>? mensajeDeBloqueo, string codigo, CancellationToken ct) =>
+        Sucursal sucursal, Func<string, string>? mensajeDeBloqueo, string codigo, CancellationToken ct,
+        bool excluirParametros = false) =>
         ExigirSinUsoAsync(
             typeof(Sucursal),
             sucursal.CreatedAt,
@@ -255,7 +261,8 @@ public partial class ServicioDeOrganizacion
             "la sucursal",
             ct,
             // Las cajas ya las respondió quien llama (vivas) o son las propias; acá solo el uso propio de la sucursal.
-            soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta",
+            soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta"
+                               && !(excluirParametros && rama.Tabla == "parametros"),
             mensajeDeBloqueo);
 
     private void RegistrarBajaDeSucursal(Sucursal sucursal, DateTimeOffset momento, bool porCascada)

@@ -314,3 +314,100 @@ describe('Sucursales — baja', () => {
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('Sucursales — fusión', () => {
+  const otraEmpresa = sucursalFixture({ id: 600, idEmpresa: 30, nombre: 'Ajena', razonSocialEmpresa: 'Norte SA' })
+
+  async function abrirFusion(usuario: ReturnType<typeof userEvent.setup>, fila: string) {
+    await esperarFilas()
+    await usuario.click(within(screen.getByRole('row', { name: new RegExp(fila) })).getByRole('button', { name: 'Fusionar' }))
+  }
+
+  it('el destino ofrece solo las otras sucursales de la misma empresa', async () => {
+    const usuario = userEvent.setup()
+    montar([centro, deposito, otraEmpresa])
+    await abrirFusion(usuario, 'Depósito')
+
+    const opciones = within(screen.getByLabelText('Sucursal destino')).getAllByRole('option').map((o) => o.textContent)
+    expect(opciones).toEqual(['Elegir…', 'Sucursal Centro'])
+  })
+
+  it('explica qué pasa y no deja fusionar sin destino y sin confirmar', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await abrirFusion(usuario, 'Depósito')
+
+    expect(
+      screen.getByText(/Las cajas de "Depósito" y todo su stock .* pasan a la sucursal destino, y "Depósito" se elimina\./),
+    ).toBeInTheDocument()
+    const fusionar = within(screen.getByRole('dialog')).getByRole('button', { name: 'Fusionar' })
+    expect(fusionar).toBeDisabled()
+
+    await usuario.selectOptions(screen.getByLabelText('Sucursal destino'), '500')
+    expect(fusionar).toBeDisabled()
+
+    await usuario.click(
+      screen.getByLabelText(
+        'Confirmo que las cajas y el stock de "Depósito" pasan a "Sucursal Centro" y que "Depósito" se elimina. No se puede deshacer.',
+      ),
+    )
+    expect(fusionar).toBeEnabled()
+  })
+
+  it('fusiona con el destino elegido, cierra el modal y refresca', async () => {
+    const usuario = userEvent.setup()
+    let listados = 0
+    apiPostMock.mockResolvedValue(sucursalFixture({ cantidadPuntosVenta: 3 }))
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/sucursales') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      listados += 1
+
+      return Promise.resolve(listados === 1 ? [centro, deposito] : [sucursalFixture({ cantidadPuntosVenta: 3 })])
+    })
+    render(<Sucursales />)
+    await abrirFusion(usuario, 'Depósito')
+
+    await usuario.selectOptions(screen.getByLabelText('Sucursal destino'), '500')
+    await usuario.click(screen.getByRole('checkbox'))
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Fusionar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/sucursales/501/fusionar', { idSucursalDestino: 500 }))
+    expect(await screen.findByText('Se fusionó "Depósito" en "Sucursal Centro".')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('row', { name: /Depósito/ })).not.toBeInTheDocument())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('un rechazo del servidor rinde su mensaje y deja el modal abierto', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'sucursal_de_otra_empresa', 'La sucursal pertenece a otra empresa.'))
+    montar()
+    await abrirFusion(usuario, 'Depósito')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal destino'), '500')
+    await usuario.click(screen.getByRole('checkbox'))
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Fusionar' }))
+
+    expect(await screen.findByText('La sucursal pertenece a otra empresa.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('mientras la fusión está en vuelo todo queda inerte y un segundo envío se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    montar()
+    await abrirFusion(usuario, 'Depósito')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal destino'), '500')
+    await usuario.click(screen.getByRole('checkbox'))
+
+    const fusionar = within(screen.getByRole('dialog')).getByRole('button', { name: 'Fusionar' })
+    await act(async () => {
+      fusionar.click()
+      fusionar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('Sucursal destino')).toBeDisabled()
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(within(screen.getByRole('row', { name: /Sucursal Centro/ })).getByRole('button', { name: 'Fusionar' })).toBeDisabled()
+  })
+})

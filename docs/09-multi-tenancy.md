@@ -44,7 +44,24 @@ tenant  (el cliente que paga: "Supermercados Pérez SRL")
 > venta, que los escritores que asientan cantidades toman en modo compartido (`FOR SHARE`) al resolver su sucursal
 > (ventas, remitos, compras, ajustes, conteos, transferencias).
 > Transferencias: `POST /api/stock/transferencias` acepta dos puntos de venta (el POS empaquetado) o dos
-> sucursales, nunca mezcladas (400 `transferencia_origen_destino_invalido`).
+> sucursales, nunca mezcladas (400 `transferencia_origen_destino_invalido`). Dentro de su transacción la
+> transferencia vuelve a leer la sucursal de cada caja (`FOR SHARE`, en orden de id de caja) y rechaza con 409
+> `sucursal_cambio_durante_transferencia` una caja que cambió de sucursal desde que se la eligió.
+>
+> **Fusión (sucursales, T5).** `POST /api/sucursales/{id}/fusionar` con `{idSucursalDestino}`
+> (`GestionDeOrganizacion`) absorbe la sucursal `{id}` en otra viva de su MISMA empresa: 404 para un origen o destino
+> inexistente, dado de baja o de otro tenant (el origen antes de mirar el cuerpo), 409 `sucursal_de_otra_empresa`,
+> 400 `sucursal_destino_requerida` y 400 `fusion_misma_sucursal`. En una sola transacción las cajas vivas del origen
+> pasan al destino, todo su stock pasa con un par de movimientos de transferencia por saldo (agregados, lotes y
+> negativos; el origen queda en cero) y el origen queda dado de baja con un solo rastro `sucursal.fusion` y con
+> `id_sucursal_fusion` = destino (FK compuesta `fk_sucursales_fusion`: misma empresa y mismo tenant). Locks: el
+> advisory del tenant, después `FOR UPDATE` sobre las cajas de las dos sucursales en orden de id, después
+> `FOR UPDATE` sobre las dos sucursales en orden de id, y recién después el stock en el orden de `EscritorDeStock`. Un
+> asiento nuevo toma su caja con `FOR SHARE` antes de cualquier fila de stock, así que una venta en vuelo termina
+> antes de la fusión o espera sin haber tomado stock, y después escribe en el destino. Una reversa (anulación de
+> venta, remito o compra, edición de una compra confirmada) toma sus cajas y después su sucursal guardada con
+> `FOR SHARE`, también antes del stock, y sigue `id_sucursal_fusion` hasta una sucursal sin fusión: nunca devuelve
+> stock al origen fusionado. Es el camino para el cliente que tiene dos cajas de un local partidas en dos sucursales.
 
 El negocio actual (Ways/Alsina) es el tenant 1: una empresa, dos puntos de venta (cada uno con su sucursal).
 

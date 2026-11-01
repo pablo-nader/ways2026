@@ -200,9 +200,9 @@ public sealed record FilaExistencia(
 public sealed record Existencias(int IdSucursal, string NombreSucursal, IReadOnlyList<FilaExistencia> Filas);
 
 /// <summary>A qué sucursal se refiere un reporte de stock: la sucursal pedida, o la de la caja que mandó un
-/// cliente anterior a las sucursales. <see cref="IdPuntoVentaDeReferencia"/> solo sirve para resolver los parámetros
-/// por caja (zona horaria, días de alerta y de rotación) y no se devuelve al cliente.</summary>
-public sealed record AlcanceDeStock(int IdSucursal, string NombreSucursal, int IdEmpresa, int? IdPuntoVentaDeReferencia);
+/// cliente anterior a las sucursales. <see cref="IdEmpresa"/> acota los parámetros de la sucursal (zona horaria, días de
+/// alerta, de rotación y de cobertura) y no se devuelve al cliente.</summary>
+public sealed record AlcanceDeStock(int IdSucursal, string NombreSucursal, int IdEmpresa);
 
 /// <summary>Fila de <c>GET /api/reportes/stock/vencimientos</c> (stage-12-lotes-vencimientos,
 /// Slice 13; design decisión 15/16). Solo lotes con <c>stock_lotes.cantidad</c> positivo (spec
@@ -221,7 +221,7 @@ public sealed record FilaDeVencimiento(
 /// se calcula en la zona horaria del punto de venta, NUNCA en UTC (spec: "'Hoy' Is Resolved In The
 /// Punto De Venta's Own Zona Horaria, Not UTC" — vinculante). <see cref="DiasDeAlerta"/> es el
 /// horizonte efectivamente aplicado: el parámetro <c>dias</c> de la query si vino, si no el
-/// <c>dias_alerta_vencimiento</c> resuelto (PV → empresa → default).</summary>
+/// <c>dias_alerta_vencimiento</c> resuelto (sucursal → empresa → default).</summary>
 public sealed record Vencimientos(
     int IdSucursal, string NombreSucursal, DateOnly Hoy, int DiasDeAlerta, string ZonaHoraria, IReadOnlyList<FilaDeVencimiento> Filas);
 
@@ -311,7 +311,7 @@ public sealed record FilaDeRotacion(
 /// cref="ZonaHoraria"/>/<see cref="DiasDeRotacion"/> son el mismo eco obligatorio que <see
 /// cref="Reposicion"/> — misma ventana, misma definición de consumo (design decisión 5, nunca una
 /// segunda). <see cref="DiasCoberturaObjetivo"/> es el horizonte de cobertura efectivamente
-/// resuelto (<c>dias_cobertura_objetivo</c>, PV → empresa → default 7) que <see
+/// resuelto (<c>dias_cobertura_objetivo</c>, sucursal → empresa → default 7) que <see
 /// cref="FilaDeRotacion.MinimoSugerido"/> multiplica — echo obligatorio, mismo criterio que
 /// <see cref="DiasDeRotacion"/>: una sugerencia cuyo horizonte es invisible no es auditable.</summary>
 public sealed record Rotacion(

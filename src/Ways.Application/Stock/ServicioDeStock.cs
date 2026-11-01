@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Parametros;
 using Ways.Domain.Articulos;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
@@ -321,9 +322,10 @@ public class ServicioDeStock(
     /// lote-efectiva resuelve su <c>idLote</c> (explícito o FEFO-defaulted) en la fase de
     /// resolución, ANTES de que la transacción abra, y esa fase es también donde corren el
     /// rechazo de duplicados <c>(IdArticulo, IdLote)</c> post-defaulting (decisión 11) y el
-    /// chequeo de <c>transferencia_lote_vencido</c>. El stock es de la sucursal: dentro de la transacción se resuelven
-    /// las dos sucursales, una transferencia entre cajas de la misma sucursal se rechaza
-    /// (<c>409 transferencia_misma_sucursal</c>) y las <c>2N</c> claves se escriben en el orden de locks de
+    /// chequeo de <c>transferencia_lote_vencido</c>. El stock es de la sucursal: una transferencia entre cajas de la misma
+    /// sucursal se rechaza (<c>409 transferencia_misma_sucursal</c>); dentro de la transacción se vuelven a leer las dos
+    /// sucursales bajo lock, una caja que cambió de sucursal desde la lectura previa es
+    /// <c>409 sucursal_cambio_durante_transferencia</c>, y las <c>2N</c> claves se escriben en el orden de locks de
     /// <see cref="EscritorDeStock"/> <c>(id_sucursal, id_articulo, id_lote NULLS FIRST)</c>, el que evita el deadlock
     /// contra una transferencia inversa simultánea y contra un checkout concurrente en cualquiera de las dos
     /// sucursales.</summary>
@@ -345,8 +347,12 @@ public class ServicioDeStock(
         var puntoVentaDestino = await ResolverPuntoVentaAsync(idPuntoVentaDestino, ct);
 
         // Dos cajas de una misma sucursal comparten el stock: se rechaza antes de resolver lotes, que no tiene
-        // sentido hacer para un movimiento que no existe. EjecutarTransferenciaAsync repite la comparación con las
-        // sucursales leídas dentro de la transacción, por si una caja cambió de sucursal entre las dos lecturas.
+        // sentido hacer para un movimiento que no existe. Las sucursales esperadas son las pedidas o, por caja, las
+        // leídas acá; EjecutarTransferenciaAsync las vuelve a exigir bajo lock.
+        var sucursalesEsperadas = (
+            Origen: solicitud.IdSucursalOrigen ?? puntoVentaOrigen.IdSucursal,
+            Destino: solicitud.IdSucursalDestino ?? puntoVentaDestino.IdSucursal);
+
         if (puntoVentaOrigen.IdSucursal == puntoVentaDestino.IdSucursal)
         {
             throw ErrorTransferenciaMismaSucursal();
@@ -367,7 +373,7 @@ public class ServicioDeStock(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransferenciaAsync(
-                idTenant, idEmpleado, idPuntoVentaOrigen, idPuntoVentaDestino, lineasResueltas,
+                idTenant, idEmpleado, idPuntoVentaOrigen, idPuntoVentaDestino, sucursalesEsperadas, lineasResueltas,
                 observaciones, momento, ct));
     }
 
@@ -437,19 +443,33 @@ public class ServicioDeStock(
 
     private async Task<ResultadoTransferencia> EjecutarTransferenciaAsync(
         int idTenant, int idEmpleado, int idPuntoVentaOrigen, int idPuntoVentaDestino,
-        IReadOnlyList<LineaDeTransferenciaResuelta> lineas, string observaciones, DateTimeOffset momento, CancellationToken ct)
+        (int Origen, int Destino) sucursalesEsperadas, IReadOnlyList<LineaDeTransferenciaResuelta> lineas,
+        string observaciones, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        var idSucursalOrigen = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaOrigen, ct);
-        var idSucursalDestino = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaDestino, ct);
-
-        if (idSucursalOrigen == idSucursalDestino)
+        // Las dos cajas se toman con FOR SHARE en orden de id, el mismo orden en que la fusión de sucursales las toma con
+        // FOR UPDATE: tomarlas en orden origen/destino podría cruzarse con ella.
+        var sucursalPorCaja = new Dictionary<int, int>();
+        foreach (var idCaja in new[] { idPuntoVentaOrigen, idPuntoVentaDestino }.Order())
         {
-            throw ErrorTransferenciaMismaSucursal();
+            sucursalPorCaja[idCaja] = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idCaja, ct);
+        }
+
+        var idSucursalOrigen = sucursalPorCaja[idPuntoVentaOrigen];
+        var idSucursalDestino = sucursalPorCaja[idPuntoVentaDestino];
+
+        // Una caja que cambió de sucursal después de que se la eligió (o de que se resolvieron sus lotes) se rechaza: la
+        // transferencia saldría de, o llegaría a, una sucursal que nadie pidió. Como las esperadas ya son distintas,
+        // esto también cubre el caso de dos cajas que terminaron en la misma sucursal.
+        if (idSucursalOrigen != sucursalesEsperadas.Origen || idSucursalDestino != sucursalesEsperadas.Destino)
+        {
+            throw ErrorDominio.Conflicto(
+                "sucursal_cambio_durante_transferencia",
+                "Una de las cajas de la transferencia cambió de sucursal mientras se preparaba. Volvé a intentarlo.");
         }
 
         // Un asiento por línea y por lado: el movimiento (con su lote) y los upserts del agregado y del lote.
@@ -668,12 +688,8 @@ public class ServicioDeStock(
     /// sin filtrar).</summary>
     private async Task<bool> ResolverLotesHabilitadoAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        var candidatos = await db.Parametros
-            .Where(p => p.Clave == ParametroConocido.LotesHabilitado.Clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
-            .ToListAsync(ct);
-
-        var valorJson = ResolucionDeParametros.Resolver(ParametroConocido.LotesHabilitado.Clave, candidatos, idPuntoVenta);
+        var valorJson = await ConsultaDeParametros.ResolverDePuntoVentaAsync(
+            db, ParametroConocido.LotesHabilitado.Clave, idEmpresa, idPuntoVenta, ct);
         return JsonSerializer.Deserialize<bool>(valorJson);
     }
 
