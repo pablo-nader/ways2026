@@ -1477,7 +1477,7 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
     }
 
     [Fact]
-    public async Task ReintentarUnCambioDeModoFallidoRepiteLaMismaClaveDeIdempotencia()
+    public async Task ReintentarUnCambioDeModoFallidoUsaOtraClaveDeIdempotencia()
     {
         var c = await PrepararCajaAsync("mp-term-clave");
         Guionar(
