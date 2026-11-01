@@ -199,6 +199,11 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_conexiones_mercadopago_usuario_activa" } =>
                 (StatusCodes.Status409Conflict, "Esa cuenta de Mercado Pago ya está conectada a otra empresa.", "mercadopago_cuenta_en_uso"),
 
+            // Backstop del vínculo de una sucursal con su local de Mercado Pago: el lock por sucursal serializa los registros, así que
+            // solo lo alcanza una escritura que no pase por `ServicioDeLocalesMercadoPago`. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_locales_mercadopago_sucursal_usuario" } =>
+                (StatusCodes.Status409Conflict, "La sucursal ya está registrada en esa cuenta de Mercado Pago.", "mercadopago_local_duplicado"),
+
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
             // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas
@@ -635,6 +640,19 @@ public class ManejadorDeErrores(
             // ck_clientes_cf_protegido).
             { SqlState: "23514", ConstraintName: "ck_precios_ventana_valida" } =>
                 (StatusCodes.Status400BadRequest, "vigente_hasta no puede ser anterior a vigente_desde.", "vigente_desde_invalido"),
+
+            // Dirección de la sucursal: DireccionDeSucursal.Normalizar valida antes el rango y el par completo con
+            // estos mismos códigos; esto atrapa una escritura cruda que los esquive.
+            { SqlState: "23514", ConstraintName: "ck_sucursales_latitud" } =>
+                (StatusCodes.Status400BadRequest, "La latitud tiene que estar entre -90 y 90.", "latitud_invalida"),
+
+            { SqlState: "23514", ConstraintName: "ck_sucursales_longitud" } =>
+                (StatusCodes.Status400BadRequest, "La longitud tiene que estar entre -180 y 180.", "longitud_invalida"),
+
+            { SqlState: "23514", ConstraintName: "ck_sucursales_coordenadas_completas" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La latitud y la longitud se completan juntas o no se completan.",
+                    "coordenadas_incompletas"),
 
             // Dominios por tenant: ck_dominios_host_formato. ServicioDeDominios normaliza y valida el host
             // con Dominio.NormalizarHost antes de escribir (mismo código de dominio); esto atrapa una

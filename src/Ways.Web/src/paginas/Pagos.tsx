@@ -19,6 +19,14 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { clienteDeCompras, filtrosDeComprasVacios } from '../api/compras'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeProveedores } from '../api/proveedores'
+import { clienteDePersonal, FILTROS_DE_PERSONAL_VACIOS, TAMANIO_MAXIMO_DE_PAGINA } from '../api/personal'
+import { clienteDeCuentaDePersonal } from '../api/cuentaDePersonal'
+import { errorDeEscritura, esRechazoCierto } from './cuentaDePersonalErrores'
+import {
+  aSolicitudDePagoDePersonalDesdeAdministracion,
+  elegiblesComoPersonal,
+  esPagoAPersonal,
+} from '../api/sueldoConPersonal'
 import { ErrorApi } from '../api/cliente'
 import { esResultadoIncierto } from '../api/cuentasTesoreria'
 import { COPIA_RESULTADO_INCIERTO } from '../api/bajas'
@@ -36,6 +44,7 @@ import type {
   OpcionDeProveedor,
   OrigenFondosPago,
   PaginaDePagosDeAdministracion,
+  PersonalListado,
   PuntoVentaListado,
   SolicitudDeEdicionDePagoConLineas,
 } from '../api/tipos'
@@ -117,6 +126,8 @@ export function Pagos() {
   const [areas, setAreas] = useState<AreaListado[] | null>(null)
   const [proveedores, setProveedores] = useState<OpcionDeProveedor[] | null>(null)
   const [errorCatalogos, setErrorCatalogos] = useState('')
+  const [personal, setPersonal] = useState<PersonalListado[] | null>(null)
+  const [errorDePersonal, setErrorDePersonal] = useState('')
 
   const [filtros, setFiltros] = useState<FiltrosDePagosDeAdministracion>(filtrosDePagosDeAdministracionVacios())
   const [pagina, setPagina] = useState<PaginaDePagosDeAdministracion | null>(null)
@@ -257,6 +268,27 @@ export function Pagos() {
     }
   }, [])
 
+  // El personal es de solo lectura y solo lo usa el alta de sueldos: si falla no frena el resto de la pantalla.
+  useEffect(() => {
+    let vigente = true
+
+    clienteDePersonal
+      .listarGrilla({ filtros: FILTROS_DE_PERSONAL_VACIOS, orden: null, pagina: 1, tamanio: TAMANIO_MAXIMO_DE_PAGINA })
+      .then((respuesta) => {
+        if (!vigente) return
+        setPersonal(elegiblesComoPersonal(respuesta.items))
+      })
+      .catch(() => {
+        if (!vigente) return
+        setPersonal([])
+        setErrorDePersonal('No se pudo cargar el personal.')
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [])
+
   const cargar = useCallback(() => {
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
@@ -313,11 +345,15 @@ export function Pagos() {
     // regla 11: guard de reentrancia de primera línea.
     if (guardandoRef.current) return
 
+    const aPersonal = esPagoAPersonal(formulario)
+
     if (!formularioDePagoDeAdministracionCompleto(formulario)) {
       setErrorGuardar(
-        formulario.fecha.trim() !== '' && formulario.idEmpresa !== '' && formulario.concepto.trim() !== ''
+        formulario.fecha.trim() !== '' && formulario.idEmpresa !== '' && (aPersonal || formulario.concepto.trim() !== '')
           ? (errorDeLineasDePago(formulario.lineas) ?? 'Revisá los medios de pago.')
-          : 'Completá fecha, empresa, concepto y, en cada medio de pago, el medio y un importe mayor a 0.',
+          : aPersonal
+            ? 'Completá fecha, empresa y, en cada medio de pago, el medio y un importe mayor a 0.'
+            : 'Completá fecha, empresa, concepto y, en cada medio de pago, el medio y un importe mayor a 0.',
       )
       setDisparoDeError((n) => n + 1)
       return
@@ -335,14 +371,34 @@ export function Pagos() {
     // mientras dura y nada puede reabrirlo ni reemplazarlo, así que siempre se aplica y siempre libera
     // `guardando`. Gatearla dejaba el modal trabado si otra lectura acuñaba una generación en el medio.
     try {
-      await clienteDePagosDeAdministracion.registrar(aSolicitudDePagoDeAdministracion(formulario))
+      if (aPersonal) {
+        await clienteDeCuentaDePersonal.pagar(
+          Number(formulario.idPersonal),
+          aSolicitudDePagoDePersonalDesdeAdministracion(formulario),
+        )
+      } else {
+        await clienteDePagosDeAdministracion.registrar(aSolicitudDePagoDeAdministracion(formulario))
+      }
       limpiarFormulario()
       toast.exito('Pago registrado.')
       setMostrarFormulario(false)
     } catch (e) {
-      setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
-      setDisparoDeError((n) => n + 1)
-      return
+      if (aPersonal && !esRechazoCierto(e)) {
+        // Un pago de personal no lleva clave de idempotencia: ante un fallo incierto no se deja reintentar a ciegas.
+        limpiarFormulario()
+        setAvisoIncierto(COPIA_RESULTADO_INCIERTO)
+        setMostrarFormulario(false)
+      } else {
+        setErrorGuardar(
+          aPersonal && esRechazoCierto(e)
+            ? errorDeEscritura(e, 'pago', 'Tesoreria').mensaje
+            : e instanceof ErrorApi
+              ? e.message
+              : 'No se pudo registrar el pago.',
+        )
+        setDisparoDeError((n) => n + 1)
+        return
+      }
     } finally {
       guardandoRef.current = false
       setGuardando(false)
@@ -629,6 +685,8 @@ export function Pagos() {
             medios={mediosParaPago}
             areas={areas ?? []}
             proveedores={proveedoresOrdenados}
+            personal={personal}
+            errorDePersonal={errorDePersonal}
             fechaMaxima={fechaDeHoy()}
             error={errorGuardar}
             disparoDeError={disparoDeError}

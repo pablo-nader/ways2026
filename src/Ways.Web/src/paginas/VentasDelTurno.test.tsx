@@ -13,6 +13,7 @@ import type {
   VentaDeTurnoListado,
 } from '../api/tipos'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
@@ -766,7 +767,12 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
   it('si el punto de venta cambia con la anulación en vuelo, el modal se cierra y la respuesta tardía no relee el listado viejo', async () => {
     const venta = ventaFixture({ id: 57 })
     mockearRutas({ turno: turnoFixture(), ventas: [venta] })
-    const { rerender } = render(<VentasDelTurno />)
+    const { rerender } = render(
+      <>
+        <VentasDelTurno />
+        <Toaster />
+      </>,
+    )
     await screen.findByText('0007-00000001')
     await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
     let resolverAnulacion: (valor: unknown) => void = () => undefined
@@ -814,12 +820,17 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
     const listados = () => apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
     const antes = listados()
     estadoDePuntoVenta = { ...estadoDePuntoVenta, puntoVenta: puntoVentaFixture({ id: 8 }) }
-    rerender(<VentasDelTurno />)
+    rerender(
+      <>
+        <VentasDelTurno />
+        <Toaster />
+      </>,
+    )
     await waitFor(() => expect(listados()).toBeGreaterThan(antes))
     return { resolver: () => resolver({ ...venta, estado: 'Anulado' }), rechazar: (e: unknown) => rechazar(e), listadosConLaCargaNueva: listados(), listados }
   }
 
-  it('si el punto de venta cambió, una anulación que termina bien se informa en un aviso que se puede cerrar, sin tocar el listado nuevo', async () => {
+  it('si el punto de venta cambió, una anulación que termina bien se informa en un toast que se puede cerrar, sin tocar el listado nuevo', async () => {
     const ctx = await anularYCambiarDePuntoVenta()
 
     await act(async () => {
@@ -828,6 +839,8 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
 
     const aviso = await screen.findByRole('status')
     expect(aviso).toHaveTextContent('La venta 0007-00000001 se anuló.')
+    expect(aviso.closest('.ws-toaster')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(ctx.listados()).toBe(ctx.listadosConLaCargaNueva)
     await userEvent.click(within(aviso).getByRole('button', { name: 'Cerrar aviso' }))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
@@ -841,7 +854,10 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
       ctx.rechazar(new ErrorApi(409, 'turno_cerrado', 'El turno ya está cerrado.'))
     })
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo anular la venta 0007-00000001: El turno ya está cerrado.')
+    const aviso = await screen.findByRole('alert')
+    expect(aviso).toHaveTextContent('No se pudo anular la venta 0007-00000001: El turno ya está cerrado.')
+    expect(aviso.closest('.alert-danger')).not.toBeNull()
+    expect(aviso.closest('.ws-toaster')).toBeNull()
     expect(ctx.listados()).toBe(ctx.listadosConLaCargaNueva)
   })
 
@@ -1702,7 +1718,9 @@ describe('VentasDelTurno — nota de crédito (T8c)', () => {
   it('con la NC pendiente no imprime y avisa que se emitirá sola', async () => {
     const imprimir = await anularLaFila(comprobanteFixture({ id: 3, estado: 'Anulado', fiscal: fiscalConNota({ estado: 'pendiente', idFacturacion: 9 }) }))
 
-    expect(await screen.findByText('La venta 0007-00000003 se anuló. La nota de crédito quedó pendiente; se emitirá sola.')).toBeInTheDocument()
+    const aviso = await screen.findByText('La venta 0007-00000003 se anuló. La nota de crédito quedó pendiente; se emitirá sola.')
+    expect(aviso.closest('.alert-warning')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(imprimir).not.toHaveBeenCalled()
   })
 

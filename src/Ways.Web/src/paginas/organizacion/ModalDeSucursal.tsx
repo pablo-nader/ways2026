@@ -2,11 +2,34 @@ import type { EmpresaListado } from '../../api/tipos'
 import { ETIQUETA_SIN_DUENIO } from '../../api/organizacion'
 import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
+import { atributosDeCampoDecimal } from '../../formato/numeros'
+import { PROVINCIAS_ARGENTINAS, type DireccionDelFormulario } from './direccionDeSucursal'
 
 const ID_FORMULARIO_SUCURSAL = 'formulario-sucursal'
 
-/** `id` es `null` en el alta; `idEmpresa` es '' hasta que se elige y no se edita (es estructural). */
-export type FormularioDeSucursal = { id: number | null; idEmpresa: string; nombre: string }
+type CampoDeTexto = {
+  clave: 'calle' | 'altura' | 'ciudad' | 'codigoPostal'
+  etiqueta: string
+  largo: number
+  columnas: string
+}
+
+/** Los largos son los de las columnas (`DireccionDeSucursal.LargoMaximo*`). */
+const CAMPOS_DE_TEXTO: CampoDeTexto[] = [
+  { clave: 'calle', etiqueta: 'Calle', largo: 120, columnas: 'col-md-6' },
+  { clave: 'altura', etiqueta: 'Altura', largo: 20, columnas: 'col-md-3' },
+  { clave: 'codigoPostal', etiqueta: 'Código postal', largo: 10, columnas: 'col-md-3' },
+  { clave: 'ciudad', etiqueta: 'Ciudad', largo: 80, columnas: 'col-md-6' },
+]
+
+const CAMPOS_DE_COORDENADA: { clave: 'latitud' | 'longitud'; etiqueta: string }[] = [
+  { clave: 'latitud', etiqueta: 'Latitud' },
+  { clave: 'longitud', etiqueta: 'Longitud' },
+]
+
+/** `id` es `null` en el alta; `idEmpresa` es '' hasta que se elige y no se edita (es estructural). La dirección es
+ * opcional: `''` es "sin informar". */
+export type FormularioDeSucursal = { id: number | null; idEmpresa: string; nombre: string } & DireccionDelFormulario
 
 type Props = {
   valor: FormularioDeSucursal
@@ -27,7 +50,7 @@ type Props = {
   onCancelar: () => void
 }
 
-/** Alta y renombre de una sucursal en un modal. La empresa se elige al crearla y no se cambia después. */
+/** Alta y edición de una sucursal en un modal. La empresa se elige al crearla y no se cambia después. */
 export function ModalDeSucursal({
   valor,
   empresas,
@@ -115,6 +138,65 @@ export function ModalDeSucursal({
               value={valor.nombre}
               onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
               required
+            />
+          </div>
+          <h3 className="col-12 h6 mb-0 mt-4">Dirección</h3>
+          {CAMPOS_DE_TEXTO.map((campo) => (
+            <div key={campo.clave} className={campo.columnas}>
+              <label className="form-label" htmlFor={`sucursal-${campo.clave}`}>
+                {campo.etiqueta}
+              </label>
+              <input
+                id={`sucursal-${campo.clave}`}
+                className="form-control"
+                maxLength={campo.largo}
+                value={valor[campo.clave]}
+                onChange={(e) => onCambio({ ...valor, [campo.clave]: e.target.value })}
+              />
+            </div>
+          ))}
+          <div className="col-md-6">
+            <label className="form-label" htmlFor="sucursal-provincia">
+              Provincia
+            </label>
+            <select
+              id="sucursal-provincia"
+              className="form-select"
+              value={valor.provincia}
+              onChange={(e) => onCambio({ ...valor, provincia: e.target.value })}
+            >
+              <option value="">Sin informar</option>
+              {PROVINCIAS_ARGENTINAS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+          {CAMPOS_DE_COORDENADA.map((campo) => (
+            <div key={campo.clave} className="col-md-3">
+              <label className="form-label" htmlFor={`sucursal-${campo.clave}`}>
+                {campo.etiqueta}
+              </label>
+              <input
+                id={`sucursal-${campo.clave}`}
+                className="form-control"
+                {...atributosDeCampoDecimal({ decimales: 6, permitirNegativo: true })}
+                value={valor[campo.clave]}
+                onChange={(e) => onCambio({ ...valor, [campo.clave]: e.target.value })}
+              />
+            </div>
+          ))}
+          <div className="col-12">
+            <label className="form-label" htmlFor="sucursal-referencia">
+              Referencia
+            </label>
+            <input
+              id="sucursal-referencia"
+              className="form-control"
+              maxLength={200}
+              value={valor.referencia}
+              onChange={(e) => onCambio({ ...valor, referencia: e.target.value })}
             />
           </div>
         </fieldset>

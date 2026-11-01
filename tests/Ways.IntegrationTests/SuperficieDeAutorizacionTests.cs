@@ -71,6 +71,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // por rol real lo cubre
         // RendicionDeColaEndpointsTests.UnCajeroVendedorDeDispositivoRindeSuColaYQuedaPersistida.
         ("POST", "/api/pos/rendicion-de-cola"),
+        // Alta rápida de cliente desde el POS: mismo grupo /api/clientes (OperacionDePos), sin
+        // GestionDeCatalogo apilado porque la hace el Vendedor. El positivo por rol real es
+        // ClientesEndpointsTests.UnVendedorCreaUnClienteRapidoConLosDefaultsForzados.
+        ("POST", "/api/clientes/rapido"),
 
         // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
         // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que

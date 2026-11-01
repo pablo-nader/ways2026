@@ -3629,6 +3629,83 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Ways.Domain.MercadoPago.LocalMercadoPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_local_mercadopago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("external_id");
+
+                    b.Property<DateTimeOffset>("FechaRegistro")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_registro");
+
+                    b.Property<DateTimeOffset>("FechaSincronizacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_sincronizacion");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<long>("IdStoreMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_store_mercadopago");
+
+                    b.Property<int>("IdSucursal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_sucursal");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<long>("IdUsuarioMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_usuario_mercadopago");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_locales_mercadopago");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_locales_mercadopago_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_locales_mercadopago_empresa");
+
+                    b.HasIndex("IdSucursal", "IdUsuarioMercadoPago")
+                        .IsUnique()
+                        .HasDatabaseName("ux_locales_mercadopago_sucursal_usuario");
+
+                    b.HasIndex("IdSucursal", "IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_locales_mercadopago_sucursal");
+
+                    b.ToTable("locales_mercadopago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_locales_mercadopago_external_id", "length(btrim(external_id)) > 0");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Ofertas.Oferta", b =>
                 {
                     b.Property<int>("Id")
@@ -4067,6 +4144,26 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("Altura")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("altura");
+
+                    b.Property<string>("Calle")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("calle");
+
+                    b.Property<string>("Ciudad")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("ciudad");
+
+                    b.Property<string>("CodigoPostal")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("codigo_postal");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -4087,11 +4184,31 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
 
+                    b.Property<decimal?>("Latitud")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("latitud");
+
+                    b.Property<decimal?>("Longitud")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("longitud");
+
                     b.Property<string>("Nombre")
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
+
+                    b.Property<string>("Provincia")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("provincia");
+
+                    b.Property<string>("Referencia")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("referencia");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -4113,7 +4230,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdSucursalFusion", "IdEmpresa", "IdTenant");
 
-                    b.ToTable("sucursales", (string)null);
+                    b.ToTable("sucursales", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_sucursales_coordenadas_completas", "(latitud IS NULL) = (longitud IS NULL)");
+
+                            t.HasCheckConstraint("ck_sucursales_latitud", "latitud BETWEEN -90 AND 90");
+
+                            t.HasCheckConstraint("ck_sucursales_longitud", "longitud BETWEEN -180 AND 180");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Organizacion.Tenant", b =>
@@ -7630,6 +7754,32 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_conexiones_mercadopago_cuenta_tesoreria");
+                });
+
+            modelBuilder.Entity("Ways.Domain.MercadoPago.LocalMercadoPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_locales_mercadopago_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_locales_mercadopago_empresa");
+
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
+                        .WithMany()
+                        .HasForeignKey("IdSucursal", "IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdEmpresa", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_locales_mercadopago_sucursal");
                 });
 
             modelBuilder.Entity("Ways.Domain.Ofertas.Oferta", b =>

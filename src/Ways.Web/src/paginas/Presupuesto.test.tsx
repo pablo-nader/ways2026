@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Presupuesto } from './Presupuesto'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type { ClienteListado, PresupuestoDetalle, PuntoVentaListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -133,8 +134,25 @@ function renderPantalla(id: string | number = 30) {
       <Routes>
         <Route path="/presupuestos/:id" element={<Presupuesto />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
+
+/** Un fallo de escritura queda en un banner junto a la acción: ni es un toast ni hay uno con su texto. */
+async function bannerPersistente(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -205,6 +223,7 @@ describe('Presupuesto — crear borrador', () => {
           <Route path="/presupuestos/nuevo" element={<Presupuesto />} />
           <Route path="/presupuestos/:id" element={<Presupuesto />} />
         </Routes>
+        <Toaster />
       </MemoryRouter>,
     )
 
@@ -350,10 +369,44 @@ describe('Presupuesto — Anular pide confirmación en un modal', () => {
     const dialogo = await abrirConfirmacion()
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
 
-    expect(await screen.findByText('Presupuesto anulado.')).toBeInTheDocument()
+    await toastDeExito('Presupuesto anulado.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(await screen.findByText('Anulado')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Presupuesto — resultado de las escrituras', () => {
+  it('enviar avisa con un toast de éxito', async () => {
+    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(borradorFixture()) : undefined))
+    apiPostMock.mockResolvedValue(detalleFixture())
+
+    renderPantalla()
+    await userEvent.click(await screen.findByRole('button', { name: 'Enviar' }))
+
+    await toastDeExito('Presupuesto enviado.')
+  })
+
+  it('guardar el borrador avisa con un toast de éxito', async () => {
+    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(borradorFixture()) : undefined))
+    apiPutMock.mockResolvedValue(borradorFixture())
+
+    renderPantalla()
+    const boton = await screen.findByRole('button', { name: 'Guardar borrador' })
+    await waitFor(() => expect(boton).not.toBeDisabled())
+    await userEvent.click(boton)
+
+    await toastDeExito('Borrador guardado.')
+  })
+
+  it('un fallo incierto al enviar queda en un banner persistente junto a la acción', async () => {
+    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(borradorFixture()) : undefined))
+    apiPostMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'No sabemos si el presupuesto se envió.'))
+
+    renderPantalla()
+    await userEvent.click(await screen.findByRole('button', { name: 'Enviar' }))
+
+    await bannerPersistente('No sabemos si el presupuesto se envió.')
   })
 })
 
@@ -412,6 +465,7 @@ describe('Presupuesto — artículos no disponibles a la venta', () => {
           <Route path="/presupuestos/nuevo" element={<Presupuesto />} />
           <Route path="/presupuestos/:id" element={<Presupuesto />} />
         </Routes>
+        <Toaster />
       </MemoryRouter>,
     )
   }
@@ -449,6 +503,6 @@ describe('Presupuesto — artículos no disponibles a la venta', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
 
-    expect(await screen.findByText('El artículo A0007 no está disponible a la venta. Sacalo para poder continuar.')).toBeInTheDocument()
+    await bannerPersistente('El artículo A0007 no está disponible a la venta. Sacalo para poder continuar.')
   })
 })

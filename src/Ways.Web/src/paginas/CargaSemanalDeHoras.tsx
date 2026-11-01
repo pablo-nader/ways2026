@@ -24,8 +24,7 @@ import {
   type Ediciones,
 } from './semanaDeCargaDeHoras'
 import { esRechazoCierto } from './cuentaDePersonalErrores'
-
-type Aviso = { tipo: 'exito' | 'atencion'; texto: string }
+import { toast } from '../toasts/toasts'
 
 /** Salida pendiente de confirmación porque hay horas editadas sin guardar. */
 type Puerta = { accion: () => void; disparador: HTMLElement | null }
@@ -67,7 +66,8 @@ export function CargaSemanalDeHoras() {
   const [cargando, setCargando] = useState(true)
   const [errorDeCarga, setErrorDeCarga] = useState('')
   const [errorDeGuardado, setErrorDeGuardado] = useState('')
-  const [aviso, setAviso] = useState<Aviso | null>(null)
+  /** Resultado incierto o vista desactualizada tras guardar: queda a la vista hasta la próxima acción. */
+  const [aviso, setAviso] = useState('')
   const [ediciones, setEdiciones] = useState<Ediciones>(SIN_EDICIONES)
   const [guardando, setGuardando] = useState(false)
   const [puerta, setPuerta] = useState<Puerta | null>(null)
@@ -138,7 +138,7 @@ export function CargaSemanalDeHoras() {
   }
 
   function irASemana(desde: string | null) {
-    setAviso(null)
+    setAviso('')
     setErrorDeGuardado('')
     void cargar(desde)
   }
@@ -176,7 +176,7 @@ export function CargaSemanalDeHoras() {
     if (guardandoRef.current || semana === null) return
     guardandoRef.current = true
     setGuardando(true)
-    setAviso(null)
+    setAviso('')
     setErrorDeGuardado('')
 
     try {
@@ -193,26 +193,21 @@ export function CargaSemanalDeHoras() {
         // Sin confirmación del servidor: se relee la semana y quien lee decide, no se reintenta a ciegas.
         const vistaActualizada = await cargar(semana.desde)
         if (!vistaActualizada) setVistaVieja(true)
-        setAviso({
-          tipo: 'atencion',
-          texto: vistaActualizada
+        setAviso(
+          vistaActualizada
             ? 'No se pudo confirmar si se guardó la semana. Revisá las horas que se muestran antes de volver a guardar.'
             : 'No se pudo confirmar si se guardó la semana y tampoco se pudo actualizar la vista: hasta que la semana se vuelva a cargar con Reintentar no se puede editar ni guardar.',
-        })
+        )
 
         return
       }
 
       const vistaActualizada = await cargar(semana.desde)
       if (!vistaActualizada) setVistaVieja(true)
-      setAviso(
-        vistaActualizada
-          ? {
-              tipo: 'exito',
-              texto: `Se guardó la semana: ${plural(resultado.jornadasConfirmadas, 'jornada confirmada', 'jornadas confirmadas')} y ${plural(resultado.movimientosCreados, 'movimiento registrado', 'movimientos registrados')}.`,
-            }
-          : { tipo: 'atencion', texto: 'Se guardó la semana, pero no se pudo actualizar la vista: hasta que la semana se vuelva a cargar con Reintentar no se puede editar ni guardar.' },
+      toast.exito(
+        `Se guardó la semana: ${plural(resultado.jornadasConfirmadas, 'jornada confirmada', 'jornadas confirmadas')} y ${plural(resultado.movimientosCreados, 'movimiento registrado', 'movimientos registrados')}.`,
       )
+      if (!vistaActualizada) setAviso('No se pudo actualizar la vista: hasta que la semana se vuelva a cargar con Reintentar no se puede editar ni guardar.')
     } finally {
       guardandoRef.current = false
       setGuardando(false)
@@ -291,8 +286,8 @@ export function CargaSemanalDeHoras() {
           </div>
         )}
         {aviso && (
-          <div className={`alert ${aviso.tipo === 'exito' ? 'alert-success' : 'alert-warning'}`} role="status">
-            {aviso.texto}
+          <div className="alert alert-warning" role="status">
+            {aviso}
           </div>
         )}
 

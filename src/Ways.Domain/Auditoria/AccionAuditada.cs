@@ -171,6 +171,11 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// stock pasan al destino y la sucursal de origen (<c>id_entidad</c>) queda dada de baja. Un solo rastro por fusión.</summary>
     public static readonly AccionAuditada SucursalFusion = new("sucursal.fusion", "sucursal");
 
+    /// <summary>Registro o actualización de una sucursal como local de Mercado Pago
+    /// (<c>POST /api/sucursales/{id}/mercadopago</c>). El <c>id_entidad</c> es la sucursal; el payload dice la operación
+    /// (alta, adopción de un local ya existente o actualización) y los ids de Mercado Pago, nunca un token.</summary>
+    public static readonly AccionAuditada SucursalMercadoPago = new("sucursal.mercadopago", "sucursal");
+
     /// <summary>Edición de una compra confirmada (<c>PUT /api/compras/{id}</c>) — <c>Compras/ServicioDeCompras.cs</c>. El
     /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
     public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
@@ -228,6 +233,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         SucursalEdicion,
         SucursalBaja,
         PuntoVentaSucursal,
-        SucursalFusion
+        SucursalFusion,
+        SucursalMercadoPago
     ];
 }

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ErrorApi } from '../../api/cliente'
 import type { HistorialDePrecio, ListaPrecioListado, PrecioVigente, PuntoVentaListado } from '../../api/tipos'
 import { PuntoVentaContext } from '../../puntoVenta/PuntoVentaContext'
+import { Toaster } from '../../toasts/Toaster'
 import { EditorDePrecios } from './EditorDePrecios'
 import type { FamiliaDelArticulo } from './familia'
 
@@ -65,17 +66,20 @@ function montar(props: Partial<ComponentProps<typeof EditorDePrecios>> = {}) {
   const alSalirDeLaFamilia = vi.fn()
   const alCambiarLaFamilia = vi.fn()
   const resultado = render(
-    <EditorDePrecios
-      idArticulo={31}
-      listasPrecio={[listaGeneral]}
-      bloqueadoPorPadre={false}
-      alDeEscribir={alDeEscribir}
-      familia={sabores}
-      alSalirDeLaFamilia={alSalirDeLaFamilia}
-      alEscribirPrecio={vi.fn()}
-      alCambiarLaFamilia={alCambiarLaFamilia}
-      {...props}
-    />,
+    <>
+      <EditorDePrecios
+        idArticulo={31}
+        listasPrecio={[listaGeneral]}
+        bloqueadoPorPadre={false}
+        alDeEscribir={alDeEscribir}
+        familia={sabores}
+        alSalirDeLaFamilia={alSalirDeLaFamilia}
+        alEscribirPrecio={vi.fn()}
+        alCambiarLaFamilia={alCambiarLaFamilia}
+        {...props}
+      />
+      <Toaster />
+    </>,
   )
   return { ...resultado, alDeEscribir, alSalirDeLaFamilia, alCambiarLaFamilia }
 }
@@ -86,6 +90,14 @@ async function abrirPanelDeLaLista() {
   const gestionar = await screen.findByRole('button', { name: 'Gestionar' })
   await userEvent.click(gestionar)
   await screen.findByRole('button', { name: 'Establecer ahora' })
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 async function escribirPrecio(texto: string) {
@@ -249,7 +261,7 @@ describe('EditorDePrecios — un miembro de una familia pregunta el alcance ante
       confirmarReemplazo: false,
       alcance: 'Familia',
     })
-    expect(await screen.findByText('El precio se aplicó a toda la familia "Sabores".')).toBeInTheDocument()
+    await toastDeExito('El precio se aplicó a toda la familia "Sabores".')
     expect(await screen.findByText('$ 1.500,00')).toBeInTheDocument()
     expect(alSalirDeLaFamilia).not.toHaveBeenCalled()
     expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
@@ -307,7 +319,7 @@ describe('EditorDePrecios — un miembro de una familia pregunta el alcance ante
 
     await userEvent.click(screen.getByRole('button', { name: 'Toda la familia' }))
 
-    expect(await screen.findByText('El precio se programó para toda la familia "Sabores".')).toBeInTheDocument()
+    await toastDeExito('El precio se programó para toda la familia "Sabores".')
     expect(screen.queryByText(/se aplicó/)).not.toBeInTheDocument()
   })
 
@@ -652,26 +664,6 @@ describe('EditorDePrecios — el foco de la pregunta de alcance', () => {
 })
 
 describe('EditorDePrecios — cada acción que empieza borra lo que dijo la anterior', () => {
-  /** Cláusula bajo prueba: `setAviso('')` de `iniciarGuardado`. Abrir la pregunta no pasa por `guardarPrecio` (que ya
-   * limpia el aviso), así que esa línea es la única que lo saca. Evidencia de mutación (mutation-proof-tests): sacarla
-   * hace fallar este test (el aviso del precio anterior sigue en pantalla con la pregunta abierta); revertido, vuelve a
-   * verde. */
-  it('abrir la pregunta saca de pantalla el aviso del precio anterior para toda la familia', async () => {
-    montar()
-    await abrirPanelDeLaLista()
-    await escribirPrecio('1500')
-    await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Toda la familia' }))
-    await screen.findByText('El precio se aplicó a toda la familia "Sabores".')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Establecer ahora' })).toBeEnabled())
-
-    await escribirPrecio('1600')
-    await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
-
-    expect(screen.getByRole('dialog', { name: 'Alcance del precio' })).toBeInTheDocument()
-    expect(screen.queryByText('El precio se aplicó a toda la familia "Sabores".')).not.toBeInTheDocument()
-  })
-
   /** Cláusula bajo prueba: `error: ''` del estado con el que `iniciarGuardado` abre la pregunta. Evidencia de mutación
    * (mutation-proof-tests): sacarlo hace fallar este test (el rechazo anterior sigue en pantalla con la pregunta
    * abierta); revertido, vuelve a verde. */

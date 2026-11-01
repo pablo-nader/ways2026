@@ -1,5 +1,6 @@
 using Ways.Domain.Auditoria;
 using Ways.Domain.Compras;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 
@@ -161,15 +162,23 @@ public class PayloadDeAuditoriaTests
     [Fact]
     public void LosPayloadsDeSucursalSonConstruiblesYDicenLoQueCambio()
     {
-        var alta = PayloadDeAuditoria.AltaDeSucursal(7, "Centro");
+        var direccion = DireccionDeSucursal.Normalizar(
+            "Mitre", "1234", "Rosario", "santa fe", "2000", -32.9468m, -60.6393m, "Esquina con farmacia");
+        var alta = PayloadDeAuditoria.AltaDeSucursal(7, "Centro", direccion);
         AsumirConstruible(AccionAuditada.SucursalAlta, alta);
         Assert.Null(alta.Anterior);
         Assert.Equal(7, alta.Nuevo["id_empresa"]);
+        Assert.Equal("Santa Fe", alta.Nuevo["provincia"]);
+        Assert.Equal(-32.9468m, alta.Nuevo["latitud"]);
+        Assert.Equal("Esquina con farmacia", alta.Nuevo["referencia"]);
 
-        var renombre = PayloadDeAuditoria.RenombreDeSucursal("Centro", "Centro Norte");
-        AsumirConstruible(AccionAuditada.SucursalEdicion, renombre);
-        Assert.Equal("Centro", renombre.Anterior!["nombre"]);
-        Assert.Equal("Centro Norte", renombre.Nuevo["nombre"]);
+        var edicion = PayloadDeAuditoria.EdicionDeSucursal(
+            "Centro", DireccionDeSucursal.Vacia, "Centro Norte", direccion);
+        AsumirConstruible(AccionAuditada.SucursalEdicion, edicion);
+        Assert.Equal("Centro", edicion.Anterior!["nombre"]);
+        Assert.Null(edicion.Anterior["calle"]);
+        Assert.Equal("Centro Norte", edicion.Nuevo["nombre"]);
+        Assert.Equal("Mitre", edicion.Nuevo["calle"]);
 
         var movimiento = PayloadDeAuditoria.CambioDeSucursalDePuntoVenta(3, 4, sucursalDadaDeBaja: true);
         AsumirConstruible(AccionAuditada.PuntoVentaSucursal, movimiento);
@@ -196,6 +205,22 @@ public class PayloadDeAuditoriaTests
         Assert.Equal(3, fusion.Nuevo["articulos"]);
         Assert.Equal(2, fusion.Nuevo["lotes"]);
         Assert.Equal(10, fusion.Nuevo["movimientos"]);
+    }
+
+    [Fact]
+    public void LocalDeMercadoPagoDiceLaOperacionYLosIdsSinNingunToken()
+    {
+        var momento = DateTimeOffset.UtcNow;
+        var payload = PayloadDeAuditoria.LocalDeMercadoPago("alta", 77, 555, "WAYSS7", momento);
+
+        AsumirConstruible(AccionAuditada.SucursalMercadoPago, payload);
+        Assert.Null(payload.Anterior);
+        Assert.Equal("alta", payload.Nuevo["operacion"]);
+        Assert.Equal(77L, payload.Nuevo["id_usuario_mercadopago"]);
+        Assert.Equal(555L, payload.Nuevo["id_store_mercadopago"]);
+        Assert.Equal("WAYSS7", payload.Nuevo["external_id"]);
+        Assert.Equal(momento, payload.Nuevo["fecha_sincronizacion"]);
+        Assert.DoesNotContain(payload.Nuevo.Keys, k => k.Contains("token", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

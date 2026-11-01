@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Articulos } from './Articulos'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type {
   AlicuotaIvaListado,
   ArticuloListado,
@@ -287,6 +288,7 @@ function renderArticulos(rutaInicial = '/articulos') {
       <Routes>
         <Route path="/articulos/*" element={<Articulos />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
 }
@@ -310,6 +312,7 @@ function renderArticulosConHistorial(entradas: string[], indiceInicial: number) 
       <Routes>
         <Route path="/articulos/*" element={<Articulos />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
 }
@@ -1274,9 +1277,10 @@ describe('Articulos — edición de un miembro: el alcance de un cambio', () => 
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
     expect(pedidosDeEdicion()[0][0]).toBe('/articulos/31')
     expect(pedidosDeEdicion()[0][1]).toMatchObject({ costoLista: 175, alcance: 'Familia' })
-    expect(
-      await screen.findByText('Artículo "Vainilla" actualizado. Los cambios en los campos compartidos se aplicaron a toda la familia "Sabores".'),
-    ).toBeInTheDocument()
+    const aviso = await screen.findByText('Artículo "Vainilla" actualizado. Los cambios en los campos compartidos se aplicaron a toda la familia "Sabores".')
+    expect(aviso.closest('.ws-toaster')).not.toBeNull()
+    expect(aviso.closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
     expect(screen.getByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
     await waitFor(() => expect(llamadasAGrilla()).toBeGreaterThan(lecturasDeLaGrillaAntes))
@@ -1404,23 +1408,6 @@ describe('Articulos — edición de un miembro: el alcance de un cambio', () => 
     })
 
     expect(apiPutMock).toHaveBeenCalledTimes(1)
-  })
-
-  /** Cláusula bajo prueba: `setAvisoGuardado('')` de `pedirGuardado`. Abrir la pregunta no pasa por `guardar`, que ya
-   * limpia el aviso: esa línea es la única que saca el del guardado anterior. Evidencia de mutación
-   * (mutation-proof-tests): sacarla hace fallar este test; revertido, vuelve a verde. */
-  it('abrir la pregunta saca de pantalla el aviso del guardado anterior', async () => {
-    await abrirEdicion()
-    await cambiarCostoDeLista('175')
-    await guardar()
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).getByRole('button', { name: 'Toda la familia' }))
-    await screen.findByText('Artículo "Vainilla" actualizado. Los cambios en los campos compartidos se aplicaron a toda la familia "Sabores".')
-
-    await cambiarCostoDeLista('180')
-    await guardar()
-
-    expect(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).toBeInTheDocument()
-    expect(screen.queryByText(/actualizado\./)).not.toBeInTheDocument()
   })
 
   /** Cláusula bajo prueba: `setErrorGuardado('')` de `pedirGuardado`, la hermana de la anterior para el rechazo.

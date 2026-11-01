@@ -1,7 +1,16 @@
-import type { CuentaDelLibro, DesgloseDeMedioDelLibro, FilaDelLibro, LibroDeTesoreria, SaldosDelLibro } from '../../api/tipos'
+import {
+  CATEGORIAS_PAGO,
+  type CategoriaPago,
+  type CuentaDelLibro,
+  type DesgloseDeMedioDelLibro,
+  type FilaDelLibro,
+  type LibroDeTesoreria,
+  type SaldosDelLibro,
+} from '../../api/tipos'
 import { formatearImporte, redondearImporte } from '../../formato/importes'
 
 export const CLASE_DE_IMPORTE_NEGATIVO = 'libro-importe--negativo'
+export const CLASE_DE_IMPORTE_POSITIVO = 'libro-importe--positivo'
 
 /** Clase del importe: solo el negativo se pinta (rojo del tema); positivo y cero conservan el color del texto. */
 export function claseDeImporte(valor: number | null | undefined): string {
@@ -29,6 +38,31 @@ export function etiquetaDeCaja(numero: number, diferenciaArqueo: number | null):
 
 export function detalleDeAjuste(concepto: string): string {
   return `Ajuste: ${concepto}`
+}
+
+/** Tono del chip: sufijo de la clase `text-bg-*` del badge del sistema de diseño. */
+export type CategoriaDeFila = { etiqueta: string; tono: 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'secondary' }
+
+const TONO_DE_CATEGORIA_DE_PAGO: Record<CategoriaPago, CategoriaDeFila['tono']> = {
+  Proveedor: 'primary',
+  Sueldos: 'success',
+  Viaticos: 'warning',
+  Impuestos: 'danger',
+  Servicios: 'info',
+  Otros: 'secondary',
+}
+
+/** La categoría que rotula la fila: la del pago, "Caja" para el cierre de un turno y "Ajuste" para los ajustes manuales. */
+export function categoriaDeFila(fila: FilaDelLibro): CategoriaDeFila {
+  if (fila.tipo === 'Caja') return { etiqueta: 'Caja', tono: 'secondary' }
+  if (fila.tipo === 'Pago' && fila.pago) {
+    const { categoria } = fila.pago
+    return {
+      etiqueta: CATEGORIAS_PAGO.find((c) => c.valor === categoria)?.etiqueta ?? categoria,
+      tono: TONO_DE_CATEGORIA_DE_PAGO[categoria] ?? 'secondary',
+    }
+  }
+  return { etiqueta: 'Ajuste', tono: 'secondary' }
 }
 
 export type ColumnaDeCuenta = { id: number; titulo: string }
@@ -60,4 +94,24 @@ export function estaConciliada(fecha: string, conciliadoHasta: string | null): b
   const instante = Date.parse(fecha)
   const marca = Date.parse(conciliadoHasta)
   return !Number.isNaN(instante) && !Number.isNaN(marca) && instante <= marca
+}
+
+/** Cada fila con su posición original (orden del servidor, de la más vieja a la más nueva), que desempata el orden por fecha. */
+export function entradasDelLibro(filas: readonly FilaDelLibro[]): { fila: FilaDelLibro; indice: number }[] {
+  return filas.map((fila, indice) => ({ fila, indice }))
+}
+
+/** Clase de la diferencia del arqueo: el faltante usa el rojo del tema y el sobrante el verde. */
+export function claseDeDiferencia(valor: number): string {
+  const redondeado = redondearImporte(valor)
+  if (redondeado < 0) return CLASE_DE_IMPORTE_NEGATIVO
+
+  return redondeado > 0 ? CLASE_DE_IMPORTE_POSITIVO : ''
+}
+
+/** Destino del ícono de detalle; `null` cuando la fila no tiene a dónde ir (los pagos solo los abre el Admin). */
+export function destinoDelDetalle(fila: FilaDelLibro, puedeAbrirPagos: boolean): string | null {
+  if (fila.tipo === 'Caja' && fila.caja) return `/caja/turnos/${fila.caja.idTurnoCaja}/z`
+  if (fila.tipo === 'Pago' && fila.pago && puedeAbrirPagos) return `/pagos?id=${fila.pago.idPago}`
+  return null
 }

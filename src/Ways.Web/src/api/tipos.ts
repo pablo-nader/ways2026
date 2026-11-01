@@ -615,13 +615,28 @@ export type SucursalListado = {
   nombre: string
   razonSocialEmpresa: string | null
   cantidadPuntosVenta: number
+} & Partial<SucursalDireccion>
+
+/** Dirección estructurada de una sucursal, toda opcional — espejo de los campos de dirección de `SucursalAlta`,
+ * `SucursalEdicion` y `SucursalListado`. `provincia` es el nombre canónico de una de las 24 jurisdicciones; la latitud y
+ * la longitud van juntas o ninguna. */
+export type SucursalDireccion = {
+  calle: string | null
+  altura: string | null
+  ciudad: string | null
+  provincia: string | null
+  codigoPostal: string | null
+  latitud: number | null
+  longitud: number | null
+  referencia: string | null
 }
 
 /** Cuerpo de `POST /api/sucursales` — espejo de `SucursalAlta`. */
-export type SucursalAlta = { idEmpresa: number; nombre: string }
+export type SucursalAlta = { idEmpresa: number; nombre: string } & SucursalDireccion
 
-/** Cuerpo de `PUT /api/sucursales/{id}` — espejo de `SucursalEdicion`: el nombre es lo único editable. */
-export type SucursalEdicion = { nombre: string }
+/** Cuerpo de `PUT /api/sucursales/{id}` — espejo de `SucursalEdicion`: el nombre y la dirección; la dirección se
+ * reemplaza entera. */
+export type SucursalEdicion = { nombre: string } & SucursalDireccion
 
 /** Cuerpo de `POST /api/sucursales/{id}/fusionar` — espejo de `SucursalFusion`: la sucursal que absorbe a la del id. */
 export type SucursalFusion = { idSucursalDestino: number }

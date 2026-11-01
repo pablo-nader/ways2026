@@ -160,7 +160,7 @@ public static class OrganizacionEndpoints
             ServicioDeOrganizacion servicio, int id, SucursalEdicion datos, CancellationToken ct) =>
             servicio.ActualizarSucursalAsync(id, datos, ct))
         .RequireAuthorization(Politicas.GestionDeOrganizacion)
-        .WithSummary("Renombra una sucursal.");
+        .WithSummary("Edita el nombre y la dirección de una sucursal.");
 
         sucursales.MapDelete("/{id:int}", async (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
         {

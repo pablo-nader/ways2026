@@ -11,6 +11,7 @@ import {
   lineasEditablesDesdeListado,
   type LineaDePagoEditable,
 } from './lineasDePago'
+import { esPagoAPersonal } from './sueldoConPersonal'
 import type {
   CategoriaPago,
   LineaDePagoListada,
@@ -132,6 +133,8 @@ export type FormularioDePagoDeAdministracion = {
   idPuntoVenta: number | ''
   categoria: CategoriaPago
   idProveedor: number | ''
+  /** Solo con la categoría Sueldos: el empleado al que se le registra el pago. */
+  idPersonal: number | ''
   idArea: number | ''
   concepto: string
   detalle: string
@@ -149,6 +152,7 @@ export function formularioDePagoDeAdministracionVacio(
     idPuntoVenta: '',
     categoria: 'Otros',
     idProveedor: '',
+    idPersonal: '',
     idArea: '',
     concepto: '',
     detalle: '',
@@ -191,7 +195,8 @@ export function aSolicitudDePagoDeAdministracion(f: FormularioDePagoDeAdministra
 /** Feedback instantáneo client-side (el servidor vuelve a validar todo, `dto-contract-honesty`):
  * fecha elegida, empresa, concepto no vacío y todas las líneas válidas (`errorDeLineasDePago`). */
 export function formularioDePagoDeAdministracionCompleto(f: FormularioDePagoDeAdministracion): boolean {
-  return f.fecha.trim() !== '' && f.idEmpresa !== '' && f.concepto.trim() !== '' && errorDeLineasDePago(f.lineas) === null
+  const conceptoOk = esPagoAPersonal(f) || f.concepto.trim() !== ''
+  return f.fecha.trim() !== '' && f.idEmpresa !== '' && conceptoOk && errorDeLineasDePago(f.lineas) === null
 }
 
 // --- Edición de pagos (POS y administración comparten formulario y mapeo) ---------------------

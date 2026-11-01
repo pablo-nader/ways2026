@@ -711,6 +711,34 @@ export function aClienteListado(c: ClienteDeInstantanea): ClienteListado {
   }
 }
 
+/**
+ * Copia de la instantánea con un cliente recién dado de alta (o actualizado), para venderle aunque se corte la red:
+ * reemplaza al que tenga el mismo id y mantiene el orden por número. No toca la instantánea recibida.
+ */
+export function conClienteEnInstantanea(instantanea: InstantaneaDePos, cliente: ClienteListado): InstantaneaDePos {
+  const nuevo: ClienteDeInstantanea = {
+    idCliente: cliente.id,
+    numero: cliente.numero,
+    nombre: cliente.nombre,
+    apellido: cliente.apellido,
+    razonSocial: cliente.razonSocial,
+    tipoDocumento: cliente.tipoDocumento,
+    numeroDocumento: cliente.numeroDocumento,
+    idCondicionFiscal: cliente.idCondicionFiscal,
+    idEmpresa: cliente.idEmpresa,
+    idListaPrecio: cliente.idListaPrecio,
+    esConsumidorFinal: cliente.esConsumidorFinal,
+    saldo: cliente.saldo,
+    limiteCredito: cliente.limiteCredito,
+    creditoIlimitado: cliente.creditoIlimitado,
+    domicilio: cliente.domicilio,
+    telefono: cliente.telefono,
+    celular: cliente.celular,
+  }
+  const clientes = [...instantanea.clientes.filter((c) => c.idCliente !== cliente.id), nuevo].sort((a, b) => a.numero - b.numero)
+  return { ...instantanea, clientes }
+}
+
 /** Lleva un medio de pago de la instantánea a `MedioPagoListado`. `orden` sale de la posición (la
  * instantánea ya viene ordenada); `idEmpresa`/`recargoPorcentaje` no viajan y la pantalla de venta
  * no los lee. */

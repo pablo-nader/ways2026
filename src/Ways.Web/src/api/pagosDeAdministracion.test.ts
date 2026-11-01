@@ -21,6 +21,7 @@ function formularioFixture(sobrescribir: Partial<FormularioDePagoDeAdministracio
     idPuntoVenta: '',
     categoria: 'Otros',
     idProveedor: '',
+    idPersonal: '',
     idArea: '',
     concepto: 'Alquiler de septiembre',
     detalle: '',
@@ -118,6 +119,18 @@ describe('aSolicitudDePagoDeAdministracion', () => {
 describe('formularioDePagoDeAdministracionCompleto', () => {
   it('true cuando fecha, empresa, concepto y todas las líneas válidas están', () => {
     expect(formularioDePagoDeAdministracionCompleto(formularioFixture())).toBe(true)
+  })
+
+  it('con Sueldos y un empleado elegido no exige el concepto, que no viaja en un pago de personal', () => {
+    expect(
+      formularioDePagoDeAdministracionCompleto(formularioFixture({ categoria: 'Sueldos', idPersonal: 4, concepto: '' })),
+    ).toBe(true)
+  })
+
+  it('Sueldos sin empleado sigue exigiendo el concepto', () => {
+    expect(
+      formularioDePagoDeAdministracionCompleto(formularioFixture({ categoria: 'Sueldos', idPersonal: '', concepto: '' })),
+    ).toBe(false)
   })
 
   it.each([
