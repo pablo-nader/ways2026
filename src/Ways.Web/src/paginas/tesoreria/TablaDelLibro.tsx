@@ -1,4 +1,4 @@
-import { Link } from 'react-router'
+import { EnlaceIcono } from '../../componentes/BotonIcono'
 import type { DatosDeCajaDelLibro, FilaDelLibro, LibroDeTesoreria } from '../../api/tipos'
 import { fechaHoraATexto } from '../../formato/fechas'
 import { ConGlobo } from './ConGlobo'
@@ -6,11 +6,16 @@ import {
   claseDeImporte,
   columnasDeCuentas,
   detalleDeAjuste,
+  destinoDelDetalle,
+  estiloDeDiferencia,
   estaConciliada,
   etiquetaDeCaja,
+  filasMasRecientesPrimero,
   hayFilasSinCuenta,
   hayRetenciones,
   importeDeCuenta,
+  claseDeDiferencia,
+  textoDeDiferencia,
   saldoDeCuenta,
   textoDeImporte,
 } from './libro'
@@ -68,9 +73,18 @@ function DetalleDeCaja({ caja, id }: { caja: DatosDeCajaDelLibro; id: string }) 
   return (
     <ConGlobo id={id} globo={globo}>
       {(accesibilidad) => (
-        <Link to={`/caja/turnos/${caja.idTurnoCaja}/z`} target="_blank" rel="noopener noreferrer" {...accesibilidad}>
-          {etiquetaDeCaja(caja.numero, caja.diferenciaArqueo)}
-        </Link>
+        <span tabIndex={0} {...accesibilidad}>
+          {`Caja #${caja.numero}`}
+          {caja.diferenciaArqueo !== null && (
+            <>
+              {' ('}
+              <span className={claseDeDiferencia(caja.diferenciaArqueo)} style={estiloDeDiferencia(caja.diferenciaArqueo)}>
+                {textoDeDiferencia(caja.diferenciaArqueo)}
+              </span>
+              {')'}
+            </>
+          )}
+        </span>
       )}
     </ConGlobo>
   )
@@ -118,24 +132,20 @@ function CeldaDeCuenta({ fila, idCuenta, id }: { fila: FilaDelLibro; idCuenta: n
   )
 }
 
-function Detalle({ fila, indice, puedeAbrirPagos }: { fila: FilaDelLibro; indice: number; puedeAbrirPagos: boolean }) {
+function Detalle({ fila, indice }: { fila: FilaDelLibro; indice: number }) {
   if (fila.tipo === 'Caja' && fila.caja) return <DetalleDeCaja caja={fila.caja} id={`libro-globo-caja-${indice}`} />
-
-  if (fila.tipo === 'Pago' && fila.pago) {
-    return puedeAbrirPagos ? (
-      <Link to={`/pagos?id=${fila.pago.idPago}`} target="_blank" rel="noopener noreferrer">
-        {fila.pago.detalle}
-      </Link>
-    ) : (
-      <>{fila.pago.detalle}</>
-    )
-  }
-
+  if (fila.tipo === 'Pago' && fila.pago) return <>{fila.pago.detalle}</>
   return <>{detalleDeAjuste(fila.ajuste?.concepto ?? '')}</>
+}
+
+function textoDelDetalle(fila: FilaDelLibro): string {
+  if (fila.tipo === 'Caja' && fila.caja) return etiquetaDeCaja(fila.caja.numero, fila.caja.diferenciaArqueo)
+  return fila.pago?.detalle ?? ''
 }
 
 /** Una columna de efectivo, una por cuenta y, si alguna fila la usa, "Sin cuenta"; la primera fila es el saldo anterior al rango. */
 export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
+  const filas = filasMasRecientesPrimero(libro.filas)
   const columnas = columnasDeCuentas(libro.cuentas)
   const conSinCuenta = hayFilasSinCuenta(libro)
   const saldoAnteriorCongelado = estaConciliada(libro.desde, libro.conciliadoHasta)
@@ -160,23 +170,13 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
                 Sin cuenta
               </th>
             )}
+            <th scope="col">
+              <span className="visually-hidden">Ver detalle</span>
+            </th>
           </tr>
         </thead>
         <tbody>
-          <tr data-fila="saldo-anterior" className={saldoAnteriorCongelado ? 'libro-fila--conciliada' : undefined}>
-            <td>{saldoAnteriorCongelado && <MarcaDeConciliado />}</td>
-            <td className="libro-detalle fw-semibold">Saldo anterior</td>
-            <td className="text-end">
-              <Importe valor={libro.saldoAnterior.efectivo} />
-            </td>
-            {columnas.map((c) => (
-              <td className="text-end" key={c.id}>
-                <Importe valor={saldoDeCuenta(libro.saldoAnterior, c.id)} />
-              </td>
-            ))}
-            {conSinCuenta && <td />}
-          </tr>
-          {libro.filas.map((fila, i) => {
+          {filas.map(({ fila, indice: i }) => {
             const congelada = estaConciliada(fila.fecha, libro.conciliadoHasta)
             return (
               <tr key={`${fila.tipo}-${i}`} className={congelada ? 'libro-fila--conciliada' : undefined}>
@@ -185,7 +185,7 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
                   {fechaHoraATexto(fila.fecha)}
                 </td>
                 <td className="libro-detalle">
-                  <Detalle fila={fila} indice={i} puedeAbrirPagos={puedeAbrirPagos} />
+                  <Detalle fila={fila} indice={i} />
                 </td>
                 <td className="text-end">
                   <Importe valor={fila.efectivo} />
@@ -200,16 +200,41 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
                     <Importe valor={fila.sinCuenta} />
                   </td>
                 )}
+                <td className="text-end">
+                  {destinoDelDetalle(fila, puedeAbrirPagos) && (
+                    <EnlaceIcono
+                      icono="detalle"
+                      etiqueta={`Ver detalle de ${textoDelDetalle(fila)}`}
+                      to={destinoDelDetalle(fila, puedeAbrirPagos)!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  )}
+                </td>
               </tr>
             )
           })}
           {libro.filas.length === 0 && (
             <tr>
-              <td colSpan={columnas.length + 3 + (conSinCuenta ? 1 : 0)} className="text-center text-muted py-4">
+              <td colSpan={columnas.length + 4 + (conSinCuenta ? 1 : 0)} className="text-center text-muted py-4">
                 No hay movimientos en el rango elegido.
               </td>
             </tr>
           )}
+          <tr data-fila="saldo-anterior" className={saldoAnteriorCongelado ? 'libro-fila--conciliada' : undefined}>
+            <td>{saldoAnteriorCongelado && <MarcaDeConciliado />}</td>
+            <td className="libro-detalle fw-semibold">Saldo anterior</td>
+            <td className="text-end">
+              <Importe valor={libro.saldoAnterior.efectivo} />
+            </td>
+            {columnas.map((c) => (
+              <td className="text-end" key={c.id}>
+                <Importe valor={saldoDeCuenta(libro.saldoAnterior, c.id)} />
+              </td>
+            ))}
+            {conSinCuenta && <td />}
+            <td />
+          </tr>
         </tbody>
       </table>
     </div>

@@ -61,3 +61,25 @@ export function estaConciliada(fecha: string, conciliadoHasta: string | null): b
   const marca = Date.parse(conciliadoHasta)
   return !Number.isNaN(instante) && !Number.isNaN(marca) && instante <= marca
 }
+
+/** Filas del libro de la más nueva a la más vieja; conservan su posición original para identificar el globo de cada una. */
+export function filasMasRecientesPrimero(filas: readonly FilaDelLibro[]): { fila: FilaDelLibro; indice: number }[] {
+  return filas.map((fila, indice) => ({ fila, indice })).reverse()
+}
+
+/** Clase de la diferencia del arqueo: el faltante usa el rojo del tema. */
+export function claseDeDiferencia(valor: number): string {
+  return redondearImporte(valor) < 0 ? CLASE_DE_IMPORTE_NEGATIVO : ''
+}
+
+/** Estilo de la diferencia del arqueo: el sobrante usa el verde (`--ws-ok`) del tema. */
+export function estiloDeDiferencia(valor: number): { color: string } | undefined {
+  return redondearImporte(valor) > 0 ? { color: 'var(--ws-ok)' } : undefined
+}
+
+/** Destino del ícono de detalle; `null` cuando la fila no tiene a dónde ir (los pagos solo los abre el Admin). */
+export function destinoDelDetalle(fila: FilaDelLibro, puedeAbrirPagos: boolean): string | null {
+  if (fila.tipo === 'Caja' && fila.caja) return `/caja/turnos/${fila.caja.idTurnoCaja}/z`
+  if (fila.tipo === 'Pago' && fila.pago && puedeAbrirPagos) return `/pagos?id=${fila.pago.idPago}`
+  return null
+}

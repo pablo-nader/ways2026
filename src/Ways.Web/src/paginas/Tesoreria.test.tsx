@@ -337,9 +337,9 @@ describe('Tesoreria — libro: liquidez y saldo anterior', () => {
     const encabezados = within(screen.getByRole('table'))
       .getAllByRole('columnheader')
       .map((h) => h.textContent)
-    expect(encabezados).toEqual(['Fecha', 'Detalle', 'Efectivo', 'Mercado Pago', 'Banco'])
+    expect(encabezados).toEqual(['Fecha', 'Detalle', 'Efectivo', 'Mercado Pago', 'Banco', 'Ver detalle'])
 
-    const primera = screen.getByRole('table').querySelector('tbody tr') as HTMLElement
+    const primera = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).at(-1) as HTMLElement
     const celdas = celdasDeLaFila(primera).map((c) => c.textContent)
     expect(celdas[1]).toBe('Saldo anterior')
     expect(celdas[2]).toMatch(/^\$\s10\.000,00$/)
@@ -362,39 +362,55 @@ describe('Tesoreria — libro: liquidez y saldo anterior', () => {
     expect(screen.getByRole('columnheader', { name: 'Sin cuenta' })).toBeInTheDocument()
     const fila = screen.getByText('Proveedor: Flete').closest('tr') as HTMLElement
     const celdas = celdasDeLaFila(fila)
-    expect(celdas[celdas.length - 1]).toHaveTextContent(/-\$\s80,00/)
-    expect(within(celdas[celdas.length - 1]).getByText(/-\$\s80,00/)).toHaveClass('libro-importe--negativo')
+    expect(celdas[celdas.length - 2]).toHaveTextContent(/-\$\s80,00/)
+    expect(within(celdas[celdas.length - 2]).getByText(/-\$\s80,00/)).toHaveClass('libro-importe--negativo')
   })
 })
 
 describe('Tesoreria — libro: filas', () => {
-  it('Caja: enlace al Z en pestaña nueva con la diferencia del arqueo, y celdas vacías donde la fila no toca', async () => {
+  it('Caja: el detalle es texto plano con la diferencia del arqueo y el ícono lleva al Z en pestaña nueva', async () => {
     mockearRutas()
     renderTesoreria()
     await esperarElLibro()
 
-    const enlace = screen.getByRole('link', { name: 'Caja #137 ($ -1.500)' })
+    const detalle = screen.getByText(/^Caja #137/)
+    expect(detalle.closest('a')).toBeNull()
+    expect(detalle).toHaveTextContent('Caja #137 ($ -1.500)')
+
+    const enlace = screen.getByRole('link', { name: 'Ver detalle de Caja #137 ($ -1.500)' })
     expect(enlace).toHaveAttribute('href', '/caja/turnos/137/z')
     expect(enlace).toHaveAttribute('target', '_blank')
     expect(enlace).toHaveAttribute('rel', 'noopener noreferrer')
 
     const celdas = celdasDeLaFila(enlace.closest('tr') as HTMLElement)
+    expect(celdas[1]).toBe(detalle.closest('td'))
     expect(celdas[2]).toHaveTextContent(/^\$\s3\.000,00$/)
     expect(celdas[3]).toHaveTextContent(/^\$\s950,00$/)
     expect(celdas[4].textContent).toBe('')
+    expect(celdas[celdas.length - 1]).toContainElement(enlace)
   })
 
-  it('Caja: la diferencia positiva lleva signo y sin diferencia se muestra solo el número', async () => {
+  it('Caja: la diferencia positiva lleva signo y verde, la negativa rojo y sin diferencia se muestra solo el número', async () => {
     const sinDiferencia = filaDeCaja()
     sinDiferencia.caja = { ...sinDiferencia.caja!, numero: 150, idTurnoCaja: 150, diferenciaArqueo: null }
     const sobrante = filaDeCaja()
     sobrante.caja = { ...sobrante.caja!, numero: 151, idTurnoCaja: 151, diferenciaArqueo: 1300 }
-    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [sinDiferencia, sobrante] })) })
+    const faltante = filaDeCaja()
+    faltante.caja = { ...faltante.caja!, numero: 152, idTurnoCaja: 152, diferenciaArqueo: -200 }
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [sinDiferencia, sobrante, faltante] })) })
     renderTesoreria()
     await esperarElLibro()
 
-    expect(screen.getByRole('link', { name: 'Caja #150' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Caja #151 ($ +1.300)' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ver detalle de Caja #150' })).toBeInTheDocument()
+    expect(screen.getByText(/^Caja #150$/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ver detalle de Caja #151 ($ +1.300)' })).toBeInTheDocument()
+
+    const verde = screen.getByText('$ +1.300')
+    expect(verde.style.color).toBe('var(--ws-ok)')
+    expect(verde).not.toHaveClass('libro-importe--negativo')
+    const rojo = screen.getByText('$ -200')
+    expect(rojo).toHaveClass('libro-importe--negativo')
+    expect(rojo.style.color).toBe('')
   })
 
   it('Caja: el tooltip muestra apertura, cierre y punto de venta con el mouse y con el foco, y se cierra con Escape', async () => {
@@ -402,7 +418,7 @@ describe('Tesoreria — libro: filas', () => {
     renderTesoreria()
     await esperarElLibro()
     const usuario = userEvent.setup()
-    const enlace = screen.getByRole('link', { name: /Caja #137/ })
+    const enlace = screen.getByText(/^Caja #137/)
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
 
     await usuario.hover(enlace)
@@ -427,7 +443,7 @@ describe('Tesoreria — libro: filas', () => {
     renderTesoreria()
     await esperarElLibro()
     const usuario = userEvent.setup()
-    const celda = celdasDeLaFila(screen.getByRole('link', { name: /Caja #137/ }).closest('tr') as HTMLElement)[3]
+    const celda = celdasDeLaFila(screen.getByText(/^Caja #137/).closest('tr') as HTMLElement)[3]
 
     await usuario.hover(within(celda).getByText(/950,00/))
 
@@ -450,7 +466,7 @@ describe('Tesoreria — libro: filas', () => {
     mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [fila] })) })
     renderTesoreria()
     await esperarElLibro()
-    const celda = celdasDeLaFila(screen.getByRole('link', { name: /Caja #137/ }).closest('tr') as HTMLElement)[3]
+    const celda = celdasDeLaFila(screen.getByText(/^Caja #137/).closest('tr') as HTMLElement)[3]
 
     act(() =>
       (
@@ -469,15 +485,17 @@ describe('Tesoreria — libro: filas', () => {
     expect(within(tabla).getAllByRole('row')[1].textContent).toMatch(/^Tarjeta\$\s1\.000,00\$\s50,00\$\s30,00\$\s920,00$/)
   })
 
-  it('Pago: el detalle es un enlace a /pagos?id=N en pestaña nueva solo para el Admin', async () => {
+  it('Pago: el detalle es texto plano y el ícono de detalle abre /pagos?id=N en pestaña nueva solo para el Admin', async () => {
     mockearRutas()
     const { unmount } = renderTesoreria()
     await esperarElLibro()
 
-    const enlace = screen.getByRole('link', { name: 'Proveedor: Flete' })
+    expect(screen.getByText('Proveedor: Flete').closest('a')).toBeNull()
+    const enlace = screen.getByRole('link', { name: 'Ver detalle de Proveedor: Flete' })
     expect(enlace).toHaveAttribute('href', '/pagos?id=7')
     expect(enlace).toHaveAttribute('target', '_blank')
     expect(enlace).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(screen.queryByRole('link', { name: /Ver detalle de Ajuste/ })).not.toBeInTheDocument()
     unmount()
 
     usuarioActual = usuarioFixture(ROL.Supervisor)
@@ -485,7 +503,29 @@ describe('Tesoreria — libro: filas', () => {
     await esperarElLibro()
 
     expect(screen.getByText('Proveedor: Flete')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Proveedor: Flete' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Ver detalle de Proveedor: Flete' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ver detalle de Caja #137 ($ -1.500)' })).toBeInTheDocument()
+  })
+
+  it('el libro va de lo más nuevo a lo más viejo y el saldo anterior queda al final', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const detalles = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((f) => celdasDeLaFila(f as HTMLElement)[1].textContent)
+    expect(detalles).toEqual(['Ajuste: Comisión bancaria', 'Ajuste: Conteo', 'Proveedor: Flete', 'Caja #137 ($ -1.500)', 'Saldo anterior'])
+  })
+
+  it('el botón Ajustar efectivo vive dentro de la tarjeta de efectivo, igual que el de cada cuenta', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const efectivo = screen.getByRole('group', { name: 'Efectivo' })
+    const botonEfectivo = within(efectivo).getByRole('button', { name: 'Ajustar efectivo' })
+    const botonCuenta = within(screen.getByRole('group', { name: 'Mercado Pago' })).getByRole('button', { name: 'Ajustar Mercado Pago' })
+    expect(botonEfectivo.className).toBe(botonCuenta.className)
+    expect(screen.getAllByRole('button', { name: 'Ajustar efectivo' })).toHaveLength(1)
   })
 
   it('Pago: el efectivo negativo lleva la clase de rojo y el positivo no', async () => {
@@ -661,7 +701,7 @@ describe('Tesoreria — libro: conciliación', () => {
     renderTesoreria()
     await esperarElLibro()
 
-    const [saldo, caja, pago, ajusteEfectivo, ajusteCuenta] = filasDeLaTabla()
+    const [ajusteCuenta, ajusteEfectivo, pago, caja, saldo] = filasDeLaTabla()
     for (const congelada of [saldo, caja, pago]) {
       expect(within(congelada).getByRole('img', { name: 'Conciliado' })).toBeInTheDocument()
       expect(congelada).toHaveClass('libro-fila--conciliada')
