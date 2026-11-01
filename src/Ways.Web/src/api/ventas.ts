@@ -19,10 +19,14 @@ import type {
   LoteListado,
   PagoDeVenta,
   ResultadoDeResolucion,
+  SolicitudDeCambioDeMedios,
   SolicitudDeReservaDeNumeracion,
   SolicitudDeVenta,
   VentaDeTurnoListado,
 } from './tipos'
+
+/** Desde dónde se corrige: la caja (solo con el turno abierto) o la administración (cualquier turno). */
+export type ModoDeCambioDeMedios = 'pos' | 'administracion'
 
 export const clienteDeVentas = {
   /** `POST /api/ventas` (design: API Surface): checkout — 201 + body = comprobante emitido, sin
@@ -40,6 +44,10 @@ export const clienteDeVentas = {
   /** `POST /api/ventas/{id}/anulacion` (stage-desktop-pos): sin cuerpo — el servidor no acepta
    * `motivo`, revierte stock y cuenta corriente en la misma transacción. Nunca hay "restaurar". */
   anular: (id: number) => api.post<ComprobanteEmitido>(`/ventas/${id}/anulacion`),
+  /** `PUT /api/ventas/{id}/medios` (caja) o `PUT /api/ventas/administracion/{id}/medios`: reemplaza los cobros de la venta
+   * por `solicitud.pagos`, con el mismo total cobrado. Responde el comprobante ya corregido. */
+  cambiarMedios: (id: number, solicitud: SolicitudDeCambioDeMedios, modo: ModoDeCambioDeMedios = 'pos') =>
+    api.put<ComprobanteEmitido>(modo === 'pos' ? `/ventas/${id}/medios` : `/ventas/administracion/${id}/medios`, solicitud),
   /** `POST /api/ventas/reservas-numeracion` (stage-pos-reserva-de-numeracion): un dispositivo pide
    * un bloque de números para repartir localmente mientras vende sin red. */
   reservarNumeracion: (solicitud: SolicitudDeReservaDeNumeracion, senal?: AbortSignal) =>

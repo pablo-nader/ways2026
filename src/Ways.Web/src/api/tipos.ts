@@ -2225,6 +2225,9 @@ export type LineaDeVenta = {
 }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
+/** Cuerpo de `PUT /api/ventas/{id}/medios` (y de su gemelo de administración): los medios nuevos reemplazan a todos los cobros de la venta. */
+export type SolicitudDeCambioDeMedios = { pagos: PagoDeVenta[] }
+
 /** stage-17-presupuestos-y-remitos, Slice 7 (design: Interfaces/Contracts, decisión 2/tensión
  * T7): `idCliente`/`lineas` pasan a opcionales — con `idPresupuestoOrigen` presente, `lineas` NO
  * viaja (`dto-contract-honesty` regla 1: un campo que el servidor ignoraría no se manda) y
