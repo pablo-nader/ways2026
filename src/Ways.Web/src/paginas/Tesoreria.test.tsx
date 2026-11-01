@@ -456,9 +456,11 @@ describe('Tesoreria — libro: filas', () => {
         .map((h) => h.textContent),
     ).toEqual(['Medio', 'Importe', 'Comisión', 'Neto'])
     const filas = within(tabla).getAllByRole('row').slice(1)
-    expect(filas).toHaveLength(2)
+    expect(filas).toHaveLength(3)
     expect(filas[0].textContent).toMatch(/^Tarjeta\$\s1\.000,00\$\s50,00\$\s950,00$/)
     expect(filas[1].textContent).toMatch(/^Billetera\$\s200,00\$\s0,00\$\s200,00$/)
+    expect(filas[2].textContent).toMatch(/^Total\$\s1\.200,00\$\s50,00\$\s1\.150,00$/)
+    expect(filas[2].closest('tfoot')).not.toBeNull()
   })
 
   it('Caja: agrega la columna Retenciones solo cuando algún medio las tiene', async () => {
@@ -484,6 +486,7 @@ describe('Tesoreria — libro: filas', () => {
         .map((h) => h.textContent),
     ).toEqual(['Medio', 'Importe', 'Comisión', 'Retenciones', 'Neto'])
     expect(within(tabla).getAllByRole('row')[1].textContent).toMatch(/^Tarjeta\$\s1\.000,00\$\s50,00\$\s30,00\$\s920,00$/)
+    expect(within(tabla).getAllByRole('row').at(-1)?.textContent).toMatch(/^Total\$\s1\.200,00\$\s50,00\$\s30,00\$\s1\.120,00$/)
   })
 
   it('Pago: el detalle es texto plano y el ícono de detalle abre /pagos?id=N en pestaña nueva solo para el Admin', async () => {

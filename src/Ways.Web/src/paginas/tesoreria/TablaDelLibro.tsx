@@ -103,6 +103,10 @@ function DetalleDeCaja({ caja, id }: { caja: DatosDeCajaDelLibro; id: string }) 
   )
 }
 
+function sumarCentavos<T>(items: readonly T[], valor: (item: T) => number): number {
+  return items.reduce((total, item) => total + Math.round(valor(item) * 100), 0) / 100
+}
+
 function CeldaDeCuenta({ fila, idCuenta, id }: { fila: FilaDelLibro; idCuenta: number; id: string }) {
   const importe = importeDeCuenta(fila, idCuenta)
   const medios = fila.caja?.desglose.find((d) => d.idCuentaTesoreria === idCuenta)?.medios ?? []
@@ -131,6 +135,15 @@ function CeldaDeCuenta({ fila, idCuenta, id }: { fila: FilaDelLibro; idCuenta: n
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr>
+          <td>Total</td>
+          <td>{textoDeImporte(sumarCentavos(medios, (m) => m.importe))}</td>
+          <td>{textoDeImporte(sumarCentavos(medios, (m) => m.comision))}</td>
+          {conRetenciones && <td>{textoDeImporte(sumarCentavos(medios, (m) => m.retenciones))}</td>}
+          <td className={claseDeImporte(sumarCentavos(medios, (m) => m.neto))}>{textoDeImporte(sumarCentavos(medios, (m) => m.neto))}</td>
+        </tr>
+      </tfoot>
     </table>
   )
 

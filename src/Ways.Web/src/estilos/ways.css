@@ -298,3 +298,8 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+.globo-libro__tabla tfoot td {
+  border-top: 1px solid var(--ws-line);
+  font-weight: 600;
+}
