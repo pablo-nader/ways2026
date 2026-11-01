@@ -2,14 +2,14 @@ namespace Ways.Domain.Caja;
 
 /// <summary>
 /// Ledger de movimientos físicos de caja fuera de la venta (doc 10 §7, design: Table Shapes —
-/// write path B): retiros, refuerzos y apertura de cajón (F12 del legacy). Append-only por
-/// contrato — ningún endpoint actualiza ni elimina una fila.
+/// write path B): retiros, refuerzos y apertura de cajón (F12 del legacy). Los refuerzos y las
+/// aperturas de cajón son append-only; un retiro manual lo puede corregir o dar de baja un Admin
+/// (<c>ServicioDeRetiros</c>): el importe y el motivo se actualizan en el lugar, con la auditoría
+/// llevando el valor anterior, y la baja es lógica (<see cref="DeletedAt"/>).
 ///
-/// A propósito NO hereda de <see cref="Common.EntidadBase"/>/<see cref="Common.EntidadTenant"/>
-/// — mismo criterio que <see cref="Ways.Domain.Stock.MovimientoStock"/>: un ledger append-only
-/// no tiene <c>updated_at</c>/<c>deleted_at</c> con sentido, así que su única columna de fecha
-/// es <c>creado_el</c>, con filtro de tenant escrito a mano en
-/// <c>WaysDbContext.AplicarFiltroDeTenantEnMovimientoCaja</c>.
+/// A propósito NO hereda de <see cref="Common.EntidadBase"/>/<see cref="Common.EntidadTenant"/>:
+/// no tiene <c>created_at</c>/<c>updated_at</c>, su fecha es <c>creado_el</c>. Los filtros de tenant
+/// y de baja lógica están escritos a mano en <c>WaysDbContext.AplicarFiltroDeTenantEnMovimientoCaja</c>.
 /// </summary>
 public class MovimientoCaja
 {
@@ -32,4 +32,10 @@ public class MovimientoCaja
     public int IdEmpleado { get; set; }
 
     public DateTimeOffset CreadoEl { get; set; }
+
+    /// <summary>El retiro que inserta el cierre por retiro (<c>ServicioDeTurnos.CerrarPorRetiroAsync</c>). No se edita ni se
+    /// elimina: es parte del cierre.</summary>
+    public bool EsRetiroDeCierre { get; set; }
+
+    public DateTimeOffset? DeletedAt { get; set; }
 }

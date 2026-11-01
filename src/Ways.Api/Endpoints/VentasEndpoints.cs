@@ -93,6 +93,19 @@ public static class VentasEndpoints
             "Con la factura aprobada decide la nota de crédito (3/8/13) y la intenta emitir en línea; con la factura en trámite " +
             "responde 409 venta_con_factura_en_tramite. La respuesta informa el estado fiscal, con fiscal.notaDeCredito.");
 
+        // Corrección del medio de un ticket desde la caja: mismo criterio que la anulación (un Vendedor corrige lo que cobró), y
+        // solo con el turno de la venta abierto.
+        grupo.MapPut("/{id:int}/medios", async (
+            ServicioDeCambioDeMedios servicio, ServicioDeFacturacionDeVentas facturacion, int id,
+            SolicitudDeCambioDeMedios solicitud, CancellationToken ct) =>
+        {
+            var venta = await servicio.CambiarDesdeLaCajaAsync(id, solicitud, ct);
+            return Results.Ok(venta with { Fiscal = await facturacion.LeerEstadoDeVentaAsync(id, ct) });
+        })
+        .WithSummary(
+            "Reemplaza los medios de pago de una venta del turno abierto sin cambiar lo cobrado. Rechaza con 409 una venta con " +
+            "CAE, con la factura en trámite, con cuenta corriente, anulada, de un turno cerrado o de una fecha conciliada.");
+
         grupo.MapGet("/", (
             ServicioDeVentas servicio,
             int? idPuntoVenta,
@@ -140,6 +153,40 @@ public static class VentasEndpoints
         .WithSummary(
             "Export XLSX de GET /api/ventas: mismo filtro, sin paginado bajo el tope, gate " +
             "OperacionDePos heredado por co-locación.");
+
+        // Back office: la grilla la leen Supervisor y Admin (el gate de los reportes de tesorería); cambiar los medios, solo Admin,
+        // con el turno de la venta abierto o cerrado.
+        var administracion = app.MapGroup("/api/ventas/administracion")
+            .WithTags("Ventas")
+            .RequireAuthorization(Politicas.LecturaDeReportes);
+
+        administracion.MapGet("/", (
+            ServicioDeVentasDeAdministracion servicio, DateTimeOffset? desde, DateTimeOffset? hasta, long? numero,
+            int? idTipoComprobante, int? idPuntoVenta, int? idTurnoCaja, string? cliente, int? idEmpleado, int? idMedioPago,
+            decimal? totalDesde, decimal? totalHasta, EstadoComprobante? estado, string? estadoFiscal, bool? turnoCerrado,
+            bool? conciliado, int? pagina, int? tamanio, string? orden, string? direccion, CancellationToken ct) =>
+            servicio.ListarAsync(
+                new FiltrosDeVentasDeAdministracion(
+                    desde, hasta, numero, idTipoComprobante, idPuntoVenta, idTurnoCaja, cliente, idEmpleado, idMedioPago,
+                    totalDesde, totalHasta, estado, estadoFiscal, turnoCerrado, conciliado),
+                pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
+        .WithSummary(
+            "Lista los comprobantes de venta (sin las facturas espejo) con un filtro por columna y si sus medios se pueden " +
+            "cambiar. orden (fecha, numero, tipo, puntoVenta, turno, cliente, empleado, medios, total, estado, estadoFiscal, " +
+            "estadoTurno, conciliado) y direccion (ascendente, descendente) ordenan todo el conjunto filtrado antes de paginar; " +
+            "400 si no son válidos. Los cobros de una venta se leen con GET /api/ventas/{id}.");
+
+        administracion.MapPut("/{id:int}/medios", async (
+            ServicioDeCambioDeMedios servicio, ServicioDeFacturacionDeVentas facturacion, int id,
+            SolicitudDeCambioDeMedios solicitud, CancellationToken ct) =>
+        {
+            var venta = await servicio.CambiarDeAdministracionAsync(id, solicitud, ct);
+            return Results.Ok(venta with { Fiscal = await facturacion.LeerEstadoDeVentaAsync(id, ct) });
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Reemplaza los medios de pago de cualquier venta sin cambiar lo cobrado. Con el turno cerrado recalcula el arqueo " +
+            "(con la marca del recálculo) y compensa las cuentas de tesorería de los medios electrónicos.");
 
         return app;
     }

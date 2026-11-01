@@ -596,7 +596,8 @@ public class ServicioDeVentas(
             // así que no puede llegar acá con un plan distinto bajo el mismo número.
             if (solicitud.NumeroPreasignado is not null)
             {
-                ExigirMismoContenido(existente, plan, solicitud.ImporteEnvio);
+                ExigirMismoContenido(
+                    existente, plan, solicitud.ImporteEnvio, await LeerCobrosOriginalesReemplazadosAsync(existente.Id, ct));
             }
 
             return existente;
@@ -725,7 +726,9 @@ public class ServicioDeVentas(
     /// pre-asignado es el que cobró la caja (el que mandó el dispositivo, o el importe tipeado si no mandó precio) y nunca
     /// se vuelve a derivar con la lista de hoy (el precio de una línea de lista, en cambio, se deriva y no entra).
     /// Compara contra los propios items/pagos ya persistidos del comprobante encontrado.</summary>
-    private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan, decimal? importeEnvioDelDispositivo)
+    private static void ExigirMismoContenido(
+        ComprobanteEmitido existente, PlanDeVenta plan, decimal? importeEnvioDelDispositivo,
+        IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia)> cobrosOriginalesReemplazados)
     {
         var lineasExistentes = existente.Items
             .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, ImporteTipeado: i.PorImporte ? i.PrecioUnitario : (decimal?)null))
@@ -760,6 +763,16 @@ public class ServicioDeVentas(
             .ThenBy(p => p.Importe)
             .ThenBy(p => p.Referencia, StringComparer.Ordinal)
             .ToList();
+
+        // Una venta cuyos medios se cambiaron después de ingerirla (ServicioDeCambioDeMedios) ya no tiene vivos los cobros que
+        // mandó el dispositivo: su reenvío coincide con los cobros originales, los que el cambio dio de baja.
+        var pagosOriginales = cobrosOriginalesReemplazados
+            .OrderBy(p => p.IdMedioPago)
+            .ThenBy(p => p.Importe)
+            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
+            .ToList();
+        var mismosPagos = pagosExistentes.SequenceEqual(pagosSolicitados)
+            || (pagosOriginales.Count > 0 && pagosOriginales.SequenceEqual(pagosSolicitados));
 
         // El total queda AFUERA de esta comparación a propósito: es server-derived
         // (servicioDeOfertas.ResolverAsync lo recalcula en cada request, a precio/oferta del
@@ -803,7 +816,7 @@ public class ServicioDeVentas(
             || existente.IdComprobanteAsociado != plan.IdComprobanteAsociado
             || existente.FacturaForzada != plan.ForzarFactura
             || !lineasExistentes.SequenceEqual(lineasSolicitadas)
-            || !pagosExistentes.SequenceEqual(pagosSolicitados)
+            || !mismosPagos
             || (importeEnvioDelDispositivo is not null
                 && ImporteDeEnvio(existente.Items.Where(i => i.IdArticulo is null).Select(i => i.PrecioUnitario))
                     != ImporteDeEnvio(plan.Items.Where(i => i.IdArticulo is null).Select(i => i.PrecioUnitario))))
@@ -814,6 +827,20 @@ public class ServicioDeVentas(
                 409);
         }
     }
+
+    /// <summary>Los cobros con los que la venta se ingirió, si un cambio de medios los reemplazó: los dados de baja que nacieron con
+    /// el comprobante (misma marca de creación). Una sola consulta, solo en el reenvío de un número pre-asignado que ya tiene
+    /// comprobante; vacía si los medios nunca se cambiaron.</summary>
+    private async Task<IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia)>> LeerCobrosOriginalesReemplazadosAsync(
+        int idComprobante, CancellationToken ct) =>
+        (await (
+                from p in db.Cobros.IgnoreQueryFilters(["BajaLogica"])
+                join c in db.ComprobantesVenta.SinEspejosFiscales() on p.IdComprobanteVenta equals c.Id
+                where p.IdComprobanteVenta == idComprobante && p.DeletedAt != null && p.CreatedAt == c.CreatedAt
+                select new { p.IdMedioPago, p.Importe, p.Referencia })
+            .ToListAsync(ct))
+        .Select(p => (p.IdMedioPago, p.Importe, (string?)p.Referencia))
+        .ToList();
 
     private static decimal? ImporteDeEnvio(IEnumerable<decimal> preciosDeLineasSinArticulo) =>
         preciosDeLineasSinArticulo.Select(p => (decimal?)p).SingleOrDefault();

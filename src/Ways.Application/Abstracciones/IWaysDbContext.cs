@@ -182,6 +182,12 @@ public interface IWaysDbContext
     // Conexión OAuth de cada empresa con Mercado Pago; los tokens van cifrados y no salen del servicio.
     DbSet<ConexionMercadoPago> ConexionesMercadoPago { get; }
 
+    DbSet<LocalMercadoPago> LocalesMercadoPago { get; }
+
+    DbSet<CajaMercadoPago> CajasMercadoPago { get; }
+
+    DbSet<CobroMercadoPago> CobrosMercadoPago { get; }
+
     // Decisión de facturar una venta (facturación por medio de pago). El acumulado por medio y mes NO se
     // expone: su único escritor es un upsert crudo, como numeraciones_fiscales.
     DbSet<FacturacionDeVenta> FacturacionesDeVenta { get; }

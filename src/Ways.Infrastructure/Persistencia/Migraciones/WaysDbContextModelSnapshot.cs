@@ -59,7 +59,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_caja", new[] { "apertura_cajon", "refuerzo", "retiro" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc", new[] { "actualizacion_precios", "ajuste", "consumo", "descuento_personal", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago", "redondeo" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cuenta", new[] { "ajuste", "cobro", "comision", "deposito", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro", "transferencia" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cuenta", new[] { "ajuste", "cobro", "comision", "deposito", "pago", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro", "transferencia" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "ajuste_manual", "deposito", "pago", "retiro_caja" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "importe", "peso", "unidad" });
@@ -848,6 +848,16 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("creado_el");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<bool>("EsRetiroDeCierre")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("es_retiro_de_cierre");
+
                     b.Property<int>("IdEmpleado")
                         .HasColumnType("integer")
                         .HasColumnName("id_empleado");
@@ -935,6 +945,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_medio_pago");
 
+                    b.Property<int?>("IdPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_pago");
+
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
@@ -971,6 +985,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdMedioPago", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_medio_pago");
 
+                    b.HasIndex("IdPago", "IdTenant")
+                        .HasDatabaseName("ix_movimientos_cuenta_pago");
+
                     b.HasIndex("IdTurnoCaja", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_turno");
 
@@ -987,6 +1004,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_movimientos_cuenta_cadena", "final = inicio + ingreso - egreso");
 
                             t.HasCheckConstraint("ck_movimientos_cuenta_importes_no_negativos", "ingreso >= 0 AND egreso >= 0");
+
+                            t.HasCheckConstraint("ck_movimientos_cuenta_pago", "(tipo = 'pago') = (id_pago IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_movimientos_cuenta_un_solo_lado", "ingreso = 0 OR egreso = 0");
                         });
@@ -1745,6 +1764,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDefaultValue(0m)
                         .HasColumnName("porcentaje_facturacion");
 
+                    b.Property<string>("Proveedor")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("proveedor");
+
                     b.Property<decimal?>("RecargoPorcentaje")
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("recargo_porcentaje");
@@ -1808,6 +1832,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_medios_pago_porcentajes_cuenta_rango", "comision_porcentaje BETWEEN 0 AND 100 AND retencion_iibb_porcentaje BETWEEN 0 AND 100 AND retencion_iva_porcentaje BETWEEN 0 AND 100 AND retencion_ganancias_porcentaje BETWEEN 0 AND 100");
 
                             t.HasCheckConstraint("ck_medios_pago_porcentajes_cuenta_suma", "comision_porcentaje + retencion_iibb_porcentaje + retencion_iva_porcentaje + retencion_ganancias_porcentaje <= 100");
+
+                            t.HasCheckConstraint("ck_medios_pago_proveedor", "proveedor IS NULL OR proveedor IN ('mercadopago_qr', 'mercadopago_point')");
+
+                            t.HasCheckConstraint("ck_medios_pago_proveedor_solo_electronico", "proveedor IS NULL OR comportamiento = 'electronico'");
                         });
                 });
 
@@ -3476,6 +3504,273 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Ways.Domain.MercadoPago.CajaMercadoPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_caja_mercadopago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("external_id");
+
+                    b.Property<DateTimeOffset>("FechaRegistro")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_registro");
+
+                    b.Property<DateTimeOffset>("FechaSincronizacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_sincronizacion");
+
+                    b.Property<DateTimeOffset?>("FechaTerminal")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_terminal");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdLocalMercadoPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_local_mercadopago");
+
+                    b.Property<long>("IdPosMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_pos_mercadopago");
+
+                    b.Property<int>("IdPuntoVenta")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_punto_venta");
+
+                    b.Property<long>("IdStoreMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_store_mercadopago");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<string>("IdTerminalPoint")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("id_terminal_point");
+
+                    b.Property<long>("IdUsuarioMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_usuario_mercadopago");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("UrlQr")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("url_qr");
+
+                    b.HasKey("Id")
+                        .HasName("pk_cajas_mercadopago");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_cajas_mercadopago_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_cajas_mercadopago_empresa");
+
+                    b.HasIndex("IdPuntoVenta", "IdTenant")
+                        .HasDatabaseName("ix_cajas_mercadopago_punto_venta");
+
+                    b.HasIndex("IdPuntoVenta", "IdUsuarioMercadoPago")
+                        .IsUnique()
+                        .HasDatabaseName("ux_cajas_mercadopago_punto_venta_usuario");
+
+                    b.HasIndex("IdLocalMercadoPago", "IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_cajas_mercadopago_local");
+
+                    b.ToTable("cajas_mercadopago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_cajas_mercadopago_external_id", "length(btrim(external_id)) > 0");
+
+                            t.HasCheckConstraint("ck_cajas_mercadopago_terminal", "(id_terminal_point IS NULL) = (fecha_terminal IS NULL) AND (id_terminal_point IS NULL OR length(btrim(id_terminal_point)) > 0)");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.MercadoPago.CobroMercadoPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cobro_mercadopago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ClaveIdempotencia")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("clave_idempotencia");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("Estado")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("estado");
+
+                    b.Property<DateTimeOffset>("ExpiraEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expira_en");
+
+                    b.Property<string>("ExternalPosId")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("external_pos_id");
+
+                    b.Property<string>("ExternalReference")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("external_reference");
+
+                    b.Property<DateTimeOffset?>("FechaAprobacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_aprobacion");
+
+                    b.Property<DateTimeOffset?>("FechaUltimaConsulta")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_ultima_consulta");
+
+                    b.Property<int>("IdDispositivo")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_dispositivo");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdMedioPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_medio_pago");
+
+                    b.Property<string>("IdOrdenMercadoPago")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("id_orden_mercadopago");
+
+                    b.Property<string>("IdPagoMercadoPago")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("id_pago_mercadopago");
+
+                    b.Property<int>("IdPuntoVenta")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_punto_venta");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("Importe")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("importe");
+
+                    b.Property<decimal?>("ImportePagado")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("importe_pagado");
+
+                    b.Property<int>("Intento")
+                        .HasColumnType("integer")
+                        .HasColumnName("intento");
+
+                    b.Property<long>("NumeroPreasignado")
+                        .HasColumnType("bigint")
+                        .HasColumnName("numero_preasignado");
+
+                    b.Property<string>("QrData")
+                        .HasColumnType("text")
+                        .HasColumnName("qr_data");
+
+                    b.Property<long?>("ReferenciaPagoMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("referencia_pago_mercadopago");
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("tipo");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_cobros_mercadopago");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_cobros_mercadopago_tenant");
+
+                    b.HasIndex("IdDispositivo", "IdTenant")
+                        .HasDatabaseName("ix_cobros_mercadopago_dispositivo");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_cobros_mercadopago_empresa");
+
+                    b.HasIndex("IdMedioPago", "IdTenant")
+                        .HasDatabaseName("ix_cobros_mercadopago_medio_pago");
+
+                    b.HasIndex("IdPuntoVenta", "IdTenant");
+
+                    b.HasIndex("IdPuntoVenta", "NumeroPreasignado")
+                        .IsUnique()
+                        .HasDatabaseName("ux_cobros_mercadopago_vivo_numero")
+                        .HasFilter("estado IN ('creando', 'pendiente', 'aprobado')");
+
+                    b.HasIndex("IdPuntoVenta", "NumeroPreasignado", "Intento")
+                        .IsUnique()
+                        .HasDatabaseName("ux_cobros_mercadopago_intento");
+
+                    b.ToTable("cobros_mercadopago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_cobros_mercadopago_aprobacion", "estado <> 'aprobado' OR fecha_aprobacion IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto')");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_importe", "importe > 0");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_importe_pagado", "importe_pagado IS NULL OR importe_pagado >= 0");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_intento", "intento >= 1");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_tipo", "tipo IN ('qr', 'point')");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.MercadoPago.ConexionMercadoPago", b =>
                 {
                     b.Property<int>("Id")
@@ -3617,6 +3912,86 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_conexiones_mercadopago_estado", "estado IN ('activa', 'desconectada', 'requiere_reconexion')");
 
                             t.HasCheckConstraint("ck_conexiones_mercadopago_requiere_reconexion", "estado <> 'requiere_reconexion' OR (fecha_requiere_reconexion IS NOT NULL AND fecha_desconexion IS NULL AND access_token_cifrado IS NULL AND access_token_nonce IS NULL AND access_token_tag IS NULL AND refresh_token_cifrado IS NULL AND refresh_token_nonce IS NULL AND refresh_token_tag IS NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.MercadoPago.LocalMercadoPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_local_mercadopago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("external_id");
+
+                    b.Property<DateTimeOffset>("FechaRegistro")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_registro");
+
+                    b.Property<DateTimeOffset>("FechaSincronizacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_sincronizacion");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<long>("IdStoreMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_store_mercadopago");
+
+                    b.Property<int>("IdSucursal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_sucursal");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<long>("IdUsuarioMercadoPago")
+                        .HasColumnType("bigint")
+                        .HasColumnName("id_usuario_mercadopago");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_locales_mercadopago");
+
+                    b.HasAlternateKey("Id", "IdEmpresa", "IdTenant")
+                        .HasName("ak_locales_mercadopago_id_local_id_empresa_id_tenant");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_locales_mercadopago_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_locales_mercadopago_empresa");
+
+                    b.HasIndex("IdSucursal", "IdUsuarioMercadoPago")
+                        .IsUnique()
+                        .HasDatabaseName("ux_locales_mercadopago_sucursal_usuario");
+
+                    b.HasIndex("IdSucursal", "IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_locales_mercadopago_sucursal");
+
+                    b.ToTable("locales_mercadopago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_locales_mercadopago_external_id", "length(btrim(external_id)) > 0");
                         });
                 });
 
@@ -4058,6 +4433,26 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("Altura")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("altura");
+
+                    b.Property<string>("Calle")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("calle");
+
+                    b.Property<string>("Ciudad")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("ciudad");
+
+                    b.Property<string>("CodigoPostal")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("codigo_postal");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -4078,11 +4473,31 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
 
+                    b.Property<decimal?>("Latitud")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("latitud");
+
+                    b.Property<decimal?>("Longitud")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("longitud");
+
                     b.Property<string>("Nombre")
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
+
+                    b.Property<string>("Provincia")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("provincia");
+
+                    b.Property<string>("Referencia")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("referencia");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -4104,7 +4519,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdSucursalFusion", "IdEmpresa", "IdTenant");
 
-                    b.ToTable("sucursales", (string)null);
+                    b.ToTable("sucursales", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_sucursales_coordenadas_completas", "(latitud IS NULL) = (longitud IS NULL)");
+
+                            t.HasCheckConstraint("ck_sucursales_latitud", "latitud BETWEEN -90 AND 90");
+
+                            t.HasCheckConstraint("ck_sucursales_longitud", "longitud BETWEEN -180 AND 180");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Organizacion.Tenant", b =>
@@ -6807,6 +7229,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_movimientos_cuenta_medio_pago");
 
+                    b.HasOne("Ways.Domain.Pagos.Pago", null)
+                        .WithMany()
+                        .HasForeignKey("IdPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_movimientos_cuenta_pago");
+
                     b.HasOne("Ways.Domain.Caja.TurnoCaja", null)
                         .WithMany()
                         .HasForeignKey("IdTurnoCaja", "IdTenant")
@@ -7577,6 +8006,82 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasConstraintName("fk_numeraciones_fiscales_punto_venta");
                 });
 
+            modelBuilder.Entity("Ways.Domain.MercadoPago.CajaMercadoPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cajas_mercadopago_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cajas_mercadopago_empresa");
+
+                    b.HasOne("Ways.Domain.Organizacion.PuntoVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdPuntoVenta", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cajas_mercadopago_punto_venta");
+
+                    b.HasOne("Ways.Domain.MercadoPago.LocalMercadoPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdLocalMercadoPago", "IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdEmpresa", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cajas_mercadopago_local");
+                });
+
+            modelBuilder.Entity("Ways.Domain.MercadoPago.CobroMercadoPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_mercadopago_tenant");
+
+                    b.HasOne("Ways.Domain.Dispositivos.Dispositivo", null)
+                        .WithMany()
+                        .HasForeignKey("IdDispositivo", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_mercadopago_dispositivo");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_mercadopago_empresa");
+
+                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdMedioPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_mercadopago_medio_pago");
+
+                    b.HasOne("Ways.Domain.Organizacion.PuntoVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdPuntoVenta", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_mercadopago_punto_venta");
+                });
+
             modelBuilder.Entity("Ways.Domain.MercadoPago.ConexionMercadoPago", b =>
                 {
                     b.HasOne("Ways.Domain.Organizacion.Tenant", null)
@@ -7614,6 +8119,32 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_conexiones_mercadopago_cuenta_tesoreria");
+                });
+
+            modelBuilder.Entity("Ways.Domain.MercadoPago.LocalMercadoPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_locales_mercadopago_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_locales_mercadopago_empresa");
+
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
+                        .WithMany()
+                        .HasForeignKey("IdSucursal", "IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdEmpresa", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_locales_mercadopago_sucursal");
                 });
 
             modelBuilder.Entity("Ways.Domain.Ofertas.Oferta", b =>

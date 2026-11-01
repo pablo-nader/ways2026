@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { copiaDeFalloDeBaja } from '../api/bajas'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion, ETIQUETA_SIN_DUENIO } from '../api/organizacion'
-import { ROL } from '../api/tipos'
+import { puedeGestionarCatalogos, ROL } from '../api/tipos'
 import type { EmpresaListado, SucursalListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -18,12 +18,14 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { ModalDeFusionDeSucursal, type FormularioDeFusion } from './organizacion/ModalDeFusionDeSucursal'
+import { aDireccionDeLaApi, aDireccionDelFormulario, DIRECCION_VACIA } from './organizacion/direccionDeSucursal'
+import { ModalDeMercadoPagoDeSucursal } from './organizacion/ModalDeMercadoPagoDeSucursal'
 import { ModalDeSucursal, type FormularioDeSucursal } from './organizacion/ModalDeSucursal'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
-const ALTA_VACIA: FormularioDeSucursal = { id: null, idEmpresa: '', nombre: '' }
+const ALTA_VACIA: FormularioDeSucursal = { id: null, idEmpresa: '', nombre: '', ...DIRECCION_VACIA }
 
 const textoDeId = (s: SucursalListado) => String(s.id).padStart(4, '0')
 const textoDeEmpresa = (s: SucursalListado) => s.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO
@@ -46,7 +48,7 @@ const CELDAS = ['id', 'empresa', 'nombre', 'cajas', null]
 
 /**
  * ABM de sucursales (tenant → empresa → sucursal → punto de venta): el stock es de la sucursal y las cajas la
- * comparten. Alta, renombre, baja lógica y fusión en otra sucursal de la misma empresa (sus cajas y su stock pasan al
+ * comparten. Alta, edición (nombre y dirección), baja lógica y fusión en otra sucursal de la misma empresa (sus cajas y su stock pasan al
  * destino); mover una caja de sucursal se hace desde Puntos de venta. La baja la
  * rechaza el servidor mientras la sucursal tenga cajas vivas o uso (stock, lotes, movimientos). Mismo patrón
  * de escrituras que `PuntosVenta.tsx`: token de generación para las lecturas y una guarda síncrona de
@@ -55,6 +57,8 @@ const CELDAS = ['id', 'empresa', 'nombre', 'cajas', null]
 export function Sucursales() {
   const { usuario } = useAuth()
   const esPlataforma = usuario?.rolId === ROL.Root
+  /** Mercado Pago es solo Admin (`GestionDeCatalogo` en la API): root entra a la pantalla pero no ve la acción. */
+  const puedeMercadoPago = !!usuario && puedeGestionarCatalogos(usuario.rolId)
 
   const [items, setItems] = useState<SucursalListado[]>([])
   const [cargando, setCargando] = useState(true)
@@ -73,6 +77,7 @@ export function Sucursales() {
   const [baja, setBaja] = useState<SucursalListado | null>(null)
   const [fusion, setFusion] = useState<FormularioDeFusion | null>(null)
   const [errorFusion, setErrorFusion] = useState('')
+  const [mercadoPago, setMercadoPago] = useState<SucursalListado | null>(null)
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
   const generacion = useRef(0)
@@ -138,7 +143,12 @@ export function Sucursales() {
 
   function abrirEdicion(sucursal: SucursalListado) {
     setErrorFormulario('')
-    setFormulario({ id: sucursal.id, idEmpresa: String(sucursal.idEmpresa), nombre: sucursal.nombre })
+    setFormulario({
+      id: sucursal.id,
+      idEmpresa: String(sucursal.idEmpresa),
+      nombre: sucursal.nombre,
+      ...aDireccionDelFormulario(sucursal),
+    })
   }
 
   function cerrarFormulario() {
@@ -158,6 +168,14 @@ export function Sucursales() {
       return
     }
 
+    const direccion = aDireccionDeLaApi(datos)
+    if (direccion.error !== null) {
+      setErrorFormulario(direccion.error)
+      setDisparoDeError((n) => n + 1)
+
+      return
+    }
+
     const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
@@ -169,9 +187,9 @@ export function Sucursales() {
       // La respuesta de la escritura no se compara con la generación: el modal queda inerte hasta que el refresco aterriza.
       try {
         if (datos.id === null) {
-          await clienteDeOrganizacion.crearSucursal({ idEmpresa: Number(datos.idEmpresa), nombre })
+          await clienteDeOrganizacion.crearSucursal({ idEmpresa: Number(datos.idEmpresa), nombre, ...direccion.direccion })
         } else {
-          await clienteDeOrganizacion.editarSucursal(datos.id, { nombre })
+          await clienteDeOrganizacion.editarSucursal(datos.id, { nombre, ...direccion.direccion })
         }
       } catch (e) {
         setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
@@ -347,6 +365,14 @@ export function Sucursales() {
               onCancelar={cerrarFormulario}
             />
           )}
+          {mercadoPago && puedeMercadoPago && (
+            <ModalDeMercadoPagoDeSucursal
+              key={mercadoPago.id}
+              sucursal={mercadoPago}
+              focoDeReserva={nuevoRef}
+              onCerrar={() => setMercadoPago(null)}
+            />
+          )}
           {fusion && (
             <ModalDeFusionDeSucursal
               valor={fusion}
@@ -420,6 +446,16 @@ export function Sucursales() {
                         >
                           Fusionar
                         </button>
+                        {puedeMercadoPago && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary me-1"
+                            onClick={() => setMercadoPago(s)}
+                            disabled={bloqueado}
+                          >
+                            Mercado Pago
+                          </button>
+                        )}
                         <BotonIcono
                           icono="eliminar"
                           onClick={(evento) => pedirBaja(s, evento.currentTarget)}

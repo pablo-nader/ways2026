@@ -171,6 +171,21 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// stock pasan al destino y la sucursal de origen (<c>id_entidad</c>) queda dada de baja. Un solo rastro por fusión.</summary>
     public static readonly AccionAuditada SucursalFusion = new("sucursal.fusion", "sucursal");
 
+    /// <summary>Registro o actualización de una sucursal como local de Mercado Pago
+    /// (<c>POST /api/sucursales/{id}/mercadopago</c>). El <c>id_entidad</c> es la sucursal; el payload dice la operación
+    /// (alta, adopción de un local ya existente o actualización) y los ids de Mercado Pago, nunca un token.</summary>
+    public static readonly AccionAuditada SucursalMercadoPago = new("sucursal.mercadopago", "sucursal");
+
+    /// <summary>Registro o actualización de un punto de venta como caja (<i>POS</i>) de Mercado Pago
+    /// (<c>POST /api/puntos-venta/{id}/mercadopago</c>). El <c>id_entidad</c> es el punto de venta; el payload dice la operación
+    /// (alta, adopción de una caja ya existente o actualización) y los ids de Mercado Pago, nunca un token.</summary>
+    public static readonly AccionAuditada PuntoVentaMercadoPago = new("pv.mercadopago", "punto_venta");
+
+    /// <summary>Asignación o desasignación de la terminal Point de la caja de Mercado Pago de un punto de venta
+    /// (<c>POST|DELETE /api/puntos-venta/{id}/mercadopago/terminal</c>). El <c>id_entidad</c> es el punto de venta; el payload lleva
+    /// la terminal anterior y la nueva y el modo que se cambió en Mercado Pago, nunca un token.</summary>
+    public static readonly AccionAuditada PuntoVentaTerminalMercadoPago = new("pv.terminalmercadopago", "punto_venta");
+
     /// <summary>Edición de una compra confirmada (<c>PUT /api/compras/{id}</c>) — <c>Compras/ServicioDeCompras.cs</c>. El
     /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
     public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
@@ -184,7 +199,19 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// recibo.</summary>
     public static readonly AccionAuditada CobroDesaplicacion = new("cobro.desaplicacion", "comprobante_venta");
 
-    /// <summary>Las 30 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// <summary>Cambio de los medios de pago de una venta ya emitida — <c>Ventas/ServicioDeCambioDeMedios.cs</c>, desde la caja o
+    /// desde administración. <c>valor_anterior</c> y <c>valor_nuevo</c> llevan los cobros vivos antes y después.</summary>
+    public static readonly AccionAuditada VentaCambioDeMedios = new("venta.medios", "comprobante_venta");
+
+    /// <summary>Edición administrativa del importe o el motivo de un retiro de caja — <c>Caja/ServicioDeRetiros.cs</c>.
+    /// <c>valor_anterior</c> y <c>valor_nuevo</c> llevan importe y motivo, y el nuevo el turno cuyo arqueo se recalculó.</summary>
+    public static readonly AccionAuditada RetiroEdicion = new("retiro.edicion", "movimiento_caja");
+
+    /// <summary>Baja lógica administrativa de un retiro de caja — <c>Caja/ServicioDeRetiros.cs</c>. Mismos campos que
+    /// <see cref="RetiroEdicion"/>, con <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
+    public static readonly AccionAuditada RetiroBaja = new("retiro.baja", "movimiento_caja");
+
+    /// <summary>Las acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
@@ -228,6 +255,12 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         SucursalEdicion,
         SucursalBaja,
         PuntoVentaSucursal,
-        SucursalFusion
+        SucursalFusion,
+        SucursalMercadoPago,
+        PuntoVentaMercadoPago,
+        PuntoVentaTerminalMercadoPago,
+        VentaCambioDeMedios,
+        RetiroEdicion,
+        RetiroBaja
     ];
 }

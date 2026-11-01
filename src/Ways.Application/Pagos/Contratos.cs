@@ -195,7 +195,8 @@ public sealed record ComandoDeEdicionDePago(
     string Concepto,
     string? Detalle,
     IReadOnlyList<LineaDePago> Lineas,
-    string? NumeroFactura);
+    string? NumeroFactura,
+    int? IdPersonal = null);
 
 /// <summary>Pago de una compra con líneas por medio. Equivale a <see cref="SolicitudDePagoDeCompra"/>.</summary>
 public sealed record ComandoDePagoDeCompra(DateOnly Fecha, IReadOnlyList<LineaDePago> Lineas, string? Concepto)
@@ -251,7 +252,9 @@ public sealed record SolicitudDePagoDeAdministracionConLineas(
 }
 
 /// <summary>Cuerpo de <c>PUT /api/pagos/{id}</c> y <c>PUT /api/pagos/administracion/{id}</c>: reemplaza el conjunto de líneas
-/// del pago. Edita también un pago con varios medios.</summary>
+/// del pago. Edita también un pago con varios medios. <see cref="IdPersonal"/> convierte un pago de sueldos común en un pago
+/// de ese empleado en la misma transacción: exige categoría sueldos, el pago no puede ser ya de personal, y el concepto lo
+/// genera el servidor, así que <see cref="Concepto"/> tiene que venir vacío (<c>400 concepto_de_pago_de_personal</c>).</summary>
 public sealed record SolicitudDeEdicionDePagoConLineas(
     CategoriaPago Categoria,
     int? IdProveedor,
@@ -259,10 +262,11 @@ public sealed record SolicitudDeEdicionDePagoConLineas(
     string Concepto,
     string? Detalle,
     string? NumeroFactura,
-    IReadOnlyList<LineaDePago> Lineas)
+    IReadOnlyList<LineaDePago> Lineas,
+    int? IdPersonal = null)
 {
     public ComandoDeEdicionDePago AComando() => new(
-        Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura);
+        Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura, IdPersonal);
 }
 
 /// <summary>Cuerpo de <c>POST /api/pagos/de-compra/{idCompra}</c>. Mismas reglas que <see cref="SolicitudDePagoDeCompra"/>

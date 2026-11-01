@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react'
 import type { FormularioDePagoDeAdministracion } from '../../api/registroDePagos'
+import { cambiosAlElegirCategoria, esPagoAPersonal, ofreceElegirPersonal } from '../../api/sueldoConPersonal'
 import { CATEGORIAS_PAGO } from '../../api/tipos'
 import type {
   AreaListado,
@@ -7,6 +8,7 @@ import type {
   EmpresaListado,
   MedioPagoListado,
   OpcionDeProveedor,
+  PersonalListado,
   PuntoVentaListado,
 } from '../../api/tipos'
 import { CampoFecha } from '../../componentes/CampoFecha'
@@ -27,6 +29,10 @@ type Props = {
   medios: MedioPagoListado[]
   areas: AreaListado[]
   proveedores: OpcionDeProveedor[]
+  /** Empleados a los que se puede registrar el pago de sueldos; `null` mientras se leen. */
+  personal: PersonalListado[] | null
+  /** Vacío si el personal se leyó bien; si no, el motivo, y el pago de sueldos queda sin empleado. */
+  errorDePersonal: string
   fechaMaxima: string
   /** Validación local o rechazo del servidor: se rinde dentro del modal. */
   error: string
@@ -49,6 +55,8 @@ export function ModalDeAltaDePago({
   medios,
   areas,
   proveedores,
+  personal,
+  errorDePersonal,
   fechaMaxima,
   error,
   disparoDeError,
@@ -61,6 +69,8 @@ export function ModalDeAltaDePago({
     evento.preventDefault()
     onRegistrar()
   }
+
+  const conPersonal = esPagoAPersonal(valor)
 
   const pie = (
     <>
@@ -133,7 +143,10 @@ export function ModalDeAltaDePago({
               className="form-select"
               value={valor.idPuntoVenta}
               onChange={(e) =>
-                onCambio((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))
+                onCambio((prev) => ({
+                  ...prev,
+                  idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value),
+                }))
               }
             >
               <option value="">Sin punto de venta</option>
@@ -153,7 +166,12 @@ export function ModalDeAltaDePago({
               id="pago-admin-categoria"
               className="form-select"
               value={valor.categoria}
-              onChange={(e) => onCambio((prev) => ({ ...prev, categoria: e.target.value as CategoriaPago }))}
+              onChange={(e) =>
+                onCambio((prev) => ({
+                  ...prev,
+                  ...cambiosAlElegirCategoria(prev, e.target.value as CategoriaPago),
+                }))
+              }
             >
               {CATEGORIAS_PAGO.map((c) => (
                 <option key={c.valor} value={c.valor}>
@@ -163,60 +181,99 @@ export function ModalDeAltaDePago({
             </select>
           </div>
 
-          <div className="col-md-4">
-            <label className="form-label" htmlFor="pago-admin-proveedor">
-              Proveedor (opcional)
-            </label>
-            <select
-              id="pago-admin-proveedor"
-              className="form-select"
-              value={valor.idProveedor}
-              onChange={(e) => onProveedorCambio(e.target.value)}
-            >
-              <option value="">Sin proveedor</option>
-              {proveedores.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {etiquetaDeProveedor(p)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label" htmlFor="pago-admin-area">
-              Área
-            </label>
-            <select
-              id="pago-admin-area"
-              className="form-select"
-              value={valor.idArea}
-              onChange={(e) => onCambio((prev) => ({ ...prev, idArea: Number(e.target.value) }))}
-            >
-              {areas.length === 0 && (
-                <option value="" disabled>
-                  Sin áreas
-                </option>
+          {ofreceElegirPersonal(valor.categoria) ? (
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pago-admin-personal">
+                Empleado (opcional)
+              </label>
+              <select
+                id="pago-admin-personal"
+                className="form-select"
+                value={valor.idPersonal}
+                onChange={(e) =>
+                  onCambio((prev) => ({
+                    ...prev,
+                    idPersonal: e.target.value === '' ? '' : Number(e.target.value),
+                  }))
+                }
+              >
+                <option value="">Sin empleado</option>
+                {(personal ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nombre}
+                  </option>
+                ))}
+              </select>
+              {errorDePersonal && <div className="form-text text-danger">{errorDePersonal}</div>}
+              {conPersonal && (
+                <div className="form-text">Se registra como pago de personal y baja el saldo del empleado.</div>
               )}
-              {areas.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
+            </div>
+          ) : (
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pago-admin-proveedor">
+                Proveedor (opcional)
+              </label>
+              <select
+                id="pago-admin-proveedor"
+                className="form-select"
+                value={valor.idProveedor}
+                onChange={(e) => onProveedorCambio(e.target.value)}
+              >
+                <option value="">Sin proveedor</option>
+                {proveedores.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {etiquetaDeProveedor(p)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          <div className="col-md-6">
-            <label className="form-label" htmlFor="pago-admin-concepto">
-              Concepto
-            </label>
-            <input
-              id="pago-admin-concepto"
-              type="text"
-              className="form-control"
-              value={valor.concepto}
-              onChange={(e) => onCambio((prev) => ({ ...prev, concepto: e.target.value }))}
-            />
-          </div>
+          {!conPersonal && (
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pago-admin-area">
+                Área
+              </label>
+              <select
+                id="pago-admin-area"
+                className="form-select"
+                value={valor.idArea}
+                onChange={(e) =>
+                  onCambio((prev) => ({
+                    ...prev,
+                    idArea: Number(e.target.value),
+                  }))
+                }
+              >
+                {areas.length === 0 && (
+                  <option value="" disabled>
+                    Sin áreas
+                  </option>
+                )}
+                {areas.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {!conPersonal && (
+            <div className="col-md-6">
+              <label className="form-label" htmlFor="pago-admin-concepto">
+                Concepto
+              </label>
+              <input
+                id="pago-admin-concepto"
+                type="text"
+                className="form-control"
+                value={valor.concepto}
+                onChange={(e) => onCambio((prev) => ({ ...prev, concepto: e.target.value }))}
+              />
+            </div>
+          )}
 
           <div className="col-md-6">
             <label className="form-label" htmlFor="pago-admin-detalle">
@@ -231,18 +288,25 @@ export function ModalDeAltaDePago({
             />
           </div>
 
-          <div className="col-md-4">
-            <label className="form-label" htmlFor="pago-admin-factura">
-              N° de factura (opcional)
-            </label>
-            <input
-              id="pago-admin-factura"
-              type="text"
-              className="form-control"
-              value={valor.numeroFactura}
-              onChange={(e) => onCambio((prev) => ({ ...prev, numeroFactura: e.target.value }))}
-            />
-          </div>
+          {!conPersonal && (
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pago-admin-factura">
+                N° de factura (opcional)
+              </label>
+              <input
+                id="pago-admin-factura"
+                type="text"
+                className="form-control"
+                value={valor.numeroFactura}
+                onChange={(e) =>
+                  onCambio((prev) => ({
+                    ...prev,
+                    numeroFactura: e.target.value,
+                  }))
+                }
+              />
+            </div>
+          )}
 
           <div className="col-12">
             <EditorDeLineasDePago

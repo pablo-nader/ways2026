@@ -18,7 +18,7 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
-import { ROL } from '../api/tipos'
+import { puedeGestionarCatalogos, ROL } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
 import {
   EncabezadoOrdenable,
@@ -29,6 +29,7 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { ModalDeAltaDePuntoVenta } from './organizacion/ModalDeAltaDePuntoVenta'
+import { ModalDeMercadoPagoDePuntoVenta } from './organizacion/ModalDeMercadoPagoDePuntoVenta'
 import { ModalDeModoDePuntoVenta } from './organizacion/ModalDeModoDePuntoVenta'
 import { ModalDePuntoVenta } from './organizacion/ModalDePuntoVenta'
 import { ModalDeSucursalDePuntoVenta } from './organizacion/ModalDeSucursalDePuntoVenta'
@@ -107,6 +108,8 @@ export function PuntosVenta() {
   /** Misma policy que el backend (`GestionDeOrganizacion`: Root y Admin). La ruta ya exige esos dos
    * roles; esto evita ofrecer el alta si la pantalla llegara a abrirse con otro. */
   const puedeCrear = usuario?.rolId === ROL.Root || usuario?.rolId === ROL.Admin
+  /** Mercado Pago es solo Admin (`GestionDeCatalogo` en la API): root entra a la pantalla pero no ve la acción. */
+  const puedeMercadoPago = !!usuario && puedeGestionarCatalogos(usuario.rolId)
 
   const [items, setItems] = useState<PuntoVentaListado[]>([])
   const [cargando, setCargando] = useState(true)
@@ -119,6 +122,7 @@ export function PuntosVenta() {
   const [formularioModo, setFormularioModo] = useState<FormularioDeModoDePuntoVenta | null>(null)
   /** Formulario para mover la caja de sucursal: endpoint, precondiciones y rastro propios, como el modo. */
   const [formularioSucursal, setFormularioSucursal] = useState<FormularioDeSucursalDePuntoVenta | null>(null)
+  const [mercadoPago, setMercadoPago] = useState<PuntoVentaListado | null>(null)
   /** Sucursales que ofrecen el alta y el movimiento; se piden al abrir cualquiera de los dos, por la misma razón que las empresas. */
   const [sucursales, setSucursales] = useState<SucursalListado[] | null>(null)
   const [errorSucursales, setErrorSucursales] = useState('')
@@ -608,6 +612,15 @@ export function PuntosVenta() {
             />
           )}
 
+          {mercadoPago && puedeMercadoPago && (
+            <ModalDeMercadoPagoDePuntoVenta
+              key={mercadoPago.id}
+              puntoVenta={mercadoPago}
+              focoDeReserva={nuevoRef}
+              onCerrar={() => setMercadoPago(null)}
+            />
+          )}
+
           {formularioModo && (
             <ModalDeModoDePuntoVenta
               valor={formularioModo}
@@ -747,6 +760,16 @@ export function PuntosVenta() {
                         >
                           Modo
                         </button>
+                        {puedeMercadoPago && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary me-1"
+                            onClick={() => setMercadoPago(p)}
+                            disabled={bloqueado}
+                          >
+                            Mercado Pago
+                          </button>
+                        )}
                         <BotonIcono
                           icono="editar"
                           className="me-1"

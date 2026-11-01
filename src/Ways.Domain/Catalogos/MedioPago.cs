@@ -35,4 +35,8 @@ public class MedioPago : CatalogoSimple
     public decimal RetencionIvaPorcentaje { get; set; }
 
     public decimal RetencionGananciasPorcentaje { get; set; }
+
+    /// <summary>Quién cobra por este medio (<see cref="ProveedorDeCobro"/>), o null si el medio pide una referencia a mano. Solo
+    /// para medios <see cref="ComportamientoMedioPago.Electronico"/>.</summary>
+    public string? Proveedor { get; set; }
 }

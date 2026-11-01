@@ -615,13 +615,28 @@ export type SucursalListado = {
   nombre: string
   razonSocialEmpresa: string | null
   cantidadPuntosVenta: number
+} & Partial<SucursalDireccion>
+
+/** Dirección estructurada de una sucursal, toda opcional — espejo de los campos de dirección de `SucursalAlta`,
+ * `SucursalEdicion` y `SucursalListado`. `provincia` es el nombre canónico de una de las 24 jurisdicciones; la latitud y
+ * la longitud van juntas o ninguna. */
+export type SucursalDireccion = {
+  calle: string | null
+  altura: string | null
+  ciudad: string | null
+  provincia: string | null
+  codigoPostal: string | null
+  latitud: number | null
+  longitud: number | null
+  referencia: string | null
 }
 
 /** Cuerpo de `POST /api/sucursales` — espejo de `SucursalAlta`. */
-export type SucursalAlta = { idEmpresa: number; nombre: string }
+export type SucursalAlta = { idEmpresa: number; nombre: string } & SucursalDireccion
 
-/** Cuerpo de `PUT /api/sucursales/{id}` — espejo de `SucursalEdicion`: el nombre es lo único editable. */
-export type SucursalEdicion = { nombre: string }
+/** Cuerpo de `PUT /api/sucursales/{id}` — espejo de `SucursalEdicion`: el nombre y la dirección; la dirección se
+ * reemplaza entera. */
+export type SucursalEdicion = { nombre: string } & SucursalDireccion
 
 /** Cuerpo de `POST /api/sucursales/{id}/fusionar` — espejo de `SucursalFusion`: la sucursal que absorbe a la del id. */
 export type SucursalFusion = { idSucursalDestino: number }
@@ -1996,7 +2011,8 @@ export type SolicitudDeEdicionDePago = {
 }
 
 /** Cuerpo de `PUT /api/pagos/administracion/{id}` — espejo de `SolicitudDeEdicionDePagoConLineas`: reemplaza el
- * conjunto de líneas del pago. */
+ * conjunto de líneas del pago. Con `idPersonal` el pago de sueldos común pasa a ser un pago de ese empleado: el concepto
+ * viaja vacío (lo genera el servidor) y no lleva proveedor. */
 export type SolicitudDeEdicionDePagoConLineas = {
   categoria: CategoriaPago
   idProveedor: number | null
@@ -2005,6 +2021,7 @@ export type SolicitudDeEdicionDePagoConLineas = {
   detalle: string | null
   numeroFactura: string | null
   lineas: LineaDePagoSolicitud[]
+  idPersonal?: number
 }
 
 /** Página de resultados de `GET /api/pagos/administracion` — espejo de
@@ -2029,6 +2046,7 @@ export type TipoMovimientoCuenta =
   | 'Transferencia'
   | 'Deposito'
   | 'Retiro'
+  | 'Pago'
 
 /** Movimiento de una cuenta tal como lo devuelve el ajuste manual. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
  * usuario dados de baja: el id distingue los dos casos. */
@@ -2209,6 +2227,9 @@ export type LineaDeVenta = {
   descuentoDeOfertaDeLinea?: number
 }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
+
+/** Cuerpo de `PUT /api/ventas/{id}/medios` (y de su gemelo de administración): los medios nuevos reemplazan a todos los cobros de la venta. */
+export type SolicitudDeCambioDeMedios = { pagos: PagoDeVenta[] }
 
 /** stage-17-presupuestos-y-remitos, Slice 7 (design: Interfaces/Contracts, decisión 2/tensión
  * T7): `idCliente`/`lineas` pasan a opcionales — con `idPresupuestoOrigen` presente, `lineas` NO
@@ -3320,6 +3341,32 @@ export type VentasPorArticulo = {
   articulos: ArticuloVendido[]
 }
 
+/** Ticket de `GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets` — espejo de `TicketDeArticulo`. `fecha` es un
+ * instante ISO con offset; `comprobante` ya viene armado para mostrarse; `cliente` es `null` en un consumidor final.
+ * `cantidad`/`total` son de ESE artículo en el ticket y van negativos en una nota de crédito. */
+export type TicketDeArticulo = {
+  idComprobante: number
+  fecha: string
+  puntoVenta: string
+  comprobante: string
+  cliente: string | null
+  cantidad: number
+  total: number
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets` — espejo de `TicketsDeArticulo`. `tickets`
+ * viene del más nuevo al más viejo; `cantidadTotal` y `total` suman esas mismas filas. */
+export type TicketsDeArticulo = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  idArticulo: number
+  descripcion: string
+  cantidadTotal: number
+  total: number
+  tickets: TicketDeArticulo[]
+}
+
 /** Cuántas veces cae un día de la semana (1 = lunes … 7 = domingo) en el rango: es el divisor de sus promedios. */
 export type DiaDeVentasPorHora = { diaDeLaSemana: number; ocurrencias: number }
 
@@ -3501,6 +3548,9 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'tenant.baja', etiqueta: 'Baja de tenant' },
   { valor: 'empresa.baja', etiqueta: 'Baja de empresa' },
   { valor: 'pv.baja', etiqueta: 'Baja de punto de venta' },
+  { valor: 'venta.medios', etiqueta: 'Cambio de medios de pago de venta' },
+  { valor: 'retiro.edicion', etiqueta: 'Edición de retiro' },
+  { valor: 'retiro.baja', etiqueta: 'Baja de retiro' },
 ]
 
 // --- Órdenes de compra (stage-16-ordenes-de-compra, Slice 6) --------------------------------
@@ -4012,6 +4062,27 @@ export type SolicitudDePagoDePersonal = {
   detalle?: string
 }
 
+/** Espejo de `SolicitudDePagoDePersonal` en `POST /api/pos/personal/{id}/pagos`: el cajero no manda fecha (el servidor usa
+ * hoy en la zona del punto de venta y una fecha distinta responde 400), ni empresa, ni descuento. */
+export type SolicitudDePagoDePersonalDelPos = Omit<
+  SolicitudDePagoDePersonal,
+  'fecha' | 'idEmpresa' | 'descuentoDeCuentaCorriente'
+>
+
+/** Espejo de `ReciboDePagoDePersonalDelPos`: el POS nunca recibe el saldo del empleado. */
+export type ReciboDePagoDePersonalDelPos = {
+  idMovimiento: number
+  fecha: string
+  importe: number
+}
+
+/** Espejo de `Ways.Application.Plantel.OpcionDePersonal` (`GET /api/pos/personal/opciones`, `OperacionDePos`): solo id y
+ * nombre, nunca saldo, valor hora ni documento. */
+export type OpcionDePersonal = {
+  id: number
+  nombre: string
+}
+
 /** Espejo de `Ways.Application.Plantel.DatosDePersonal`: cuerpo del alta y de la edición. */
 export type DatosDePersonal = {
   nombre: string
@@ -4025,3 +4096,57 @@ export type DatosDePersonal = {
   /** `null` = sin horario habitual; si no, exactamente 7 horas (lunes a domingo), 0 = franco. */
   horarioHabitual: number[] | null
 }
+
+/** Estado fiscal de una venta en la grilla de administración (`estadoFiscal` de `GET /api/ventas/administracion`). */
+export type EstadoFiscalDeGrilla = 'sin_factura' | 'en_tramite' | 'con_cae'
+
+/** Fila de `GET /api/ventas/administracion`. Un punto de venta, cliente o empleado dado de baja llega con id y nombre `null`. */
+export type FilaDeVentaDeAdministracion = {
+  id: number
+  numero: number
+  numeroVisible: string
+  fecha: string
+  idTipoComprobante: number
+  codigoTipo: string
+  tipo: string
+  idPuntoVenta: number | null
+  puntoVenta: string | null
+  idTurnoCaja: number | null
+  /** `null` = la venta no tiene turno. */
+  turnoCerrado: boolean | null
+  idCliente: number | null
+  cliente: string | null
+  idEmpleado: number | null
+  empleado: string | null
+  total: number
+  estado: EstadoComprobante
+  estadoFiscal: EstadoFiscalDeGrilla
+  /** Nombres distintos de los medios cobrados, "A, B"; `null` sin cobros. */
+  medios: string | null
+  conciliado: boolean
+  medioEditable: boolean
+  motivoMedioNoEditable: string | null
+}
+
+export type PaginaDeVentasDeAdministracion = PaginaDe<FilaDeVentaDeAdministracion>
+
+/** Fila de `GET /api/caja/retiros`. */
+export type FilaDeRetiro = {
+  id: number
+  fecha: string
+  idTurnoCaja: number
+  idPuntoVenta: number | null
+  puntoVenta: string | null
+  idEmpleado: number | null
+  empleado: string | null
+  importe: number
+  motivo: string
+  turnoCerrado: boolean
+  conciliado: boolean
+  esRetiroDeCierre: boolean
+}
+
+export type PaginaDeRetiros = PaginaDe<FilaDeRetiro>
+
+/** Cuerpo de `PUT /api/caja/retiros/{id}`. */
+export type SolicitudDeEdicionDeRetiro = { importe: number; motivo: string }

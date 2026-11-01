@@ -2,12 +2,13 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Caja;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Caja;
 
 /// <summary>
 /// Acredita al cierre de un turno lo cobrado con cada medio electrónico en su cuenta de tesorería, neto de comisión y
-/// retenciones (doc 10 §7). Es el único escritor del libro <c>movimientos_cuenta</c> por esta vía y corre dentro de la
+/// retenciones (doc 10 §7). Es el único escritor de las filas de cierre de <c>movimientos_cuenta</c> y corre dentro de la
 /// transacción del cierre, ya con el lock exclusivo del turno y con el lock de empresa de la tesorería de efectivo.
 ///
 /// Orden de locks: turno (exclusivo) → empresa (advisory) → medios <c>FOR SHARE</c> por id ascendente → cuentas de la
@@ -18,13 +19,13 @@ namespace Ways.Application.Caja;
 /// acredite la misma cuenta, que es lo que serializa su cadena, pero no con el <c>FOR KEY SHARE</c> de los chequeos de FK, así
 /// que insertar un movimiento o asignar la cuenta a un medio no queda bloqueado. Ninguno de esos escritores forma un ciclo
 /// con este: el ABM de cuentas solo lee los medios, el guardado de un medio pide <c>FOR KEY SHARE</c> sobre la cuenta (que no
-/// choca) y los pagos solo toman el lock de empresa. El saldo de partida se lee de la fila de la cuenta ya bloqueada y la
+/// choca) y los débitos de pago (<see cref="DebitosDePagoEnCuenta"/>) toman los mismos locks en el mismo orden. El saldo de partida se lee de la fila de la cuenta ya bloqueada y la
 /// cola de la cadena después, nunca antes.
 ///
 /// Que el medio sea electrónico no se vuelve a chequear: <c>ck_medios_pago_cuenta_solo_electronico</c> impide que un
 /// medio de otro comportamiento tenga cuenta, así que "tiene cuenta" ya implica "es electrónico".
 ///
-/// Fechas monótonas: la <c>fecha</c> de toda fila que se agrega a una cuenta, de este escritor o del ajuste manual, es
+/// Fechas monótonas: la <c>fecha</c> de toda fila que se agrega a una cuenta, de este escritor, del ajuste manual o de un débito de pago, es
 /// <c>max(hora propia, fecha del último movimiento de la cuenta)</c> (<see cref="FechaMonotona"/>), leída junto con el
 /// <c>final</c> bajo el lock. Cada escritor fija su hora antes de esperar ese lock, así que sin esto un cierre podía comitear un id
 /// mayor con una fecha anterior. Con la regla, para cada cuenta que solo tuvo estos escritores el orden por fecha (con empates) es el orden por id, y el libro por
@@ -35,10 +36,10 @@ namespace Ways.Application.Caja;
 /// movimiento de una cuenta tiene fecha futura (reloj desfasado o una fila mal cargada), toda fila posterior de esa cuenta lleva esa
 /// fecha hasta que la hora real la alcance; se cura sola y no se detecta (la pantalla avisa si el ajuste cae fuera del rango mostrado).
 ///
-/// Lo que el libro todavía NO refleja: (a) una devolución por nota de crédito de una venta cobrada con un medio digital
-/// no descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta
-/// un ajuste manual; (b) un pago pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
-/// cuenta. El soporte de un bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún
+/// Lo que el libro todavía NO refleja: una devolución por nota de crédito de una venta cobrada con un medio digital no
+/// descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
+/// ajuste manual. Un pago con un medio digital sí debita su cuenta, con filas <c>pago</c> que escribe
+/// <see cref="DebitosDePagoEnCuenta"/>. El soporte de un bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún
 /// camino actual ejerce: los importes de pago nunca son negativos y <c>ValidadorDePagos</c> rechaza los pagos en una nota de
 /// crédito.
 /// </summary>
@@ -101,6 +102,139 @@ public static class EscriturasDeCuentaDeTesoreria
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Compensa en las cuentas de tesorería el cambio de medios de una venta de un turno ya cerrado. Mismo orden de locks que
+    /// <see cref="AcreditarAsync"/>: el llamador ya tiene el turno (<c>FOR UPDATE</c>) y el lock de empresa; acá se toman los
+    /// medios <c>FOR SHARE</c> y las cuentas de la empresa del turno <c>FOR NO KEY UPDATE</c>, en id ascendente, y recién bajo
+    /// ese lock se lee qué medios ya acreditó el turno.
+    ///
+    /// Por cada medio con cuenta cuya variación de bruto no es cero:
+    /// <list type="bullet">
+    /// <item>si el turno ya le escribió sus filas de cierre (cobro, comisión, retenciones), se agrega una fila <c>ajuste</c> con el
+    /// neto de la variación (comisión y retenciones con los porcentajes actuales del medio, como el cierre), con el turno y el
+    /// medio para rastrearla. Las filas de cierre no se tocan: su índice único las admite una sola vez por turno y medio;</item>
+    /// <item>si no las tiene y la variación es positiva, se escriben las filas de cierre con todo lo que ese medio cobra ahora en el
+    /// turno: lo mismo que haría la reconstrucción del historial, que después ya no vuelve a acreditar ese par;</item>
+    /// <item>si no las tiene y la variación es negativa, no se escribe nada: la cuenta nunca recibió ese cobro.</item>
+    /// </list>
+    /// Las fechas siguen <see cref="FechaMonotona"/>.
+    /// </summary>
+    public static async Task CompensarCambioDeMediosAsync(
+        IWaysDbContext db, DbConnection conexion, DbTransaction? transaccion, int idTenant, int idEmpresa,
+        int idTurnoCaja, int idComprobanteVenta, DateTimeOffset momento, int idEmpleado,
+        IReadOnlyDictionary<int, decimal> variacionDeBrutoPorMedio, CancellationToken ct)
+    {
+        var variaciones = variacionDeBrutoPorMedio.Where(v => v.Value != 0m).ToDictionary(v => v.Key, v => v.Value);
+        if (variaciones.Count == 0)
+        {
+            return;
+        }
+
+        var medios = await LeerYBloquearMediosAsync(conexion, transaccion, idTenant, variaciones, ct);
+        if (medios.Count == 0)
+        {
+            return;
+        }
+
+        var cuentas = await LeerYBloquearCuentasAsync(
+            conexion, transaccion, idTenant, idEmpresa, medios.Select(m => m.IdCuenta).Distinct().Order().ToList(), ct);
+
+        var idsDeMedio = medios.Select(m => m.IdMedioPago).ToList();
+        var acreditados = (await db.MovimientosCuenta
+                .Where(m => m.IdTurnoCaja == idTurnoCaja && m.IdMedioPago != null && idsDeMedio.Contains(m.IdMedioPago.Value)
+                            && TiposDeCierre.Contains(m.Tipo))
+                .Select(m => m.IdMedioPago!.Value)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        var brutoActual = await BrutoDelTurnoPorMedioAsync(
+            db, idTurnoCaja, medios.Where(m => !acreditados.Contains(m.IdMedioPago) && m.Bruto > 0m).Select(m => m.IdMedioPago).ToList(),
+            ct);
+
+        var saldos = new Dictionary<int, decimal>();
+        var fechas = new Dictionary<int, DateTimeOffset>();
+        foreach (var (idCuenta, cuenta) in cuentas.OrderBy(c => c.Key))
+        {
+            var cola = await LeerColaAsync(db, idTenant, idCuenta, cuenta.SaldoInicial, ct);
+            saldos[idCuenta] = cola.Saldo;
+            fechas[idCuenta] = FechaMonotona(momento, cola.Fecha);
+        }
+
+        foreach (var medio in medios.Where(m => saldos.ContainsKey(m.IdCuenta)))
+        {
+            if (acreditados.Contains(medio.IdMedioPago))
+            {
+                var neto = CalculadorDeMovimientosDeCuenta.Calcular(medio.Bruto, medio.Porcentajes).Sum(c => c.Ingreso - c.Egreso);
+                if (neto == 0m)
+                {
+                    continue;
+                }
+
+                var inicio = saldos[medio.IdCuenta];
+                var fila = new MovimientoCuenta
+                {
+                    IdTenant = idTenant,
+                    IdCuentaTesoreria = medio.IdCuenta,
+                    Fecha = fechas[medio.IdCuenta],
+                    Tipo = TipoMovimientoCuenta.Ajuste,
+                    IdTurnoCaja = idTurnoCaja,
+                    IdMedioPago = medio.IdMedioPago,
+                    Concepto = $"Cambio de medio de la venta {idComprobanteVenta} ({medio.Nombre}) - turno {idTurnoCaja}",
+                    Inicio = inicio,
+                    Ingreso = neto > 0m ? neto : 0m,
+                    Egreso = neto < 0m ? -neto : 0m,
+                    Final = inicio + neto,
+                    IdEmpleado = idEmpleado,
+                    BaseBruta = medio.Bruto
+                };
+                saldos[medio.IdCuenta] = fila.Final;
+                db.MovimientosCuenta.Add(fila);
+                continue;
+            }
+
+            var bruto = brutoActual.GetValueOrDefault(medio.IdMedioPago);
+            if (bruto > 0m)
+            {
+                foreach (var componente in CalculadorDeMovimientosDeCuenta.Calcular(bruto, medio.Porcentajes))
+                {
+                    var inicio = saldos[medio.IdCuenta];
+                    saldos[medio.IdCuenta] = inicio + componente.Ingreso - componente.Egreso;
+                    db.MovimientosCuenta.Add(ArmarFila(
+                        idTenant, medio.IdCuenta, fechas[medio.IdCuenta], componente, idTurnoCaja, medio.IdMedioPago, medio.Nombre,
+                        inicio, idEmpleado));
+                }
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static readonly TipoMovimientoCuenta[] TiposDeCierre =
+    [
+        TipoMovimientoCuenta.Cobro, TipoMovimientoCuenta.Comision, TipoMovimientoCuenta.RetencionIibb,
+        TipoMovimientoCuenta.RetencionIva, TipoMovimientoCuenta.RetencionGanancias
+    ];
+
+    /// <summary>Mismo conjunto que <see cref="LectorDeMovimientosDelTurno"/>: cobros vivos de comprobantes emitidos del turno.</summary>
+    private static async Task<Dictionary<int, decimal>> BrutoDelTurnoPorMedioAsync(
+        IWaysDbContext db, int idTurnoCaja, List<int> idsDeMedio, CancellationToken ct)
+    {
+        if (idsDeMedio.Count == 0)
+        {
+            return [];
+        }
+
+        return await (
+                from p in db.Cobros
+                join c in db.ComprobantesVenta.SinEspejosFiscales() on p.IdComprobanteVenta equals c.Id
+                where c.IdTurnoCaja == idTurnoCaja && c.Estado == EstadoComprobante.Emitido
+                      && idsDeMedio.Contains(p.IdMedioPago)
+                group p.Importe by p.IdMedioPago into g
+                select new { IdMedioPago = g.Key, Bruto = g.Sum() })
+            .ToDictionaryAsync(x => x.IdMedioPago, x => x.Bruto, ct);
     }
 
     /// <summary>Bloquea una sola cuenta viva del tenant con el mismo <c>FOR NO KEY UPDATE</c> que el cierre y devuelve su saldo

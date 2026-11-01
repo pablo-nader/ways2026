@@ -60,6 +60,17 @@ function sucursalFixture(sobrescribir: Partial<SucursalListado> = {}): SucursalL
   }
 }
 
+const DIRECCION_NULA = {
+  calle: null,
+  altura: null,
+  ciudad: null,
+  provincia: null,
+  codigoPostal: null,
+  latitud: null,
+  longitud: null,
+  referencia: null,
+}
+
 const centro = sucursalFixture()
 const deposito = sucursalFixture({ id: 501, nombre: 'Depósito', cantidadPuntosVenta: 0 })
 const empresaSur: EmpresaListado = {
@@ -160,7 +171,7 @@ describe('Sucursales — alta', () => {
     await usuario.type(screen.getByLabelText('Nombre'), '  Norte  ')
     await usuario.click(screen.getByRole('button', { name: 'Crear' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/sucursales', { idEmpresa: 20, nombre: 'Norte' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/sucursales', { idEmpresa: 20, nombre: 'Norte', ...DIRECCION_NULA }))
     expect(await screen.findByText('Se creó la sucursal "Norte".')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('Norte')).toBeInTheDocument())
     expect(screen.queryByLabelText('Empresa')).not.toBeInTheDocument()
@@ -229,8 +240,95 @@ describe('Sucursales — renombre', () => {
     await usuario.type(nombre, 'Centro Norte')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/sucursales/500', { nombre: 'Centro Norte' }))
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith('/sucursales/500', { nombre: 'Centro Norte', ...DIRECCION_NULA }),
+    )
     expect(await screen.findByText('Se actualizó "Centro Norte".')).toBeInTheDocument()
+  })
+})
+
+describe('Sucursales — dirección', () => {
+  it('la edición precarga la dirección guardada y el PUT la lleva completa', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValue(centro)
+    montar([
+      sucursalFixture({
+        calle: 'Colón',
+        altura: '1234 bis',
+        ciudad: 'Córdoba',
+        provincia: 'Córdoba',
+        codigoPostal: '5000',
+        latitud: -31.4201,
+        longitud: 0,
+        referencia: 'Frente a la plaza',
+      }),
+    ])
+    await esperarFilas()
+
+    await usuario.click(botonDeFila('Sucursal Centro', 'Editar'))
+    expect(screen.getByLabelText('Calle')).toHaveValue('Colón')
+    expect(screen.getByLabelText('Provincia')).toHaveValue('Córdoba')
+    expect(screen.getByLabelText('Latitud')).toHaveValue('-31.4201')
+    expect(screen.getByLabelText('Longitud')).toHaveValue('0')
+
+    await usuario.clear(screen.getByLabelText('Calle'))
+    await usuario.type(screen.getByLabelText('Calle'), 'Mitre')
+    await usuario.selectOptions(screen.getByLabelText('Provincia'), 'Santa Fe')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith('/sucursales/500', {
+        nombre: 'Sucursal Centro',
+        calle: 'Mitre',
+        altura: '1234 bis',
+        ciudad: 'Córdoba',
+        provincia: 'Santa Fe',
+        codigoPostal: '5000',
+        latitud: -31.4201,
+        longitud: 0,
+        referencia: 'Frente a la plaza',
+      }),
+    )
+  })
+
+  it('ofrece las 24 jurisdicciones más la opción sin informar', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFilas()
+
+    await usuario.click(botonDeFila('Sucursal Centro', 'Editar'))
+
+    expect(within(screen.getByLabelText('Provincia')).getAllByRole('option')).toHaveLength(25)
+  })
+
+  it('una coordenada a medias se rechaza en el formulario, sin llamar a la API', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFilas()
+
+    await usuario.click(botonDeFila('Sucursal Centro', 'Editar'))
+    await usuario.type(screen.getByLabelText('Latitud'), '-31,4')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Completá la latitud y la longitud, o dejá las dos vacías.')).toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('un rechazo del servidor por la dirección se rinde dentro del modal', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockRejectedValue(
+      new ErrorApi(400, 'provincia_invalida', 'La provincia tiene que ser una de las 24 jurisdicciones argentinas.'),
+    )
+    montar()
+    await esperarFilas()
+
+    await usuario.click(botonDeFila('Sucursal Centro', 'Editar'))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(
+      await screen.findByText('La provincia tiene que ser una de las 24 jurisdicciones argentinas.'),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Calle')).toBeInTheDocument()
   })
 })
 
@@ -409,5 +507,61 @@ describe('Sucursales — fusión', () => {
     expect(screen.getByLabelText('Sucursal destino')).toBeDisabled()
     expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
     expect(within(screen.getByRole('row', { name: /Sucursal Centro/ })).getByRole('button', { name: 'Fusionar' })).toBeDisabled()
+  })
+})
+
+describe('Sucursales — Mercado Pago', () => {
+  const estadoDeLocal = {
+    estado: 'no_registrada',
+    idStoreMercadoPago: null,
+    externalId: 'WAYSS500',
+    fechaRegistro: null,
+    fechaSincronizacion: null,
+    camposFaltantes: [],
+  }
+
+  function montarConMercadoPago() {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/sucursales') return Promise.resolve([centro, deposito])
+      if (ruta === '/sucursales/500/mercadopago') return Promise.resolve(estadoDeLocal)
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    return render(<Sucursales />)
+  }
+
+  it('el Admin ve la acción en cada fila y abre el modal de la sucursal elegida', async () => {
+    const usuario = userEvent.setup()
+    montarConMercadoPago()
+    await esperarFilas()
+
+    expect(screen.getAllByRole('button', { name: 'Mercado Pago' })).toHaveLength(2)
+    await usuario.click(within(screen.getByRole('row', { name: /Sucursal Centro/ })).getByRole('button', { name: 'Mercado Pago' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Mercado Pago de Sucursal Centro' })
+    expect(await within(dialogo).findByText('No registrada')).toBeInTheDocument()
+    expect(apiGetMock).toHaveBeenCalledWith('/sucursales/500/mercadopago')
+  })
+
+  it('cerrar el modal lo desmonta', async () => {
+    const usuario = userEvent.setup()
+    montarConMercadoPago()
+    await esperarFilas()
+    await usuario.click(within(screen.getByRole('row', { name: /Sucursal Centro/ })).getByRole('button', { name: 'Mercado Pago' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Mercado Pago de Sucursal Centro' })
+    await within(dialogo).findByText('No registrada')
+
+    await usuario.click(within(dialogo).getAllByRole('button', { name: 'Cerrar' })[0])
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('quien no es Admin no ve la acción', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Root, rol: 'Root', idTenant: null })
+    montarConMercadoPago()
+    await esperarFilas()
+
+    expect(screen.queryByRole('button', { name: 'Mercado Pago' })).not.toBeInTheDocument()
   })
 })

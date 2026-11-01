@@ -10,6 +10,7 @@ using Ways.Application.Caja;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Parametros;
+using Ways.Application.Plantel;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
@@ -473,8 +474,9 @@ public partial class ServicioDePagos(
         var momento = reloj.Ahora;
 
         var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        await ExigirPersonalDeLaConversionAsync(solicitud.IdPersonal, ct);
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
-        ExigirConceptoValido(solicitud.Concepto);
+        ExigirDatosDeLaEdicion(solicitud);
 
         ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         if (inmutables.IdTurnoCaja is null)
@@ -500,8 +502,9 @@ public partial class ServicioDePagos(
         var momento = reloj.Ahora;
 
         var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        await ExigirPersonalDeLaConversionAsync(solicitud.IdPersonal, ct);
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
-        ExigirConceptoValido(solicitud.Concepto);
+        ExigirDatosDeLaEdicion(solicitud);
 
         ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
@@ -539,7 +542,8 @@ public partial class ServicioDePagos(
     /// <summary>Columnas que ninguna escritura cambia después del alta, así que se pueden leer
     /// antes de los locks (single-read-under-lock regla 6): el turno es la clave del primer lock.
     /// <c>id_comprobante_compra</c> NO está acá: la vinculación posterior lo cambia.
-    /// <c>id_movimiento_personal</c> sí: se escribe al insertar el pago y no hay escritor que lo cambie.</summary>
+    /// <c>id_movimiento_personal</c> sí lo está solo como lectura rápida: la conversión de un pago de sueldos común en pago de
+    /// personal lo cambia, así que cada escritura lo vuelve a decidir sobre el pago leído bajo su lock.</summary>
     private sealed record DatosInmutablesDePago(
         int? IdTurnoCaja, int IdEmpresa, OrigenFondosPago OrigenFondos, int? IdMovimientoPersonal);
 
@@ -580,6 +584,47 @@ public partial class ServicioDePagos(
             throw new ErrorDominio(
                 "gasto_de_pago_de_personal",
                 "El gasto pertenece a un pago de personal y no se puede modificar por separado.", 409);
+        }
+    }
+
+    /// <summary>update-404-first: asignar un empleado inexistente (o de otro tenant, o dado de baja) responde 404 antes de
+    /// validar el cuerpo. La lectura es solo la respuesta rápida: el <c>UPDATE</c> atómico del saldo bajo el lock decide.</summary>
+    private async Task ExigirPersonalDeLaConversionAsync(int? idPersonal, CancellationToken ct)
+    {
+        if (idPersonal is { } id && !await db.Personal.AnyAsync(p => p.Id == id, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe el personal {id}.");
+        }
+    }
+
+    /// <summary>Validaciones puras del cuerpo de la edición. Con empleado, el pago pasa a ser un pago de personal: tiene que ser de
+    /// sueldos, sin proveedor, y su concepto lo genera el servidor, así que el enviado tiene que venir vacío (un campo
+    /// aceptado y descartado sería una promesa falsa).</summary>
+    private static void ExigirDatosDeLaEdicion(ComandoDeEdicionDePago solicitud)
+    {
+        if (solicitud.IdPersonal is null)
+        {
+            ExigirConceptoValido(solicitud.Concepto);
+            return;
+        }
+
+        if (solicitud.Categoria != CategoriaPago.Sueldos)
+        {
+            throw new ErrorDominio(
+                "pago_personal_requiere_sueldos", "Solo un pago de categoría sueldos se asigna a un empleado.", 400);
+        }
+
+        if (solicitud.IdProveedor is not null)
+        {
+            throw new ErrorDominio(
+                "pago_personal_sin_proveedor", "Un pago de personal no lleva proveedor.", 400);
+        }
+
+        if (!string.IsNullOrWhiteSpace(solicitud.Concepto))
+        {
+            throw new ErrorDominio(
+                "concepto_de_pago_de_personal",
+                "El concepto de un pago de personal lo genera el sistema; dejalo vacío al asignar un empleado.", 400);
         }
     }
 
@@ -678,6 +723,10 @@ public partial class ServicioDePagos(
             throw PagoCambioConcurrente();
         }
 
+        // La conversión en pago de personal es la única escritura que cambia id_movimiento_personal después del alta: la
+        // lectura previa a los locks pudo quedar vieja, así que el chequeo definitivo se hace acá, sobre el pago leído bajo su lock.
+        ExigirPagoSinPagoDePersonal(pago.IdMovimientoPersonal);
+
         // El pago cuenta para el libro en su fecha; el cierre de su turno, en la del cierre (normalmente la fecha del pago es
         // anterior, y la menor de las dos es la que decide).
         var fechaQueCuentaParaElLibro = turnoCerrado?.FechaCierre is { } cierre && cierre < pago.Fecha ? cierre : pago.Fecha;
@@ -705,6 +754,7 @@ public partial class ServicioDePagos(
             .GroupBy(a => a.IdComprobanteCompra)
             .ToDictionary(g => g.Key, g => g.Sum(a => a.Importe));
 
+        int? idMovimientoDeLaConversion = null;
         var anterior = await EstadoContableAsync(pago, ct);
         var medioAnterior = itemsVivos.FirstOrDefault()?.IdMedioPago;
         var valorAnterior = PayloadDeEdicion(pago, medioAnterior, anterior.ImportePorMedio);
@@ -730,6 +780,12 @@ public partial class ServicioDePagos(
 
             await AjustarAplicacionesAlNuevoImporteAsync(
                 pago, anterior.Importe, aplicaciones, comprasBloqueadas, momento, ct);
+
+            if (solicitud.IdPersonal is { } idPersonal)
+            {
+                idMovimientoDeLaConversion = await ConvertirEnPagoDePersonalAsync(
+                    idTenant, pago, idPersonal, plan.Total, idEmpleado, momento, ct);
+            }
         }
         else
         {
@@ -765,7 +821,8 @@ public partial class ServicioDePagos(
 
         if (turnoCerrado is not null && CalculadorDeAjustesDePago.AfectaElArqueo(pago.OrigenFondos, anterior, nuevo))
         {
-            await RecalcularArqueoAsync(idTenant, turnoCerrado, idEmpleado, momento, ct);
+            await RecalculoDeArqueoDeTurnoCerrado.RecalcularAsync(
+                db, lectorDeMovimientos, idTenant, turnoCerrado.Id, turnoCerrado.IdMedioPagoEfectivo, idEmpleado, momento, ct);
         }
 
         if (CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(pago.OrigenFondos, anterior.Importe, nuevo?.Importe)
@@ -781,11 +838,19 @@ public partial class ServicioDePagos(
                 idEmpleado, ct);
         }
 
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
+
         var valorNuevo = PayloadDeEdicion(
             pago, plan?.IdMedioPagoDeCompatibilidad ?? medioAnterior, nuevo?.ImportePorMedio ?? anterior.ImportePorMedio);
         if (solicitud is null)
         {
             valorNuevo["deleted_at"] = pago.DeletedAt;
+        }
+
+        if (idMovimientoDeLaConversion is { } idMovimientoConvertido)
+        {
+            valorNuevo["id_personal"] = solicitud!.IdPersonal;
+            valorNuevo["id_movimiento_personal"] = idMovimientoConvertido;
         }
 
         auditoria.Registrar(new RegistroDeAuditoria(
@@ -796,6 +861,49 @@ public partial class ServicioDePagos(
         await transaccion.CommitAsync(ct);
 
         return pago;
+    }
+
+    /// <summary>
+    /// Convierte el pago de sueldos que se está editando en un pago de personal, dentro de la transacción de la edición y sin
+    /// volver a escribir el dinero: el pago y sus ítems conservan medios, importes, origen, turno y fecha, así que el arqueo y la
+    /// tesorería no se mueven. Escribe lo mismo que <c>ServicioDePagoDePersonal</c> para un pago nuevo: el saldo del personal
+    /// baja por el total (<c>UPDATE ... RETURNING</c> crudo, que toma el lock de la fila y responde 404 si el empleado no
+    /// existe, es de otro tenant o está dado de baja) y el asiento de tipo <c>pago</c> lleva la fecha de negocio del pago.
+    /// Después apunta el pago a ese asiento y le pone el concepto de un pago de personal.
+    /// Orden de locks: la fila del personal es posterior al lock del pago. Sin ciclo con la reasignación, que lockea
+    /// personal y después pago: solo opera sobre pagos que ya tienen asiento, y esta conversión rechaza esos pagos bajo el lock
+    /// del pago, antes de tomar el del personal.
+    /// </summary>
+    private async Task<int> ConvertirEnPagoDePersonalAsync(
+        int idTenant, Pago pago, int idPersonal, decimal total, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var personal = await EscriturasDePersonal.ActualizarSaldoYLeerVinculoAsync(
+            conexion, transaccionCruda, idTenant, idPersonal, -total, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el personal {idPersonal}.");
+
+        var nombre = await db.Personal.Where(p => p.Id == idPersonal).Select(p => p.Nombre).FirstAsync(ct);
+        var zona = await ResolverZonaAsync(pago.IdEmpresa, pago.IdPuntoVenta, ct);
+        var fecha = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(pago.Fecha, zona).DateTime);
+
+        var idMovimiento = await EscriturasDePersonal.InsertarMovimientoAsync(
+            conexion, transaccionCruda, idTenant, idPersonal, idEmpleado, fecha, TipoMovimientoPersonal.Pago,
+            horas: null, valorHora: null, -total, personal.Saldo, detalle: null, momento, ct);
+
+        pago.IdMovimientoPersonal = idMovimiento;
+        pago.Concepto = $"Pago de personal: {nombre}";
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText = "UPDATE movimientos_tesoreria SET concepto = $1 WHERE id_pago = $2 AND id_tenant = $3";
+        ParametrosDeComando.Agregar(comando, pago.Concepto);
+        ParametrosDeComando.Agregar(comando, pago.Id);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        await comando.ExecuteNonQueryAsync(ct);
+
+        return idMovimiento;
     }
 
     private static ErrorDominio PagoCambioConcurrente() =>
@@ -895,65 +1003,6 @@ public partial class ServicioDePagos(
                 .Where(c => c.Id == idComprobanteCompra)
                 .Select(c => (int?)c.IdPuntoVenta)
                 .FirstOrDefaultAsync(ct);
-
-    /// <summary>Recalcula el arqueo persistido de un turno cerrado con la misma derivación que el
-    /// cierre (<see cref="LectorDeMovimientosDelTurno"/> + <see cref="CalculadorDeArqueo"/>) y el
-    /// ancla pineada al cierre. El modo de cierre (clásico o por retiro) no queda persistido, así
-    /// que el declarado de las filas existentes no se toca y las filas nuevas se declaran en 0:
-    /// nadie declaró nada para ese medio. La marca del turno se escribe solo si alguna fila
-    /// cambió.</summary>
-    private async Task RecalcularArqueoAsync(
-        int idTenant, TurnoBloqueado turno, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
-    {
-        var insumos = await lectorDeMovimientos.LeerAsync(turno.Id, ct);
-        var idAncla = turno.IdMedioPagoEfectivo ?? ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
-        var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
-
-        var filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == turno.Id).ToListAsync(ct);
-        var cambios = RecalculadorDeArqueo.Planificar(
-            lineas, insumos.Actividad,
-            filas.Select(f => new ArqueoPersistido(f.IdMedioPago, f.ImporteEsperado, f.ImporteEsperadoOriginal)).ToList());
-
-        if (cambios.Count == 0)
-        {
-            return;
-        }
-
-        foreach (var cambio in cambios)
-        {
-            if (cambio.EsNueva)
-            {
-                db.ArqueosTurno.Add(new ArqueoTurno
-                {
-                    IdTenant = idTenant,
-                    IdTurnoCaja = turno.Id,
-                    IdMedioPago = cambio.IdMedioPago,
-                    ImporteEsperado = cambio.ImporteEsperado,
-                    ImporteDeclarado = 0m,
-                    ImporteEsperadoOriginal = cambio.ImporteEsperadoOriginal
-                });
-                continue;
-            }
-
-            var fila = filas.Single(f => f.IdMedioPago == cambio.IdMedioPago);
-            fila.ImporteEsperado = cambio.ImporteEsperado;
-            fila.ImporteEsperadoOriginal = cambio.ImporteEsperadoOriginal;
-        }
-
-        await db.SaveChangesAsync(ct);
-
-        var conexion = await ObtenerConexionAbiertaAsync(ct);
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
-        comando.CommandText =
-            "UPDATE turnos_caja SET fecha_recalculo = $1, id_empleado_recalculo = $2, updated_at = $1 " +
-            "WHERE id_turno_caja = $3 AND id_tenant = $4";
-        ParametrosDeComando.Agregar(comando, momento);
-        ParametrosDeComando.Agregar(comando, idEmpleado);
-        ParametrosDeComando.Agregar(comando, turno.Id);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        await comando.ExecuteNonQueryAsync(ct);
-    }
 
     /// <summary>Un ítem por línea, en el orden de las líneas (el primero es el de menor id).</summary>
     private async Task EscribirItemsDelPagoAsync(
@@ -1478,6 +1527,8 @@ public partial class ServicioDePagos(
             await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, pago, idEmpleado, momento, ct);
         }
 
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
+
         await transaccion.CommitAsync(ct);
 
         return pago;
@@ -1579,6 +1630,8 @@ public partial class ServicioDePagos(
         // ningún lock de turno antes: la compra ligada FOR UPDATE (si aplica) y el pago a proveedor
         // (si aplica) son los únicos locks de fila que pueden preceder a este advisory.
         await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, pago, idEmpleado, momento, ct);
+
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
 
         return pago;
     }
@@ -1830,7 +1883,7 @@ public partial class ServicioDePagos(
     /// venta 404 y turno abierto 409). El pago solo de descuento no tiene origen y solo resuelve el punto de
     /// venta y la fecha. Este método no escribe nada.</summary>
     public async Task<EntornoDePagoDeSueldo> PrepararPagosDeSueldoAsync(
-        OrigenFondosPago? origenFondos, int? idEmpresa, int? idPuntoVenta, DateOnly fecha,
+        OrigenFondosPago? origenFondos, int? idEmpresa, int? idPuntoVenta, DateOnly? fecha, bool exigirHoy,
         IReadOnlyCollection<int> idsMedioPago, CancellationToken ct = default)
     {
         var momento = reloj.Ahora;
@@ -1866,10 +1919,19 @@ public partial class ServicioDePagos(
         }
 
         var zona = await ResolverZonaAsync(idEmpresaResuelta, idPuntoVentaResuelto, ct);
-        ExigirFechaNoFutura(fecha, momento, zona);
+        var hoy = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(momento, zona).DateTime);
+        var fechaDelPago = fecha ?? hoy;
+        if (exigirHoy && fechaDelPago != hoy)
+        {
+            throw new ErrorDominio(
+                "fecha_no_es_hoy", "Un pago de personal desde el POS se registra siempre con la fecha de hoy.", 400);
+        }
+
+        ExigirFechaNoFutura(fechaDelPago, momento, zona);
 
         return new EntornoDePagoDeSueldo(
-            idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona, momento), nombresDeMedios);
+            idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, fechaDelPago,
+            FechaDeNegocioAInstante(fechaDelPago, zona, momento), nombresDeMedios);
     }
 
     /// <summary>Un solo pago de categoría sueldos con un ítem por línea de dinero, dentro de la transacción del
@@ -1924,6 +1986,8 @@ public partial class ServicioDePagos(
         {
             await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, pago, idEmpleado, momento, ct);
         }
+
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
 
         return new PagoDeSueldoPersistido(pago, items);
     }

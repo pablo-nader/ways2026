@@ -346,17 +346,88 @@ public static class PayloadDeAuditoria
                 ["id_sucursal"] = idSucursal
             });
 
-    /// <summary><c>sucursal.alta</c>. Sin estado previo; <c>{id_empresa, nombre}</c>.</summary>
+    /// <summary><c>sucursal.alta</c>. Sin estado previo; <c>{id_empresa, nombre}</c> más los ocho campos de la dirección.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
-        AltaDeSucursal(int idEmpresa, string nombre) => (
-            null,
-            new Dictionary<string, object?> { ["id_empresa"] = idEmpresa, ["nombre"] = nombre });
+        AltaDeSucursal(int idEmpresa, string nombre, DireccionDeSucursal direccion)
+    {
+        var nuevo = ConDireccion(new Dictionary<string, object?> { ["id_empresa"] = idEmpresa, ["nombre"] = nombre }, direccion);
 
-    /// <summary><c>sucursal.edicion</c>. El único campo editable es el nombre.</summary>
+        return (null, nuevo);
+    }
+
+    /// <summary><c>sucursal.edicion</c>. El nombre y la dirección completa, antes y después.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
-        RenombreDeSucursal(string nombreAnterior, string nombreNuevo) => (
-            new Dictionary<string, object?> { ["nombre"] = nombreAnterior },
-            new Dictionary<string, object?> { ["nombre"] = nombreNuevo });
+        EdicionDeSucursal(
+            string nombreAnterior, DireccionDeSucursal direccionAnterior, string nombreNuevo,
+            DireccionDeSucursal direccionNueva) => (
+            ConDireccion(new Dictionary<string, object?> { ["nombre"] = nombreAnterior }, direccionAnterior),
+            ConDireccion(new Dictionary<string, object?> { ["nombre"] = nombreNuevo }, direccionNueva));
+
+    /// <summary><c>sucursal.mercadopago</c>. Sin estado previo; <c>{operacion, id_usuario_mercadopago, id_store_mercadopago, external_id,
+    /// fecha_sincronizacion}</c>. <paramref name="operacion"/> es <c>alta</c>, <c>adopcion</c> o <c>actualizacion</c>. Nunca lleva un token.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        LocalDeMercadoPago(
+            string operacion, long idUsuarioMercadoPago, long idStoreMercadoPago, string externalId,
+            DateTimeOffset fechaSincronizacion) => (
+            null,
+            new Dictionary<string, object?>
+            {
+                ["operacion"] = operacion,
+                ["id_usuario_mercadopago"] = idUsuarioMercadoPago,
+                ["id_store_mercadopago"] = idStoreMercadoPago,
+                ["external_id"] = externalId,
+                ["fecha_sincronizacion"] = fechaSincronizacion
+            });
+
+    /// <summary><c>pv.mercadopago</c>. Sin estado previo; <c>{operacion, id_usuario_mercadopago, id_store_mercadopago, id_pos_mercadopago,
+    /// external_id, fecha_sincronizacion}</c>. <paramref name="operacion"/> es <c>alta</c>, <c>adopcion</c> o <c>actualizacion</c>.
+    /// Nunca lleva un token.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        CajaDeMercadoPago(
+            string operacion, long idUsuarioMercadoPago, long idStoreMercadoPago, long idPosMercadoPago, string externalId,
+            DateTimeOffset fechaSincronizacion) => (
+            null,
+            new Dictionary<string, object?>
+            {
+                ["operacion"] = operacion,
+                ["id_usuario_mercadopago"] = idUsuarioMercadoPago,
+                ["id_store_mercadopago"] = idStoreMercadoPago,
+                ["id_pos_mercadopago"] = idPosMercadoPago,
+                ["external_id"] = externalId,
+                ["fecha_sincronizacion"] = fechaSincronizacion
+            });
+
+    /// <summary><c>pv.terminalmercadopago</c>. <c>anterior</c> = <c>{id_terminal_point}</c> (nulo si no había terminal); <c>nuevo</c> =
+    /// <c>{operacion, id_usuario_mercadopago, id_pos_mercadopago, id_terminal_point, modo_cambiado}</c>. <paramref name="operacion"/> es
+    /// <c>asignacion</c> o <c>desasignacion</c>; en la segunda <paramref name="idTerminalNueva"/> es nulo. Nunca lleva un token.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        TerminalDeMercadoPago(
+            string operacion, long idUsuarioMercadoPago, long idPosMercadoPago, string? idTerminalAnterior, string? idTerminalNueva,
+            bool modoCambiado) => (
+            new Dictionary<string, object?> { ["id_terminal_point"] = idTerminalAnterior },
+            new Dictionary<string, object?>
+            {
+                ["operacion"] = operacion,
+                ["id_usuario_mercadopago"] = idUsuarioMercadoPago,
+                ["id_pos_mercadopago"] = idPosMercadoPago,
+                ["id_terminal_point"] = idTerminalNueva,
+                ["modo_cambiado"] = modoCambiado
+            });
+
+    private static Dictionary<string, object?> ConDireccion(
+        Dictionary<string, object?> campos, DireccionDeSucursal direccion)
+    {
+        campos["calle"] = direccion.Calle;
+        campos["altura"] = direccion.Altura;
+        campos["ciudad"] = direccion.Ciudad;
+        campos["provincia"] = direccion.Provincia;
+        campos["codigo_postal"] = direccion.CodigoPostal;
+        campos["latitud"] = direccion.Latitud;
+        campos["longitud"] = direccion.Longitud;
+        campos["referencia"] = direccion.Referencia;
+
+        return campos;
+    }
 
     /// <summary><c>pv.sucursal</c>. <c>{id_sucursal}</c> antes y después; <c>sucursal_dada_de_baja</c> dice si la
     /// sucursal de origen quedó sin cajas ni stock y cayó con el movimiento.</summary>
@@ -416,6 +487,56 @@ public static class PayloadDeAuditoria
                 ["viva"] = false,
                 ["id_comprobante_anulado"] = idComprobanteAnulado
             });
+
+    /// <summary><c>venta.medios</c>: los cobros vivos de la venta antes y después del cambio, en orden de medio, y en el
+    /// valor nuevo el turno cuyo arqueo se recalculó (<c>null</c> si el turno seguía abierto o la venta no tiene turno).</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        CambioDeMediosDeVenta(
+            IReadOnlyCollection<CobroDeVenta> anteriores, IReadOnlyCollection<CobroDeVenta> nuevos, int? idTurnoRecalculado) => (
+            new Dictionary<string, object?> { ["cobros"] = ProyectarCobros(anteriores) },
+            new Dictionary<string, object?>
+            {
+                ["cobros"] = ProyectarCobros(nuevos),
+                ["id_turno_recalculado"] = idTurnoRecalculado
+            });
+
+    /// <summary><c>retiro.edicion</c>: importe y motivo antes y después, y en el valor nuevo el turno cuyo arqueo se recalculó
+    /// (<c>null</c> si el turno seguía abierto).</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        EdicionDeRetiro(
+            decimal importeAnterior, string motivoAnterior, decimal importeNuevo, string motivoNuevo, int? idTurnoRecalculado) => (
+            new Dictionary<string, object?> { ["importe"] = importeAnterior, ["motivo"] = motivoAnterior },
+            new Dictionary<string, object?>
+            {
+                ["importe"] = importeNuevo,
+                ["motivo"] = motivoNuevo,
+                ["id_turno_recalculado"] = idTurnoRecalculado
+            });
+
+    /// <summary><c>retiro.baja</c>: importe y motivo (los mismos en los dos lados, la baja no los cambia), <c>deleted_at</c> antes y
+    /// después y, en el valor nuevo, el turno cuyo arqueo se recalculó.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        BajaDeRetiro(decimal importe, string motivo, DateTimeOffset momento, int? idTurnoRecalculado) => (
+            new Dictionary<string, object?> { ["importe"] = importe, ["motivo"] = motivo, ["deleted_at"] = null },
+            new Dictionary<string, object?>
+            {
+                ["importe"] = importe,
+                ["motivo"] = motivo,
+                ["deleted_at"] = momento,
+                ["id_turno_recalculado"] = idTurnoRecalculado
+            });
+
+    private static List<Dictionary<string, object?>> ProyectarCobros(IEnumerable<CobroDeVenta> cobros) =>
+        cobros
+            .OrderBy(c => c.IdMedioPago).ThenBy(c => c.Importe)
+            .Select(c => new Dictionary<string, object?>
+            {
+                ["id_medio_pago"] = c.IdMedioPago,
+                ["importe"] = c.Importe,
+                ["vuelto"] = c.Vuelto,
+                ["referencia"] = c.Referencia
+            })
+            .ToList();
 
     private static Dictionary<string, object?> EstadoDeAplicacionesDeCobro(
         decimal netoCobrado, IReadOnlyCollection<(int IdComprobanteVenta, decimal Importe)> aplicaciones)

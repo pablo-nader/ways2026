@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ReporteDeVentasPorArticulo } from './ReporteDeVentasPorArticulo'
@@ -10,7 +10,9 @@ import type {
   CategoriaListado,
   EmpresaListado,
   GrupoListado,
+  ComprobanteEmitido,
   PuntoVentaListado,
+  TicketsDeArticulo,
   VentasPorArticulo,
 } from '../api/tipos'
 
@@ -77,6 +79,63 @@ function respuestaFixture(sobrescribir: Partial<VentasPorArticulo> = {}): Ventas
   }
 }
 
+function ticketsFixture(idArticulo: number): TicketsDeArticulo {
+  return {
+    desde: '2026-10-12',
+    hasta: '2026-10-18',
+    zonaHoraria: 'America/Argentina/Buenos_Aires',
+    idArticulo,
+    descripcion: idArticulo === 1 ? 'Marlboro box 20' : 'Fiambre suelto',
+    cantidadTotal: 4,
+    total: 4000,
+    tickets: [
+      {
+        idComprobante: 345,
+        fecha: '2026-10-15T01:30:00+00:00',
+        puntoVenta: 'Sucursal Centro',
+        comprobante: 'Ticket 0001-00000345',
+        cliente: null,
+        cantidad: 4,
+        total: 4000,
+      },
+    ],
+  }
+}
+
+function comprobanteFixture(): ComprobanteEmitido {
+  return {
+    id: 345,
+    numero: 345,
+    numeroVisible: '0001-00000345',
+    estado: 'Emitido',
+    fecha: '2026-10-15T01:30:00+00:00',
+    idPuntoVenta: 11,
+    idCliente: 1,
+    idComprobanteAsociado: null,
+    subtotal: 4000,
+    descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
+    total: 4000,
+    direccionEntrega: null,
+    observaciones: null,
+    items: [
+      {
+        orden: 1,
+        idArticulo: 1,
+        descripcion: 'Marlboro box 20',
+        cantidad: 4,
+        precioUnitario: 1000,
+        descuento: 0,
+        total: 4000,
+        codigoLote: null,
+      },
+    ],
+    pagos: [{ idMedioPago: 5, importe: 4000, referencia: null, vuelto: 0 }],
+    idPresupuestoOrigen: null,
+  } as unknown as ComprobanteEmitido
+}
+
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     const propia = sobrescribir?.(ruta)
@@ -95,6 +154,10 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
       })
     }
     if (ruta.startsWith('/reportes/ventas/por-articulo?')) return Promise.resolve(respuestaFixture())
+    const tickets = /^\/reportes\/ventas\/por-articulo\/(\d+)\/tickets\?/.exec(ruta)
+    if (tickets) return Promise.resolve(ticketsFixture(Number(tickets[1])))
+    if (ruta === '/ventas/345') return Promise.resolve(comprobanteFixture())
+    if (ruta.startsWith('/catalogos/medios-pago')) return Promise.resolve([{ id: 5, nombre: 'Efectivo' }])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -108,13 +171,27 @@ function ultimaLlamadaDeReporte(): URLSearchParams {
   return new URLSearchParams(llamadas[llamadas.length - 1].split('?')[1])
 }
 
-function renderReporte() {
-  return render(<ReporteDeVentasPorArticulo />, { wrapper: ({ children }) => (
-      <MemoryRouter>
+let ubicacionActual = ''
+
+function SondaDeUbicacion() {
+  ubicacionActual = useLocation().search
+  return null
+}
+
+function renderReporte(entrada = '/') {
+  return render(<ReporteDeVentasPorArticulo />, {
+    wrapper: ({ children }) => (
+      <MemoryRouter initialEntries={[entrada]}>
+        <SondaDeUbicacion />
         {children}
         <Toaster />
       </MemoryRouter>
-    ) })
+    ),
+  })
+}
+
+function llamadasDeTickets(): string[] {
+  return apiGetMock.mock.calls.map((c) => c[0] as string).filter((r) => r.includes('/tickets?'))
 }
 
 /** Espera a que los selectores de catálogo tengan sus opciones: el `<select>` existe antes que los datos. */
@@ -410,5 +487,94 @@ describe('ReporteDeVentasPorArticulo', () => {
     expect(parametros.get('idEmpresa')).toBe('1')
     expect(parametros.get('idGrupo')).toBe('30')
     expect(parametros.get('desde')).toBe(rangoDeLaSemanaActual().desde)
+  })
+})
+
+describe('ReporteDeVentasPorArticulo - tickets por artículo', () => {
+  it('el botón de la fila abre los tickets con el recorte aplicado del reporte y sin los demás filtros', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await screen.findByText('MARL-20')
+    await esperarCatalogos()
+    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), 'Sucursal Centro')
+    await usuario.selectOptions(screen.getByLabelText('Grupo'), 'Cigarrillos')
+    await waitFor(() => {
+      expect(ultimaLlamadaDeReporte().get('idPuntoVenta')).toBe('11')
+      expect(ultimaLlamadaDeReporte().get('idGrupo')).toBe('30')
+    })
+
+    await usuario.click(await screen.findByRole('button', { name: 'Ver tickets de Marlboro box 20' }))
+
+    await screen.findByRole('row', { name: /Ticket 0001-00000345/ })
+    const semana = rangoDeLaSemanaActual()
+    expect(llamadasDeTickets()).toEqual([
+      `/reportes/ventas/por-articulo/1/tickets?idEmpresa=1&idPuntoVenta=11&desde=${semana.desde}&hasta=${semana.hasta}`,
+    ])
+    expect(ubicacionActual).toBe('?articulo=1')
+  })
+
+  it('cada fila tiene su botón con el nombre de su artículo', async () => {
+    mockearRutasBase()
+    renderReporte()
+
+    expect(await screen.findByRole('button', { name: 'Ver tickets de Marlboro box 20' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ver tickets de Fiambre suelto' })).toBeInTheDocument()
+  })
+
+  it('abrir un ticket lo refleja en la URL, y cerrarlo vuelve a la lista con el foco en su botón', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await usuario.click(await screen.findByRole('button', { name: 'Ver tickets de Marlboro box 20' }))
+    const fila = await screen.findByRole('row', { name: /Ticket 0001-00000345/ })
+    const botonDelTicket = within(fila).getByRole('button', { name: /Ver el detalle del ticket/ })
+    await usuario.click(botonDelTicket)
+
+    const detalle = await screen.findByRole('dialog', { name: 'Detalle de la venta 0001-00000345' })
+    expect(await within(detalle).findByText('Efectivo')).toBeInTheDocument()
+    expect(ubicacionActual).toBe('?articulo=1&ticket=345')
+
+    await usuario.click(within(detalle).getByRole('button', { name: 'Cerrar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Detalle de la venta/ })).not.toBeInTheDocument())
+    expect(ubicacionActual).toBe('?articulo=1')
+    expect(screen.getByRole('dialog', { name: /Tickets de Marlboro box 20/ })).toBeInTheDocument()
+    expect(botonDelTicket).toHaveFocus()
+  })
+
+  it('cerrar la lista quita los parámetros y devuelve el foco al botón de la fila', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    const boton = await screen.findByRole('button', { name: 'Ver tickets de Marlboro box 20' })
+    await usuario.click(boton)
+    const dialogo = await screen.findByRole('dialog', { name: /Tickets de Marlboro box 20/ })
+    await screen.findByRole('row', { name: /Ticket 0001-00000345/ })
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Cerrar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(ubicacionActual).toBe('')
+    expect(boton).toHaveFocus()
+  })
+
+  it('un enlace con artículo y ticket reabre los dos modales', async () => {
+    mockearRutasBase()
+    renderReporte('/?articulo=1&ticket=345')
+
+    expect(await screen.findByRole('dialog', { name: 'Detalle de la venta 0001-00000345' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: /Tickets de Marlboro box 20/ })).toBeInTheDocument()
+  })
+
+  it('un parámetro inválido o un ticket sin artículo no abre nada', async () => {
+    mockearRutasBase()
+    renderReporte('/?articulo=abc&ticket=345')
+
+    await screen.findByText('MARL-20')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(llamadasDeTickets()).toEqual([])
   })
 })

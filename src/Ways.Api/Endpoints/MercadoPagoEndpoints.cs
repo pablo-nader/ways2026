@@ -9,7 +9,7 @@ using Ways.Domain.Common;
 namespace Ways.Api.Endpoints;
 
 /// <summary>
-/// Conexión de una empresa con Mercado Pago por OAuth. Inicio, completar, lectura y desconexión son de Admin
+/// Conexión de una empresa con Mercado Pago por OAuth y registro de sus sucursales como locales. Inicio, completar, lectura, desconexión y el local de cada sucursal son de Admin
 /// (<see cref="Politicas.GestionDeCatalogo"/>); el callback es anónimo porque la URI de retorno registrada en Mercado Pago es
 /// una sola y la sesión del comercio puede no existir en ese host, por eso no canjea nada: solo reenvía el code y el state a la
 /// web del comercio, donde la sesión que inició el flujo completa el canje.
@@ -92,6 +92,90 @@ public static class MercadoPagoEndpoints
             "Completa la conexión dentro de la sesión que la inició: canjea el code y guarda la conexión cifrada. 400 " +
             "mercadopago_estado_invalido, 403 mercadopago_estado_ajeno, 409 mercadopago_ya_conectada|mercadopago_cuenta_en_uso, " +
             "502 mercadopago_intercambio_fallido.");
+
+        var locales = app.MapGroup("/api/sucursales/{idSucursal:int}/mercadopago")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        locales.MapGet("/", (ServicioDeLocalesMercadoPago servicio, int idSucursal, CancellationToken ct) =>
+            servicio.ObtenerAsync(idSucursal, ct))
+        .WithSummary(
+            "Estado de la sucursal como local de Mercado Pago en la cuenta conectada a su empresa: sin_conexion, no_registrada, " +
+            "registrada o desactualizada, con los datos de dirección que le faltan. 404 si la sucursal no existe.");
+
+        locales.MapPost("/", (ServicioDeLocalesMercadoPago servicio, int idSucursal, CancellationToken ct) =>
+            servicio.RegistrarAsync(idSucursal, ct))
+        .WithSummary(
+            "Registra la sucursal como local de Mercado Pago, adopta el que ya exista con su external_id o actualiza el existente " +
+            "con los datos actuales. 404 sucursal inexistente, 400 direccion_incompleta_para_mercadopago, 409 " +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion, 502 mercadopago_solicitud_rechazada, 503 mercadopago_no_disponible.");
+
+        var cajas = app.MapGroup("/api/puntos-venta/{idPuntoVenta:int}/mercadopago")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        cajas.MapGet("/", (ServicioDeCajasMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.ObtenerAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Estado del punto de venta como caja de Mercado Pago en la cuenta conectada a su empresa: sin_conexion, " +
+            "local_no_registrado, no_registrada, registrada o desactualizada. 404 si el punto de venta no existe.");
+
+        cajas.MapPost("/", (ServicioDeCajasMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.RegistrarAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Registra el punto de venta como caja de Mercado Pago bajo el local de su sucursal, adopta la que ya exista con su " +
+            "external_id o actualiza la existente (también la reapunta al local de la sucursal actual si el punto de venta se movió). " +
+            "404 punto de venta inexistente, 400 nombre_invalido_para_mercadopago, 409 mercadopago_no_conectada|" +
+            "mercadopago_requiere_reconexion|mercadopago_local_no_registrado, 502 mercadopago_solicitud_rechazada, " +
+            "503 mercadopago_no_disponible.");
+
+        cajas.MapGet("/terminales", (ServicioDeTerminalesMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.ListarAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Terminales Point que Mercado Pago tiene vinculadas a la caja del punto de venta (id, modo, si es la asignada); con la lista " +
+            "vacía trae las instrucciones para vincularla en la app de Mercado Pago. 404 punto de venta inexistente, 409 " +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion|mercadopago_caja_no_registrada, 502 mercadopago_solicitud_rechazada, " +
+            "503 mercadopago_no_disponible.");
+
+        cajas.MapPost("/terminal", (ServicioDeTerminalesMercadoPago servicio, int idPuntoVenta, SolicitudDeTerminalMercadoPago? solicitud, CancellationToken ct) =>
+            servicio.AsignarAsync(idPuntoVenta, solicitud, ct))
+        .WithSummary(
+            "Asigna la terminal Point (solo una vinculada a la caja) al punto de venta y la pasa a modo PDV si no lo estaba. 404 punto de " +
+            "venta inexistente, 400 terminal_point_invalida, 409 mercadopago_no_conectada|mercadopago_requiere_reconexion|" +
+            "mercadopago_caja_no_registrada|mercadopago_terminal_no_vinculada|mercadopago_terminal_modelo_no_admitido|" +
+            "mercadopago_caja_con_terminal_en_pdv, 502 mercadopago_solicitud_rechazada, 503 mercadopago_no_disponible.");
+
+        cajas.MapDelete("/terminal", (ServicioDeTerminalesMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.QuitarAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Quita la terminal asignada al punto de venta en Ways; no toca Mercado Pago. 404 punto de venta inexistente, 409 " +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion|mercadopago_caja_no_registrada.");
+
+        var cobros = app.MapGroup("/api/pos/mercadopago/cobros")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.OperacionDePos)
+            .RequireAuthorization(Politicas.RequiereDispositivo);
+
+        cobros.MapPost("/", async (ServicioDeCobrosMercadoPago servicio, SolicitudDeCobroMercadoPago solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.CrearAsync(solicitud, ct)))
+        .WithSummary(
+            "Dispositivo: cobra una venta con QR dinámico de Mercado Pago (el punto de venta es el del dispositivo). Con un cobro pendiente " +
+            "del mismo número, medio e importe devuelve ese mismo cobro. 400 cobro_mercadopago_medio_invalido|cobro_mercadopago_importe_invalido|" +
+            "cobro_mercadopago_numero_invalido, 403 sin dispositivo vigente, 409 cobro_mercadopago_en_curso|cobro_mercadopago_ya_aprobado|" +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion|mercadopago_caja_no_registrada|punto_venta_modo_incompatible, " +
+            "502 mercadopago_solicitud_rechazada|mercadopago_respuesta_invalida, 503 mercadopago_no_disponible.");
+
+        cobros.MapGet("/{idCobro:int}", async (ServicioDeCobrosMercadoPago servicio, int idCobro, CancellationToken ct) =>
+            Results.Ok(await servicio.ObtenerAsync(idCobro, ct)))
+        .WithSummary(
+            "Dispositivo: estado de un cobro de su punto de venta. Un cobro pendiente se refresca desde Mercado Pago a lo sumo una vez " +
+            "cada 2 segundos. 404 si el cobro no existe o es de otro punto de venta, 403 sin dispositivo vigente.");
+
+        cobros.MapPost("/{idCobro:int}/cancelar", async (ServicioDeCobrosMercadoPago servicio, int idCobro, CancellationToken ct) =>
+            Results.Ok(await servicio.CancelarAsync(idCobro, ct)))
+        .WithSummary(
+            "Dispositivo: cancela un cobro pendiente. Si Mercado Pago ya no puede cancelarlo (409) lee la orden y devuelve su estado real, " +
+            "que puede ser aprobado. 404 si el cobro no existe o es de otro punto de venta, 409 cobro_mercadopago_ya_aprobado si ya estaba aprobado.");
 
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,

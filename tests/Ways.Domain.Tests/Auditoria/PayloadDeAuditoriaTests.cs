@@ -1,5 +1,6 @@
 using Ways.Domain.Auditoria;
 using Ways.Domain.Compras;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 
@@ -132,6 +133,49 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void CambioDeMediosDeVentaEsConstruibleYLlevaLosCobrosDeAntesYDeDespues()
+    {
+        var payload = PayloadDeAuditoria.CambioDeMediosDeVenta(
+            [new CobroDeVenta(1, Domain.Catalogos.ComportamientoMedioPago.Efectivo, 1000m, 200m, null)],
+            [new CobroDeVenta(2, Domain.Catalogos.ComportamientoMedioPago.Electronico, 800m, 0m, "OP-1")],
+            idTurnoRecalculado: 7);
+
+        AsumirConstruible(AccionAuditada.VentaCambioDeMedios, payload);
+        var nuevo = Assert.Single(Assert.IsType<List<Dictionary<string, object?>>>(payload.Nuevo["cobros"]));
+        Assert.Equal(2, nuevo["id_medio_pago"]);
+        Assert.Equal("OP-1", nuevo["referencia"]);
+        Assert.Equal(7, payload.Nuevo["id_turno_recalculado"]);
+        Assert.Equal(200m, Assert.Single(Assert.IsType<List<Dictionary<string, object?>>>(payload.Anterior!["cobros"]))["vuelto"]);
+    }
+
+    [Fact]
+    public void EdicionDeRetiroLlevaImporteYMotivoDeAntesYDeDespues()
+    {
+        var payload = PayloadDeAuditoria.EdicionDeRetiro(100m, "Retiro mal cargado", 130m, "Retiro corregido", idTurnoRecalculado: 4);
+
+        AsumirConstruible(AccionAuditada.RetiroEdicion, payload);
+        Assert.Equal(100m, payload.Anterior!["importe"]);
+        Assert.Equal("Retiro mal cargado", payload.Anterior["motivo"]);
+        Assert.Equal(130m, payload.Nuevo["importe"]);
+        Assert.Equal("Retiro corregido", payload.Nuevo["motivo"]);
+        Assert.Equal(4, payload.Nuevo["id_turno_recalculado"]);
+    }
+
+    [Fact]
+    public void BajaDeRetiroLlevaLoQueTeniaYElInstanteDeLaBaja()
+    {
+        var momento = new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.Zero);
+        var payload = PayloadDeAuditoria.BajaDeRetiro(100m, "Retiro duplicado", momento, idTurnoRecalculado: null);
+
+        AsumirConstruible(AccionAuditada.RetiroBaja, payload);
+        Assert.Equal(100m, payload.Anterior!["importe"]);
+        Assert.Equal("Retiro duplicado", payload.Anterior["motivo"]);
+        Assert.Null(payload.Anterior["deleted_at"]);
+        Assert.Equal(momento, payload.Nuevo["deleted_at"]);
+        Assert.Null(payload.Nuevo["id_turno_recalculado"]);
+    }
+
+    [Fact]
     public void AjusteDeStockEsConstruible() =>
         AsumirConstruible(
             AccionAuditada.StockAjuste,
@@ -161,15 +205,23 @@ public class PayloadDeAuditoriaTests
     [Fact]
     public void LosPayloadsDeSucursalSonConstruiblesYDicenLoQueCambio()
     {
-        var alta = PayloadDeAuditoria.AltaDeSucursal(7, "Centro");
+        var direccion = DireccionDeSucursal.Normalizar(
+            "Mitre", "1234", "Rosario", "santa fe", "2000", -32.9468m, -60.6393m, "Esquina con farmacia");
+        var alta = PayloadDeAuditoria.AltaDeSucursal(7, "Centro", direccion);
         AsumirConstruible(AccionAuditada.SucursalAlta, alta);
         Assert.Null(alta.Anterior);
         Assert.Equal(7, alta.Nuevo["id_empresa"]);
+        Assert.Equal("Santa Fe", alta.Nuevo["provincia"]);
+        Assert.Equal(-32.9468m, alta.Nuevo["latitud"]);
+        Assert.Equal("Esquina con farmacia", alta.Nuevo["referencia"]);
 
-        var renombre = PayloadDeAuditoria.RenombreDeSucursal("Centro", "Centro Norte");
-        AsumirConstruible(AccionAuditada.SucursalEdicion, renombre);
-        Assert.Equal("Centro", renombre.Anterior!["nombre"]);
-        Assert.Equal("Centro Norte", renombre.Nuevo["nombre"]);
+        var edicion = PayloadDeAuditoria.EdicionDeSucursal(
+            "Centro", DireccionDeSucursal.Vacia, "Centro Norte", direccion);
+        AsumirConstruible(AccionAuditada.SucursalEdicion, edicion);
+        Assert.Equal("Centro", edicion.Anterior!["nombre"]);
+        Assert.Null(edicion.Anterior["calle"]);
+        Assert.Equal("Centro Norte", edicion.Nuevo["nombre"]);
+        Assert.Equal("Mitre", edicion.Nuevo["calle"]);
 
         var movimiento = PayloadDeAuditoria.CambioDeSucursalDePuntoVenta(3, 4, sucursalDadaDeBaja: true);
         AsumirConstruible(AccionAuditada.PuntoVentaSucursal, movimiento);
@@ -196,6 +248,64 @@ public class PayloadDeAuditoriaTests
         Assert.Equal(3, fusion.Nuevo["articulos"]);
         Assert.Equal(2, fusion.Nuevo["lotes"]);
         Assert.Equal(10, fusion.Nuevo["movimientos"]);
+    }
+
+    [Fact]
+    public void CajaDeMercadoPagoDiceLaOperacionYLosIdsSinNingunToken()
+    {
+        var momento = DateTimeOffset.UtcNow;
+        var payload = PayloadDeAuditoria.CajaDeMercadoPago("adopcion", 77, 555, 888, "WAYSPV7", momento);
+
+        AsumirConstruible(AccionAuditada.PuntoVentaMercadoPago, payload);
+        Assert.Null(payload.Anterior);
+        Assert.Equal("adopcion", payload.Nuevo["operacion"]);
+        Assert.Equal(77L, payload.Nuevo["id_usuario_mercadopago"]);
+        Assert.Equal(555L, payload.Nuevo["id_store_mercadopago"]);
+        Assert.Equal(888L, payload.Nuevo["id_pos_mercadopago"]);
+        Assert.Equal("WAYSPV7", payload.Nuevo["external_id"]);
+        Assert.Equal(momento, payload.Nuevo["fecha_sincronizacion"]);
+        Assert.DoesNotContain(payload.Nuevo.Keys, k => k.Contains("token", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void TerminalDeMercadoPagoDiceLaTerminalAnteriorYLaNuevaSinNingunToken()
+    {
+        var payload = PayloadDeAuditoria.TerminalDeMercadoPago("asignacion", 77, 888, "PAX_A910__1", "PAX_A910__2", true);
+
+        AsumirConstruible(AccionAuditada.PuntoVentaTerminalMercadoPago, payload);
+        Assert.Equal("PAX_A910__1", payload.Anterior!["id_terminal_point"]);
+        Assert.Equal("asignacion", payload.Nuevo["operacion"]);
+        Assert.Equal(77L, payload.Nuevo["id_usuario_mercadopago"]);
+        Assert.Equal(888L, payload.Nuevo["id_pos_mercadopago"]);
+        Assert.Equal("PAX_A910__2", payload.Nuevo["id_terminal_point"]);
+        Assert.Equal(true, payload.Nuevo["modo_cambiado"]);
+        Assert.DoesNotContain(payload.Nuevo.Keys, k => k.Contains("token", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void LaDesasignacionDeTerminalDejaLaNuevaEnNulo()
+    {
+        var payload = PayloadDeAuditoria.TerminalDeMercadoPago("desasignacion", 77, 888, "PAX_A910__1", null, false);
+
+        AsumirConstruible(AccionAuditada.PuntoVentaTerminalMercadoPago, payload);
+        Assert.Null(payload.Nuevo["id_terminal_point"]);
+        Assert.Equal("desasignacion", payload.Nuevo["operacion"]);
+    }
+
+    [Fact]
+    public void LocalDeMercadoPagoDiceLaOperacionYLosIdsSinNingunToken()
+    {
+        var momento = DateTimeOffset.UtcNow;
+        var payload = PayloadDeAuditoria.LocalDeMercadoPago("alta", 77, 555, "WAYSS7", momento);
+
+        AsumirConstruible(AccionAuditada.SucursalMercadoPago, payload);
+        Assert.Null(payload.Anterior);
+        Assert.Equal("alta", payload.Nuevo["operacion"]);
+        Assert.Equal(77L, payload.Nuevo["id_usuario_mercadopago"]);
+        Assert.Equal(555L, payload.Nuevo["id_store_mercadopago"]);
+        Assert.Equal("WAYSS7", payload.Nuevo["external_id"]);
+        Assert.Equal(momento, payload.Nuevo["fecha_sincronizacion"]);
+        Assert.DoesNotContain(payload.Nuevo.Keys, k => k.Contains("token", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

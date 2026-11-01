@@ -6,6 +6,7 @@
  * `timestamptz` y sí necesita ese offset.
  */
 import { api } from './cliente'
+import { fechaIsoConOffset } from './fechas'
 import type {
   ArticuloDeReporte,
   Comisiones,
@@ -24,6 +25,7 @@ import type {
   Rotacion,
   TopArticulos,
   Vencimientos,
+  TicketsDeArticulo,
   VentasPorArticulo,
   VentasPorHora,
   VentasPorMedioPago,
@@ -173,6 +175,12 @@ export const clienteDeReportes = {
     api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros, orden)}`),
   ventasPorArticulo: (filtros: FiltrosDeVentasPorArticulo) =>
     api.get<VentasPorArticulo>(`/reportes/ventas/por-articulo${construirQueryDeVentasPorArticulo(filtros)}`),
+  /** Tickets donde se vendió un artículo, con la empresa, el punto de venta y el rango del reporte (sin área, grupo,
+   * categoría ni artículo). */
+  ticketsDeArticulo: (idArticulo: number, filtros: FiltrosDeTicketsDeArticulo) =>
+    api.get<TicketsDeArticulo>(
+      `/reportes/ventas/por-articulo/${idArticulo}/tickets${construirQueryDeTicketsDeArticulo(filtros)}`,
+    ),
   ventasPorHora: (filtros: FiltrosDeVentasPorHora) =>
     api.get<VentasPorHora>(`/reportes/ventas/por-hora${construirQueryDeVentasPorHora(filtros)}`),
   libroIvaCompras: (filtros: FiltrosDeLibroIva) =>
@@ -181,25 +189,10 @@ export const clienteDeReportes = {
     api.get<LibroIva>(`/reportes/libro-iva-ventas${construirQueryDeLibroIva(filtros)}`),
 }
 
-// ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
-// Slices 6a/7): a diferencia de ventas/resumen (arriba, `DateOnly` del lado del servidor), estas
-// dos rutas filtran contra un `timestamptz` (`fecha_cierre`/`fecha`) — mismo criterio de offset
-// explícito que `compras.ts`/`cuentaCorriente.ts`. Duplicado a propósito: no hay un módulo
-// compartido de utilidades de fecha en esta web todavía. -------------------------------------
-function desplazamientoUtcLocal(anio: number, mes: number, dia: number): string {
-  const minutos = new Date(anio, mes - 1, dia).getTimezoneOffset()
-  const signo = minutos > 0 ? '-' : '+'
-  const minutosAbsolutos = Math.abs(minutos)
-  const horas = String(Math.floor(minutosAbsolutos / 60)).padStart(2, '0')
-  const restoMinutos = String(minutosAbsolutos % 60).padStart(2, '0')
-  return `${signo}${horas}:${restoMinutos}`
-}
-
-function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
-  const [anio, mes, dia] = fechaIso.split('-').map(Number)
-  return `${fechaIso}T${horaLimite}${desplazamientoUtcLocal(anio, mes, dia)}`
-}
-
+// ---- /cajas y /tesoreria (stage-11-exportacion-reportes, Slices 6a/7): a diferencia de
+// ventas/resumen (arriba, `DateOnly` del lado del servidor), estas dos rutas filtran contra un
+// `timestamptz` (`fecha_cierre`/`fecha`), así que `desde`/`hasta` llevan el offset local
+// explícito (`fechaIsoConOffset`, ./fechas). ---------------------------------------------------
 /** Filtro de `GET /api/reportes/cajas` — `idPuntoVenta` es opcional (a diferencia de
  * `FiltrosDeTesoreria`): el histórico de cierres admite "Todos". */
 export type FiltrosDeHistoricoDeCajas = {
@@ -343,6 +336,20 @@ export function construirQueryDeVentasPorArticulo(filtros: FiltrosDeVentasPorArt
   if (filtros.idGrupo !== null) parametros.set('idGrupo', String(filtros.idGrupo))
   if (filtros.idCategoria !== null) parametros.set('idCategoria', String(filtros.idCategoria))
   if (filtros.idArticulo !== null) parametros.set('idArticulo', String(filtros.idArticulo))
+  return `?${parametros.toString()}`
+}
+
+/** Filtro de `GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets`: el mismo recorte de empresa, punto de venta
+ * y rango que el reporte; el artículo viaja en la ruta. */
+export type FiltrosDeTicketsDeArticulo = Pick<FiltrosDeVentasPorArticulo, 'idEmpresa' | 'idPuntoVenta' | 'desde' | 'hasta'>
+
+/** Mismos nombres de parámetro que `construirQueryDeVentasPorArticulo`; el punto de venta se omite si no hay. */
+export function construirQueryDeTicketsDeArticulo(filtros: FiltrosDeTicketsDeArticulo): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
   return `?${parametros.toString()}`
 }
 

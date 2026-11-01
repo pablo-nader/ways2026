@@ -7,9 +7,13 @@ Categoria | ofertas | id_categoria,id_tenant | marcado
 Empresa | acumulados_de_facturacion | id_empresa,id_tenant | sinmarca
 Empresa | areas | id_empresa,id_tenant | marcado
 Empresa | articulos_empresas | id_empresa,id_tenant | sinmarca
+Empresa | cajas_mercadopago via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | cajas_mercadopago | id_empresa,id_tenant | marcado
 Empresa | categorias | id_empresa,id_tenant | marcado
 Empresa | certificados_fiscales | id_empresa,id_tenant | marcado
 Empresa | clientes | id_empresa,id_tenant | marcado
+Empresa | cobros_mercadopago via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | cobros_mercadopago | id_empresa,id_tenant | marcado
 Empresa | combos | id_empresa,id_tenant | marcado
 Empresa | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
@@ -20,6 +24,8 @@ Empresa | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | facturaciones_de_venta | id_empresa,id_tenant | marcado
 Empresa | grupos | id_empresa,id_tenant | marcado
 Empresa | listas_precio | id_empresa,id_tenant | marcado
+Empresa | locales_mercadopago via sucursales | id_sucursal,id_empresa,id_tenant | marcado
+Empresa | locales_mercadopago | id_empresa,id_tenant | marcado
 Empresa | marcas | id_empresa,id_tenant | marcado
 Empresa | medios_pago | id_empresa,id_tenant | marcado
 Empresa | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_tenant | sinmarca
@@ -68,6 +74,7 @@ Marca | articulos | id_marca,id_tenant | marcado
 MedioPago | acumulados_de_facturacion | id_medio_pago,id_tenant | sinmarca
 MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
 MedioPago | cobros | id_medio_pago,id_tenant | marcado
+MedioPago | cobros_mercadopago | id_medio_pago,id_tenant | marcado
 MedioPago | items_pago | id_medio_pago,id_tenant | marcado
 MedioPago | movimientos_cuenta | id_medio_pago,id_tenant | sinmarca
 MedioPago | turnos_caja | id_medio_pago_efectivo,id_tenant | marcado
@@ -80,6 +87,8 @@ Proveedor | movimientos_cuenta_corriente_proveedor | id_proveedor,id_tenant | si
 Proveedor | ordenes_compra | id_proveedor,id_tenant | marcado
 Proveedor | pagos | id_proveedor,id_tenant | marcado
 PuntoVenta | auditoria | id_punto_venta,id_tenant | excluido
+PuntoVenta | cajas_mercadopago | id_punto_venta,id_tenant | marcado
+PuntoVenta | cobros_mercadopago | id_punto_venta,id_tenant | marcado
 PuntoVenta | comprobantes_compra | id_punto_venta,id_tenant | marcado
 PuntoVenta | comprobantes_venta | id_punto_venta,id_tenant | marcado
 PuntoVenta | dispositivos | id_punto_venta,id_tenant | marcado
@@ -97,9 +106,12 @@ PuntoVenta | presupuestos | id_punto_venta,id_tenant | marcado
 PuntoVenta | remitos | id_punto_venta,id_tenant | marcado
 PuntoVenta | reservas_numeracion | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | turnos_caja | id_punto_venta,id_tenant | marcado
+Sucursal | cajas_mercadopago via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | cobros_mercadopago via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | locales_mercadopago | id_sucursal,id_empresa,id_tenant | marcado
 Sucursal | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | movimientos_cuenta_corriente_proveedor via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | movimientos_stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
@@ -130,10 +142,12 @@ Tenant | arqueos_turno | id_tenant | sinmarca
 Tenant | articulos | id_tenant | marcado
 Tenant | articulos_empresas | id_tenant | sinmarca
 Tenant | auditoria | id_tenant | excluido
+Tenant | cajas_mercadopago | id_tenant | marcado
 Tenant | categorias | id_tenant | marcado
 Tenant | certificados_fiscales | id_tenant | marcado
 Tenant | clientes | id_tenant | marcado
 Tenant | cobros | id_tenant | marcado
+Tenant | cobros_mercadopago | id_tenant | marcado
 Tenant | codigos_barra | id_tenant | marcado
 Tenant | codigos_proveedor | id_tenant | marcado
 Tenant | combos | id_tenant | marcado
@@ -158,6 +172,7 @@ Tenant | items_presupuesto | id_tenant | marcado
 Tenant | items_remito | id_tenant | marcado
 Tenant | jornadas_personal | id_tenant | sinmarca
 Tenant | listas_precio | id_tenant | marcado
+Tenant | locales_mercadopago | id_tenant | marcado
 Tenant | lotes | id_tenant | marcado
 Tenant | marcas | id_tenant | marcado
 Tenant | medios_pago | id_tenant | marcado

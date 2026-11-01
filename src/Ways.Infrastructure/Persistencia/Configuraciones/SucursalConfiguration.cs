@@ -40,6 +40,27 @@ public class SucursalConfiguration : IEntityTypeConfiguration<Sucursal>
             .HasMaxLength(150)
             .IsRequired();
 
+        builder.Property(s => s.Calle).HasColumnName("calle").HasMaxLength(DireccionDeSucursal.LargoMaximoCalle);
+        builder.Property(s => s.Altura).HasColumnName("altura").HasMaxLength(DireccionDeSucursal.LargoMaximoAltura);
+        builder.Property(s => s.Ciudad).HasColumnName("ciudad").HasMaxLength(DireccionDeSucursal.LargoMaximoCiudad);
+        builder.Property(s => s.Provincia).HasColumnName("provincia").HasMaxLength(DireccionDeSucursal.LargoMaximoProvincia);
+        builder.Property(s => s.CodigoPostal).HasColumnName("codigo_postal")
+            .HasMaxLength(DireccionDeSucursal.LargoMaximoCodigoPostal);
+        builder.Property(s => s.Latitud).HasColumnName("latitud").HasPrecision(9, 6);
+        builder.Property(s => s.Longitud).HasColumnName("longitud").HasPrecision(9, 6);
+        builder.Property(s => s.Referencia).HasColumnName("referencia")
+            .HasMaxLength(DireccionDeSucursal.LargoMaximoReferencia);
+
+        builder.Ignore(s => s.Direccion);
+
+        // Backstops de DireccionDeSucursal.Normalizar: el servicio rechaza antes lo mismo con códigos de dominio.
+        builder.ToTable(t =>
+        {
+            t.HasCheckConstraint("ck_sucursales_latitud", "latitud BETWEEN -90 AND 90");
+            t.HasCheckConstraint("ck_sucursales_longitud", "longitud BETWEEN -180 AND 180");
+            t.HasCheckConstraint("ck_sucursales_coordenadas_completas", "(latitud IS NULL) = (longitud IS NULL)");
+        });
+
         builder.Property(s => s.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(s => s.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(s => s.DeletedAt).HasColumnName("deleted_at");

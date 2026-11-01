@@ -75,6 +75,14 @@ cobros (                              -- antes pagos_comprobante (E7-S1)
 );
 ```
 
+Cambio de medios de una venta ya emitida (sin CAE, sin cuenta corriente, mismo total cobrado): los cobros vigentes se dan de
+baja lógica (`deleted_at`) y se insertan los nuevos; no hay columna nueva. Todo lector de `cobros` ve solo los vivos. Los
+cobros con los que la venta se ingirió se reconocen porque nacieron con el comprobante (`created_at` igual al del
+comprobante) y están dados de baja: el reenvío offline de esa venta los compara para responder la misma venta. El cambio
+mueve el aporte de la venta en `acumulados_de_facturacion` (y reescribe `facturaciones_de_venta.aportes` si tiene decisión),
+recalcula el arqueo de un turno cerrado con su marca (§7) y compensa `movimientos_cuenta` con un `ajuste` por medio (o las
+filas de cierre de un medio que el cierre no acreditó). Queda auditado como `venta.medios`.
+
 Cambios de fondo respecto del legacy:
 
 | Legacy | Nuevo |

@@ -58,6 +58,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // y que el propio GET "/api/ventas/{id:int}" del mismo grupo) — corrige el literal sin
         // restricción que este allowlist traía adelantado desde Slice 1.
         ("POST", "/api/ventas/{id:int}/anulacion"),
+        // Cambio de medios de una venta del turno abierto desde la caja: mismo criterio que la anulación (un Vendedor corrige lo
+        // que cobró). Su prueba positiva por rol es CambioDeMediosDeVentaTests.UnVendedorCambiaElMedioDeUnaVentaDelTurnoAbiertoYQuedaAuditado.
+        ("PUT", "/api/ventas/{id:int}/medios"),
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva de bloque offline —
         // mismo grupo /api/ventas, mismo criterio que "/api/ventas/" (OperacionDePos, sin
         // GestionDeCatalogo apilado: un Vendedor/cajero de dispositivo tiene que poder pedir su
@@ -71,6 +74,15 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // por rol real lo cubre
         // RendicionDeColaEndpointsTests.UnCajeroVendedorDeDispositivoRindeSuColaYQuedaPersistida.
         ("POST", "/api/pos/rendicion-de-cola"),
+        // Cobros con QR de Mercado Pago del dispositivo: mismo grupo /api/pos y mismo criterio que la rendición de cola (los hace el cajero
+        // Vendedor del dispositivo, no un admin), con RequiereDispositivo en su lugar. Los positivos por rol real los cubre
+        // MercadoPagoCobrosTests (un cajero de dispositivo crea y cancela; una sesión web recibe 403).
+        ("POST", "/api/pos/mercadopago/cobros/"),
+        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/cancelar"),
+        // Alta rápida de cliente desde el POS: mismo grupo /api/clientes (OperacionDePos), sin
+        // GestionDeCatalogo apilado porque la hace el Vendedor. El positivo por rol real es
+        // ClientesEndpointsTests.UnVendedorCreaUnClienteRapidoConLosDefaultsForzados.
+        ("POST", "/api/clientes/rapido"),
 
         // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
         // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que
@@ -139,6 +151,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Vendedor y el 403 del Supervisor con origen tesorería (la regla va en el servicio, no en la política)
         // están en PagoDePersonalTests.
         ("POST", "/api/personal/{id:int}/pagos"),
+        // Pago de personal desde el POS: OperacionDePos sin GestionDeCatalogo (el Vendedor es quien lo usa); la restricción a
+        // cajón del turno y sin descuento de cuenta corriente la aplica el servicio (403 prohibido), probada en
+        // PagoDePersonalDelPosTests.
+        ("POST", "/api/pos/personal/{id:int}/pagos"),
         // stage-17-presupuestos-y-remitos (Slice 2, design decisión 17/proposal decisión 10):
         // /api/presupuestos agrupa SOLO bajo OperacionDePos, nada apilado — a diferencia de
         // /api/ordenes-compra, que SÍ apila GestionDeCatalogo. Un Vendedor tiene que poder
@@ -366,7 +382,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
     private static readonly (string Metodo, string Ruta, string PolicyAdicionalExigida)[] RutasConPolicyAdicionalSobreSuGrupo =
     [
         ("POST", "/api/ventas/reservas-numeracion", Politicas.RequiereDispositivo),
-        ("POST", "/api/pos/rendicion-de-cola", Politicas.RequiereDispositivo)
+        ("POST", "/api/pos/rendicion-de-cola", Politicas.RequiereDispositivo),
+        ("POST", "/api/pos/mercadopago/cobros/", Politicas.RequiereDispositivo),
+        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/cancelar", Politicas.RequiereDispositivo)
     ];
 
     [Fact]

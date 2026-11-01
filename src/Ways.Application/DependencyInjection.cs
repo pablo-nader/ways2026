@@ -99,6 +99,8 @@ public static class DependencyInjection
 
         services.AddScoped<ServicioDeEscaneo>();
         services.AddScoped<ServicioDeVentas>();
+        services.AddScoped<ServicioDeCambioDeMedios>();
+        services.AddScoped<ServicioDeVentasDeAdministracion>();
 
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva de bloques offline,
         // registrado junto a ServicioDeVentas por compartir el mismo espacio de numeración.
@@ -130,6 +132,7 @@ public static class DependencyInjection
         // ServicioDeTurnos (los dos modos de cierre), igual que los dos lectores de arriba.
         services.AddScoped<LectorDeRendicionDeDispositivos>();
         services.AddScoped<ServicioDeTurnos>();
+        services.AddScoped<ServicioDeRetiros>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<VisibilidadDeTurnos>();
         services.AddScoped<ServicioDePagos>();
@@ -234,6 +237,10 @@ public static class DependencyInjection
 
         // Conexión OAuth de cada empresa con Mercado Pago; el cliente HTTP, el cifrado y el protector del state viven en Infrastructure.
         services.AddScoped<ServicioDeConexionMercadoPago>();
+        services.AddScoped<ServicioDeLocalesMercadoPago>();
+        services.AddScoped<ServicioDeCajasMercadoPago>();
+        services.AddScoped<ServicioDeTerminalesMercadoPago>();
+        services.AddScoped<ServicioDeCobrosMercadoPago>();
         services.AddScoped<ServicioDeRenovacionDeConexionesMercadoPago>();
         services.AddScoped<IProveedorDeTokenMercadoPago, ProveedorDeTokenMercadoPago>();
 

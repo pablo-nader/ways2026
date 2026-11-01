@@ -27,7 +27,10 @@ namespace Ways.Application.Organizacion;
 /// <b>Sin reintento</b> (<c>ef-retry-safe-writes</c>): cada escritura agrega una fila de auditoría sin clave de
 /// idempotencia, así que corre en <see cref="EnUnaTransaccionDeBajaAsync{T}"/>.
 ///
-/// <b>Backstops</b> (<c>db-error-backstops</c>): ninguna constraint nueva. <c>fk_puntos_venta_sucursal</c> (compuesta con
+/// <b>Backstops</b> (<c>db-error-backstops</c>): los CHECK de coordenadas de la dirección (<c>ck_sucursales_latitud</c>,
+/// <c>ck_sucursales_longitud</c> y <c>ck_sucursales_coordenadas_completas</c>) repiten lo que valida
+/// <see cref="DireccionDeSucursal.Normalizar"/> y <c>ManejadorDeErrores</c> los traduce a 400 con los mismos códigos; su
+/// SQLSTATE 23514 se afirma en <c>SucursalesDireccionTests</c>. <c>fk_puntos_venta_sucursal</c> (compuesta con
 /// empresa y tenant) queda cubierta por la validación bajo lock y, si una escritura cruda la esquivara, por el backstop
 /// genérico de FKs de <c>ManejadorDeErrores</c>. El nombre de la sucursal no es único, igual que el del punto de venta.
 /// </summary>
@@ -45,7 +48,15 @@ public partial class ServicioDeOrganizacion
                 .Where(e => e.Id == s.IdEmpresa && e.DeletedAt == null)
                 .Select(e => e.RazonSocial)
                 .FirstOrDefault(),
-            db.PuntosVenta.Count(p => p.IdSucursal == s.Id && p.DeletedAt == null));
+            db.PuntosVenta.Count(p => p.IdSucursal == s.Id && p.DeletedAt == null),
+            s.Calle,
+            s.Altura,
+            s.Ciudad,
+            s.Provincia,
+            s.CodigoPostal,
+            s.Latitud,
+            s.Longitud,
+            s.Referencia);
 
     public async Task<IReadOnlyList<SucursalListado>> ListarSucursalesAsync(
         int? idEmpresa, CancellationToken ct = default) =>
@@ -62,6 +73,9 @@ public partial class ServicioDeOrganizacion
             ?? throw new ErrorDominio("empresa_requerida", "El campo empresa es obligatorio.", 400);
 
         var nombre = Normalizar(datos.Nombre, "nombre_sucursal", "nombre de la sucursal", LargoMaximoNombreSucursal);
+        var direccion = DireccionDeSucursal.Normalizar(
+            datos.Calle, datos.Altura, datos.Ciudad, datos.Provincia, datos.CodigoPostal, datos.Latitud, datos.Longitud,
+            datos.Referencia);
 
         var idTenant = await db.Empresas
             .Where(e => e.Id == idEmpresa)
@@ -86,10 +100,11 @@ public partial class ServicioDeOrganizacion
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             };
+            sucursal.AplicarDireccion(direccion);
             db.Sucursales.Add(sucursal);
             await db.SaveChangesAsync(ct);
 
-            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AltaDeSucursal(empresa.Id, nombre);
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AltaDeSucursal(empresa.Id, nombre, direccion);
             auditoria.Registrar(new RegistroDeAuditoria(
                 sucursal.IdTenant, idPuntoVenta: null, AccionAuditada.SucursalAlta, sucursal.Id,
                 valorAnterior, valorNuevo));
@@ -105,6 +120,9 @@ public partial class ServicioDeOrganizacion
         // update-404-first: la sucursal inexistente, dada de baja o de otro tenant contesta 404 antes de validar el cuerpo.
         var idTenant = await IdTenantDeLaSucursalAsync(id, ct);
         var nombre = Normalizar(datos.Nombre, "nombre_sucursal", "nombre de la sucursal", LargoMaximoNombreSucursal);
+        var direccion = DireccionDeSucursal.Normalizar(
+            datos.Calle, datos.Altura, datos.Ciudad, datos.Provincia, datos.CodigoPostal, datos.Latitud, datos.Longitud,
+            datos.Referencia);
 
         return await EnUnaTransaccionDeBajaAsync(async () =>
         {
@@ -113,10 +131,13 @@ public partial class ServicioDeOrganizacion
             var sucursal = await BuscarSucursalAsync(id, ct);
 
             var nombreAnterior = sucursal.Nombre;
+            var direccionAnterior = sucursal.Direccion;
             sucursal.Nombre = nombre;
+            sucursal.AplicarDireccion(direccion);
             sucursal.UpdatedAt = reloj.Ahora;
 
-            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.RenombreDeSucursal(nombreAnterior, nombre);
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.EdicionDeSucursal(
+                nombreAnterior, direccionAnterior, nombre, direccion);
             auditoria.Registrar(new RegistroDeAuditoria(
                 sucursal.IdTenant, idPuntoVenta: null, AccionAuditada.SucursalEdicion, sucursal.Id,
                 valorAnterior, valorNuevo));
@@ -210,14 +231,15 @@ public partial class ServicioDeOrganizacion
 
             if (origen is not null)
             {
-                // Los parámetros de la sucursal no son uso: acompañan a su última caja (ver más abajo).
+                // Los parámetros de la sucursal no son uso: acompañan a su última caja (ver más abajo). Tampoco su local de Mercado Pago:
+                // es un vínculo, no historia de negocio, y bloquearía mover la caja que justamente se reapunta a otro local al registrarla.
                 await ExigirSinUsoDeSucursalAsync(
                     origen,
                     descripcion => "No se puede mover la caja: su sucursal quedaría sin cajas y todavía tiene " +
                                    $"{descripcion}. Para unir dos sucursales con stock hace falta una fusión.",
                     "sucursal_en_uso",
                     ct,
-                    excluirParametros: true);
+                    excluirAcompanantes: true);
             }
 
             var momento = reloj.Ahora;
@@ -247,7 +269,7 @@ public partial class ServicioDeOrganizacion
 
     private Task ExigirSinUsoDeSucursalAsync(
         Sucursal sucursal, Func<string, string>? mensajeDeBloqueo, string codigo, CancellationToken ct,
-        bool excluirParametros = false) =>
+        bool excluirAcompanantes = false) =>
         ExigirSinUsoAsync(
             typeof(Sucursal),
             sucursal.CreatedAt,
@@ -262,7 +284,7 @@ public partial class ServicioDeOrganizacion
             ct,
             // Las cajas ya las respondió quien llama (vivas) o son las propias; acá solo el uso propio de la sucursal.
             soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta"
-                               && !(excluirParametros && rama.Tabla == "parametros"),
+                               && !(excluirAcompanantes && rama.Tabla is "parametros" or "locales_mercadopago"),
             mensajeDeBloqueo);
 
     private void RegistrarBajaDeSucursal(Sucursal sucursal, DateTimeOffset momento, bool porCascada)

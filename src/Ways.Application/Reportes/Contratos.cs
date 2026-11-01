@@ -75,6 +75,22 @@ public sealed record VentasPorArticulo(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, decimal CantidadTotal, decimal Total,
     IReadOnlyList<ArticuloVendido> Articulos);
 
+/// <summary>Un comprobante de <c>GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets</c>:
+/// <see cref="Cantidad"/> y <see cref="Total"/> suman solo las líneas de ese artículo dentro del
+/// comprobante (negativas en una nota de crédito). <see cref="Comprobante"/> es el tipo más el número
+/// visible; <see cref="Cliente"/> es <c>null</c> para el consumidor final.</summary>
+public sealed record TicketDeArticulo(
+    int IdComprobante, DateTimeOffset Fecha, string PuntoVenta, string Comprobante, string? Cliente,
+    decimal Cantidad, decimal Total);
+
+/// <summary>Respuesta de <c>GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets</c>, de la
+/// fecha más reciente a la más antigua. <see cref="CantidadTotal"/> y <see cref="Total"/> suman los
+/// <see cref="Tickets"/> y coinciden con la fila del artículo en el reporte para los mismos filtros.
+/// Un artículo ajeno, inexistente o sin ventas devuelve la lista vacía y totales en cero.</summary>
+public sealed record TicketsDeArticulo(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, int IdArticulo, string Descripcion,
+    decimal CantidadTotal, decimal Total, IReadOnlyList<TicketDeArticulo> Tickets);
+
 /// <summary>Respuesta de <c>GET /api/reportes/ventas/por-hora</c>: la grilla completa de 7 días
 /// (<c>diaDeLaSemana</c> 1 = lunes … 7 = domingo) × 24 horas locales (0..23) de la zona devuelta.
 /// <see cref="Celdas"/> siempre trae las 168 celdas, con ceros donde no hubo ventas;

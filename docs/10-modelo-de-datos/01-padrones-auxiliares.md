@@ -29,6 +29,14 @@ sucursales (                   -- [operativa] id_tenant + id_empresa, doc 09 (co
     id_empresa    integer NOT NULL,
     nombre        citext NOT NULL,          -- varchar(150), mismo tipo y largo que puntos_venta.nombre
     id_sucursal_fusion integer NULL,        -- la que la absorbió en una fusión (T5); migración FusionDeSucursales
+    calle         varchar(120) NULL,        -- dirección estructurada, toda opcional (migración DireccionDeSucursal)
+    altura        varchar(20) NULL,         -- texto: "S/N" y "1234 bis" son alturas reales
+    ciudad        varchar(80) NULL,
+    provincia     varchar(40) NULL,         -- nombre canónico de una de las 24 jurisdicciones (ProvinciasArgentinas)
+    codigo_postal varchar(10) NULL,
+    latitud       numeric(9,6) NULL,        -- van juntas o ninguna
+    longitud      numeric(9,6) NULL,
+    referencia    varchar(200) NULL,
     created_at, updated_at, deleted_at,     -- baja siempre lógica
     UNIQUE (id_sucursal, id_tenant),                 -- ak_sucursales_id_sucursal_id_tenant: FKs de hijos
     UNIQUE (id_sucursal, id_empresa, id_tenant)      -- destino de fk_puntos_venta_sucursal
@@ -37,6 +45,10 @@ sucursales (                   -- [operativa] id_tenant + id_empresa, doc 09 (co
 -- FOREIGN KEY (id_sucursal_fusion, id_empresa, id_tenant) REFERENCES sucursales (id_sucursal, id_empresa, id_tenant)
 --   = fk_sucursales_fusion, ON DELETE RESTRICT, con su índice; la que absorbe es de la MISMA empresa y tenant.
 -- RLS: sucursales_tenant (HabilitarRlsDeTenant)
+-- CHECK ck_sucursales_latitud (latitud BETWEEN -90 AND 90), ck_sucursales_longitud (longitud BETWEEN -180 AND 180) y
+--   ck_sucursales_coordenadas_completas ((latitud IS NULL) = (longitud IS NULL)): backstops de
+--   DireccionDeSucursal.Normalizar, que rechaza antes con latitud_invalida, longitud_invalida y coordenadas_incompletas;
+--   ManejadorDeErrores traduce los tres a 400 con esos mismos códigos.
 
 -- puntos_venta gana:
 --   id_sucursal integer NOT NULL
@@ -51,6 +63,11 @@ sucursales (                   -- [operativa] id_tenant + id_empresa, doc 09 (co
 - **1:1 por ahora.** El backfill creó una sucursal por cada punto de venta existente (vivo o dado de baja,
   con sus mismas marcas de tiempo) y todo punto de venta nuevo recibe la suya en el mismo `SaveChanges`
   (`WaysDbContext`: alta del ABM, aprovisionamiento y siembra pasan por ahí).
+- **Dirección.** `POST` y `PUT /api/sucursales` aceptan los ocho campos de dirección; el `PUT` la reemplaza entera (un
+  campo omitido la deja vacía). Se recorta el texto, lo vacío queda `NULL`, un largo mayor al de la columna es 400
+  `<campo>_muy_largo`, y la provincia se reconoce sin mayúsculas ni acentos pero se guarda con su nombre canónico (400
+  `provincia_invalida` si no es una de las 24). No hay regla de completitud: qué necesita Mercado Pago lo decide quien
+  lo usa. El rastro de auditoría de alta y edición lleva la dirección.
 - **Baja.** La de la empresa y la del tenant arrastran sus sucursales; la de un punto de venta baja su
   sucursal solo si no le queda otro punto de venta vivo. Desde T4 también hay baja directa
   (`DELETE /api/sucursales/{id}`): 409 `sucursal_con_puntos_venta` si tiene cajas vivas y 409 `sucursal_en_uso`
@@ -377,6 +394,8 @@ medios_pago (                 -- [catálogo]
     retencion_iibb_porcentaje      numeric(6,3) NOT NULL DEFAULT 0,
     retencion_iva_porcentaje       numeric(6,3) NOT NULL DEFAULT 0,
     retencion_ganancias_porcentaje numeric(6,3) NOT NULL DEFAULT 0,
+    proveedor       varchar(30) NULL,        -- quién cobra: 'mercadopago_qr' | 'mercadopago_point'; NULL = referencia a mano.
+                    -- Solo con comportamiento electronico (CHECK ck_medios_pago_proveedor_solo_electronico)
     orden, activo
 )
 ```
@@ -408,5 +427,12 @@ decisión de qué tickets se facturan es de una etapa posterior.
 > `cuenta_tesoreria_requiere_empresa`) y no está inactiva (400 `cuenta_tesoreria_inactiva`; un medio que ya apuntaba a una
 > cuenta desactivada después se guarda sin cambiarla). La asignación toma `FOR KEY SHARE` sobre la fila viva de la
 > cuenta, que choca con el `FOR UPDATE` de su baja: una cuenta no queda dada de baja con un medio apuntándole.
+>
+> **Proveedor de cobro.** `proveedor` (`mercadopago_qr` o `mercadopago_point`) hace que elegir el medio en el POS inicie un cobro con
+> Mercado Pago (tabla `cobros_mercadopago`, §7) en vez de pedir una referencia. El ABM lo guarda y lo devuelve (`proveedor`, visible para
+> todos los roles: el POS lo necesita); una edición que lo omite conserva lo guardado, enviado en `null` o en blanco lo quita. Un valor
+> distinto de los dos se rechaza (400 `proveedor_cobro_invalido`) y solo un medio `electronico` puede tenerlo (400 `proveedor_solo_electronico`);
+> cambiar el comportamiento sin enviarlo lo limpia. Dos CHECK de respaldo, `ck_medios_pago_proveedor` y
+> `ck_medios_pago_proveedor_solo_electronico`, traducidas a los mismos códigos. La instantánea del POS todavía no lo lleva.
 
 ---

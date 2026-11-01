@@ -15,7 +15,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// turno forzado por encima de ella. <c>venta.sobrelimite</c> la agregó la venta local a clientes
 /// identificados: una venta con cuenta corriente que superó el límite sin poder validarlo.
 /// <c>pago.edicion</c>/<c>pago.baja</c> las agregó la edición y baja de pagos.
-/// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente. Las cuatro de sucursales (<c>sucursal.alta|edicion|baja</c> y <c>pv.sucursal</c>) las agregó el ABM de sucursales; <c>sucursal.fusion</c>, la fusión de sucursales.
+/// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente. Las cuatro de sucursales (<c>sucursal.alta|edicion|baja</c> y <c>pv.sucursal</c>) las agregó el ABM de sucursales; <c>sucursal.fusion</c>, la fusión de sucursales; <c>sucursal.mercadopago</c>, el registro de la sucursal como local de Mercado Pago; <c>pv.mercadopago</c>, el del punto de venta como caja; <c>pv.terminalmercadopago</c>, la asignación de su terminal Point.
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// <c>compra.edicion</c> la agregó la edición de una compra confirmada.
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneTreintaYSeisEntradas()
+    public void TieneCuarentaYDosEntradas()
     {
-        Assert.Equal(36, AccionAuditada.Todas.Count);
+        Assert.Equal(42, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -102,7 +102,13 @@ public partial class AccionAuditadaTests
             ("sucursal.edicion", "sucursal"),
             ("sucursal.baja", "sucursal"),
             ("pv.sucursal", "punto_venta"),
-            ("sucursal.fusion", "sucursal")
+            ("sucursal.fusion", "sucursal"),
+            ("sucursal.mercadopago", "sucursal"),
+            ("pv.mercadopago", "punto_venta"),
+            ("pv.terminalmercadopago", "punto_venta"),
+            ("venta.medios", "comprobante_venta"),
+            ("retiro.edicion", "movimiento_caja"),
+            ("retiro.baja", "movimiento_caja")
         ];
 
         var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));

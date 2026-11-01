@@ -48,7 +48,9 @@ movimientos_caja (            -- [operativa]  — plata física fuera de la vent
     id_movimiento_caja, id_turno_caja,
     tipo tipo_movimiento_caja,               -- enum: retiro | refuerzo | apertura_cajon
     importe numeric(14,2),                   -- 0 en apertura_cajon (el F12 del legacy, auditado)
-    motivo text, id_empleado, creado_el
+    motivo text, id_empleado, creado_el,
+    es_retiro_de_cierre boolean DEFAULT false,  -- el retiro que inserta el cierre por retiro
+    deleted_at timestamptz NULL                 -- baja lógica administrativa de un retiro
 );
 
 arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PAGO
@@ -59,6 +61,17 @@ arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PA
     importe_esperado_original numeric(14,2) NULL  -- esperado del cierre, si un recálculo lo cambió
 );
 ```
+
+> **Corrección administrativa de retiros.** Los refuerzos y las aperturas de cajón son
+> append-only; un retiro manual lo puede corregir un Admin (`PUT`/`DELETE /api/caja/retiros/{id}`)
+> con el turno abierto o cerrado, mientras el cierre del turno no esté conciliado. La edición
+> actualiza `importe` y `motivo` en el lugar (la auditoría `retiro.edicion` lleva los valores
+> anteriores) y la baja es lógica (`deleted_at`, auditada como `retiro.baja`): todo lector de
+> `movimientos_caja` excluye las bajas por el filtro de EF. El retiro del cierre por retiro
+> (`es_retiro_de_cierre`) no se corrige. Con el turno cerrado se recalcula el arqueo como abajo y
+> la cadena de `movimientos_tesoreria` recibe un `ajuste` por la diferencia, porque el cierre
+> acreditó la suma de los retiros. Backfill (migración `EdicionDeRetiros`): se marcan los retiros
+> con el motivo fijo del cierre y `creado_el` igual a la `fecha_cierre` del turno.
 
 > **Recálculo administrativo del arqueo (DB CHANGE GATE aprobado).** Un admin puede editar o dar
 > de baja un pago de caja de un turno ya cerrado. En la misma transacción se recalcula
@@ -138,8 +151,10 @@ cuentas_tesoreria (           -- [catálogo por empresa: id_empresa NOT NULL] �
 movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ordenado por (fecha, id)]
     id_movimiento_cuenta, id_cuenta_tesoreria, fecha,
     tipo tipo_movimiento_cuenta,             -- enum: cobro | comision | retencion_iibb | retencion_iva |
-                                             -- retencion_ganancias | ajuste | transferencia | deposito | retiro
-    id_turno_caja NULL, id_medio_pago NULL, concepto,
+                                             -- retencion_ganancias | ajuste | transferencia | deposito | retiro | pago
+    id_turno_caja NULL, id_medio_pago NULL,
+    id_pago NULL,                            -- solo y siempre en las filas tipo pago (débito de un pago)
+    concepto,
     inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_cuenta_tesoreria)
     id_empleado,
     base_bruta numeric(14,2) NULL,           -- base sobre la que se calculó el porcentaje, congelada
@@ -149,8 +164,8 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 
 > **Estado (cuentas de tesorería, esquema):** la tesorería de efectivo (`movimientos_tesoreria`,
 > una cadena por empresa) y las cuentas digitales (`movimientos_cuenta`, una cadena por cuenta) son
-> libros separados: cada uno con su propia cadena y su propio candado. Hay dos escritores: el cierre de turno y el ajuste manual
-> de saldo (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
+> libros separados: cada uno con su propia cadena y su propio candado. Hay tres escritores: el cierre de turno, el ajuste manual
+> de saldo y los débitos de pago (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
 >
 > `cuentas_tesoreria`: clave alterna `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant` (destino de
 > las FK compuestas), FK compuesta `fk_cuentas_tesoreria_empresa` a `empresas` (RESTRICT), único
@@ -166,13 +181,14 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > que la tesorería de efectivo), más dos CHECK que `movimientos_tesoreria` no tiene:
 > `ck_movimientos_cuenta_importes_no_negativos` (`ingreso` y `egreso` no negativos) y
 > `ck_movimientos_cuenta_un_solo_lado` (`ingreso = 0 OR egreso = 0`; una fila con los dos lados en
-> cero es válida). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
-> `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`; `fk_movimientos_cuenta_empleado`
+> cero es válida), y `ck_movimientos_cuenta_pago` (`(tipo = 'pago') = (id_pago IS NOT NULL)`, en una migración posterior a la que
+> agrega el valor del enum). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
+> `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`, `fk_movimientos_cuenta_pago` (a `pagos`); `fk_movimientos_cuenta_empleado`
 > es simple a `usuarios`, como en la tesorería de efectivo. Índices (ninguno implícito `IX_`): `ix_movimientos_cuenta_tenant`;
 > `ix_movimientos_cuenta_cuenta_fecha_id` `(id_cuenta_tesoreria, id_tenant, fecha, id_movimiento_cuenta)`, que
 > sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro, que se ordenan por `(fecha, id)`;
-> `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago` e `ix_movimientos_cuenta_empleado`
-> como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
+> `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago`, `ix_movimientos_cuenta_pago` `(id_pago, id_tenant)` e
+> `ix_movimientos_cuenta_empleado` como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
 > id_turno_caja, id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL AND tipo IN ('cobro',
 > 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')`: respaldo de idempotencia de las
 > filas que escribe el cierre de turno; un ajuste o una transferencia con turno queda fuera. Como
@@ -187,7 +203,7 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > `medios_pago` ni `movimientos_cuenta`, incluidas las filas dadas de baja (409 `cuenta_tesoreria_en_uso`); desactivar siempre 
 > se puede. El listado trae el saldo actual (`final` del último movimiento o `saldo_inicial`) y `saldoInicialEditable`.
 >
-> **Quién escribe el libro.** Dos escritores: el cierre de turno y el ajuste manual (más abajo).
+> **Quién escribe el libro.** Tres escritores: el cierre de turno, el ajuste manual y los débitos de pago (más abajo).
 >
 > **Cierre de turno.** `EscriturasDeCuentaDeTesoreria`, dentro de la transacción compartida por
 > los dos modos de cierre (`InsertarArqueosYTesoreriaAsync`), después de la fila de tesorería de efectivo. Por cada medio
@@ -219,6 +235,19 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > escribe dos filas (el del mismo saldo objetivo no, porque la segunda diferencia da cero) y la protección es la guarda de
 > re-entrada de la pantalla; un 5xx no se reintenta solo. Es el camino para corregir lo que el libro todavía no refleja.
 >
+> **Débitos de pago.** `DebitosDePagoEnCuenta`, al final de la transacción de todo escritor de ítems de pago (alta del POS, alta
+> administrativa, pago de compra, pago de sueldo, edición y baja), antes del commit. Objetivo por `(cuenta, medio)`: la suma de los
+> ítems vivos del pago, ruteados por la cuenta ACTUAL del medio, solo si la cuenta está viva y es de la empresa del pago; ya debitado:
+> la suma de las filas `pago` de ese `id_pago` (egreso − ingreso). Cada diferencia distinta de cero escribe una fila
+> (`CalculadorDeDebitosDePago`, puro): `egreso` si sube, `ingreso` si baja, con `id_pago`, `id_medio_pago`, `id_turno_caja` nulo,
+> `concepto` `Pago {id}`, `id_empleado` = quien escribe y `fecha` monótona sobre la hora real (nunca la fecha de negocio del pago).
+> No hay índice único: una edición agrega filas. Una baja devuelve todo; un medio sin cuenta, efectivo o con una cuenta de otra
+> empresa no escribe nada. Locks: advisory de la empresa (reentrante con el de la tesorería de efectivo) → medios `FOR SHARE` →
+> cuentas `FOR NO KEY UPDATE`, el mismo orden que el cierre, siempre después del lock del pago; las filas existentes se leen
+> después del advisory y la cola después del lock de la cuenta. Sin medios con cuenta ni débitos previos no se toma ningún lock
+> (decidido con una lectura sin lock: un medio al que se le asigna cuenta en ese instante deja al pago como anterior a la
+> asignación). El libro de tesorería no lee estas filas (las calcula desde los pagos), así que no hay doble conteo.
+>
 > **Lectura.** La cadena de cada cuenta ya no tiene un reporte propio. El libro de tesorería
 > (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`, Supervisor y Admin) lee de esta tabla los cobros, las
 > comisiones y las retenciones de cada cierre, agrupados por turno, y los `ajuste` manuales. Su saldo se calcula desde las fuentes,
@@ -226,8 +255,8 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
-> ajuste manual (ver "Ajuste manual"). (b) Un pago hecho con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
-> cuenta; también se corrige con un ajuste manual. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
+> ajuste manual (ver "Ajuste manual"). (b) Los pagos anteriores a los débitos de pago no debitaron la cuenta hasta que la
+> reconstrucción los cargue. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
 > `pago_en_comprobante_negativo` un comprobante de total negativo con algún pago de importe o vuelto positivo, así que el lector del
 > turno, que suma los importes sin el signo del documento, nunca cuenta como cobrado el dinero de una nota de crédito (fijado por
 > `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo`). La regla vive en el servicio: ninguna CHECK puede
@@ -419,3 +448,160 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > reintenta, y si no logra renovarlo responde 503 `mercadopago_no_disponible`. La corrida en segundo plano no respeta el backoff, pero sí lo
 > anota cuando falla. Una excepción inesperada de la renovación previa al uso se registra (sin tokens) y no corta la llamada si el token
 > guardado todavía sirve.
+
+### Locales de Mercado Pago (sucursales)
+
+```sql
+locales_mercadopago (         -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una por sucursal y cuenta de Mercado Pago
+    id_local_mercadopago, id_tenant, id_empresa,
+    id_sucursal,                             -- FK compuesta (id_sucursal, id_empresa, id_tenant): la base rechaza una sucursal de otra empresa
+    id_usuario_mercadopago bigint,           -- user_id del vendedor dueño del local; NO es FK (la conexión puede desconectarse y la fila queda de historia)
+    id_store_mercadopago bigint,             -- id numérico que Mercado Pago asignó al local
+    external_id varchar(60),                 -- 'WAYSS' + id_sucursal: alfanumérico, estable, único por vendedor
+    fecha_registro, fecha_sincronizacion,    -- esta última es la de la LECTURA de la sucursal, no la del fin de la llamada
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_locales_mercadopago_tenant` (simple), `fk_locales_mercadopago_empresa` (compuesta `(id_empresa, id_tenant)`) y
+> `fk_locales_mercadopago_sucursal` (compuesta `(id_sucursal, id_empresa, id_tenant)`, sobre la clave alterna de `sucursales`); todas RESTRICT.
+> CHECK `ck_locales_mercadopago_external_id` (no vacío). Único `ux_locales_mercadopago_sucursal_usuario` `(id_sucursal, id_usuario_mercadopago)`:
+> una fila por sucursal y cuenta; si la empresa se reconecta con otra cuenta, la sucursal se registra de nuevo y la fila anterior queda de
+> historia. `ManejadorDeErrores` traduce su 23505 a 409 `mercadopago_local_duplicado` (solo lo alcanza una escritura que no pase por el
+> servicio, que serializa con un lock por sucursal). Índices de soporte: `ix_locales_mercadopago_tenant`, `_empresa` y `_sucursal`. RLS
+> estándar. Efecto: como toda FK del modelo, una sucursal con un local registrado cuenta como en uso y no se da de baja (409
+> `sucursal_en_uso`), y lo mismo la empresa y el tenant (`inventario-de-dependientes.txt`).
+>
+> **Endpoints (solo Admin).** `GET /api/sucursales/{id}/mercadopago` devuelve `{ estado, idStoreMercadoPago, externalId, fechaRegistro,
+> fechaSincronizacion, camposFaltantes }` con `estado` en `sin_conexion` (la empresa no tiene una conexión activa), `no_registrada`,
+> `registrada` o `desactualizada` (la sucursal se editó después de `fecha_sincronizacion`), para la cuenta conectada hoy.
+> `camposFaltantes` lista, en orden, lo que la sucursal todavía no tiene para registrarse (`nombre`, `calle`, `altura`, `ciudad`,
+> `provincia`, `latitud`, `longitud`; el código postal y la referencia no son requisito). `POST` del mismo recurso la registra. Orden:
+> 404 de la sucursal (inexistente, ajena o dada de baja), 400 `direccion_incompleta_para_mercadopago` (nombra lo que falta), 409
+> `mercadopago_no_conectada` o `mercadopago_requiere_reconexion`. Bajo un `pg_advisory_xact_lock` por sucursal que se mantiene durante las
+> llamadas a Mercado Pago: con vínculo para la cuenta actual, `PUT /users/{user_id}/stores/{id}` con los datos actuales; sin vínculo,
+> primero `GET /users/{user_id}/stores/search?external_id=` (sin coincidencias Mercado Pago contesta 404 `store_not_found`, no una lista vacía: el 404 se trata como "no hay") y, si hay un local con ese `external_id` (un alta cuyo guardado se perdió), se
+> adopta y se actualiza; si no, `POST /users/{user_id}/stores`. Toda llamada que no es GET lleva `X-Idempotency-Key`. Después se guarda o
+> actualiza la fila y se registra `sucursal.mercadopago` (operación `alta`, `adopcion` o `actualizacion`, ids de Mercado Pago, nunca un
+> token). El texto que viaja a Mercado Pago se limpia (sin acentos; solo letras ASCII, dígitos, espacio y `. , -`) y se corta a su largo; un
+> campo que queda vacío cuenta como faltante. El rechazo de Mercado Pago sale como 502 `mercadopago_solicitud_rechazada` con su mensaje
+> saneado, un 401 deja la conexión en `requiere_reconexion` (409) y la caída o el tiempo agotado son 503 `mercadopago_no_disponible`.
+> Verificado contra la referencia (2026-11-01), no en vivo: la búsqueda `{paging, results}` y su 404 sin coincidencias, y que la actualización es `PUT`.
+> **Sin verificar contra la API real:** qué caracteres acepta cada campo, el nombre de provincia que espera Mercado Pago para la Ciudad Autónoma de
+> Buenos Aires y qué responde un `PUT` a un local borrado en Mercado Pago.
+
+### Cajas de Mercado Pago (puntos de venta)
+
+```sql
+cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una por punto de venta y cuenta de Mercado Pago
+    id_caja_mercadopago, id_tenant, id_empresa,
+    id_punto_venta,                          -- FK compuesta (id_punto_venta, id_tenant) sobre la clave alterna de puntos_venta; la empresa la fija el servicio al leer el punto de venta
+    id_local_mercadopago,                    -- FK compuesta (id_local_mercadopago, id_empresa, id_tenant) a locales_mercadopago: el local del que cuelga la caja
+    id_store_mercadopago bigint,             -- id del local (store) de Mercado Pago bajo el que se registró la caja; si el local de la sucursal cambia de id la fila queda desactualizada
+    id_usuario_mercadopago bigint,           -- user_id del vendedor dueño de la caja; NO es FK (la conexión puede desconectarse y la fila queda de historia)
+    id_pos_mercadopago bigint,               -- id numérico que Mercado Pago asignó a la caja (POS)
+    external_id varchar(40),                 -- 'WAYSPV' + id_punto_venta: letras y dígitos, estable, único por vendedor
+    url_qr varchar(500) NULL,                -- imagen del QR (qr_response.image), si Mercado Pago la devolvió
+    fecha_registro, fecha_sincronizacion,    -- esta última es la de la LECTURA del punto de venta, no la del fin de la llamada
+    id_terminal_point varchar(80) NULL,      -- terminal Point elegida para la caja (TIPO__SERIE, p. ej. PAX_A910__8701); se vincula en la app de Mercado Pago
+    fecha_terminal NULL,                     -- cuándo se asignó; nula si y solo si no hay terminal
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_cajas_mercadopago_tenant` (simple), `fk_cajas_mercadopago_empresa` (compuesta `(id_empresa, id_tenant)`),
+> `fk_cajas_mercadopago_punto_venta` (compuesta `(id_punto_venta, id_tenant)`, sobre la clave alterna existente) y `fk_cajas_mercadopago_local`; todas RESTRICT. Para la última se agregó la clave alterna
+> `ak_locales_mercadopago_id_local_id_empresa_id_tenant`
+> (sobre `locales_mercadopago`; no se agregó ninguna a `puntos_venta`: una clave alterna con la empresa obliga a toda alta de punto de venta a conocerla antes del `SaveChanges`). CHECK `ck_cajas_mercadopago_external_id` (no vacío) y `ck_cajas_mercadopago_terminal` (`id_terminal_point` y `fecha_terminal` van juntos o ninguno, y el id no es blanco; el servicio valida antes, es solo respaldo). Único `ux_cajas_mercadopago_punto_venta_usuario`
+> `(id_punto_venta, id_usuario_mercadopago)`: una fila por punto de venta y cuenta; si la empresa se reconecta con otra cuenta el punto de
+> venta se registra de nuevo y la fila anterior queda de historia. `ManejadorDeErrores` traduce su 23505 a 409 `mercadopago_caja_duplicada`
+> (solo lo alcanza una escritura que no pase por el servicio, que serializa con un lock por punto de venta). Índices de soporte:
+> `ix_cajas_mercadopago_tenant`, `_empresa`, `_punto_venta` y `_local`. RLS estándar. Efecto: como toda FK del modelo, un punto de venta
+> con una caja registrada cuenta como en uso y no se da de baja (409 `punto_venta_en_uso`), y lo mismo la empresa y el tenant
+> (`inventario-de-dependientes.txt`). **Mover el punto de venta a otra sucursal no se bloquea** (la FK no pasa por la sucursal): lo deja
+> `desactualizada` y registrarlo de nuevo lo reapunta. Por eso, al mover la última caja de una sucursal, el local de Mercado Pago de esa
+> sucursal no cuenta como uso que impida la baja en cascada de la sucursal (queda como historia, igual que sus parámetros).
+>
+> **Endpoints (solo Admin).** `GET /api/puntos-venta/{id}/mercadopago` devuelve `{ estado, idPosMercadoPago, idStoreMercadoPago, externalId,
+> urlQr, fechaRegistro, fechaSincronizacion }` con `estado` en `sin_conexion`, `local_no_registrado` (la sucursal actual del punto de venta
+> todavía no es un local de la cuenta), `no_registrada`, `registrada` o `desactualizada` (el punto de venta se editó o cambió de sucursal
+> después de `fecha_sincronizacion`, o el local de su sucursal es otro que el de la fila o se volvió a registrar con otro `id` de Mercado Pago). `POST` del mismo recurso la registra. Orden: 404 del
+> punto de venta, 400 `nombre_invalido_para_mercadopago` (el nombre no tiene ningún carácter admitido), 409 `mercadopago_no_conectada` o
+> `mercadopago_requiere_reconexion`, 409 `mercadopago_local_no_registrado`. Bajo dos `pg_advisory_xact_lock` que se mantienen
+> durante las llamadas a Mercado Pago, en orden fijo sucursal → punto de venta (el de la sucursal es el mismo de la registración del local, que toma solo ese: así el local no cambia de `id` a mitad de la llamada; si el punto de venta cambió de sucursal entre la lectura que elige el lock y la de después, 409 `mercadopago_punto_venta_movido`): con vínculo para la cuenta actual, `PATCH /v2/pos/{id}` con el nombre actual y el `store_id` del local de la
+> sucursal actual (así se reapunta una caja movida); si Mercado Pago contesta 404 (la caja se borró), se busca por `external_id` y se adopta o se
+> crea de nuevo. Sin vínculo, primero `GET /v2/pos?external_id=` (`{paging, data}`) y, si hay una caja con ese `external_id` (un alta cuyo guardado se perdió), se
+> adopta y se actualiza; si no, `POST /v2/pos` con `{name, external_id, store_id (cadena de dígitos), config: {qr: {operating_mode: "pdv"}}}` (sin `fixed_amount`, que la API no admite; si contesta 409 `pos_already_exists` se busca por `external_id` y se adopta). Toda llamada que no es GET lleva
+> `X-Idempotency-Key` (≤ 64): la del alta lleva la huella del cuerpo; la de la actualización, la caja de destino, la huella del cuerpo y el
+> `updated_at` del punto de venta, así que reintentar el mismo intento repite la clave y A → B → A no. Después se guarda o actualiza la fila y se
+> registra `pv.mercadopago` (operación `alta`, `adopcion` o `actualizacion`, ids de Mercado Pago, nunca un token). El nombre se limpia a letras ASCII, dígitos, espacio, guion y guion bajo (el punto y la coma pasan a espacio) y se corta a 45. El rechazo de Mercado Pago sale como 502 `mercadopago_solicitud_rechazada`, un 401 deja la conexión en
+> `requiere_reconexion` (409) y la caída o el tiempo agotado son 503 `mercadopago_no_disponible`.
+> Verificado contra la referencia (2026-11-01), no en vivo: `POST /v2/pos`, `PATCH /v2/pos/{id}` (el `store_id` puede cambiar), `GET /v2/pos?external_id=` con la clave `data`,
+> la imagen del QR en `qr_response.image` y el 409 `pos_already_exists`. **Sin verificar contra la API real:** qué responde un `PATCH` a una caja borrada (se asume 404 `pos_not_found`).
+>
+> **Terminal Point.** `GET /api/puntos-venta/{id}/mercadopago` también devuelve `idTerminalPoint`. `GET .../mercadopago/terminales` lista las
+> terminales que Mercado Pago tiene vinculadas a la caja (`GET /terminals/v1/list?pos_id=`; solo Newland N950 y PAX A910) como `{ id, modoOperativo,
+> asignada }`, y con la lista vacía trae `instrucciones`: la terminal se vincula **solo en la app móvil de Mercado Pago** (se enciende, se escanea el
+> QR de su pantalla y se elige local y caja); una caja admite una terminal. `POST .../mercadopago/terminal` `{ idTerminal }` (obligatorio, `^[A-Z0-9]+__[A-Za-z0-9]+$`,
+> ≤ 80; 400 `terminal_point_invalida`) asigna una terminal del listado de la caja (si no figura, 409 `mercadopago_terminal_no_vinculada`) bajo los mismos dos
+> locks sucursal → punto de venta; si no está en `PDV`, `PATCH /terminals/v1/setup` `{terminals:[{id, operating_mode:"PDV"}]}` con
+> `X-Idempotency-Key` (huella de terminal y modo; Mercado Pago pide reiniciar la terminal): 403 `terminal_not_allowed_action` es 409
+> `mercadopago_terminal_modelo_no_admitido`, 403 `store_pos_not_found` es 409 `mercadopago_terminal_no_vinculada` y 412 (la caja ya tiene otra terminal
+> en `PDV` o suspendida) es 409 `mercadopago_caja_con_terminal_en_pdv`. Con la terminal ya en `PDV` no se manda el `PATCH`. Registra
+> `pv.terminalmercadopago` (anterior y nueva terminal, si cambió el modo; sin tokens). `DELETE .../mercadopago/terminal` borra la asignación en Ways y no toca Mercado Pago. Sin caja
+> registrada, las tres rutas responden 409 `mercadopago_caja_no_registrada`. Verificado contra la referencia (2026-11-01), no en vivo.
+
+### Cobros con Mercado Pago (dispositivo del POS)
+
+```sql
+cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una fila por orden pedida a Mercado Pago
+    id_cobro_mercadopago, id_tenant, id_empresa,
+    id_punto_venta,                          -- FK compuesta (id_punto_venta, id_tenant); el del dispositivo que cobra, nunca el del cuerpo
+    id_dispositivo,                          -- FK compuesta (id_dispositivo, id_tenant) a dispositivos (clave alterna existente)
+    id_medio_pago,                           -- FK compuesta (id_medio_pago, id_tenant) a medios_pago (proveedor 'mercadopago_qr')
+    numero_preasignado bigint,               -- el número de venta que el dispositivo reservó (SolicitudDeVenta.NumeroPreasignado)
+    intento integer,                         -- 1, y +1 por cada cobro nuevo del mismo número después de uno cancelado o vencido
+    tipo varchar(10),                        -- 'qr' | 'point' (CHECK ck_cobros_mercadopago_tipo)
+    importe numeric(18,2),                   -- > 0; lo que se pidió cobrar
+    external_reference varchar(64),          -- 'W{tenant}P{punto de venta}N{número}I{intento}'; vuelve en los informes de Mercado Pago
+    external_pos_id varchar(40),             -- external_id de la caja con el que se pidió la orden; un reintento reenvía la misma orden aunque la caja cambie
+    clave_idempotencia varchar(64),          -- X-Idempotency-Key de POST /v1/orders: 'ways-cobro-' + huella SHA-256 del cuerpo completo de la orden
+    id_orden_mercadopago varchar(64) NULL,   -- id de la orden (ORD…); nulo solo en 'creando' o 'expirado' sin orden (CHECK ck_cobros_mercadopago_orden)
+    estado varchar(20),                      -- 'creando' | 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto'
+    id_pago_mercadopago varchar(64) NULL,    -- id del pago dentro de la orden
+    referencia_pago_mercadopago bigint NULL, -- reference_id numérico del pago (para /v1/payments y los informes)
+    importe_pagado numeric(18,2) NULL,       -- lo que Mercado Pago dice que se pagó; puede diferir de importe
+    qr_data text NULL,                       -- contenido EMVCo del QR dinámico; solo se devuelve mientras el cobro está pendiente
+    expira_en,                               -- reserva de la fila + 10 minutos (expiration_time PT10M)
+    fecha_ultima_consulta NULL,              -- última lectura de la orden; limita el refresco a una cada 2 segundos por cobro
+    fecha_aprobacion NULL,
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_cobros_mercadopago_tenant` (simple), `_empresa` (`(id_empresa, id_tenant)`), `_punto_venta`, `_dispositivo` y `_medio_pago`
+> (todas compuestas con `id_tenant`, RESTRICT, sobre claves alternas existentes). CHECK de respaldo `ck_cobros_mercadopago_tipo`, `_estado`,
+> `_importe` (> 0), `_importe_pagado` (nulo o >= 0), `_intento` (>= 1), `_numero` (> 0), `_aprobacion` (un cobro aprobado tiene `fecha_aprobacion`) y `_orden` (solo un cobro `creando`, o `expirado` por abandono sin orden confirmada, puede no tener `id_orden_mercadopago`).
+> Único parcial `ux_cobros_mercadopago_vivo_numero` `(id_punto_venta, numero_preasignado) WHERE estado IN ('creando', 'pendiente', 'aprobado')`: a lo sumo
+> un cobro vivo por número de venta; y único `ux_cobros_mercadopago_intento` `(id_punto_venta, numero_preasignado, intento)`. Ambos 23505 se
+> traducen a 409 `cobro_mercadopago_en_curso` en `ManejadorDeErrores` (el servicio serializa las creaciones con un lock por punto de venta, así que
+> solo los alcanza una escritura que no pase por él). Índices de soporte `ix_cobros_mercadopago_tenant`, `_empresa`, `_dispositivo` y `_medio_pago`.
+> RLS estándar. Efecto: como toda FK del modelo, un punto de venta, empresa o medio de pago con cobros cuenta como en uso y no se da de baja
+> (`inventario-de-dependientes.txt`, clasificación `marcado`). La tabla no se audita: es en sí el registro de cada intento y sus estados.
+>
+> **Endpoints (sesión de dispositivo; `OperacionDePos` + `RequiereDispositivo`).** `POST /api/pos/mercadopago/cobros` `{ idMedioPago,
+> numeroPreasignado, importe }`; `GET /api/pos/mercadopago/cobros/{id}`; `POST /api/pos/mercadopago/cobros/{id}/cancelar`. Responden `{ idCobro,
+> estado, qrData, expiraEn, importe, importePagado, importeDistinto, verificandoPago }`. Un cobro de otro punto de venta o de otro tenant es 404. Crear: el medio tiene que
+> estar activo, ser de la empresa del punto de venta y tener `proveedor = 'mercadopago_qr'` (400 `cobro_mercadopago_medio_invalido`), importe > 0 con
+> hasta 2 decimales (400 `cobro_mercadopago_importe_invalido`), número > 0 (400 `cobro_mercadopago_numero_invalido`); el punto de venta tiene que ser
+> el del dispositivo y de modo escritorio (409 `punto_venta_modo_incompatible`). Bajo un lock por punto de venta (y, si hay un cobro vivo del número, el del cobro, que se vuelve a leer después del lock): un cobro pendiente con el mismo medio e
+> importe se devuelve tal cual; con otro es 409 `cobro_mercadopago_en_curso`; uno aprobado es 409 `cobro_mercadopago_ya_aprobado`; un pendiente vencido se consulta antes
+> de decidir. Después, conexión activa (409 `mercadopago_no_conectada` o `mercadopago_requiere_reconexion`) y caja del punto de venta para el vendedor actual (409
+> `mercadopago_caja_no_registrada`). `POST /v1/orders` con `type: "qr"`, `external_reference`, `total_amount` y `unit_price` como cadena con 2 decimales,
+> `expiration_time: "PT10M"`, `config.qr.external_pos_id` = `external_id` de la caja, `mode: "dynamic"` y un ítem "Venta {número}" (`quantity` 1, `unit_measure`
+> `unit`); la `X-Idempotency-Key` es la huella del cuerpo completo (`clave_idempotencia`). **Reservar y después llamar:** la fila se inserta y se confirma primero en estado `creando` (con la `external_reference`, el importe, el `external_pos_id` de la caja y la clave), recién después se llama a `POST /v1/orders` y la fila pasa a `pendiente` con el id de la orden, el QR y el plazo. Si el guardado posterior falla, la fila queda `creando`: el siguiente crear, consultar o cancelar reenvía la orden original armada con los valores guardados y la misma clave (Mercado Pago devuelve la misma orden) y aplica la respuesta; recién después rigen las reglas de arriba (otro importe es 409 `cobro_mercadopago_en_curso`). Plazos de la fila `creando` desde su reserva (`created_at`): dentro de una vigencia (10 min) se reenvía y cualquier fallo (un 4xx incluido) la deja `creando`; desde una vigencia no se reenvía más y crear, consultar y cancelar responden 409 `cobro_mercadopago_en_curso`; desde dos vigencias más 5 min pasa a `expirado` sin llamar a Mercado Pago y libera el número. Al completarse, `expira_en` se renueva. Una `processed` recuperada sin pago legible queda `pendiente` sin QR y la respuesta trae `verificandoPago: true`. Una orden `created` sin `qr_data` es 502 `mercadopago_respuesta_invalida`. Consultar: un cobro pendiente se refresca con `GET /v1/orders/{id}` a lo sumo cada
+> 2 segundos, bajo un lock por cobro: `processed` → `aprobado` solo si trae un pago con importe pagado válido (`paid_amount` o `amount`, > 0 y hasta 2 decimales; se guarda el pago, el `reference_id` y el importe pagado, y si difiere de `importe`, `importeDistinto`); sin pago legible el cobro sigue `pendiente` y se avisa en el log. `canceled` → `cancelado`,
+> `expired` → `expirado`, `refunded` → `devuelto` (solo se observa mientras el cobro está pendiente; la devolución de un cobro ya aprobado es de la conciliación, E6); cualquier otro estado lo deja pendiente. Un 404 de la orden de un pendiente cuyo plazo pasó lo deja `expirado`; antes del plazo sigue siendo 502. Cancelar: un pendiente llama a `POST /v1/orders/{id}/cancel`; si Mercado Pago contesta
+> 409 se lee la orden y se devuelve su estado real (puede ser `aprobado`); un cobro aprobado es 409 `cobro_mercadopago_ya_aprobado`. Verificado contra la referencia (2026-11-01), no en vivo.
+>
+> **Guarda del medio.** Cambiar el `proveedor` de un medio (a nulo o a otro), sacarlo de `Electronico` o desactivarlo es 409 `medio_con_cobros_mercadopago_vivos` mientras tenga cobros `creando` o `pendiente` (los aprobados quedan como historia). La edición toma `FOR UPDATE` del medio y la reserva de un cobro `FOR KEY SHARE`, así que no se cruzan.

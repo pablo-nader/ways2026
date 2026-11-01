@@ -248,6 +248,40 @@ describe('useSincronizacionOffline — carga inicial (goal A: sobrevive un resta
   })
 })
 
+describe('useSincronizacionOffline — cliente dado de alta en el momento', () => {
+  it('lo suma a la copia local en memoria y persistida', async () => {
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaFixture())
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    await act(async () => {
+      await result.current.registrarClienteEnLaCopiaLocal({
+        id: 50,
+        numero: 12,
+        nombre: 'Ana',
+        apellido: null,
+        razonSocial: null,
+        tipoDocumento: null,
+        numeroDocumento: null,
+        idCondicionFiscal: 5,
+        idEmpresa: null,
+        idListaPrecio: LISTA_CF,
+        domicilio: 'Mitre 12',
+        telefono: null,
+        celular: null,
+        saldo: 0,
+        limiteCredito: 0,
+        creditoIlimitado: false,
+        esConsumidorFinal: false,
+      } as Parameters<typeof result.current.registrarClienteEnLaCopiaLocal>[0])
+    })
+
+    expect(result.current.instantanea?.clientes.map((c) => c.idCliente)).toEqual([50])
+    expect((await leerInstantaneaLocal(almacen))?.instantanea.clientes[0]).toMatchObject({ idCliente: 50, domicilio: 'Mitre 12' })
+  })
+})
+
 describe('useSincronizacionOffline — refresco oportunista de la instantánea', () => {
   it('con señal, refresca y persiste la instantánea nueva', async () => {
     const almacen = almacenFake()

@@ -108,6 +108,8 @@ import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
 import { ModalCuentaCorrientePos } from '../componentes/ModalCuentaCorrientePos'
+import { ModalAltaRapidaDeCliente } from '../pos/ModalAltaRapidaDeCliente'
+import { altaRapidaDeClienteDisponible } from '../pos/altaRapidaDeCliente'
 import type { PagoACuentaRegistrado } from '../componentes/ModalCuentaCorrientePos'
 import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { SelectorDeMiembrosDeCombo } from '../componentes/SelectorDeMiembrosDeCombo'
@@ -881,6 +883,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // `?idPresupuesto=` (esa venta congelada no tiene ningún cliente que el cajero pueda cambiar
   // acá adentro).
   const [modalCuentaCorrienteAbierto, setModalCuentaCorrienteAbierto] = useState(false)
+  const [altaDeClienteAbierta, setAltaDeClienteAbierta] = useState(false)
 
   // Mismo criterio que `mediosDelServidor`: `parametros`/`errorParametros` se derivan más abajo.
   const [parametrosDelServidor, setParametros] = useState<{ toleranciaPago: number } | null>(null)
@@ -3095,6 +3098,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // stage-pos-retiros-y-cierre-por-retiro (etapa 5): mismo criterio para "Retirar"/"Cerrar caja"
   // por retiro — cualquiera de los dos con un modal abierto declara la pantalla entera inerte.
   const pantallaCobroInerte = cobrando || confirmandoCobro || ventaFinalizada !== null || cajaDeEscritorioOcupada
+  const altaDeCliente = altaRapidaDeClienteDisponible({
+    enLinea: sincronizacionOffline.enLinea,
+    inerte: pantallaCobroInerte || bloqueadoPorTurno,
+  })
 
   // "Cerrar caja" y "Retirar" son excluyentes y comparten UN solo derivado, para que los dos
   // hermanos no puedan volver a divergir: mientras `verificandoCierre` está en vuelo todavía no
@@ -3989,6 +3996,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   />
                 </div>
                 {!modoPresupuesto && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-primary flex-shrink-0 text-nowrap"
+                    title={altaDeCliente.motivo}
+                    disabled={!altaDeCliente.habilitado}
+                    onClick={() => setAltaDeClienteAbierta(true)}
+                  >
+                    Nuevo cliente
+                  </button>
+                )}
+                {!modoPresupuesto && (
                   <BotonIcono
                     icono="detalle"
                     etiqueta="Ver detalle"
@@ -4582,6 +4600,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       {comboPorElegir && !modoPresupuesto && (
         <SelectorDeMiembrosDeCombo combo={comboPorElegir.combo} onConfirmar={confirmarMiembrosDeCombo} onCancelar={cancelarMiembrosDeCombo} />
+      )}
+
+      {altaDeClienteAbierta && !modoPresupuesto && (
+        <ModalAltaRapidaDeCliente
+          alCerrar={() => {
+            setAltaDeClienteAbierta(false)
+            pedirFocoEnElCodigo()
+          }}
+          alCreado={(creado) => {
+            setAltaDeClienteAbierta(false)
+            void sincronizacionOffline.registrarClienteEnLaCopiaLocal(creado).catch(() => undefined)
+            cambiarCliente(aOpcionDeCliente(creado))
+          }}
+        />
       )}
 
       {modalCuentaCorrienteAbierto && !modoPresupuesto && puntoVentaSeleccionada && medios && (

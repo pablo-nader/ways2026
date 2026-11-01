@@ -110,9 +110,9 @@ describe('etiquetaDeAccion', () => {
   // pantalla renderizaba `tenant.baja` en crudo y el `<select>` no podía filtrar por ninguna de
   // las tres bajas de organización. El front lista un subconjunto del catálogo del back (que tiene
   // más entradas): esta prueba congela el que se ofrece en el `<select>`.
-  // Mutation target: sacar cualquiera de las 23 entradas.
-  it('el catálogo del front ofrece las 23 acciones esperadas, las bajas, las de pagos y las de cobros incluidas', () => {
-    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(23)
+  // Mutation target: sacar cualquiera de las 26 entradas.
+  it('el catálogo del front ofrece las 26 acciones esperadas, las bajas, las de pagos, las de cobros y las de retiros incluidas', () => {
+    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(26)
 
     expect(CATALOGO_DE_ACCIONES_AUDITADAS.map((a) => a.valor)).toEqual([
       'precio.cambio',
@@ -138,11 +138,17 @@ describe('etiquetaDeAccion', () => {
       'tenant.baja',
       'empresa.baja',
       'pv.baja',
+      'venta.medios',
+      'retiro.edicion',
+      'retiro.baja',
     ])
 
     expect(etiquetaDeAccion('tenant.baja')).toBe('Baja de tenant')
     expect(etiquetaDeAccion('empresa.baja')).toBe('Baja de empresa')
     expect(etiquetaDeAccion('pv.baja')).toBe('Baja de punto de venta')
+    expect(etiquetaDeAccion('venta.medios')).toBe('Cambio de medios de pago de venta')
+    expect(etiquetaDeAccion('retiro.edicion')).toBe('Edición de retiro')
+    expect(etiquetaDeAccion('retiro.baja')).toBe('Baja de retiro')
     expect(etiquetaDeAccion('compra.edicion')).toBe('Edición de compra')
     expect(etiquetaDeAccion('compra.redondeo')).toBe('Ajuste de redondeo de compra')
     expect(etiquetaDeAccion('pago.aplicacion')).toBe('Aplicación de pago a compras')

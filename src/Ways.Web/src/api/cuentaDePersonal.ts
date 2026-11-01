@@ -8,11 +8,14 @@ import { rangoUltimoMes } from './cuentaCorriente'
 import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   MovimientoDePersonal,
+  OpcionDePersonal,
   PaginaDeCuentaDePersonal,
   PersonalListado,
+  ReciboDePagoDePersonalDelPos,
   SolicitudDeAjusteDePersonal,
   SolicitudDeCargaDeHoras,
   SolicitudDePagoDePersonal,
+  SolicitudDePagoDePersonalDelPos,
 } from './tipos'
 
 /** Claves de `orden` que acepta `GET /api/personal/{id}/cuenta`: una por cada columna de datos del libro. */
@@ -114,4 +117,11 @@ export const clienteDeCuentaDePersonal = {
     api.post<MovimientoDePersonal>(`/personal/${id}/ajustes`, solicitud),
   pagar: (id: number, solicitud: SolicitudDePagoDePersonal) =>
     api.post<MovimientoDePersonal>(`/personal/${id}/pagos`, solicitud),
+}
+
+/** Superficie del POS (`OperacionDePos`): el cajero ve solo id y nombre y paga solo del cajón del turno, sin descuento. */
+export const clienteDePersonalDelPos = {
+  opciones: () => api.get<OpcionDePersonal[]>('/pos/personal/opciones'),
+  pagar: (id: number, solicitud: SolicitudDePagoDePersonalDelPos) =>
+    api.post<ReciboDePagoDePersonalDelPos>(`/pos/personal/${id}/pagos`, solicitud),
 }

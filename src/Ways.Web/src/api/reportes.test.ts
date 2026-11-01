@@ -28,6 +28,7 @@ const {
   construirQueryDeLibroIva,
   construirQueryDeReporte,
   construirQueryDeReporteDeArticulos,
+  construirQueryDeTicketsDeArticulo,
   construirQueryDeVentasPorArticulo,
   construirQueryDeVentasPorHora,
   rangoDeLasUltimasCuatroSemanas,
@@ -613,5 +614,34 @@ describe('los reportes de stock hablan de sucursal', () => {
     expect(rutasDeExportacion.existencias(20)).toBe('/reportes/stock/existencias/export?idSucursal=20&formato=xlsx')
     expect(rutasDeExportacion.vencimientos(20, 15)).toBe('/reportes/stock/vencimientos/export?idSucursal=20&dias=15&formato=xlsx')
     expect(rutasDeExportacion.reposicion(20, null)).toBe('/reportes/stock/reposicion/export?idSucursal=20&formato=xlsx')
+  })
+})
+
+describe('ticketsDeArticulo', () => {
+  it('pide los tickets del artículo en la ruta con empresa, punto de venta y rango', async () => {
+    apiGetMock.mockClear()
+
+    await clienteDeReportes.ticketsDeArticulo(12, { idEmpresa: 1, idPuntoVenta: 7, desde: '2026-10-12', hasta: '2026-10-18' })
+
+    expect(apiGetMock).toHaveBeenCalledWith(
+      '/reportes/ventas/por-articulo/12/tickets?idEmpresa=1&idPuntoVenta=7&desde=2026-10-12&hasta=2026-10-18',
+    )
+  })
+
+  it('omite el punto de venta cuando no hay y no manda ningún otro filtro del reporte', () => {
+    const query = construirQueryDeTicketsDeArticulo({ idEmpresa: 1, idPuntoVenta: null, desde: '2026-10-12', hasta: '2026-10-18' })
+
+    expect(query).toBe('?idEmpresa=1&desde=2026-10-12&hasta=2026-10-18')
+  })
+
+  it('usa los mismos nombres de parámetro que el reporte', () => {
+    const delReporte = new URLSearchParams(
+      construirQueryDeVentasPorArticulo(filtrosVentasPorArticuloFixture({ idPuntoVenta: 7 })),
+    )
+    const deTickets = new URLSearchParams(
+      construirQueryDeTicketsDeArticulo({ idEmpresa: 1, idPuntoVenta: 7, desde: '2026-10-12', hasta: '2026-10-18' }),
+    )
+
+    expect(Object.fromEntries(deTickets)).toEqual(Object.fromEntries(delReporte))
   })
 })

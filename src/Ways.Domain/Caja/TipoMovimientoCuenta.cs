@@ -15,5 +15,8 @@ public enum TipoMovimientoCuenta
     Ajuste,
     Transferencia,
     Deposito,
-    Retiro
+    Retiro,
+
+    /// <summary>Débito (o su reversa) de un pago hecho con un medio que tiene cuenta; lleva <see cref="MovimientoCuenta.IdPago"/>.</summary>
+    Pago
 }

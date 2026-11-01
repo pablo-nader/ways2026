@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
+import { clienteDePersonalDelPos } from '../api/cuentaDePersonal'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { toast } from '../toasts/toasts'
 import { errorDeLineasDePago, lineaDePagoVacia, type LineaDePagoEditable } from '../api/lineasDePago'
 import { clienteDePagos, copiaDeFalloDeEdicion, esPagoOriginadoEnPersonal } from '../api/registroDePagos'
 import { clienteDeProveedores } from '../api/proveedores'
+import {
+  aSolicitudDePagoDePersonalDesdeElPos,
+  cambiosAlElegirCategoria,
+  esPagoAPersonal,
+  ofreceElegirPersonal,
+  pagoAPersonalDisponible,
+} from '../api/sueldoConPersonal'
 import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
   AreaAlta,
@@ -15,6 +23,7 @@ import type {
   PagoDeTurno,
   MedioPagoAlta,
   MedioPagoListado,
+  OpcionDePersonal,
   OpcionDeProveedor,
   OrigenFondosPago,
   SolicitudDeEdicionDePagoConLineas,
@@ -50,6 +59,23 @@ import {
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
+/** Conexión del navegador, para lo que no tiene cola offline (el pago a un empleado). Mismo criterio que la sincronización del POS. */
+function useEnLinea(): boolean {
+  const [enLinea, setEnLinea] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
+
+  useEffect(() => {
+    const alCambiar = () => setEnLinea(typeof navigator === 'undefined' || navigator.onLine)
+    window.addEventListener('online', alCambiar)
+    window.addEventListener('offline', alCambiar)
+    return () => {
+      window.removeEventListener('online', alCambiar)
+      window.removeEventListener('offline', alCambiar)
+    }
+  }, [])
+
+  return enLinea
+}
+
 /**
  * "Pagos del turno" (stage-gastos-turno-carga-simple, POS de escritorio): captura pagos contra
  * el turno ABIERTO del punto de venta fijo del dispositivo (`POST /api/pagos`, mismo criterio de
@@ -78,6 +104,11 @@ const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
  * queda inerte (regla 9 — se bloquea el supersede, no se reconcilia). Si el servidor responde
  * `409 gasto_turno_cerrado` el modal queda abierto con el motivo y el detalle se refresca.
  *
+ * Sueldos: en vez del proveedor se ofrece un empleado (opcional, `GET /api/pos/personal/opciones`, solo id y nombre). Con
+ * un empleado el guardado es un pago de personal del POS (`POST /api/pos/personal/{id}/pagos`): sale siempre del cajón del
+ * turno, sin concepto, área ni descuento de cuenta corriente, y solo existe con conexión (no hay cola offline). "Sin empleado"
+ * conserva el pago común.
+ *
  * Efectivo de caja: un pago con alguna línea en medio Efectivo pagado desde la caja del turno
  * muestra el efectivo disponible del resumen del turno y, si la suma de ESAS líneas lo supera,
  * avisa cuánto falta sin impedir el registro. Con el seam de escritorio (`cajaDeEscritorio`), un
@@ -85,6 +116,7 @@ const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
  */
 export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeEscritorio } = {}) {
   const { puntoVenta } = usePuntoVenta()
+  const enLinea = useEnLinea()
 
   const [turno, setTurno] = useState<TurnoResumen | null>(null)
   const [buscandoTurno, setBuscandoTurno] = useState(true)
@@ -102,6 +134,10 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
   const [proveedores, setProveedores] = useState<OpcionDeProveedor[] | null>(null)
   const [errorProveedores, setErrorProveedores] = useState('')
 
+  const [personal, setPersonal] = useState<OpcionDePersonal[] | null>(null)
+  const [errorPersonal, setErrorPersonal] = useState('')
+  const generacionPersonalRef = useRef(0)
+
   const [areas, setAreas] = useState<AreaListado[] | null>(null)
   const [errorAreas, setErrorAreas] = useState('')
 
@@ -112,6 +148,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => [lineaDePagoVacia()])
   const [categoria, setCategoria] = useState<CategoriaPago>('Otros')
   const [idProveedor, setIdProveedor] = useState<number | ''>('')
+  const [idPersonal, setIdPersonal] = useState<number | ''>('')
   const [idAreaElegida, setIdAreaElegida] = useState<number | ''>('')
   const [observaciones, setObservaciones] = useState('')
   const [origenFondos, setOrigenFondos] = useState<OrigenFondosPago>('CajaTurno')
@@ -172,6 +209,32 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     }
   }, [])
 
+  // El personal solo se pide con Sueldos y con conexión. regla 2 (react-async-state): una respuesta de una elección anterior
+  // nunca pisa a la vigente; un fallo no frena el resto de la pantalla (queda el sueldo sin empleado).
+  // La edición también lo pide: asignar un empleado a un sueldo común es un pago de personal, que solo existe con conexión.
+  const pideElPersonal = (ofreceElegirPersonal(categoria) || edicion !== null) && enLinea
+  useEffect(() => {
+    if (!pideElPersonal) return
+
+    const miGeneracion = (generacionPersonalRef.current += 1)
+    clienteDePersonalDelPos
+      .opciones()
+      .then((opciones) => {
+        if (generacionPersonalRef.current !== miGeneracion) return
+        setPersonal(opciones)
+        setErrorPersonal('')
+      })
+      .catch(() => {
+        if (generacionPersonalRef.current !== miGeneracion) return
+        setPersonal([])
+        setErrorPersonal('No se pudo cargar el personal.')
+      })
+
+    return () => {
+      generacionPersonalRef.current += 1
+    }
+  }, [pideElPersonal])
+
   async function cargarDetalle(idTurno: number, miGeneracion: number) {
     setCargandoDetalle(true)
     setErrorDetalle('')
@@ -227,10 +290,19 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     setCategoria((prev) => categoriaAlElegirProveedor(nuevoIdProveedor, prev))
   }
 
+  function alCambiarCategoria(nueva: CategoriaPago) {
+    // Entrar a Sueldos descarta el proveedor y salir descarta el empleado: el campo oculto nunca viaja.
+    const cambios = cambiosAlElegirCategoria({ idProveedor, idPersonal }, nueva)
+    setCategoria(cambios.categoria)
+    setIdProveedor(cambios.idProveedor)
+    setIdPersonal(cambios.idPersonal)
+  }
+
   function limpiarFormulario() {
     setLineas([lineaDePagoVacia()])
     setCategoria('Otros')
     setIdProveedor('')
+    setIdPersonal('')
     setIdAreaElegida('')
     setObservaciones('')
     setOrigenFondos('CajaTurno')
@@ -248,7 +320,12 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
       return
     }
 
-    const abreElCajon = haySalidaDeEfectivoDeCaja(lineas, medios ?? [], origenFondos)
+    if (aPersonal && !pagoDePersonal.habilitado) {
+      setErrorGuardar(pagoDePersonal.motivo)
+      return
+    }
+
+    const abreElCajon = haySalidaDeEfectivoDeCaja(lineas, medios ?? [], origenDelPago)
 
     guardandoRef.current = true
     setGuardando(true)
@@ -259,17 +336,28 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     const miGeneracion = (generacionRef.current += 1)
 
     try {
-      await clienteDePagos.registrar(
-        aSolicitudDePago({
-          idPuntoVenta: puntoVenta.id,
-          lineas,
-          categoria,
-          idProveedor: idProveedor === '' ? null : idProveedor,
-          idArea: idArea === '' ? null : idArea,
-          observaciones,
-          origenFondos,
-        }),
-      )
+      if (aPersonal) {
+        await clienteDePersonalDelPos.pagar(
+          Number(idPersonal),
+          aSolicitudDePagoDePersonalDesdeElPos({
+            idPuntoVenta: puntoVenta.id,
+            lineas,
+            observaciones,
+          }),
+        )
+      } else {
+        await clienteDePagos.registrar(
+          aSolicitudDePago({
+            idPuntoVenta: puntoVenta.id,
+            lineas,
+            categoria,
+            idProveedor: idProveedor === '' ? null : idProveedor,
+            idArea: idArea === '' ? null : idArea,
+            observaciones,
+            origenFondos,
+          }),
+        )
+      }
       // El alta ya está confirmada: el cajón se abre aunque la respuesta llegue desactualizada.
       if (abreElCajon) {
         try {
@@ -340,6 +428,11 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     await cargarDetalle(turno.id, miGeneracion)
   }
 
+  const aPersonal = esPagoAPersonal({ categoria, idPersonal })
+  const pagoDePersonal = pagoAPersonalDisponible({ enLinea })
+  // El pago de personal siempre sale del cajón del turno: ni se elige ni puede ser la caja general.
+  const origenDelPago: OrigenFondosPago = aPersonal ? 'CajaTurno' : origenFondos
+
   const bloqueado = guardando || guardandoEdicion || edicion !== null
 
   const mediosParaPago = mediosValidosParaPago(medios ?? [])
@@ -357,10 +450,10 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
   )
   const ordenDePagos = useOrdenamiento(pagos, columnasDePagos)
   const idArea = idAreaElegida !== '' ? idAreaElegida : areaPorDefecto(areas ?? [])
-  const saleDeLaCaja = haySalidaDeEfectivoDeCaja(lineas, medios ?? [], origenFondos)
+  const saleDeLaCaja = haySalidaDeEfectivoDeCaja(lineas, medios ?? [], origenDelPago)
   const efectivoDisponible = detalle ? efectivoDisponibleEnCaja(detalle.resumen) : null
   const faltante =
-    efectivoDisponible === null ? 0 : faltanteDeEfectivo(importeEnEfectivoDeCaja(lineas, medios ?? [], origenFondos), efectivoDisponible)
+    efectivoDisponible === null ? 0 : faltanteDeEfectivo(importeEnEfectivoDeCaja(lineas, medios ?? [], origenDelPago), efectivoDisponible)
 
   const herramientas = (
     <BotonIcono
@@ -404,7 +497,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
                   id="pago-categoria"
                   className="form-select"
                   value={categoria}
-                  onChange={(e) => setCategoria(e.target.value as CategoriaPago)}
+                  onChange={(e) => alCambiarCategoria(e.target.value as CategoriaPago)}
                 >
                   {CATEGORIAS_PAGO.map((c) => (
                     <option key={c.valor} value={c.valor}>
@@ -414,65 +507,93 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
                 </select>
               </div>
 
-              <div className="col-md-3">
-                <label className="form-label" htmlFor="pago-proveedor">
-                  Proveedor (opcional)
-                </label>
-                <select
-                  id="pago-proveedor"
-                  className="form-select"
-                  value={idProveedor}
-                  onChange={(e) => alCambiarProveedor(e.target.value)}
-                >
-                  <option value="">Sin proveedor</option>
-                  {proveedoresOrdenados.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {etiquetaDeProveedor(p)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {ofreceElegirPersonal(categoria) ? (
+                <div className="col-md-3">
+                  <label className="form-label" htmlFor="pago-personal">
+                    Empleado (opcional)
+                  </label>
+                  <select
+                    id="pago-personal"
+                    className="form-select"
+                    value={idPersonal}
+                    onChange={(e) => setIdPersonal(e.target.value === '' ? '' : Number(e.target.value))}
+                  >
+                    <option value="">Sin empleado</option>
+                    {(personal ?? []).map((p) => (
+                      <option key={p.id} value={p.id} disabled={!pagoDePersonal.habilitado}>
+                        {p.nombre}
+                      </option>
+                    ))}
+                  </select>
+                  {!pagoDePersonal.habilitado && <div className="form-text text-danger">{pagoDePersonal.motivo}</div>}
+                  {errorPersonal && pagoDePersonal.habilitado && <div className="form-text text-danger">{errorPersonal}</div>}
+                  {aPersonal && <div className="form-text">Se registra como pago de personal desde la caja del turno.</div>}
+                </div>
+              ) : (
+                <div className="col-md-3">
+                  <label className="form-label" htmlFor="pago-proveedor">
+                    Proveedor (opcional)
+                  </label>
+                  <select
+                    id="pago-proveedor"
+                    className="form-select"
+                    value={idProveedor}
+                    onChange={(e) => alCambiarProveedor(e.target.value)}
+                  >
+                    <option value="">Sin proveedor</option>
+                    {proveedoresOrdenados.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {etiquetaDeProveedor(p)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-              <div className="col-md-3">
-                <label className="form-label" htmlFor="pago-area">
-                  Área
-                </label>
-                <select
-                  id="pago-area"
-                  className="form-select"
-                  value={idArea}
-                  onChange={(e) => setIdAreaElegida(Number(e.target.value))}
-                >
-                  {(areas ?? []).length === 0 && (
-                    <option value="" disabled>
-                      Sin áreas
-                    </option>
-                  )}
-                  {(areas ?? []).map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!aPersonal && (
+                <>
+                  <div className="col-md-3">
+                    <label className="form-label" htmlFor="pago-area">
+                      Área
+                    </label>
+                    <select
+                      id="pago-area"
+                      className="form-select"
+                      value={idArea}
+                      onChange={(e) => setIdAreaElegida(Number(e.target.value))}
+                    >
+                      {(areas ?? []).length === 0 && (
+                        <option value="" disabled>
+                          Sin áreas
+                        </option>
+                      )}
+                      {(areas ?? []).map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <div className="col-md-3">
-                <label className="form-label" htmlFor="pago-origen-fondos">
-                  Pagado desde
-                </label>
-                <select
-                  id="pago-origen-fondos"
-                  className="form-select"
-                  value={origenFondos}
-                  onChange={(e) => setOrigenFondos(e.target.value as OrigenFondosPago)}
-                >
-                  {ORIGENES_DE_FONDOS_PAGO.map((o) => (
-                    <option key={o.valor} value={o.valor}>
-                      {o.etiqueta}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  <div className="col-md-3">
+                    <label className="form-label" htmlFor="pago-origen-fondos">
+                      Pagado desde
+                    </label>
+                    <select
+                      id="pago-origen-fondos"
+                      className="form-select"
+                      value={origenFondos}
+                      onChange={(e) => setOrigenFondos(e.target.value as OrigenFondosPago)}
+                    >
+                      {ORIGENES_DE_FONDOS_PAGO.map((o) => (
+                        <option key={o.valor} value={o.valor}>
+                          {o.etiqueta}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
 
               {saleDeLaCaja && efectivoDisponible !== null && (
                 <div className="col-12">
@@ -499,7 +620,8 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
               </div>
 
               <div className="col-md-2">
-                <button type="button" className="btn btn-primary w-100" disabled={areas === null} onClick={() => void registrarPago()}>
+                <button type="button" className="btn btn-primary w-100" disabled={areas === null || (aPersonal && !pagoDePersonal.habilitado)}
+                  onClick={() => void registrarPago()}>
                   {guardando ? 'Guardando…' : 'Registrar'}
                 </button>
               </div>
@@ -575,6 +697,9 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
           key={edicion.id}
           pago={edicion}
           ligadoACompra={edicion.idComprobanteCompra !== null}
+          personal={personal ?? []}
+          personalDisponible={pagoDePersonal}
+          errorDePersonal={errorPersonal}
           medios={mediosParaPago}
           proveedores={proveedores ?? []}
           areas={areas ?? []}

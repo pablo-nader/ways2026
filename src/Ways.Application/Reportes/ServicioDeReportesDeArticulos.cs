@@ -7,6 +7,7 @@ using Ways.Application.Parametros;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Reportes;
@@ -67,7 +68,8 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
     /// <summary>Línea de venta neta de un artículo: base compartida de
     /// <see cref="ObtenerTopArticulosAsync"/> y <see cref="ObtenerVentasPorArticuloAsync"/>.</summary>
-    private sealed record LineaVendida(int? IdArticulo, string Descripcion, decimal Cantidad, decimal Total, DateTimeOffset Fecha);
+    private sealed record LineaVendida(int? IdArticulo, string Descripcion, decimal Cantidad, decimal Total, DateTimeOffset Fecha,
+        int IdComprobante);
 
     private IQueryable<LineaVendida> LineasVendidas(
         IReadOnlyList<int> idsPuntoVenta, RangoDeReporte rango, int? idArticulo = null,
@@ -96,7 +98,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
             consulta = consulta.Where(x => soloArticulos.Contains(x.Item.IdArticulo!.Value));
         }
 
-        return consulta.Select(x => new LineaVendida(x.Item.IdArticulo, x.Item.Descripcion, x.Item.Cantidad, x.Item.Total, x.Comprobante.Fecha));
+        return consulta.Select(x => new LineaVendida(x.Item.IdArticulo, x.Item.Descripcion, x.Item.Cantidad, x.Item.Total, x.Comprobante.Fecha, x.Comprobante.Id));
     }
 
     /// <summary>Ventas netas por artículo del período, filtrables por la clasificación ACTUAL del
@@ -219,6 +221,68 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
             .ToList();
 
         return new VentasPorArticulo(desde, hasta, zonaId, filas.Sum(f => f.Cantidad), filas.Sum(f => f.Total), filas);
+    }
+
+    /// <summary>Los comprobantes del período en los que se vendió <paramref name="idArticulo"/>, con
+    /// las mismas reglas de inclusión que <see cref="ObtenerVentasPorArticuloAsync"/> (comparten
+    /// <c>LineasVendidas</c>): una nota de crédito aparece con signo negativo. Un artículo ajeno,
+    /// inexistente o sin ventas devuelve la lista vacía. Sin costo ni margen.</summary>
+    public async Task<TicketsDeArticulo> ObtenerTicketsDeArticuloAsync(
+        int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta, int idArticulo,
+        CancellationToken ct = default)
+    {
+        await ExigirEmpresaAsync(idEmpresa, ct);
+        var idsPuntoVenta = await ResolverPuntosDeVentaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, zona) = await ResolverZonaAsync(idEmpresa, idPuntoVenta, ct);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+
+        var lineas = idsPuntoVenta.Count == 0
+            ? []
+            : await LineasVendidas(idsPuntoVenta, rango, idArticulo).ToListAsync(ct);
+
+        var nombreActual = await db.Articulos
+            .Where(a => a.Id == idArticulo)
+            .Select(a => a.Nombre)
+            .FirstOrDefaultAsync(ct);
+        var descripcion = nombreActual
+            ?? lineas.OrderByDescending(l => l.Fecha).Select(l => l.Descripcion).FirstOrDefault()
+            ?? string.Empty;
+
+        var idsComprobante = lineas.Select(l => l.IdComprobante).Distinct().ToList();
+        var cabeceras = await (
+            from c in db.ComprobantesVenta.SinEspejosFiscales()
+            where idsComprobante.Contains(c.Id)
+            join t in db.TiposComprobante on c.IdTipoComprobante equals t.Id
+            join pv in db.PuntosVenta on c.IdPuntoVenta equals pv.Id
+            join cl in db.Clientes on c.IdCliente equals cl.Id into clientes
+            from cl in clientes.DefaultIfEmpty()
+            select new
+            {
+                c.Id,
+                c.Fecha,
+                c.IdPuntoVenta,
+                c.Numero,
+                TipoNombre = t.Nombre,
+                PuntoVenta = pv.Nombre,
+                Cliente = cl != null && cl.Numero != ReglaDeClientes.NumeroConsumidorFinal ? cl.Nombre : null
+            }).ToDictionaryAsync(x => x.Id, ct);
+
+        var tickets = lineas
+            .GroupBy(l => l.IdComprobante)
+            .Select(g =>
+            {
+                var cabecera = cabeceras[g.Key];
+                return new TicketDeArticulo(
+                    g.Key, cabecera.Fecha, cabecera.PuntoVenta,
+                    $"{cabecera.TipoNombre} {NumeroDeComprobante.Formatear(cabecera.IdPuntoVenta, cabecera.Numero)}",
+                    cabecera.Cliente, g.Sum(l => l.Cantidad), g.Sum(l => l.Total));
+            })
+            .OrderByDescending(t => t.Fecha)
+            .ThenByDescending(t => t.IdComprobante)
+            .ToList();
+
+        return new TicketsDeArticulo(
+            desde, hasta, zonaId, idArticulo, descripcion, tickets.Sum(t => t.Cantidad), tickets.Sum(t => t.Total), tickets);
     }
 
     /// <summary>Ventas netas por día de la semana y hora local (zona resuelta del alcance pedido),

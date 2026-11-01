@@ -258,7 +258,7 @@ public class LibroDeTesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Empty(delCajon.Cuentas);
         Assert.Null(delCajon.SinCuenta);
         Assert.Equal(e.IdPagoDelCajon, delCajon.Pago!.IdPago);
-        Assert.Equal("Proveedores — Factura 55 · Distribuidora Norte", delCajon.Pago.Detalle);
+        Assert.Equal("Distribuidora Norte", delCajon.Pago.Detalle);
 
         var caja = libro.Filas[1];
         Assert.Equal(3400m, caja.Efectivo);
@@ -321,7 +321,7 @@ public class LibroDeTesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var libro = await LeerAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, e.Desde, e.Hasta);
 
         var fila = libro.Filas.Single(f => f.Pago?.IdPago == e.IdPagoAProveedor);
-        Assert.Equal("Proveedores — Factura 56 · (proveedor no disponible)", fila.Pago!.Detalle);
+        Assert.Equal("(proveedor no disponible)", fila.Pago!.Detalle);
         Assert.Equal(-300m, fila.Cuentas.Single().Importe);
     }
 
