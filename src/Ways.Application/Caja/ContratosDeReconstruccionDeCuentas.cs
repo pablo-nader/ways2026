@@ -21,7 +21,10 @@ public sealed record CuentaDeReconstruccion(
     int IdCuentaTesoreria, string Nombre, int Filas, decimal Neto, decimal SaldoAntes, decimal SaldoDespues);
 
 /// <summary>La vista previa devuelve lo que se escribiría; la aplicación, lo que se escribió. Sin nada pendiente, las listas
-/// vienen vacías y <see cref="Filas"/> es cero.</summary>
+/// vienen vacías y <see cref="Filas"/> es cero. Los turnos con fecha de cierre menor o igual a la marca de conciliación de la empresa
+/// (<see cref="ConciliadoHasta"/>) están congelados: no se reconstruyen y sus acreditaciones pendientes se informan aparte en
+/// <see cref="Congeladas"/>, sin contarlas en <see cref="Turnos"/> ni en <see cref="Filas"/>.</summary>
 public sealed record PlanDeReconstruccion(
     int IdEmpresa, DateOnly Desde, DateOnly Hasta, int Turnos, int Filas,
-    IReadOnlyList<AcreditacionDeReconstruccion> Acreditaciones, IReadOnlyList<CuentaDeReconstruccion> Cuentas);
+    IReadOnlyList<AcreditacionDeReconstruccion> Acreditaciones, IReadOnlyList<CuentaDeReconstruccion> Cuentas,
+    DateTimeOffset? ConciliadoHasta, IReadOnlyList<AcreditacionDeReconstruccion> Congeladas);

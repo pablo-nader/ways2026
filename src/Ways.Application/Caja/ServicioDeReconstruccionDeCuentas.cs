@@ -37,6 +37,14 @@ namespace Ways.Application.Caja;
 /// <see cref="ReconstructorDeCadenaDeCuenta"/>, partiendo del saldo de la última fila anterior o del saldo inicial. Un ajuste manual
 /// conserva su diferencia (ingreso o egreso): el libro no guarda el saldo objetivo, así que el saldo final de la cuenta sube
 /// exactamente en el neto de las filas nuevas, pero el <c>inicio</c> y el <c>final</c> de ese ajuste cambian.
+///
+/// Conciliación (<see cref="GuardaDeConciliacion"/>). Los turnos con <c>FechaCierre</c> menor o igual a la marca de la empresa están
+/// congelados: reconstruirlos agregaría filas de cobro, comisión y retención en el pasado conciliado y cambiaría las filas de caja
+/// del libro. No se rechaza el pedido: esos turnos se omiten y sus acreditaciones pendientes se informan en
+/// <see cref="PlanDeReconstruccion.Congeladas"/> junto con la marca, para que el operador vea qué quedó sin acreditar. La aplicación
+/// toma el lock compartido de conciliación como PRIMER lock (antes del advisory de tesorería y de cualquier lock de fila) y lee la
+/// marca una sola vez, ya bajo ese lock; la vista previa la lee sin lock, como el resto de su plan.
+///
 /// Es idempotente: la segunda pasada no encuentra nada para escribir. El índice <c>ux_movimientos_cuenta_cierre</c> es el respaldo
 /// si un escritor se salteara los locks. No registra auditoría: el ajuste manual de cuenta, su antecedente más cercano, tampoco.
 /// </summary>
@@ -60,7 +68,8 @@ public class ServicioDeReconstruccionDeCuentas(
     private sealed record Planeado(
         IReadOnlyList<AcreditacionDeReconstruccion> Acreditaciones,
         IReadOnlyList<FilaPlaneada> Filas,
-        IReadOnlyDictionary<int, (string Nombre, decimal SaldoInicial)> Cuentas);
+        IReadOnlyDictionary<int, (string Nombre, decimal SaldoInicial)> Cuentas,
+        IReadOnlyList<AcreditacionDeReconstruccion> Congeladas);
 
     public async Task<PlanDeReconstruccion> VistaPreviaAsync(
         SolicitudDeReconstruccionDeCuentas solicitud, CancellationToken ct = default)
@@ -70,7 +79,8 @@ public class ServicioDeReconstruccionDeCuentas(
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var medios = await LeerMediosConCuentaAsync(conexion, null, idTenant, idEmpresa, bloquear: false, ct);
-        var planeado = await PlanearAsync(idEmpresa, rango, medios, ct);
+        var marca = await GuardaDeConciliacion.LeerMarcaAsync(db, idEmpresa, ct);
+        var planeado = await PlanearAsync(idEmpresa, rango, medios, marca, ct);
 
         var cuentas = new List<CuentaDeReconstruccion>();
         foreach (var grupo in planeado.Filas.GroupBy(f => f.Acreditacion.IdCuentaTesoreria).OrderBy(g => g.Key))
@@ -81,7 +91,7 @@ public class ServicioDeReconstruccionDeCuentas(
             cuentas.Add(new CuentaDeReconstruccion(grupo.Key, nombre, grupo.Count(), neto, cola.Saldo, cola.Saldo + neto));
         }
 
-        return Armar(idEmpresa, rango, planeado, cuentas);
+        return Armar(idEmpresa, rango, planeado, cuentas, marca);
     }
 
     public async Task<PlanDeReconstruccion> AplicarAsync(
@@ -99,13 +109,16 @@ public class ServicioDeReconstruccionDeCuentas(
             var conexion = db.Database.GetDbConnection();
             var transaccionCruda = transaccion.GetDbTransaction();
 
+            await GuardaDeConciliacion.TomarCompartidoAsync(db, idTenant, idEmpresa, ct);
+            var marca = await GuardaDeConciliacion.LeerMarcaAsync(db, idEmpresa, ct);
             await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(conexion, transaccionCruda, idTenant, idEmpresa, ct);
             var medios = await LeerMediosConCuentaAsync(conexion, transaccionCruda, idTenant, idEmpresa, bloquear: true, ct);
             var bloqueadas = await EscriturasDeCuentaDeTesoreria.LeerYBloquearCuentasAsync(
                 conexion, transaccionCruda, idTenant, idEmpresa, medios.Select(m => m.IdCuenta).Distinct().Order().ToList(), ct);
 
             // Un medio cuya cuenta se dio de baja entre la lectura y el lock no acredita, igual que en el cierre.
-            var planeado = await PlanearAsync(idEmpresa, rango, medios.Where(m => bloqueadas.ContainsKey(m.IdCuenta)).ToList(), ct);
+            var planeado = await PlanearAsync(
+                idEmpresa, rango, medios.Where(m => bloqueadas.ContainsKey(m.IdCuenta)).ToList(), marca, ct);
 
             var cuentas = new List<CuentaDeReconstruccion>();
             foreach (var grupo in planeado.Filas.GroupBy(f => f.Acreditacion.IdCuentaTesoreria).OrderBy(g => g.Key))
@@ -133,14 +146,15 @@ public class ServicioDeReconstruccionDeCuentas(
 
             await transaccion.CommitAsync(ct);
 
-            return Armar(idEmpresa, rango, planeado, cuentas);
+            return Armar(idEmpresa, rango, planeado, cuentas, marca);
         });
     }
 
     private static PlanDeReconstruccion Armar(
-        int idEmpresa, RangoDeReporte rango, Planeado planeado, IReadOnlyList<CuentaDeReconstruccion> cuentas) =>
+        int idEmpresa, RangoDeReporte rango, Planeado planeado, IReadOnlyList<CuentaDeReconstruccion> cuentas,
+        DateTimeOffset? marca) =>
         new(idEmpresa, rango.Desde, rango.Hasta, planeado.Acreditaciones.Select(a => a.IdTurnoCaja).Distinct().Count(),
-            planeado.Filas.Count, planeado.Acreditaciones, cuentas);
+            planeado.Filas.Count, planeado.Acreditaciones, cuentas, marca, planeado.Congeladas);
 
     /// <summary>Agrega las filas nuevas de una cuenta y recalcula <c>inicio</c>/<c>final</c> desde la primera hasta el final de la
     /// cadena. Las filas existentes se leen UNA vez, ya bajo el lock de la cuenta, y se modifican en el mismo tracker. Devuelve el
@@ -187,9 +201,9 @@ public class ServicioDeReconstruccionDeCuentas(
     }
 
     private async Task<Planeado> PlanearAsync(
-        int idEmpresa, RangoDeReporte rango, IReadOnlyList<MedioConCuenta> medios, CancellationToken ct)
+        int idEmpresa, RangoDeReporte rango, IReadOnlyList<MedioConCuenta> medios, DateTimeOffset? marca, CancellationToken ct)
     {
-        var vacio = new Planeado([], [], new Dictionary<int, (string, decimal)>());
+        var vacio = new Planeado([], [], new Dictionary<int, (string, decimal)>(), []);
         if (medios.Count == 0)
         {
             return vacio;
@@ -241,9 +255,11 @@ public class ServicioDeReconstruccionDeCuentas(
             .ToDictionaryAsync(c => c.Id, c => (c.Nombre, c.SaldoInicial), ct);
 
         var acreditaciones = new List<AcreditacionDeReconstruccion>();
+        var congeladas = new List<AcreditacionDeReconstruccion>();
         var filas = new List<FilaPlaneada>();
         foreach (var turno in turnos)
         {
+            var congelado = ReglasDeConciliacion.EstaCongelado(turno.FechaCierre, marca);
             foreach (var medio in medios)
             {
                 if (!brutoPorTurnoYMedio.TryGetValue((turno.Id, medio.IdMedioPago), out var bruto)
@@ -259,12 +275,18 @@ public class ServicioDeReconstruccionDeCuentas(
                     turno.Id, turno.FechaCierre, medio.IdMedioPago, medio.Nombre, medio.IdCuenta, cuenta.Nombre, bruto,
                     componentes.Sum(c => c.Ingreso - c.Egreso),
                     componentes.Select(c => new ComponenteDeReconstruccion(c.Tipo, c.Ingreso, c.Egreso, c.PorcentajeAplicado)).ToList());
+                if (congelado)
+                {
+                    congeladas.Add(acreditacion);
+                    continue;
+                }
+
                 acreditaciones.Add(acreditacion);
                 filas.AddRange(componentes.Select(c => new FilaPlaneada(acreditacion, c, medio.Nombre)));
             }
         }
 
-        return new Planeado(acreditaciones, filas, cuentas);
+        return new Planeado(acreditaciones, filas, cuentas, congeladas);
     }
 
     private async Task<(int IdEmpresa, RangoDeReporte Rango)> ValidarAsync(

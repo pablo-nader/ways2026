@@ -121,6 +121,7 @@ public interface IWaysDbContext
     DbSet<MovimientoTesoreria> MovimientosTesoreria { get; }
     DbSet<CuentaTesoreria> CuentasTesoreria { get; }
     DbSet<MovimientoCuenta> MovimientosCuenta { get; }
+    DbSet<ConciliacionTesoreria> ConciliacionesTesoreria { get; }
 
     // stage-6-turnos-caja, Slice 3: ServicioDePagos es el primer consumidor de Application de
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).
