@@ -49,7 +49,7 @@ type PropsCajaZ = {
   contextoDeImpresion?: ContextoDeImpresion
   /** Reimpresión de un ticket por la cola FIFO de la térmica del POS de escritorio (la misma de
    * "Ventas del turno"). Sin ella —app web— el ticket sale por el diálogo de impresión del navegador. */
-  alReimprimirVenta?: (comprobante: ComprobanteEmitido, medios: MedioPagoListado[]) => void
+  alReimprimirVenta?: (comprobante: ComprobanteEmitido, medios: MedioPagoListado[], contexto: ContextoDeImpresion) => void
 }
 
 type MedioDelResumen = DetalleDeTurno['resumen']['medios'][number]
@@ -107,6 +107,7 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
   const [error, setError] = useState('')
   const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
+  const [generacionDelDetalle, setGeneracionDelDetalle] = useState(0)
 
   const [errorImpresion, setErrorImpresion] = useState('')
 
@@ -158,15 +159,19 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
   }
 
   /** Reimprime un ticket de venta del turno: por la térmica en el POS de escritorio; en la web, con
-   * las líneas del mismo ticket y el diálogo del navegador. El contexto de la web se arma con el punto
-   * de venta del cierre del turno. Los errores suben a la fila del ticket. */
+   * las líneas del mismo ticket y el diálogo del navegador. El cajero del ticket es el del turno, no
+   * quien reimprime. Si mientras tanto se cargó otro turno, no imprime nada. Los errores suben a la
+   * fila del ticket. */
   async function reimprimirTicket(comprobante: ComprobanteEmitido, medios: MedioPagoListado[]) {
+    const deEsteDetalle = generacionDelDetalle
+    const resumen = await clienteDeCaja.obtenerResumenDeCierre(idTurno)
+    const base = contextoDeImpresion ?? (await contextoDeLaWeb(resumen))
+    if (generacionRef.current !== deEsteDetalle) return
+    const contexto = { ...base, cajero: resumen.vendedor }
     if (enTermica && alReimprimirVenta) {
-      alReimprimirVenta(comprobante, medios)
+      alReimprimirVenta(comprobante, medios, contexto)
       return
     }
-    const resumen = await clienteDeCaja.obtenerResumenDeCierre(idTurno)
-    const contexto = contextoDeImpresion ?? (await contextoDeLaWeb(resumen))
     setLineasAImprimir(lineasDeTicketDeVenta(comprobante, contexto, medios, { reimpresion: true }))
   }
 
@@ -208,6 +213,7 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setDetalle(datos)
+        setGeneracionDelDetalle(miGeneracion)
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return

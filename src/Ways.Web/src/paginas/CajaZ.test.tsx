@@ -815,6 +815,8 @@ describe('CajaZ — tickets del turno', () => {
     expect(within(vista).getByText('*** REIMPRESION ***')).toBeInTheDocument()
     expect(within(vista).getByText('PV 10 — Local Centro')).toBeInTheDocument()
     expect(within(vista).getByText(/Coca Cola 1L/)).toBeInTheDocument()
+    expect(within(vista).getByText('Cajero: jperez')).toBeInTheDocument()
+    expect(within(vista).queryByText('Cajero: vendedor')).not.toBeInTheDocument()
     expect(imprimirSpy).toHaveBeenCalledTimes(1)
     expect(imprimirMock).not.toHaveBeenCalled()
     expect(document.body).toHaveClass('imprimiendo-ticket')
@@ -827,13 +829,14 @@ describe('CajaZ — tickets del turno', () => {
     window.print = imprimirSpy
     const alReimprimirVenta = vi.fn()
     const usuario = userEvent.setup()
-    renderCajaZConReimpresion({ contextoDeImpresion: CONTEXTO_DE_IMPRESION, alReimprimirVenta })
+    renderCajaZConReimpresion({ contextoDeImpresion: { ...CONTEXTO_DE_IMPRESION, cajero: 'quien-reimprime' }, alReimprimirVenta })
 
     const fila = await screen.findByRole('row', { name: /0003-00000001/ })
     await usuario.click(within(fila).getByRole('button', { name: 'Reimprimir' }))
 
     await waitFor(() => expect(alReimprimirVenta).toHaveBeenCalledTimes(1))
     expect(alReimprimirVenta.mock.calls[0][0]).toMatchObject({ id: 1, numeroVisible: '0003-00000001' })
+    expect(alReimprimirVenta.mock.calls[0][2]).toEqual({ ...CONTEXTO_DE_IMPRESION, cajero: 'jperez' })
     expect(imprimirSpy).not.toHaveBeenCalled()
     expect(screen.queryByTestId('vista-de-ticket')).not.toBeInTheDocument()
   })
@@ -856,6 +859,59 @@ describe('CajaZ — tickets del turno', () => {
     await waitFor(() =>
       expect(within(screen.getByRole('row', { name: /0003-00000001/ })).queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument(),
     )
+  })
+
+  it('una reimpresión que termina después de cambiar de turno no imprime el ticket del turno anterior', async () => {
+    let resolver: (r: ResumenDeCierrePorRetiro) => void = () => {}
+    const pendiente = new Promise<ResumenDeCierrePorRetiro>((resolve) => (resolver = resolve))
+    apiGetMock.mockImplementation((ruta: string) => {
+      const turno = /^\/caja\/turnos\/(\d+)(\/.*)?$/.exec(ruta)
+      if (turno?.[2] === '/detalle') return Promise.resolve(detalleFixture())
+      if (turno && !turno[2]) return Promise.resolve(turnoFixture({ id: Number(turno[1]) }))
+      if (ruta === '/caja/turnos/412/resumen-de-cierre') return pendiente
+      if (ruta === '/puntos-venta') return Promise.resolve([])
+      if (ruta === '/medios-pago') return Promise.resolve([])
+      if (ruta === '/ventas/1') return Promise.resolve(comprobanteFixture())
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const imprimirSpy = vi.fn()
+    window.print = imprimirSpy
+    escritorioMock = true
+    const alReimprimirVenta = vi.fn()
+
+    function Navegar() {
+      const navegar = useNavigate()
+      return <button onClick={() => navegar('/caja/turnos/413/z')}>ir al 413</button>
+    }
+    render(
+      <MemoryRouter initialEntries={['/caja/turnos/412/z']}>
+        <Routes>
+          <Route
+            path="/caja/turnos/:id/z"
+            element={
+              <>
+                <Navegar />
+                <CajaZ contextoDeImpresion={CONTEXTO_DE_IMPRESION} alReimprimirVenta={alReimprimirVenta} />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const fila = await screen.findByRole('row', { name: /0003-00000001/ })
+    await userEvent.click(within(fila).getByRole('button', { name: 'Reimprimir' }))
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/412/resumen-de-cierre'))
+    await userEvent.click(screen.getByText('ir al 413'))
+    await screen.findByText('Caja Z — turno #413')
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/413/detalle'))
+
+    await act(async () => {
+      resolver(resumenDeCierreFixture())
+    })
+
+    expect(alReimprimirVenta).not.toHaveBeenCalled()
+    expect(imprimirSpy).not.toHaveBeenCalled()
   })
 
   it('dos clics sincrónicos en Reimprimir piden la venta una sola vez', async () => {
