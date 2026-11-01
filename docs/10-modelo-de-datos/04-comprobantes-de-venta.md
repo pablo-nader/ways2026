@@ -71,9 +71,28 @@ cobros (                              -- antes pagos_comprobante (E7-S1)
     id_cobro, id_comprobante_venta,
     id_medio_pago, importe numeric(14,2),
     referencia text NULL,                    -- cupón, nro de operación
-    vuelto numeric(14,2) NOT NULL DEFAULT 0  -- solo medios que admiten vuelto
+    vuelto numeric(14,2) NOT NULL DEFAULT 0, -- solo medios que admiten vuelto
+    id_cobro_mercadopago integer NULL        -- el cobro aprobado de Mercado Pago que pagó este medio (§7); FK compuesta (id, id_tenant)
 );
 ```
+
+**Pago cobrado con Mercado Pago (E3-T2).** Un medio con `proveedor` (§1) se cobra con una orden del proveedor: su pago en la venta
+tiene que traer `id_cobro_mercadopago` (400 `cobro_mercadopago_requerido`) y un medio sin proveedor no lo admite (400
+`cobro_mercadopago_en_medio_sin_proveedor`). Solo se admite en una venta con número preasignado (400
+`cobro_mercadopago_sin_numero_preasignado`), sin `referencia` propia (400 `cobro_mercadopago_referencia_no_admitida`: la fija el
+servidor con el id del pago de Mercado Pago) y sin repetir el cobro en dos pagos (400 `cobro_mercadopago_repetido`). En una
+devolución (nota de crédito) el medio con proveedor es solo el medio de devolución y no lleva cobro (400
+`cobro_mercadopago_no_admitido_en_devolucion` si lo trae). La emisión toma `FOR UPDATE` del cobro después del turno y antes del
+comprobante, lo lee una vez bajo ese lock y exige que sea de la misma venta (punto de venta, número y medio; si no, 409
+`cobro_mercadopago_de_otra_venta`), esté `aprobado` (409 `cobro_mercadopago_no_aprobado`), no esté ligado a otra venta (409
+`cobro_mercadopago_ya_usado`) y haya cobrado exactamente el importe del pago (409 `cobro_mercadopago_importe_distinto`); un cobro
+inexistente es 400 `cobro_mercadopago_inexistente`. Después liga `cobros_mercadopago.id_comprobante_venta` al comprobante y deja
+la `referencia` del pago con el id del pago de Mercado Pago, todo en la transacción de la venta. El reenvío de la misma venta
+(mismo número y contenido) devuelve el comprobante ya emitido; el cobro entra en la identidad que se compara, y la referencia de
+un pago con cobro no. Anular la venta deja el cobro ligado (el dinero entró; su devolución es de la conciliación, E6). Ni el cambio
+de medios (409 `pago_mercadopago_no_editable` sobre una venta con un pago cobrado con Mercado Pago; un medio con proveedor entre los
+medios nuevos se rechaza igual que en la venta, sin número preasignado) ni la facturación de remitos ni los recibos pueden agregar
+un medio con proveedor sin cobro.
 
 Cambio de medios de una venta ya emitida (sin CAE, sin cuenta corriente, mismo total cobrado): los cobros vigentes se dan de
 baja lógica (`deleted_at`) y se insertan los nuevos; no hay columna nueva. Todo lector de `cobros` ve solo los vivos. Los

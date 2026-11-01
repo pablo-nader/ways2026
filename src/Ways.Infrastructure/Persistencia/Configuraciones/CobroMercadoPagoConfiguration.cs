@@ -4,6 +4,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Dispositivos;
 using Ways.Domain.MercadoPago;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Ventas;
 
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
@@ -29,6 +30,8 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
                 "ck_cobros_mercadopago_aprobacion", "estado <> 'aprobado' OR fecha_aprobacion IS NOT NULL");
             t.HasCheckConstraint(
                 "ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
+            t.HasCheckConstraint(
+                "ck_cobros_mercadopago_aprobado_con_pago", "estado <> 'aprobado' OR id_pago_mercadopago IS NOT NULL");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_cobros_mercadopago");
@@ -58,6 +61,12 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
         builder.Property(c => c.ExpiraEn).HasColumnName("expira_en").IsRequired();
         builder.Property(c => c.FechaUltimaConsulta).HasColumnName("fecha_ultima_consulta");
         builder.Property(c => c.FechaAprobacion).HasColumnName("fecha_aprobacion");
+        builder.Property(c => c.FechaProcesadaMercadoPago).HasColumnName("fecha_procesada_mercadopago");
+
+        builder.Property(c => c.IdComprobanteVenta).HasColumnName("id_comprobante_venta");
+
+        // La venta (más el tenant) referencia al cobro desde cobros.id_cobro_mercadopago.
+        builder.HasAlternateKey(c => new { c.Id, c.IdTenant }).HasName("ak_cobros_mercadopago_id_id_tenant");
 
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();
@@ -80,6 +89,19 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
         builder.HasIndex(c => new { c.IdPuntoVenta, c.NumeroPreasignado, c.Intento })
             .HasDatabaseName("ux_cobros_mercadopago_intento")
             .IsUnique();
+
+        // Una venta liga a lo sumo un cobro (a lo sumo un cobro vivo por número) y un cobro paga una sola venta. Los nulos no chocan.
+        // Incluye el tenant para servir también de índice de la FK compuesta; el id de la venta ya es único por sí solo.
+        builder.HasIndex(c => new { c.IdComprobanteVenta, c.IdTenant })
+            .HasDatabaseName("ux_cobros_mercadopago_comprobante_venta")
+            .IsUnique();
+
+        builder.HasOne<ComprobanteVenta>()
+            .WithMany()
+            .HasForeignKey(c => new { c.IdComprobanteVenta, c.IdTenant })
+            .HasPrincipalKey(v => new { v.Id, v.IdTenant })
+            .HasConstraintName("fk_cobros_mercadopago_comprobante_venta")
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Tenant>()
             .WithMany()

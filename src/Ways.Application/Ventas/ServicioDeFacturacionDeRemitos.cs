@@ -11,6 +11,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Ventas;
 
@@ -118,6 +119,14 @@ public class ServicioDeFacturacionDeRemitos(
         if (idsMedioFaltantes.Count > 0)
         {
             throw new ErrorDominio("referencia_invalida", $"No existe el medio de pago {idsMedioFaltantes[0]}.", 400);
+        }
+
+        // E3-T2: la facturación de remitos no tiene número preasignado, así que no puede apoyarse en un cobro de Mercado Pago: un medio con
+        // proveedor se rechaza (cobro_mercadopago_requerido) y un pago con cobro también.
+        foreach (var pago in pagos)
+        {
+            ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                medioPorId[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia, traeNumeroPreasignado: false);
         }
 
         var pagosAValidar = pagos
@@ -370,6 +379,6 @@ public class ServicioDeFacturacionDeRemitos(
         comprobante.DireccionEntrega, comprobante.Observaciones,
         [],
         pagos
-            .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto))
+            .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto, p.IdCobroMercadoPago))
             .ToList());
 }

@@ -21,6 +21,7 @@ using Ways.Domain.Combos;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Ventas;
@@ -475,13 +476,27 @@ public class ServicioDeVentas(
             throw new ErrorDominio("referencia_invalida", $"No existe el medio de pago {idsMedioFaltantes[0]}.", 400);
         }
 
+        // E3-T2: un medio con proveedor se cobra con una orden del proveedor. La forma del pago se juzga acá, sin tocar el cobro; el
+        // cobro mismo se lee y se valida más abajo, bajo su lock, dentro de la transacción.
+        foreach (var pago in pagos)
+        {
+            ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                medioPorId[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia,
+                traeNumeroPreasignado: solicitud.NumeroPreasignado is not null, esDevolucion: tipo.Signo <= 0);
+        }
+
+        ReglaDeCobroEnVenta.ExigirUnSoloCobro(
+            pagos.Where(p => p.IdCobroMercadoPago is not null).Select(p => p.IdCobroMercadoPago!.Value));
+
+        // La referencia que exige un medio es la que tipea el cajero; el pago con cobro la toma del pago de Mercado Pago, así que el
+        // validador no la reclama.
         var pagosAValidar = pagos
             .Select(p =>
             {
                 var medio = medioPorId[p.IdMedioPago];
                 return new PagoAValidar(
                     p.IdMedioPago, medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia,
-                    p.Importe, p.Vuelto, p.Referencia);
+                    p.Importe, p.Vuelto, p.IdCobroMercadoPago is null ? p.Referencia : ReferenciaDeMercadoPago);
             })
             .ToList();
 
@@ -497,7 +512,7 @@ public class ServicioDeVentas(
 
         var pagosDelPlan = pagos
             .Select(p => new PagoDelPlan(
-                p.IdMedioPago, medioPorId[p.IdMedioPago].Comportamiento, p.Importe, p.Referencia, p.Vuelto))
+                p.IdMedioPago, medioPorId[p.IdMedioPago].Comportamiento, p.Importe, p.Referencia, p.Vuelto, p.IdCobroMercadoPago))
             .ToList();
 
         var plan = new PlanDeVenta(
@@ -728,7 +743,7 @@ public class ServicioDeVentas(
     /// Compara contra los propios items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(
         ComprobanteEmitido existente, PlanDeVenta plan, decimal? importeEnvioDelDispositivo,
-        IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia)> cobrosOriginalesReemplazados)
+        IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia, int? IdCobroMercadoPago)> cobrosOriginalesReemplazados)
     {
         var lineasExistentes = existente.Items
             .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, ImporteTipeado: i.PorImporte ? i.PrecioUnitario : (decimal?)null))
@@ -750,26 +765,33 @@ public class ServicioDeVentas(
         // ValidadorDePagos la exige para los medios con RequiereReferencia, o sea que identifica
         // una transaccion bancaria concreta. Dos transferencias del mismo importe con
         // autorizaciones distintas son dos cobros distintos, no el mismo reenviado.
+        //
+        // El cobro de Mercado Pago también identifica el pago: otro cobro es otra transacción. Su referencia la pone el servidor (el
+        // id del pago de Mercado Pago) y el pedido no la trae, así que en un pago con cobro la referencia no se compara.
         var pagosExistentes = existente.Pagos
-            .Select(p => (p.IdMedioPago, p.Importe, p.Referencia))
+            .Select(p => (p.IdMedioPago, p.Importe, Referencia: ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago))
             .OrderBy(p => p.IdMedioPago)
             .ThenBy(p => p.Importe)
             .ThenBy(p => p.Referencia, StringComparer.Ordinal)
+            .ThenBy(p => p.IdCobroMercadoPago)
             .ToList();
 
         var pagosSolicitados = plan.Pagos
-            .Select(p => (p.IdMedioPago, p.Importe, p.Referencia))
+            .Select(p => (p.IdMedioPago, p.Importe, Referencia: ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago))
             .OrderBy(p => p.IdMedioPago)
             .ThenBy(p => p.Importe)
             .ThenBy(p => p.Referencia, StringComparer.Ordinal)
+            .ThenBy(p => p.IdCobroMercadoPago)
             .ToList();
 
         // Una venta cuyos medios se cambiaron después de ingerirla (ServicioDeCambioDeMedios) ya no tiene vivos los cobros que
         // mandó el dispositivo: su reenvío coincide con los cobros originales, los que el cambio dio de baja.
         var pagosOriginales = cobrosOriginalesReemplazados
+            .Select(p => (p.IdMedioPago, p.Importe, Referencia: ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago))
             .OrderBy(p => p.IdMedioPago)
             .ThenBy(p => p.Importe)
             .ThenBy(p => p.Referencia, StringComparer.Ordinal)
+            .ThenBy(p => p.IdCobroMercadoPago)
             .ToList();
         var mismosPagos = pagosExistentes.SequenceEqual(pagosSolicitados)
             || (pagosOriginales.Count > 0 && pagosOriginales.SequenceEqual(pagosSolicitados));
@@ -831,16 +853,21 @@ public class ServicioDeVentas(
     /// <summary>Los cobros con los que la venta se ingirió, si un cambio de medios los reemplazó: los dados de baja que nacieron con
     /// el comprobante (misma marca de creación). Una sola consulta, solo en el reenvío de un número pre-asignado que ya tiene
     /// comprobante; vacía si los medios nunca se cambiaron.</summary>
-    private async Task<IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia)>> LeerCobrosOriginalesReemplazadosAsync(
+    private async Task<IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia, int? IdCobroMercadoPago)>> LeerCobrosOriginalesReemplazadosAsync(
         int idComprobante, CancellationToken ct) =>
         (await (
                 from p in db.Cobros.IgnoreQueryFilters(["BajaLogica"])
                 join c in db.ComprobantesVenta.SinEspejosFiscales() on p.IdComprobanteVenta equals c.Id
                 where p.IdComprobanteVenta == idComprobante && p.DeletedAt != null && p.CreatedAt == c.CreatedAt
-                select new { p.IdMedioPago, p.Importe, p.Referencia })
+                select new { p.IdMedioPago, p.Importe, p.Referencia, p.IdCobroMercadoPago })
             .ToListAsync(ct))
-        .Select(p => (p.IdMedioPago, p.Importe, (string?)p.Referencia))
+        .Select(p => (p.IdMedioPago, p.Importe, (string?)p.Referencia, p.IdCobroMercadoPago))
         .ToList();
+
+    /// <summary>La referencia de un pago que cuenta para la identidad de la venta: la que tipeó el cajero, o ninguna si el pago lo
+    /// cobró Mercado Pago (la referencia la fija el servidor desde el cobro, que ya identifica al pago).</summary>
+    private static string? ReferenciaQueIdentifica(int? idCobroMercadoPago, string? referencia) =>
+        idCobroMercadoPago is null ? referencia : null;
 
     private static decimal? ImporteDeEnvio(IEnumerable<decimal> preciosDeLineasSinArticulo) =>
         preciosDeLineasSinArticulo.Select(p => (decimal?)p).SingleOrDefault();
@@ -1449,6 +1476,23 @@ public class ServicioDeVentas(
         return await ObtenerAsync(id, ct);
     }
 
+    /// <summary>Bloquea y valida los cobros de Mercado Pago que nombran los pagos del plan (<see cref="EscriturasDeCobroMercadoPago"/>).
+    /// Vacío, sin tocar la base, si ningún pago trae cobro. Un pago con cobro solo existe en una venta con número preasignado
+    /// (<c>ReglaDeCobroEnVenta.ExigirFormaDelPago</c>), y ese número es el que el cobro tiene que traer.</summary>
+    private static async Task<IReadOnlyDictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>> ReservarCobrosDeMercadoPagoAsync(
+        DbConnection conexion, DbTransaction? transaccion, PlanDeVenta plan, long numero, CancellationToken ct)
+    {
+        var pedidos = plan.Pagos
+            .Where(p => p.IdCobroMercadoPago is not null)
+            .Select(p => (p.IdCobroMercadoPago!.Value, p.IdMedioPago, p.Importe))
+            .ToList();
+
+        return pedidos.Count == 0
+            ? new Dictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>()
+            : await EscriturasDeCobroMercadoPago.ReservarYValidarAsync(
+                conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, pedidos, ct);
+    }
+
     /// <summary>Guard de turno (design decisión 4; Slice 5 task 5.3) — <c>FOR SHARE OF t</c>
     /// contra el turno del comprobante, ANTES del UPDATE atómico de <see cref="MarcarAnuladoAsync"/>:
     /// mismo criterio que <c>ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync</c>, un
@@ -1695,6 +1739,12 @@ public class ServicioDeVentas(
         // directo en el paso 2: el número que recibe como parámetro es un dato de solo lectura
         // acá, nunca se vuelve a pedir.
         //
+        // 1.6. Cobros de Mercado Pago (E3-T2): FOR UPDATE de cada cobro y su única lectura, bajo ese lock, ANTES del INSERT del
+        // comprobante (fail-fast: una venta que va a fallar no escribe nada, y de todos modos la atomicidad la revierte). Dos ventas del
+        // mismo cobro se serializan acá; la segunda lo ve ligado y responde cobro_mercadopago_ya_usado. Sin pagos con cobro son CERO
+        // statements extra.
+        var cobrosDeMercadoPago = await ReservarCobrosDeMercadoPagoAsync(conexion, transaccionCruda, plan, numero, ct);
+
         // 2. Comprobante.
         var comprobante = new ComprobanteVenta
         {
@@ -1721,6 +1771,12 @@ public class ServicioDeVentas(
         };
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync(ct);
+
+        if (cobrosDeMercadoPago.Count > 0)
+        {
+            await EscriturasDeCobroMercadoPago.LigarAsync(
+                conexion, transaccionCruda, plan.IdTenant, comprobante.Id, cobrosDeMercadoPago.Keys, plan.Momento, ct);
+        }
 
         // 3 + 4. Items y pagos, en un único SaveChanges (sin FK entre ellos, así que el orden
         // relativo entre las dos tablas no importa acá — solo necesitaban el Id del
@@ -1765,8 +1821,9 @@ public class ServicioDeVentas(
                 IdComprobanteVenta = comprobante.Id,
                 IdMedioPago = p.IdMedioPago,
                 Importe = p.Importe,
-                Referencia = p.Referencia,
+                Referencia = p.IdCobroMercadoPago is { } idCobro ? cobrosDeMercadoPago[idCobro].IdPagoMercadoPago : p.Referencia,
                 Vuelto = p.Vuelto,
+                IdCobroMercadoPago = p.IdCobroMercadoPago,
                 CreatedAt = plan.Momento,
                 UpdatedAt = plan.Momento
             })
@@ -2935,7 +2992,7 @@ public class ServicioDeVentas(
         comprobante.DireccionEntrega, comprobante.Observaciones,
         items,
         pagos
-            .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto))
+            .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto, p.IdCobroMercadoPago))
             .ToList(),
         comprobante.IdPresupuestoOrigen, comprobante.FacturaForzada);
 
@@ -2971,7 +3028,11 @@ public class ServicioDeVentas(
     private sealed record ComboDeAuditoria(decimal? Unidades, decimal? Ahorro, int? IdCombo, bool Inexistente);
 
     private readonly record struct PagoDelPlan(
-        int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);
+        int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto,
+        int? IdCobroMercadoPago = null);
+
+    /// <summary>Lo que ve <see cref="ValidadorDePagos"/> en lugar de la referencia de un pago con cobro de Mercado Pago.</summary>
+    private const string ReferenciaDeMercadoPago = "mercadopago";
 
     private sealed record PlanDeVenta(
         int IdTenant,

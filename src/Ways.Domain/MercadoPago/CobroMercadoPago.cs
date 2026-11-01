@@ -104,4 +104,15 @@ public class CobroMercadoPago : EntidadTenant
     public DateTimeOffset? FechaUltimaConsulta { get; set; }
 
     public DateTimeOffset? FechaAprobacion { get; set; }
+
+    /// <summary>
+    /// La primera vez que Mercado Pago informó la orden <c>processed</c> sin un pago con importe e id legibles: el cliente ya pagó, pero
+    /// Ways todavía no puede aprobar el cobro. Mientras esté puesta y el cobro siga pendiente no se muestra el QR ni se puede cancelar;
+    /// la consulta sigue refrescando y un pago legible posterior lo aprueba. Una vez puesta no se borra.
+    /// </summary>
+    public DateTimeOffset? FechaProcesadaMercadoPago { get; set; }
+
+    /// <summary>La venta que este cobro aprobado pagó (E3-T2); nulo hasta que una venta lo liga. Único: un cobro paga a lo sumo una venta.
+    /// Anular la venta lo deja ligado (el dinero entró; su devolución es de la conciliación).</summary>
+    public int? IdComprobanteVenta { get; set; }
 }

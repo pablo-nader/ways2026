@@ -45,7 +45,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 - [x] E3-T1 — Backend charges: `medios_pago.proveedor`; table `cobros_mercadopago`; device endpoints create / read (refresh
   from Mercado Pago) / cancel a QR charge.
-- [ ] E3-T2 — Backend sale: `PagoDeVenta.IdCobroMercadoPago`; the sale validates and links the approved charge (unique).
+- [x] E3-T2 — Backend sale: `PagoDeVenta.IdCobroMercadoPago`; the sale validates and links the approved charge (unique).
 - [ ] E3-T3 — Web: the medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close +
   print.
 - [ ] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
@@ -61,7 +61,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E3-T2: `PagoDeVenta.IdCobroMercadoPago` and the sale validating and linking the approved charge (unique). See "E3-T1 progress" for what T2 can rely on.
+E3-T3: web. The medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close and print, sending `idCobroMercadoPago` in the payment row. See "E3-T2 progress" for the sale contract (codes, `numeroPreasignado` required, no client `referencia`).
 
 ## E3-T1 design (2026-11-01)
 
@@ -140,3 +140,70 @@ Both judges confirmed the round-1 fix introduced R1-R3. Same unshipped migration
   2 vigencias + margin, then local `expirado`). Final re-judgment: both clean. Applied after it (both suggested): margin 2 -> 5 min.
 - Accepted (judge B, documented): a re-send whose response is lost leaves no order id; that order is not payable by a customer
   because a dynamic QR exists only in the response Ways never showed, and it expires before the give-up instant.
+
+## E3-T2 design (2026-11-01)
+
+Branch `pnader/mercadopago-e3-t2`, stacked on E3-T1. Backend only.
+
+- `PagoDeVenta` gains optional `IdCobroMercadoPago` (dto-contract-honesty: persisted or rejected). The sale's payment row gets
+  a nullable FK to `cobros_mercadopago` (column `id_cobro_mercadopago` on the table that stores sale payments), and
+  `cobros_mercadopago` gets nullable `id_comprobante_venta` (FK, UNIQUE): one charge pays at most one sale.
+- `ServicioDeVentas.EmitirAsync` (inside its existing transaction and locks): a payment whose medio has `proveedor` must carry
+  `IdCobroMercadoPago` (400 `cobro_mercadopago_requerido`; E5 will add the offline "sin verificar" alternative); a payment
+  with `IdCobroMercadoPago` on a medio without proveedor -> 400. The charge, read under `FOR UPDATE`, must be: same tenant and
+  punto de venta as the sale, same `numero_preasignado`, same `id_medio_pago`, `estado = aprobado`, `importe_pagado` equal to
+  the payment's `Importe`, and not linked to another sale (409 codes: `cobro_mercadopago_no_aprobado`,
+  `cobro_mercadopago_de_otra_venta`, `cobro_mercadopago_importe_distinto`, `cobro_mercadopago_ya_usado`). The payment's
+  `Referencia` is set from the charge's Mercado Pago payment id.
+- Idempotent retry of the same sale (same `NumeroPreasignado` and content) succeeds: a charge already linked to THIS sale is
+  fine. Annulling a sale leaves the charge linked (the money was received; refunds are E6).
+- The offline outbox carries `IdCobroMercadoPago` inside `SolicitudDeVenta` unchanged (no POS change in this task).
+
+## E3-T2 progress (2026-11-01)
+
+Done on `pnader/mercadopago-e3-t2`, commit `feat(ventas): la venta cobrada con Mercado Pago vincula su cobro aprobado` (hash in git log). Migration `CobroMercadoPagoLigadoALaVenta`.
+
+- Model: `cobros.id_cobro_mercadopago` (nullable, FK `fk_cobros_cobro_mercadopago` composite with tenant, RESTRICT, index `ix_cobros_cobro_mercadopago`); `cobros_mercadopago.id_comprobante_venta` (nullable, FK `fk_cobros_mercadopago_comprobante_venta`, RESTRICT) with UNIQUE `ux_cobros_mercadopago_comprobante_venta` on `(id_comprobante_venta, id_tenant)` (composite so it also indexes the FK; the sale id is globally unique, so it is "one charge per sale"); new alternate key `ak_cobros_mercadopago_id_id_tenant`. 23505 -> 409 `cobro_mercadopago_ya_usado`; the FKs fall in the generic 23503 -> 400. docs/10 §4 and §7 updated. No golden-inventory change was needed (guards pass).
+- Sale (`ServicioDeVentas.EmitirAsync`): `PagoDeVenta.IdCobroMercadoPago` (also `PagoEmitido`). Form rules in `ReglaDeCobroEnVenta` (domain): provider medio without charge 400 `cobro_mercadopago_requerido`; charge on a medio without provider 400 `..._en_medio_sin_proveedor`; charge without `NumeroPreasignado` 400 `..._sin_numero_preasignado`; client `Referencia` with a charge 400 `..._referencia_no_admitida`; same charge twice 400 `..._repetido`. In the transaction (step 1.6, after turno, before the comprobante): `FOR UPDATE` of the charge rows in ascending id, single read, then 400 `..._inexistente` or 409 `..._de_otra_venta` (PV, numero or medio differ), `..._no_aprobado`, `..._ya_usado`, `..._importe_distinto` (payment `Importe` must equal `importe_pagado`). After the comprobante insert the charge is linked and the payment row gets `id_cobro_mercadopago` and `referencia` = Mercado Pago payment id. Zero extra statements without charges.
+- Lock order: the charge service takes advisory PV -> advisory charge -> charge row and never waits on sale locks; an approved charge is no longer modified, so the sale's row lock cannot close a cycle.
+- Idempotent retry: `ExigirMismoContenido` compares `IdCobroMercadoPago`; the `Referencia` of a payment with charge is ignored (server-set). A concurrent identical pair ends 201 + (201 | 409 `cobro_mercadopago_ya_usado`), one sale.
+- Credit notes: a charge is rejected (`..._no_admitido_en_devolucion`) but a provider medio is accepted as the refund medio without charge (refunds are E6). Decision to confirm.
+- Other writers of `Cobro` rows: `ServicioDeCambioDeMedios` (409 `pago_mercadopago_no_editable` when any live payment has a charge; new payments go through the same form rule), `ServicioDeFacturacionDeRemitos` (form rule, no numero -> provider medio rejected), `ServicioDeCuentaCorriente` receipts (provider medio rejected). A structural guard (`EscritoresDePagosDeVentaEstructuralTests`) requires every `new Cobro` file to call the rule.
+- Mutation evidence (one per run, all killed): PV, numero, medio, estado, importe, ya_usado, requerido, sin_proveedor, sin_numero, referencia, repetido, esDevolucion (domain test only), identity ignoring referencia, identity ignoring the charge, link skipped, referencia from the MP payment, id persisted on the payment, `FOR UPDATE` removed (race test), cambio-de-medios guard, its form rule, receipts, remitos.
+- Not exercised: nothing against the real Mercado Pago API; POS bundle/offline engine unchanged (T3 sends the field).
+
+## Judgment-day E3-T2 round 1 (2026-11-01)
+
+Both blind judges confirmed E3T2-1; two small items were accepted from one judge each. The E3-T2 migration `CobroMercadoPagoLigadoALaVenta` is unshipped, so it was edited in place (Designer + snapshot synced; `has-pending-model-changes` clean).
+
+- E3T2-1 — a charge could become `aprobado` with `id_pago_mercadopago` NULL (`AplicarOrden` stored null for an empty or over-long payment id) and the sale then threw `InvalidOperationException` (500) with the number stuck. Fixed in three layers: (a) `processed` approves only with a readable amount AND a valid payment id (1..64 chars); otherwise the charge stays `pendiente`, a warning is logged (order and charge ids only) and the next poll retries; the response follows the same rule as the unreadable amount; (b) CHECK `ck_cobros_mercadopago_aprobado_con_pago` (`estado <> 'aprobado' OR id_pago_mercadopago IS NOT NULL`) in the E3-T2 migration, backstop 23514 -> 409 `cobro_mercadopago_sin_pago`, raw-SQL test; (c) `ReglaDeCobroEnVenta.ExigirCobroUtilizable` answers a typed 409 `cobro_mercadopago_sin_pago` for an approved charge without payment id (unit-tested; unreachable through the database once the CHECK holds, kept as a defence in the domain rule). The false "la aprobación lo exige" exception message in `EscriturasDeCobroMercadoPago` became a comment that points at the rule.
+- A sale admits at most ONE Mercado Pago charge (one live charge per number, UNIQUE on the sale). `ExigirSinCobrosRepetidos` / `cobro_mercadopago_repetido` was replaced by `ExigirUnSoloCobro` -> 400 `venta_con_mas_de_un_cobro_mercadopago` (same charge twice or two different ones). Documented in the `PagoDeVenta` XML doc.
+- Accepted limits (documentation only): numbering is per (PV, tipo de comprobante) while the charge carries only (PV, número); a mismatch needs the device to send the charge with a sale it did not charge, and the charge is consumed once (UNIQUE). Annulling a charged sale leaves the charge linked: refunds are E6.
+- Tests: processed order with empty / over-long payment id stays `pendiente` and approves when the id appears (`MercadoPagoCobrosTests`); CHECK backstop with 23514 and the 409 translation; two different charges in one sale -> 400; unit tests for `ExigirUnSoloCobro` and the sin-pago 409. The raw-SQL helper that inserts `aprobado` rows now sets a payment id.
+- Mutation evidence (one per run, all killed): `|| idPago is null` removed from `AplicarOrden`; CHECK SQL replaced by `true` in the migration; `Count() > 1` -> `> 2`; the `IdPagoMercadoPago is null` guard in `ExigirCobroUtilizable` disabled.
+
+## Judgment-day E3-T2 round 2 (2026-11-01, final)
+
+Both judges confirmed the round-1 fix introduced one defect: a `processed` order whose payment has no readable amount or id left the charge `pendiente` forever with its QR still shown, cancel looped (Mercado Pago 409 -> refresh -> `pendiente`) and the number stayed blocked, with no signal to the POS. Same unshipped migration `CobroMercadoPagoLigadoALaVenta`, edited in place (Designer + snapshot synced; `has-pending-model-changes` clean).
+
+- R2-1 — new nullable `cobros_mercadopago.fecha_procesada_mercadopago` (docs/10 part 07): set the first time a refresh, cancel or creation sees `processed` without a usable payment (`??=` in `AplicarOrden`), kept once set, never cleared.
+- R2-2 — `Mapear`: `verificandoPago` is true when `pendiente` and (`qrData` null or the column is set); new `pagoInformadoSinDatos` (true while `pendiente` and the column is set; an approved charge no longer reports it) so the POS can say "Mercado Pago informa el pago, falta confirmarlo"; `qrData` is omitted when `pagoInformadoSinDatos`.
+- R2-3 — cancelling such a charge is 409 `cobro_mercadopago_pagado_sin_datos` without calling Mercado Pago (customer already paid; wait for confirmation or use manual approval, E5). GET keeps refreshing (2 s throttle), so a later readable payment approves it.
+- R2-4 — the payment id is trimmed before validation and storage; a whitespace-only id is not usable.
+- R2-5 — the migration demotes `aprobado` rows without `id_pago_mercadopago` to `pendiente` (`SqlDeBajaDeAprobadosSinPago`, `SET LOCAL app.acceso = 'plataforma'` in the same block) after adding the column and before the CHECK, so a dev/staging DB that ran E3-T1 does not fail. Tested in `CobroMercadoPagoLigadoALaVentaMigracionTests` (isolated DB at the previous migration, `ways_app` without/with the GUC, idempotent, and a full Up that leaves the CHECK in place).
+- R2-6 — class summary now says "importe o id" for a payment that does not approve.
+- Tests (`MercadoPagoCobrosTests`): processed-without-data sets the column, hides the QR and sets both flags; the mark is set once and does not move; cancel is 409 with no Mercado Pago call and a later readable poll approves; a cancel whose MP 409 reveals the processed order marks it; the mark survives approval but flags nothing; whitespace / empty / over-long ids do not approve; a padded id is stored trimmed.
+- Mutation evidence (one per run, each killed): removing `??= ahora`; disabling the cancel guard; returning `qrData` when informed; dropping `|| pagoInformadoSinDatos` from `verificandoPago`; removing `.Trim()`; removing `SET LOCAL` from the backfill block; removing the `Sql()` call from `Up`.
+- Verification: build 0 errors, `has-pending-model-changes` clean, Domain 2444, Application 1654, integration filter 118 (4 m 26 s).
+
+## Judgment-day E3-T2 verdict
+
+- 2026-11-01: **APPROVED** after two fix rounds. Round 1 (both judges): an approved charge without a payment id made the sale a
+  500; fixed in 3d87a215 (approval needs a payment id, CHECK `ck_cobros_mercadopago_aprobado_con_pago`, typed 409, one MP charge
+  per sale). Re-judgment (both): a processed order without usable payment stayed pendiente forever showing its QR; fixed in
+  23ffd8a1 (`fecha_procesada_mercadopago`, QR hidden, `pagoInformadoSinDatos`, cancel 409, id trimmed, migration demotion under
+  the platform GUC). Final re-judgment: both clean. Applied after it (both suggested): the demotion also marks
+  `fecha_procesada_mercadopago`, so a demoted row hides its QR from the first read.
+- Accepted (documented): numbering is per (PV, tipo) while the charge carries (PV, número); annulling a charged sale leaves the
+  charge linked (refunds are E6); a charge informed without data keeps the number blocked until it is confirmed or approved
+  manually (E5).

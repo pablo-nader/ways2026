@@ -12,6 +12,7 @@ using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Fiscal;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Ventas;
@@ -166,7 +167,24 @@ public class ServicioDeCambioDeMedios(
             .OrderBy(c => c.Id)
             .ToListAsync(ct);
 
+        // E3-T2: el dinero de un pago cobrado con Mercado Pago entró por ese medio y lo respalda un cobro ligado a la venta; cambiarlo
+        // desacoplaría ambos (la devolución es de la conciliación). Decidido sobre la única lectura de los cobros, bajo el lock de la venta.
+        if (cobrosVivos.Any(c => c.IdCobroMercadoPago is not null))
+        {
+            throw ErrorDominio.Conflicto(
+                CodigosDePagoConMercadoPago.NoEditable, "Un pago cobrado con Mercado Pago no se puede cambiar.");
+        }
+
         var medios = await LeerMediosAsync(cobrosVivos.Select(c => c.IdMedioPago), pagos.Select(p => p.IdMedioPago), ct);
+
+        // Tampoco se agrega un medio de Mercado Pago: su pago necesita un cobro aprobado, que este camino no tiene número preasignado
+        // con el cual pedir.
+        foreach (var pago in pagos)
+        {
+            ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                medios[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia, traeNumeroPreasignado: false);
+        }
+
         var anteriores = cobrosVivos
             .Select(c => new CobroDeVenta(c.IdMedioPago, medios[c.IdMedioPago].Comportamiento, c.Importe, c.Vuelto, c.Referencia))
             .ToList();
@@ -236,7 +254,8 @@ public class ServicioDeCambioDeMedios(
     private static string? NormalizarReferencia(string? referencia) =>
         string.IsNullOrWhiteSpace(referencia) ? null : referencia.Trim();
 
-    private sealed record MedioDelCambio(ComportamientoMedioPago Comportamiento, bool AdmiteVuelto, bool RequiereReferencia);
+    private sealed record MedioDelCambio(
+        ComportamientoMedioPago Comportamiento, bool AdmiteVuelto, bool RequiereReferencia, string? Proveedor);
 
     /// <summary>Los medios nuevos tienen que existir y estar vivos (un medio desconocido es <c>400 referencia_invalida</c>, como
     /// en la venta); los que la venta ya tenía se leen aunque estén dados de baja.</summary>
@@ -248,8 +267,8 @@ public class ServicioDeCambioDeMedios(
 
         var vivos = await db.MediosPago
             .Where(m => nuevos.Contains(m.Id))
-            .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia })
-            .ToDictionaryAsync(m => m.Id, m => new MedioDelCambio(m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia), ct);
+            .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor })
+            .ToDictionaryAsync(m => m.Id, m => new MedioDelCambio(m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor), ct);
 
         var faltante = nuevos.Except(vivos.Keys).ToList();
         if (faltante.Count > 0)
@@ -262,11 +281,11 @@ public class ServicioDeCambioDeMedios(
         {
             var dadosDeBaja = await db.MediosPago.IgnoreQueryFilters(["BajaLogica"])
                 .Where(m => faltantesAnteriores.Contains(m.Id))
-                .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia })
+                .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor })
                 .ToListAsync(ct);
             foreach (var medio in dadosDeBaja)
             {
-                vivos[medio.Id] = new MedioDelCambio(medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia);
+                vivos[medio.Id] = new MedioDelCambio(medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia, medio.Proveedor);
             }
         }
 

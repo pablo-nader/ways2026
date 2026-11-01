@@ -66,6 +66,9 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         /// <summary>El texto exacto de <c>paid_amount</c> (y de <c>amount</c> si es distinto del total); anula <see cref="Pagado"/>.</summary>
         public string? PagadoCrudo { get; set; }
 
+        /// <summary>El id exacto del pago de la orden <c>processed</c>; nulo usa <c>PAY{orden}</c>.</summary>
+        public string? IdDelPago { get; set; }
+
         /// <summary>Una orden sin <c>type_response</c>.</summary>
         public bool SinQr { get; set; }
     }
@@ -108,7 +111,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var pagado = o.PagadoCrudo ?? (o.Pagado ?? total).ToString("F2", CultureInfo.InvariantCulture);
         var pagos = estado == "processed" && !o.SinPagos
             ? $$"""
-              "transactions": {"payments": [{"id": "PAY{{id}}", "status": "processed", "amount": "{{pagado}}",
+              "transactions": {"payments": [{"id": "{{o.IdDelPago ?? "PAY" + id}}", "status": "processed", "amount": "{{pagado}}",
               "paid_amount": "{{pagado}}", "reference_id": {{(o.ReferenceId ?? "null")}}}]},
               """
             : string.Empty;
@@ -342,8 +345,8 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         comando.CommandText =
             "INSERT INTO cobros_mercadopago (id_tenant, id_empresa, id_punto_venta, id_dispositivo, id_medio_pago, numero_preasignado, " +
             "intento, tipo, importe, external_reference, external_pos_id, clave_idempotencia, id_orden_mercadopago, estado, expira_en, " +
-            "fecha_aprobacion, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', 10, $8, 'WAYSPVCRUDO', $8, $9, $10, now(), now(), now(), now())";
+            "fecha_aprobacion, created_at, updated_at, id_pago_mercadopago) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', 10, $8, 'WAYSPVCRUDO', $8, $9, $10, now(), now(), now(), now(), CASE WHEN $10::text = 'aprobado' THEN 'PAYCRUDO' END)";
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = e.Ctx.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta ?? e.IdPuntoVenta });
@@ -795,6 +798,8 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("pendiente", cobro.Estado);
         Assert.Null(cobro.QrData);
         Assert.True(cobro.VerificandoPago);
+        Assert.True(cobro.PagoInformadoSinDatos);
+        Assert.NotNull(Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_procesada_mercadopago"]);
     }
 
     // Clausula: single-read-under-lock. La rama de reuso relee el cobro despues de tomar el lock: si una cancelacion confirma entre la
@@ -1157,8 +1162,8 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Null(Assert.Single(await FilasAsync(e.IdPuntoVenta))["referencia_pago_mercadopago"]);
     }
 
-    // Clausula: F1. Una orden processed sin un pago con importe pagado legible NO aprueba: el cobro sigue pendiente (con su QR) y la
-    // proxima consulta lo reintenta.
+    // Clausula: F1 + R2-1. Una orden processed sin un pago con importe pagado legible NO aprueba: el cobro sigue pendiente, el cliente
+    // ya pago asi que el QR deja de viajar y se marca (fecha_procesada_mercadopago + los dos avisos), y la proxima consulta lo reintenta.
     [Fact]
     public async Task UnaOrdenProcesadaSinPagosNoApruebaElCobroYLaProximaConsultaLoReintenta()
     {
@@ -1170,14 +1175,16 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
 
         Assert.Equal("pendiente", consultado.Estado);
-        Assert.NotNull(consultado.QrData);
-        Assert.False(consultado.VerificandoPago);
+        Assert.Null(consultado.QrData);
+        Assert.True(consultado.VerificandoPago);
+        Assert.True(consultado.PagoInformadoSinDatos);
         Assert.Null(consultado.ImportePagado);
         var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
         Assert.Equal("pendiente", fila["estado"]);
         Assert.Null(fila["importe_pagado"]);
         Assert.Null(fila["fecha_aprobacion"]);
         Assert.Null(fila["id_pago_mercadopago"]);
+        Assert.NotNull(fila["fecha_procesada_mercadopago"]);
 
         e.Ordenes.SinPagos = false;
         e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
@@ -1185,6 +1192,146 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal("aprobado", reintento.Estado);
         Assert.Equal(100m, reintento.ImportePagado);
+        Assert.False(reintento.PagoInformadoSinDatos);
+        Assert.False(reintento.VerificandoPago);
+    }
+
+    // Clausula: R2-1. La marca se pone la primera vez y no se corre: una segunda lectura de la misma orden sin datos la deja igual.
+    [Fact]
+    public async Task LaMarcaDePagoInformadoSinDatosSePoneLaPrimeraVezYNoSeMueve()
+    {
+        var e = await PrepararAsync("mp-cobro-marca-fija");
+        var cobro = await CrearOkAsync(e, 5070, 100m);
+        Assert.Null(Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_procesada_mercadopago"]);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.SinPagos = true;
+
+        await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+        var primera = Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_procesada_mercadopago"];
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(30);
+        var segunda = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.True(segunda.PagoInformadoSinDatos);
+        Assert.Equal(2, Lecturas(e).Count);
+        Assert.Equal(primera, Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_procesada_mercadopago"]);
+    }
+
+    // Clausula: R2-1. Cancelar un cobro cuyo pago Mercado Pago ya informo (sin datos legibles) es 409 sin llamar a Mercado Pago ni
+    // cambiar nada; consultar sigue refrescando y un pago legible posterior lo aprueba.
+    [Fact]
+    public async Task CancelarUnCobroPagadoSinDatosEsUn409SinLlamarAMercadoPagoYUnaConsultaPosteriorLoApruebaSiElPagoYaEsLegible()
+    {
+        var e = await PrepararAsync("mp-cobro-cancelar-sin-datos");
+        var cobro = await CrearOkAsync(e, 5071, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.SinPagos = true;
+        await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+        var pedidosAntes = Pedidos(e).Count;
+
+        await AssertCodigoAsync(await CancelarAsync(e, cobro.IdCobro), HttpStatusCode.Conflict, "cobro_mercadopago_pagado_sin_datos");
+
+        Assert.Empty(Cancelaciones(e));
+        Assert.Equal(pedidosAntes, Pedidos(e).Count);
+        Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+
+        e.Ordenes.SinPagos = false;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        var aprobado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("aprobado", aprobado.Estado);
+        Assert.Equal(100m, aprobado.ImportePagado);
+    }
+
+    // Clausula: R2-1. Si el cancelar es el primero en ver la orden processed sin datos (Mercado Pago contesta 409), la marca queda puesta
+    // y la respuesta ya avisa el pago, sin QR.
+    [Fact]
+    public async Task UnCancelarQueContesta409SobreUnaOrdenProcesadaSinDatosMarcaElPagoInformado()
+    {
+        var e = await PrepararAsync("mp-cobro-cancelar-409-sin-datos");
+        var cobro = await CrearOkAsync(e, 5072, 100m);
+        e.Ordenes.Cancelar = id =>
+        {
+            e.Ordenes.Estados[id] = "processed";
+            e.Ordenes.SinPagos = true;
+            return Json(HttpStatusCode.Conflict, """{"error": "cannot_cancel_order", "message": "order already processed"}""");
+        };
+
+        var resultado = await LeerAsync<CobroDeMercadoPago>(await CancelarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("pendiente", resultado.Estado);
+        Assert.Null(resultado.QrData);
+        Assert.True(resultado.PagoInformadoSinDatos);
+        Assert.True(resultado.VerificandoPago);
+        Assert.NotNull(Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_procesada_mercadopago"]);
+    }
+
+    // Clausula: R2-1. Un cobro que se aprueba despues conserva la marca en la base pero ya no avisa nada.
+    [Fact]
+    public async Task UnCobroAprobadoDespuesDeLaMarcaConservaLaFechaYNoAvisaPagoSinDatos()
+    {
+        var e = await PrepararAsync("mp-cobro-marca-aprobado");
+        var cobro = await CrearOkAsync(e, 5073, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.SinPagos = true;
+        await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+        e.Ordenes.SinPagos = false;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+
+        var aprobado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+        var otraVez = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.False(aprobado.PagoInformadoSinDatos);
+        Assert.False(otraVez.PagoInformadoSinDatos);
+        Assert.NotNull(Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_procesada_mercadopago"]);
+    }
+
+    // Clausula: E3T2-1. Un pago sin id legible (vacio o mas largo que id_pago_mercadopago) NO aprueba el cobro: la venta se apoya en ese id.
+    // El cobro sigue pendiente y la proxima consulta lo aprueba cuando el id aparece.
+    [Theory]
+    [InlineData("vacio", 5060)]
+    [InlineData("largo", 5061)]
+    [InlineData("blanco", 5062)]
+    public async Task UnPagoSinIdLegibleNoApruebaElCobroHastaQueElIdAparece(string caso, int numero)
+    {
+        var e = await PrepararAsync("mp-cobro-sin-id-pago-" + caso);
+        var cobro = await CrearOkAsync(e, numero, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.IdDelPago = caso switch { "vacio" => string.Empty, "blanco" => "   ", _ => new string('P', 65) };
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("pendiente", consultado.Estado);
+        Assert.Null(consultado.ImportePagado);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("pendiente", fila["estado"]);
+        Assert.Null(fila["id_pago_mercadopago"]);
+        Assert.Null(fila["fecha_aprobacion"]);
+        Assert.NotNull(fila["fecha_procesada_mercadopago"]);
+        Assert.True(consultado.PagoInformadoSinDatos);
+        Assert.Null(consultado.QrData);
+
+        e.Ordenes.IdDelPago = null;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        var reintento = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("aprobado", reintento.Estado);
+        var aprobada = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.NotNull(aprobada["id_pago_mercadopago"]);
+    }
+
+    // Clausula: R2-4. El id del pago se recorta antes de validarlo y de guardarlo.
+    [Fact]
+    public async Task ElIdDelPagoConEspaciosEnLosBordesSeGuardaRecortado()
+    {
+        var e = await PrepararAsync("mp-cobro-id-recortado");
+        var cobro = await CrearOkAsync(e, 5064, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.IdDelPago = "  PAYRECORTADO ";
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("aprobado", consultado.Estado);
+        Assert.Equal("PAYRECORTADO", Assert.Single(await FilasAsync(e.IdPuntoVenta))["id_pago_mercadopago"]);
     }
 
     // Clausula: F1. El importe pagado tiene que ser mayor a 0 y con hasta 2 decimales; si no, no se aprueba.

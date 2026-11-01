@@ -29,4 +29,8 @@ public class Cobro : EntidadTenant
     /// <summary>Solo medios que admiten vuelto (<c>medios_pago.admite_vuelto</c>) — validado
     /// server-side, nunca confiado del cliente tal cual (design decisión 3).</summary>
     public decimal Vuelto { get; set; }
+
+    /// <summary>El cobro aprobado de Mercado Pago (<c>cobros_mercadopago</c>) que pagó este medio; nulo en cualquier otro pago. La
+    /// venta lo valida y lo liga (<c>cobros_mercadopago.id_comprobante_venta</c>) en la misma transacción.</summary>
+    public int? IdCobroMercadoPago { get; set; }
 }

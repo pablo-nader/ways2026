@@ -162,8 +162,18 @@ public sealed record LineaDeVenta(
 /// <summary>Un medio de pago del checkout (design: Checkout Contract). A diferencia de
 /// <see cref="LineaDeVenta"/>, SÍ lleva dinero: <see cref="Importe"/>/<see cref="Vuelto"/> son lo
 /// que el cajero tipeó en caja, no un valor derivado del catálogo — <see cref="ValidadorDePagos"/>
-/// los valida, no los calcula.</summary>
-public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);
+/// los valida, no los calcula.
+///
+/// <see cref="IdCobroMercadoPago"/>: el cobro aprobado de Mercado Pago (<c>POST /api/pos/mercadopago/cobros</c>) que pagó este medio.
+/// Un medio con <c>proveedor</c> lo exige (400 <c>cobro_mercadopago_requerido</c>) y un medio sin proveedor no lo admite (400
+/// <c>cobro_mercadopago_en_medio_sin_proveedor</c>); solo se admite en una venta con <c>NumeroPreasignado</c> (400
+/// <c>cobro_mercadopago_sin_numero_preasignado</c>). <c>EmitirAsync</c> lo valida bajo lock (misma venta, aprobado, mismo importe, sin otra
+/// venta), lo liga a la venta y copia a <see cref="Referencia"/> el id del pago de Mercado Pago. Una venta admite a lo sumo UN cobro de Mercado Pago (hay un cobro vivo por número y el cobro ligado a la venta es único): dos pagos con cobro, iguales o distintos, son 400 <c>venta_con_mas_de_un_cobro_mercadopago</c>. En una nota de crédito el cobro no se admite
+/// (400 <c>cobro_mercadopago_no_admitido_en_devolucion</c>) y un medio con proveedor es solo el medio de devolución. La facturación de
+/// remitos y el cambio de medios no tienen número preasignado: rechazan un pago con cobro y un medio con proveedor sin cobro con esos
+/// mismos códigos (<c>ReglaDeCobroEnVenta.ExigirFormaDelPago</c>); los recibos no llevan cobro y rechazan un medio con proveedor.</summary>
+public sealed record PagoDeVenta(
+    int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto, int? IdCobroMercadoPago = null);
 
 /// <summary>Los medios nuevos de una venta ya emitida (<c>ServicioDeCambioDeMedios</c>): reemplazan a todos sus cobros. Cada
 /// campo de cada pago se valida como en la venta (<c>ValidadorDePagos</c>) y se persiste en el cobro nuevo.</summary>
@@ -226,8 +236,9 @@ public sealed record ItemEmitido(
     int? IdCombo = null,
     bool PorImporte = false);
 
-/// <summary>Un pago ya emitido.</summary>
-public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);
+/// <summary>Un pago ya emitido. <see cref="IdCobroMercadoPago"/>: el cobro de Mercado Pago que lo pagó, si lo hubo.</summary>
+public sealed record PagoEmitido(
+    int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto, int? IdCobroMercadoPago = null);
 
 /// <summary>Respuesta de checkout/reprint (spec: operacion-de-pos / Checkout Orchestration
 /// Contract) — <see cref="NumeroVisible"/> es <c>NumeroDeComprobante.Formatear(IdPuntoVenta,
