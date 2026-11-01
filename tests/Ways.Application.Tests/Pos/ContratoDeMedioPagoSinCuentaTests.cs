@@ -50,7 +50,7 @@ public class ContratoDeMedioPagoSinCuentaTests
             [
                 "Orden", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "RecargoPorcentaje", "PorcentajeFacturacion",
                 "IdCuentaTesoreria", "ComisionPorcentaje", "RetencionIibbPorcentaje", "RetencionIvaPorcentaje",
-                "RetencionGananciasPorcentaje", "NombreCuentaTesoreria", "CuentaTesoreriaInactiva"
+                "RetencionGananciasPorcentaje", "NombreCuentaTesoreria", "CuentaTesoreriaInactiva", "Proveedor"
             ],
             listado);
         Assert.All(
@@ -65,7 +65,7 @@ public class ContratoDeMedioPagoSinCuentaTests
             [
                 "Orden", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "RecargoPorcentaje", "PorcentajeFacturacion",
                 "ComisionPorcentaje", "RetencionIibbPorcentaje", "RetencionIvaPorcentaje",
-                "RetencionGananciasPorcentaje", "IdCuentaTesoreria"
+                "RetencionGananciasPorcentaje", "IdCuentaTesoreria", "Proveedor"
             ],
             Propiedades(typeof(MedioPagoAlta)));
     }

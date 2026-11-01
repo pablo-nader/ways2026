@@ -550,3 +550,58 @@ cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa 
 > en `PDV` o suspendida) es 409 `mercadopago_caja_con_terminal_en_pdv`. Con la terminal ya en `PDV` no se manda el `PATCH`. Registra
 > `pv.terminalmercadopago` (anterior y nueva terminal, si cambió el modo; sin tokens). `DELETE .../mercadopago/terminal` borra la asignación en Ways y no toca Mercado Pago. Sin caja
 > registrada, las tres rutas responden 409 `mercadopago_caja_no_registrada`. Verificado contra la referencia (2026-11-01), no en vivo.
+
+### Cobros con Mercado Pago (dispositivo del POS)
+
+```sql
+cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una fila por orden pedida a Mercado Pago
+    id_cobro_mercadopago, id_tenant, id_empresa,
+    id_punto_venta,                          -- FK compuesta (id_punto_venta, id_tenant); el del dispositivo que cobra, nunca el del cuerpo
+    id_dispositivo,                          -- FK compuesta (id_dispositivo, id_tenant) a dispositivos (clave alterna existente)
+    id_medio_pago,                           -- FK compuesta (id_medio_pago, id_tenant) a medios_pago (proveedor 'mercadopago_qr')
+    numero_preasignado bigint,               -- el número de venta que el dispositivo reservó (SolicitudDeVenta.NumeroPreasignado)
+    intento integer,                         -- 1, y +1 por cada cobro nuevo del mismo número después de uno cancelado o vencido
+    tipo varchar(10),                        -- 'qr' | 'point' (CHECK ck_cobros_mercadopago_tipo)
+    importe numeric(18,2),                   -- > 0; lo que se pidió cobrar
+    external_reference varchar(64),          -- 'W{tenant}P{punto de venta}N{número}I{intento}'; vuelve en los informes de Mercado Pago
+    external_pos_id varchar(40),             -- external_id de la caja con el que se pidió la orden; un reintento reenvía la misma orden aunque la caja cambie
+    clave_idempotencia varchar(64),          -- X-Idempotency-Key de POST /v1/orders: 'ways-cobro-' + huella SHA-256 del cuerpo completo de la orden
+    id_orden_mercadopago varchar(64) NULL,   -- id de la orden (ORD…); nulo solo en 'creando' o 'expirado' sin orden (CHECK ck_cobros_mercadopago_orden)
+    estado varchar(20),                      -- 'creando' | 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto'
+    id_pago_mercadopago varchar(64) NULL,    -- id del pago dentro de la orden
+    referencia_pago_mercadopago bigint NULL, -- reference_id numérico del pago (para /v1/payments y los informes)
+    importe_pagado numeric(18,2) NULL,       -- lo que Mercado Pago dice que se pagó; puede diferir de importe
+    qr_data text NULL,                       -- contenido EMVCo del QR dinámico; solo se devuelve mientras el cobro está pendiente
+    expira_en,                               -- reserva de la fila + 10 minutos (expiration_time PT10M)
+    fecha_ultima_consulta NULL,              -- última lectura de la orden; limita el refresco a una cada 2 segundos por cobro
+    fecha_aprobacion NULL,
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_cobros_mercadopago_tenant` (simple), `_empresa` (`(id_empresa, id_tenant)`), `_punto_venta`, `_dispositivo` y `_medio_pago`
+> (todas compuestas con `id_tenant`, RESTRICT, sobre claves alternas existentes). CHECK de respaldo `ck_cobros_mercadopago_tipo`, `_estado`,
+> `_importe` (> 0), `_importe_pagado` (nulo o >= 0), `_intento` (>= 1), `_numero` (> 0), `_aprobacion` (un cobro aprobado tiene `fecha_aprobacion`) y `_orden` (solo un cobro `creando`, o `expirado` por abandono sin orden confirmada, puede no tener `id_orden_mercadopago`).
+> Único parcial `ux_cobros_mercadopago_vivo_numero` `(id_punto_venta, numero_preasignado) WHERE estado IN ('creando', 'pendiente', 'aprobado')`: a lo sumo
+> un cobro vivo por número de venta; y único `ux_cobros_mercadopago_intento` `(id_punto_venta, numero_preasignado, intento)`. Ambos 23505 se
+> traducen a 409 `cobro_mercadopago_en_curso` en `ManejadorDeErrores` (el servicio serializa las creaciones con un lock por punto de venta, así que
+> solo los alcanza una escritura que no pase por él). Índices de soporte `ix_cobros_mercadopago_tenant`, `_empresa`, `_dispositivo` y `_medio_pago`.
+> RLS estándar. Efecto: como toda FK del modelo, un punto de venta, empresa o medio de pago con cobros cuenta como en uso y no se da de baja
+> (`inventario-de-dependientes.txt`, clasificación `marcado`). La tabla no se audita: es en sí el registro de cada intento y sus estados.
+>
+> **Endpoints (sesión de dispositivo; `OperacionDePos` + `RequiereDispositivo`).** `POST /api/pos/mercadopago/cobros` `{ idMedioPago,
+> numeroPreasignado, importe }`; `GET /api/pos/mercadopago/cobros/{id}`; `POST /api/pos/mercadopago/cobros/{id}/cancelar`. Responden `{ idCobro,
+> estado, qrData, expiraEn, importe, importePagado, importeDistinto, verificandoPago }`. Un cobro de otro punto de venta o de otro tenant es 404. Crear: el medio tiene que
+> estar activo, ser de la empresa del punto de venta y tener `proveedor = 'mercadopago_qr'` (400 `cobro_mercadopago_medio_invalido`), importe > 0 con
+> hasta 2 decimales (400 `cobro_mercadopago_importe_invalido`), número > 0 (400 `cobro_mercadopago_numero_invalido`); el punto de venta tiene que ser
+> el del dispositivo y de modo escritorio (409 `punto_venta_modo_incompatible`). Bajo un lock por punto de venta (y, si hay un cobro vivo del número, el del cobro, que se vuelve a leer después del lock): un cobro pendiente con el mismo medio e
+> importe se devuelve tal cual; con otro es 409 `cobro_mercadopago_en_curso`; uno aprobado es 409 `cobro_mercadopago_ya_aprobado`; un pendiente vencido se consulta antes
+> de decidir. Después, conexión activa (409 `mercadopago_no_conectada` o `mercadopago_requiere_reconexion`) y caja del punto de venta para el vendedor actual (409
+> `mercadopago_caja_no_registrada`). `POST /v1/orders` con `type: "qr"`, `external_reference`, `total_amount` y `unit_price` como cadena con 2 decimales,
+> `expiration_time: "PT10M"`, `config.qr.external_pos_id` = `external_id` de la caja, `mode: "dynamic"` y un ítem "Venta {número}" (`quantity` 1, `unit_measure`
+> `unit`); la `X-Idempotency-Key` es la huella del cuerpo completo (`clave_idempotencia`). **Reservar y después llamar:** la fila se inserta y se confirma primero en estado `creando` (con la `external_reference`, el importe, el `external_pos_id` de la caja y la clave), recién después se llama a `POST /v1/orders` y la fila pasa a `pendiente` con el id de la orden, el QR y el plazo. Si el guardado posterior falla, la fila queda `creando`: el siguiente crear, consultar o cancelar reenvía la orden original armada con los valores guardados y la misma clave (Mercado Pago devuelve la misma orden) y aplica la respuesta; recién después rigen las reglas de arriba (otro importe es 409 `cobro_mercadopago_en_curso`). Plazos de la fila `creando` desde su reserva (`created_at`): dentro de una vigencia (10 min) se reenvía y cualquier fallo (un 4xx incluido) la deja `creando`; desde una vigencia no se reenvía más y crear, consultar y cancelar responden 409 `cobro_mercadopago_en_curso`; desde dos vigencias más 5 min pasa a `expirado` sin llamar a Mercado Pago y libera el número. Al completarse, `expira_en` se renueva. Una `processed` recuperada sin pago legible queda `pendiente` sin QR y la respuesta trae `verificandoPago: true`. Una orden `created` sin `qr_data` es 502 `mercadopago_respuesta_invalida`. Consultar: un cobro pendiente se refresca con `GET /v1/orders/{id}` a lo sumo cada
+> 2 segundos, bajo un lock por cobro: `processed` → `aprobado` solo si trae un pago con importe pagado válido (`paid_amount` o `amount`, > 0 y hasta 2 decimales; se guarda el pago, el `reference_id` y el importe pagado, y si difiere de `importe`, `importeDistinto`); sin pago legible el cobro sigue `pendiente` y se avisa en el log. `canceled` → `cancelado`,
+> `expired` → `expirado`, `refunded` → `devuelto` (solo se observa mientras el cobro está pendiente; la devolución de un cobro ya aprobado es de la conciliación, E6); cualquier otro estado lo deja pendiente. Un 404 de la orden de un pendiente cuyo plazo pasó lo deja `expirado`; antes del plazo sigue siendo 502. Cancelar: un pendiente llama a `POST /v1/orders/{id}/cancel`; si Mercado Pago contesta
+> 409 se lee la orden y se devuelve su estado real (puede ser `aprobado`); un cobro aprobado es 409 `cobro_mercadopago_ya_aprobado`. Verificado contra la referencia (2026-11-01), no en vivo.
+>
+> **Guarda del medio.** Cambiar el `proveedor` de un medio (a nulo o a otro), sacarlo de `Electronico` o desactivarlo es 409 `medio_con_cobros_mercadopago_vivos` mientras tenga cobros `creando` o `pendiente` (los aprobados quedan como historia). La edición toma `FOR UPDATE` del medio y la reserva de un cobro `FOR KEY SHARE`, así que no se cruzan.

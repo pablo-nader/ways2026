@@ -186,6 +186,8 @@ public interface IWaysDbContext
 
     DbSet<CajaMercadoPago> CajasMercadoPago { get; }
 
+    DbSet<CobroMercadoPago> CobrosMercadoPago { get; }
+
     // Decisión de facturar una venta (facturación por medio de pago). El acumulado por medio y mes NO se
     // expone: su único escritor es un upsert crudo, como numeraciones_fiscales.
     DbSet<FacturacionDeVenta> FacturacionesDeVenta { get; }
