@@ -598,9 +598,9 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
     }
 
     [Fact]
-    public async Task ElRecalculoDeUnTurnoCerradoPorUnPagoNoTocaLasFilasDeCuenta()
+    public async Task ElRecalculoDeUnTurnoCerradoPorUnPagoNoTocaLasFilasDelCierre()
     {
-        var ctx = await PrepararAsync(nameof(ElRecalculoDeUnTurnoCerradoPorUnPagoNoTocaLasFilasDeCuenta));
+        var ctx = await PrepararAsync(nameof(ElRecalculoDeUnTurnoCerradoPorUnPagoNoTocaLasFilasDelCierre));
         using var _ = ctx.Admin;
         var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago", saldoInicial: 100m);
         var medio = await CrearMedioAsync(ctx, "QR MP", cuenta, comision: 5m);
@@ -617,7 +617,7 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
 
         await CerrarOkAsync(ctx, turno, "clasico");
-        var antes = await LibroAsync(ctx, cuenta);
+        var antes = (await LibroAsync(ctx, cuenta)).Where(m => m.Tipo != TipoMovimientoCuenta.Pago).ToList();
         Assert.Equal(2, antes.Count);
 
         var edicion = await ctx.Admin.PutAsJsonAsync(
@@ -631,7 +631,10 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
             Assert.Equal(910m, arqueo.ImporteEsperado);
         }
 
-        var despues = await LibroAsync(ctx, cuenta);
+        // El débito del pago vive en sus propias filas `pago`; las del cierre no se tocan.
+        var libro = await LibroAsync(ctx, cuenta);
+        Assert.Equal(90m, libro.Where(m => m.Tipo == TipoMovimientoCuenta.Pago).Sum(m => m.Egreso - m.Ingreso));
+        var despues = libro.Where(m => m.Tipo != TipoMovimientoCuenta.Pago).ToList();
         Assert.Equal(antes.Count, despues.Count);
         for (var i = 0; i < antes.Count; i++)
         {

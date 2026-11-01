@@ -781,6 +781,8 @@ public partial class ServicioDePagos(
                 idEmpleado, ct);
         }
 
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
+
         var valorNuevo = PayloadDeEdicion(
             pago, plan?.IdMedioPagoDeCompatibilidad ?? medioAnterior, nuevo?.ImportePorMedio ?? anterior.ImportePorMedio);
         if (solicitud is null)
@@ -1478,6 +1480,8 @@ public partial class ServicioDePagos(
             await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, pago, idEmpleado, momento, ct);
         }
 
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
+
         await transaccion.CommitAsync(ct);
 
         return pago;
@@ -1579,6 +1583,8 @@ public partial class ServicioDePagos(
         // ningún lock de turno antes: la compra ligada FOR UPDATE (si aplica) y el pago a proveedor
         // (si aplica) son los únicos locks de fila que pueden preceder a este advisory.
         await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, pago, idEmpleado, momento, ct);
+
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
 
         return pago;
     }
@@ -1924,6 +1930,8 @@ public partial class ServicioDePagos(
         {
             await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, pago, idEmpleado, momento, ct);
         }
+
+        await ReconciliarDebitosEnCuentasAsync(idTenant, pago, idEmpleado, momento, ct);
 
         return new PagoDeSueldoPersistido(pago, items);
     }

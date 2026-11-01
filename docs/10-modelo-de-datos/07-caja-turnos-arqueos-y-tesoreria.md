@@ -138,8 +138,10 @@ cuentas_tesoreria (           -- [catálogo por empresa: id_empresa NOT NULL] �
 movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ordenado por (fecha, id)]
     id_movimiento_cuenta, id_cuenta_tesoreria, fecha,
     tipo tipo_movimiento_cuenta,             -- enum: cobro | comision | retencion_iibb | retencion_iva |
-                                             -- retencion_ganancias | ajuste | transferencia | deposito | retiro
-    id_turno_caja NULL, id_medio_pago NULL, concepto,
+                                             -- retencion_ganancias | ajuste | transferencia | deposito | retiro | pago
+    id_turno_caja NULL, id_medio_pago NULL,
+    id_pago NULL,                            -- solo y siempre en las filas tipo pago (débito de un pago)
+    concepto,
     inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_cuenta_tesoreria)
     id_empleado,
     base_bruta numeric(14,2) NULL,           -- base sobre la que se calculó el porcentaje, congelada
@@ -149,8 +151,8 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 
 > **Estado (cuentas de tesorería, esquema):** la tesorería de efectivo (`movimientos_tesoreria`,
 > una cadena por empresa) y las cuentas digitales (`movimientos_cuenta`, una cadena por cuenta) son
-> libros separados: cada uno con su propia cadena y su propio candado. Hay dos escritores: el cierre de turno y el ajuste manual
-> de saldo (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
+> libros separados: cada uno con su propia cadena y su propio candado. Hay tres escritores: el cierre de turno, el ajuste manual
+> de saldo y los débitos de pago (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
 >
 > `cuentas_tesoreria`: clave alterna `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant` (destino de
 > las FK compuestas), FK compuesta `fk_cuentas_tesoreria_empresa` a `empresas` (RESTRICT), único
@@ -166,13 +168,14 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > que la tesorería de efectivo), más dos CHECK que `movimientos_tesoreria` no tiene:
 > `ck_movimientos_cuenta_importes_no_negativos` (`ingreso` y `egreso` no negativos) y
 > `ck_movimientos_cuenta_un_solo_lado` (`ingreso = 0 OR egreso = 0`; una fila con los dos lados en
-> cero es válida). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
-> `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`; `fk_movimientos_cuenta_empleado`
+> cero es válida), y `ck_movimientos_cuenta_pago` (`(tipo = 'pago') = (id_pago IS NOT NULL)`, en una migración posterior a la que
+> agrega el valor del enum). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
+> `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`, `fk_movimientos_cuenta_pago` (a `pagos`); `fk_movimientos_cuenta_empleado`
 > es simple a `usuarios`, como en la tesorería de efectivo. Índices (ninguno implícito `IX_`): `ix_movimientos_cuenta_tenant`;
 > `ix_movimientos_cuenta_cuenta_fecha_id` `(id_cuenta_tesoreria, id_tenant, fecha, id_movimiento_cuenta)`, que
 > sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro, que se ordenan por `(fecha, id)`;
-> `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago` e `ix_movimientos_cuenta_empleado`
-> como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
+> `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago`, `ix_movimientos_cuenta_pago` `(id_pago, id_tenant)` e
+> `ix_movimientos_cuenta_empleado` como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
 > id_turno_caja, id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL AND tipo IN ('cobro',
 > 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')`: respaldo de idempotencia de las
 > filas que escribe el cierre de turno; un ajuste o una transferencia con turno queda fuera. Como
@@ -187,7 +190,7 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > `medios_pago` ni `movimientos_cuenta`, incluidas las filas dadas de baja (409 `cuenta_tesoreria_en_uso`); desactivar siempre 
 > se puede. El listado trae el saldo actual (`final` del último movimiento o `saldo_inicial`) y `saldoInicialEditable`.
 >
-> **Quién escribe el libro.** Dos escritores: el cierre de turno y el ajuste manual (más abajo).
+> **Quién escribe el libro.** Tres escritores: el cierre de turno, el ajuste manual y los débitos de pago (más abajo).
 >
 > **Cierre de turno.** `EscriturasDeCuentaDeTesoreria`, dentro de la transacción compartida por
 > los dos modos de cierre (`InsertarArqueosYTesoreriaAsync`), después de la fila de tesorería de efectivo. Por cada medio
@@ -219,6 +222,19 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > escribe dos filas (el del mismo saldo objetivo no, porque la segunda diferencia da cero) y la protección es la guarda de
 > re-entrada de la pantalla; un 5xx no se reintenta solo. Es el camino para corregir lo que el libro todavía no refleja.
 >
+> **Débitos de pago.** `DebitosDePagoEnCuenta`, al final de la transacción de todo escritor de ítems de pago (alta del POS, alta
+> administrativa, pago de compra, pago de sueldo, edición y baja), antes del commit. Objetivo por `(cuenta, medio)`: la suma de los
+> ítems vivos del pago, ruteados por la cuenta ACTUAL del medio, solo si la cuenta está viva y es de la empresa del pago; ya debitado:
+> la suma de las filas `pago` de ese `id_pago` (egreso − ingreso). Cada diferencia distinta de cero escribe una fila
+> (`CalculadorDeDebitosDePago`, puro): `egreso` si sube, `ingreso` si baja, con `id_pago`, `id_medio_pago`, `id_turno_caja` nulo,
+> `concepto` `Pago {id}`, `id_empleado` = quien escribe y `fecha` monótona sobre la hora real (nunca la fecha de negocio del pago).
+> No hay índice único: una edición agrega filas. Una baja devuelve todo; un medio sin cuenta, efectivo o con una cuenta de otra
+> empresa no escribe nada. Locks: advisory de la empresa (reentrante con el de la tesorería de efectivo) → medios `FOR SHARE` →
+> cuentas `FOR NO KEY UPDATE`, el mismo orden que el cierre, siempre después del lock del pago; las filas existentes se leen
+> después del advisory y la cola después del lock de la cuenta. Sin medios con cuenta ni débitos previos no se toma ningún lock
+> (decidido con una lectura sin lock: un medio al que se le asigna cuenta en ese instante deja al pago como anterior a la
+> asignación). El libro de tesorería no lee estas filas (las calcula desde los pagos), así que no hay doble conteo.
+>
 > **Lectura.** La cadena de cada cuenta ya no tiene un reporte propio. El libro de tesorería
 > (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`, Supervisor y Admin) lee de esta tabla los cobros, las
 > comisiones y las retenciones de cada cierre, agrupados por turno, y los `ajuste` manuales. Su saldo se calcula desde las fuentes,
@@ -226,8 +242,8 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
-> ajuste manual (ver "Ajuste manual"). (b) Un pago hecho con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
-> cuenta; también se corrige con un ajuste manual. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
+> ajuste manual (ver "Ajuste manual"). (b) Los pagos anteriores a los débitos de pago no debitaron la cuenta hasta que la
+> reconstrucción los cargue. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
 > `pago_en_comprobante_negativo` un comprobante de total negativo con algún pago de importe o vuelto positivo, así que el lector del
 > turno, que suma los importes sin el signo del documento, nunca cuenta como cobrado el dinero de una nota de crédito (fijado por
 > `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo`). La regla vive en el servicio: ninguna CHECK puede
