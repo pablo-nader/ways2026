@@ -4057,6 +4057,27 @@ export type SolicitudDePagoDePersonal = {
   detalle?: string
 }
 
+/** Espejo de `SolicitudDePagoDePersonal` en `POST /api/pos/personal/{id}/pagos`: el cajero no manda fecha (el servidor usa
+ * hoy en la zona del punto de venta y una fecha distinta responde 400), ni empresa, ni descuento. */
+export type SolicitudDePagoDePersonalDelPos = Omit<
+  SolicitudDePagoDePersonal,
+  'fecha' | 'idEmpresa' | 'descuentoDeCuentaCorriente'
+>
+
+/** Espejo de `ReciboDePagoDePersonalDelPos`: el POS nunca recibe el saldo del empleado. */
+export type ReciboDePagoDePersonalDelPos = {
+  idMovimiento: number
+  fecha: string
+  importe: number
+}
+
+/** Espejo de `Ways.Application.Plantel.OpcionDePersonal` (`GET /api/pos/personal/opciones`, `OperacionDePos`): solo id y
+ * nombre, nunca saldo, valor hora ni documento. */
+export type OpcionDePersonal = {
+  id: number
+  nombre: string
+}
+
 /** Espejo de `Ways.Application.Plantel.DatosDePersonal`: cuerpo del alta y de la edición. */
 export type DatosDePersonal = {
   nombre: string

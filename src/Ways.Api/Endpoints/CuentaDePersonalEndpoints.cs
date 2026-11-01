@@ -50,6 +50,28 @@ public static class CuentaDePersonalEndpoints
         .RequireAuthorization(Politicas.GestionDeCuentaDePersonal)
         .WithSummary("Registra un pago al personal: descuento de la cuenta corriente del cliente vinculado y líneas de dinero, en una sola transacción.");
 
+        // Superficie del POS, aparte a propósito: el cajero (Vendedor) no tiene GestionDeCuentaDePersonal ni
+        // LecturaDePersonal. Solo ve id y nombre y solo paga del cajón del turno, sin descontar cuenta corriente.
+        app.MapGet("/api/pos/personal/opciones", (ServicioDePersonal servicio, CancellationToken ct) =>
+            servicio.ListarOpcionesAsync(ct))
+        .WithTags("CuentaDePersonal")
+        .RequireAuthorization(Politicas.OperacionDePos)
+        .WithSummary("Proyección mínima (id y nombre) del personal vivo, para el selector de sueldos del POS.");
+
+        app.MapPost("/api/pos/personal/{id:int}/pagos", async (
+            ServicioDePagoDePersonal servicio, int id, SolicitudDePagoDePersonal solicitud, CancellationToken ct) =>
+        {
+            var recibo = await servicio.PagarDesdeElPosAsync(id, solicitud, ct);
+            return Results.Created($"/api/pos/personal/{id}/pagos/{recibo.IdMovimiento}", recibo);
+        })
+        .WithTags("CuentaDePersonal")
+        .RequireAuthorization(Politicas.OperacionDePos)
+        .WithSummary(
+            "Pago de personal desde el POS: solo del cajón del turno abierto (origenFondos CajaTurno) y sin descuento de " +
+            "cuenta corriente; cualquier otro origen o descuento responde 403 prohibido. La fecha es siempre hoy en la zona " +
+            "del punto de venta: se puede omitir y una fecha distinta responde 400 fecha_no_es_hoy. Responde id, fecha e " +
+            "importe del movimiento, nunca el saldo del empleado.");
+
         return app;
     }
 }
