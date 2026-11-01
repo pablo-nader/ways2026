@@ -29,9 +29,15 @@ public class ServicioDeResumenDeTurno(
 
         var contenido = await lectorDeContenido.LeerAsync(idTurnoCaja, ct);
 
+        var idsMedio = lineas.Select(l => l.IdMedioPago).ToList();
+        var nombrePorMedio = await db.MediosPago.AsNoTracking()
+            .Where(m => idsMedio.Contains(m.Id))
+            .ToDictionaryAsync(m => m.Id, m => m.Nombre, ct);
+
         return new ResumenDeTurno(
             idTurnoCaja, idAncla,
-            lineas.Select(l => new LineaDeResumen(l.IdMedioPago, l.ImporteEsperado)).ToList(),
+            lineas.Select(l => new LineaDeResumen(
+                l.IdMedioPago, l.ImporteEsperado, nombrePorMedio.GetValueOrDefault(l.IdMedioPago, "?"))).ToList(),
             contenido.CantidadTickets, contenido.PrimerTicket, contenido.UltimoTicket, contenido.IngresosPorArea,
             new EgresosDeTurno(contenido.EgresosPorCategoria, contenido.EgresosPorArea, insumos.Retiros));
     }

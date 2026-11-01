@@ -88,7 +88,11 @@ public static class ExportacionDeCaja
         new ColumnaExportable("Esperado", TipoDeColumna.Moneda),
         new ColumnaExportable("Declarado", TipoDeColumna.Moneda),
         new ColumnaExportable("Diferencia", TipoDeColumna.Moneda),
-        new ColumnaExportable("Retiros", TipoDeColumna.Moneda)
+        new ColumnaExportable("Retiros", TipoDeColumna.Moneda),
+        new ColumnaExportable("Digitales", TipoDeColumna.Moneda),
+        new ColumnaExportable("Efectivo facturado", TipoDeColumna.Moneda),
+        new ColumnaExportable("Cuenta corriente", TipoDeColumna.Moneda),
+        new ColumnaExportable("Total facturado", TipoDeColumna.Moneda)
     ];
 
     /// <summary>G2 listado (spec historico-de-cajas: G2 Listing Export Figures Equal The JSON
@@ -110,7 +114,11 @@ public static class ExportacionDeCaja
                     Celda.Moneda(f.Esperado),
                     Celda.Moneda(f.Declarado),
                     Celda.Moneda(f.Diferencia),
-                    Celda.Moneda(f.Egresos.Retiros)
+                    Celda.Moneda(f.Egresos.Retiros),
+                    Celda.Moneda(f.Digitales),
+                    Celda.Moneda(f.Efectivo),
+                    Celda.Moneda(f.CuentaCorriente),
+                    Celda.Moneda(f.TotalFacturado)
                 ])
                 .ToList());
 
@@ -154,7 +162,7 @@ public static class ExportacionDeCaja
             filas.Add(
             [
                 Celda.Texto("Medios de pago"),
-                Celda.Texto($"Medio {medio.IdMedioPago}"),
+                Celda.Texto(medio.Nombre),
                 Celda.FechaHora(null, zona),
                 Celda.Moneda(medio.ImporteEsperado)
             ]);
@@ -190,7 +198,7 @@ public static class ExportacionDeCaja
             Celda.Moneda(respuesta.Resumen.Egresos.Retiros)
         ]);
 
-        foreach (var ticket in respuesta.Tickets)
+        foreach (var ticket in respuesta.Tickets.OrderBy(t => t.Fecha).ThenBy(t => t.Id))
         {
             filas.Add(
             [
