@@ -4,21 +4,22 @@ using Npgsql;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.MercadoPago;
-using Ways.Infrastructure.Multitenancy;
+using Ways.Domain.Common;
 
 namespace Ways.Api.Endpoints;
 
 /// <summary>
-/// Conexión de una empresa con Mercado Pago por OAuth. Inicio, lectura y desconexión son de Admin
+/// Conexión de una empresa con Mercado Pago por OAuth. Inicio, completar, lectura y desconexión son de Admin
 /// (<see cref="Politicas.GestionDeCatalogo"/>); el callback es anónimo porque la URI de retorno registrada en Mercado Pago es
-/// una sola y la sesión del comercio puede no existir en ese host: confía solo en el <c>state</c> protegido que armó el inicio.
+/// una sola y la sesión del comercio puede no existir en ese host, por eso no canjea nada: solo reenvía el code y el state a la
+/// web del comercio, donde la sesión que inició el flujo completa el canje.
 /// </summary>
 public static class MercadoPagoEndpoints
 {
     public const string RutaDelCallback = "/api/integraciones/mercadopago/callback";
 
     /// <summary>Pantalla del back office donde el Admin ve y administra las empresas; vuelve acá con
-    /// <c>?mercadopago=&lt;resultado&gt;&amp;empresa=&lt;id&gt;</c>.</summary>
+    /// <c>#mercadopago=&lt;completar|cancelado&gt;&amp;empresa=&lt;id&gt;</c>.</summary>
     public const string RutaDeRetorno = "/organizacion/empresas";
 
     public static IEndpointRouteBuilder MapearMercadoPago(this IEndpointRouteBuilder app)
@@ -52,17 +53,55 @@ public static class MercadoPagoEndpoints
         })
         .WithSummary("Desconecta la empresa de Mercado Pago y borra sus tokens cifrados.");
 
-        app.MapGet(RutaDelCallback, async (
+        admin.MapPost("/completar", async (
             ServicioDeConexionMercadoPago servicio,
-            TenantActualDeSesion tenantActual,
             ILogger<ServicioDeConexionMercadoPago> log,
-            string? code,
-            string? state,
-            string? error,
+            int idEmpresa,
+            SolicitudDeCompletarConexion solicitud,
             CancellationToken ct) =>
         {
+            ResultadoDeConexion resultado;
+            try
+            {
+                resultado = await servicio.CompletarEnSesionAsync(idEmpresa, solicitud, ct);
+            }
+            catch (DbUpdateException perdedora) when (ResultadoDeCarrera(perdedora, log) is not null)
+            {
+                resultado = ResultadoDeCarrera(perdedora, log)!.Value;
+            }
+            catch (Exception e) when (e is not (OperationCanceledException or ErrorDominio))
+            {
+                log.LogError(e, "Falló el cierre de la conexión con Mercado Pago de la empresa {IdEmpresa}.", idEmpresa);
+                resultado = ResultadoDeConexion.Error;
+            }
+
+            return resultado switch
+            {
+                ResultadoDeConexion.Conectado => Results.Ok(await servicio.ObtenerAsync(idEmpresa, ct)),
+                ResultadoDeConexion.YaConectada => throw ErrorDominio.Conflicto(
+                    "mercadopago_ya_conectada", "La empresa ya tiene Mercado Pago conectado."),
+                ResultadoDeConexion.CuentaEnUso => throw ErrorDominio.Conflicto(
+                    "mercadopago_cuenta_en_uso", "Esa cuenta de Mercado Pago ya está conectada a otra empresa."),
+                _ => throw new ErrorDominio(
+                    "mercadopago_intercambio_fallido",
+                    "No se pudo completar la conexión con Mercado Pago. Intentá de nuevo.",
+                    StatusCodes.Status502BadGateway)
+            };
+        })
+        .WithSummary(
+            "Completa la conexión dentro de la sesión que la inició: canjea el code y guarda la conexión cifrada. 400 " +
+            "mercadopago_estado_invalido, 403 mercadopago_estado_ajeno, 409 mercadopago_ya_conectada|mercadopago_cuenta_en_uso, " +
+            "502 mercadopago_intercambio_fallido.");
+
+        app.MapGet(RutaDelCallback, (
+            ServicioDeConexionMercadoPago servicio,
+            string? code,
+            string? state,
+            string? error) =>
+        {
             var estado = servicio.LeerEstado(state);
-            if (estado is null || !EsOrigenValido(estado.Origen))
+            var hayCodigo = !string.IsNullOrWhiteSpace(code);
+            if (estado is null || !EsOrigenValido(estado.Origen) || (!hayCodigo && string.IsNullOrWhiteSpace(error)))
             {
                 return Results.Text(
                     "El enlace de conexión con Mercado Pago no es válido o venció. Volvé a Ways e iniciá la conexión de nuevo.",
@@ -71,30 +110,12 @@ public static class MercadoPagoEndpoints
                     StatusCodes.Status400BadRequest);
             }
 
-            // El tenant sale del state protegido, nunca de un parámetro del navegador.
-            tenantActual.Establecer(ModoDeAcceso.Tenant, estado.IdTenant);
-
-            ResultadoDeConexion resultado;
-            try
-            {
-                resultado = await servicio.CompletarAsync(estado, code, error, ct);
-            }
-            catch (DbUpdateException perdedora) when (ResultadoDeCarrera(perdedora, log) is not null)
-            {
-                resultado = ResultadoDeCarrera(perdedora, log)!.Value;
-            }
-            catch (Exception e) when (e is not OperationCanceledException)
-            {
-                log.LogError(e, "Falló el cierre de la conexión con Mercado Pago de la empresa {IdEmpresa}.", estado.IdEmpresa);
-                resultado = ResultadoDeConexion.Error;
-            }
-
-            return Results.Redirect(UrlDeRetorno(estado, resultado));
+            return Results.Redirect(UrlDeRetorno(estado, string.IsNullOrWhiteSpace(error) ? code : null, state));
         })
         .AllowAnonymous()
         .WithSummary(
-            "Retorno de OAuth de Mercado Pago: canjea el código, guarda la conexión cifrada y redirige a la pantalla de la empresa " +
-            "con ?mercadopago=conectado|cancelado|error|cuenta_en_uso|ya_conectada.");
+            "Retorno de OAuth de Mercado Pago: no canjea nada. Redirige a la pantalla de la empresa con el code y el state en el " +
+            "fragmento de la URL (#mercadopago=completar|cancelado), para que la sesión de Ways complete el canje.");
 
         return app;
     }
@@ -112,19 +133,13 @@ public static class MercadoPagoEndpoints
             }
             : null;
 
-    internal static string UrlDeRetorno(EstadoOAuth estado, ResultadoDeConexion resultado)
-    {
-        var etiqueta = resultado switch
-        {
-            ResultadoDeConexion.Conectado => "conectado",
-            ResultadoDeConexion.Cancelado => "cancelado",
-            ResultadoDeConexion.CuentaEnUso => "cuenta_en_uso",
-            ResultadoDeConexion.YaConectada => "ya_conectada",
-            _ => "error"
-        };
-
-        return $"{estado.Origen}{RutaDeRetorno}?mercadopago={etiqueta}&empresa={estado.IdEmpresa}";
-    }
+    /// <summary>Todo viaja en el fragmento, no en la consulta: el navegador no lo manda al servidor ni en el Referer, así que el
+    /// código no queda en logs. Con <paramref name="codigo"/> nulo es la vuelta de un usuario que denegó el acceso.</summary>
+    internal static string UrlDeRetorno(EstadoOAuth estado, string? codigo, string? state) =>
+        codigo is null
+            ? $"{estado.Origen}{RutaDeRetorno}#mercadopago=cancelado&empresa={estado.IdEmpresa}"
+            : $"{estado.Origen}{RutaDeRetorno}#mercadopago=completar&empresa={estado.IdEmpresa}" +
+              $"&code={Uri.EscapeDataString(codigo)}&state={Uri.EscapeDataString(state!)}";
 
     private static bool EsOrigenValido(string origen) =>
         Uri.TryCreate(origen, UriKind.Absolute, out var uri)

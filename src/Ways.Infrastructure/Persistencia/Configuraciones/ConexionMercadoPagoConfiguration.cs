@@ -9,7 +9,7 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
 /// Mapea <see cref="ConexionMercadoPago"/>: una conexión OAuth por empresa, con los dos tokens cifrados. El estado se guarda
-/// como texto (<c>activa</c> / <c>desconectada</c>) con su CHECK, sin enum nativo de Postgres.
+/// como texto (<c>activa</c> / <c>desconectada</c> / <c>requiere_reconexion</c>) con su CHECK, sin enum nativo de Postgres.
 /// </summary>
 public class ConexionMercadoPagoConfiguration : IEntityTypeConfiguration<ConexionMercadoPago>
 {
@@ -29,13 +29,16 @@ public class ConexionMercadoPagoConfiguration : IEntityTypeConfiguration<Conexio
     {
         builder.ToTable("conexiones_mercadopago", t =>
         {
-            t.HasCheckConstraint("ck_conexiones_mercadopago_estado", "estado IN ('activa', 'desconectada')");
+            t.HasCheckConstraint("ck_conexiones_mercadopago_estado", "estado IN ('activa', 'desconectada', 'requiere_reconexion')");
             t.HasCheckConstraint(
                 "ck_conexiones_mercadopago_activa",
-                $"estado <> 'activa' OR (fecha_desconexion IS NULL AND {TokensPresentes})");
+                $"estado <> 'activa' OR (fecha_desconexion IS NULL AND fecha_requiere_reconexion IS NULL AND {TokensPresentes})");
             t.HasCheckConstraint(
                 "ck_conexiones_mercadopago_desconectada",
                 $"estado <> 'desconectada' OR (fecha_desconexion IS NOT NULL AND {TokensAusentes})");
+            t.HasCheckConstraint(
+                "ck_conexiones_mercadopago_requiere_reconexion",
+                $"estado <> 'requiere_reconexion' OR (fecha_requiere_reconexion IS NOT NULL AND fecha_desconexion IS NULL AND {TokensAusentes})");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_conexiones_mercadopago");
@@ -63,14 +66,20 @@ public class ConexionMercadoPagoConfiguration : IEntityTypeConfiguration<Conexio
             .HasColumnName("estado")
             .HasColumnType("text")
             .HasConversion(
-                e => e == EstadoConexionMercadoPago.Activa ? "activa" : "desconectada",
-                s => s == "activa" ? EstadoConexionMercadoPago.Activa : EstadoConexionMercadoPago.Desconectada)
+                e => e == EstadoConexionMercadoPago.Activa
+                    ? "activa"
+                    : e == EstadoConexionMercadoPago.Desconectada ? "desconectada" : "requiere_reconexion",
+                s => s == "activa"
+                    ? EstadoConexionMercadoPago.Activa
+                    : s == "desconectada" ? EstadoConexionMercadoPago.Desconectada : EstadoConexionMercadoPago.RequiereReconexion)
             .IsRequired();
 
         builder.Property(c => c.IdUsuarioConecto).HasColumnName("id_usuario_conecto").IsRequired();
         builder.Property(c => c.FechaConexion).HasColumnName("fecha_conexion").IsRequired();
         builder.Property(c => c.FechaDesconexion).HasColumnName("fecha_desconexion");
         builder.Property(c => c.FechaUltimaRenovacion).HasColumnName("fecha_ultima_renovacion");
+        builder.Property(c => c.FechaUltimoIntentoRenovacion).HasColumnName("fecha_ultimo_intento_renovacion");
+        builder.Property(c => c.FechaRequiereReconexion).HasColumnName("fecha_requiere_reconexion");
 
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();

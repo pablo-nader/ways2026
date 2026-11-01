@@ -348,8 +348,8 @@ function renderArticulos(rutaInicial = '/articulos', rolId?: number) {
 async function abrirFormularioNuevo() {
   renderArticulos()
   await screen.findByText('Articulo Uno')
-  await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-  await screen.findByText('Nuevo artículo')
+  await userEvent.click(screen.getByRole('button', { name: 'Nuevo artículo' }))
+  await screen.findByRole('dialog', { name: 'Nuevo artículo' })
 }
 
 /** Ninguna confirmación de esta pantalla usa `window.confirm`: devuelve `true` para que un regreso a él se note. */
@@ -1312,8 +1312,8 @@ describe('Articulos — alta de un artículo nuevo', () => {
     )
 
     await screen.findByText('Articulo Uno')
-    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-    await screen.findByText('Nuevo artículo')
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo artículo' }))
+    await screen.findByRole('dialog', { name: 'Nuevo artículo' })
     await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo Art')
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
     await screen.findByRole('dialog', { name: 'Editando artículo A0005' })
@@ -1595,7 +1595,7 @@ describe('Articulos — restauración de foco al cerrar el modal', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Nuevo artículo' })).toHaveFocus()
   })
 })
 
@@ -1619,7 +1619,7 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     mockearApiGet({ grilla: paginaGrillaFixture([filaGrillaDos]) })
 
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
-    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar baja' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Dar de baja' }))
 
     expect(await screen.findByRole('status')).toHaveTextContent('Artículo "Articulo Uno" dado de baja.')
     expect(document.body.querySelector('.alert-success')).toBeNull()
@@ -1635,7 +1635,11 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
 
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('¿Dar de baja el artículo "Articulo Uno"?')
+    const confirmacion = await screen.findByRole('alertdialog')
+    expect(confirmacion).toHaveTextContent('¿Dar de baja el artículo "Articulo Uno"?')
+    expect(confirmacion).toHaveTextContent(
+      'Deja de aparecer en la tienda online y, en cada caja, desde su próxima sincronización. Las ventas registradas no cambian.',
+    )
     expect(apiDeleteMock).not.toHaveBeenCalled()
   })
 
@@ -1682,7 +1686,7 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
     const confirmacion = await screen.findByRole('alertdialog')
-    const confirmar = within(confirmacion).getByRole('button', { name: 'Confirmar baja' })
+    const confirmar = within(confirmacion).getByRole('button', { name: 'Dar de baja' })
 
     act(() => {
       confirmar.click()
@@ -1711,7 +1715,7 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
 
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
     const confirmacion = await screen.findByRole('alertdialog')
-    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar baja' }))
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Dar de baja' }))
 
     expect(await within(confirmacion).findByRole('alert')).toHaveTextContent('El artículo está en uso y no se puede dar de baja.')
     expect(screen.getAllByText('El artículo está en uso y no se puede dar de baja.')).toHaveLength(1)
@@ -1766,7 +1770,7 @@ describe('Articulos — Editar deshabilitado mientras la pantalla está ocupada'
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
-    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar baja' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Dar de baja' }))
 
     await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

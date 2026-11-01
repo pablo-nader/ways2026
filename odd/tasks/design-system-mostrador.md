@@ -61,7 +61,7 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
   in every "x(s)" UI string (~15 inline pagers, `PaginadorDePadron`, ~10 messages); "tenant"
   removed from merchant-facing copy (platform-admin pages Tenants/Empresas/PuntosVenta/Dominios
   keep it).
-- [ ] **T4 Artículos screen** (route: delegated writer). Header action as a text+icon
+- [x] **T4 Artículos screen** (route: delegated writer). Header action as a text+icon
   "Nuevo artículo" primary button; visible placeholders on the filter row (structure and
   aria-labels unchanged); name column emphasized, code muted; empty state that distinguishes
   "no articles yet" from "no match" and offers "Limpiar filtros"; baja confirmation with the
@@ -86,6 +86,8 @@ in the API); the critique's "no sorting" finding was stale.
 
 ## Progress
 
+- 2026-10-31: #553 (T1) mergeado; #554 (T2) reapuntado a main con auto-merge. #556 (T3, base t2) y #559 (T4, base t3) abiertos con Auto-fix; al mergear cada base, reapuntar el siguiente a main y recién ahí habilitar auto-merge. Judgment-day APPROVED en T3 (fixes ccf31135) y T4 (fix 35e949bb: la nota de baja aclara la sincronización del POS).
+
 - 2026-10-31: PRs abiertos. #553 (T1, base main, auto-merge) y #554 (T2, base `pnader/ds-mostrador-t1`; reapuntar a main cuando #553 se mergee y recién ahí habilitar auto-merge). Judgment-day APPROVED en ambos; advertencias corregidas en b53c6521 (borde de controles, gitignore del POS) y ae347b95 (impresión en negro de estados, guard de nombres de color).
 
 - 2026-10-31: worktree `ds-mostrador`, branch `pnader/ds-mostrador-t1`; styling surface mapped.
@@ -96,3 +98,4 @@ in the API); the critique's "no sorting" finding was stale.
   `npm test` 283 archivos / 8922 tests OK (una corrida previa fallo `Pos.test` autofocus; pasa solo y en la repeticion: flaky por carga); `npm run build` OK; `npm run lint` sin errores.
 - 2026-10-31: T3 hecha en `4aa658a9` (TituloDeSeccion, 16 encabezados), `0e3b5dbf` (pluralizar en `formato/pluralizar.ts`, paginadores, PaginadorDePadron y mensajes) y `e9d9af5a` ("tenant" fuera del texto del comercio; ademas Descargar.tsx). RED: pluralizar.test.ts sin modulo, PaginadorDePadron 3 fallas y 11 fallas en los mensajes antes del codigo; GREEN despues. Ojo: los tests con regex `/x(s)/` negativos pasaban en vacio, se pasaron a `/xs? .../`.
   `npm test` 285 archivos / 8942 tests OK; `npm run build` OK; `npm run lint` sin errores. Queda un "Historial" en mayusculas en EditorDePrecios.tsx (clases en otro orden, fuera de los 16).
+- 2026-10-31: T4 hecha en `9c571d3c` (boton 'Nuevo artículo' con icono, placeholders, nombre/codigo, estado vacio en dos casos con 'Limpiar filtros', baja con consecuencia y boton 'Dar de baja'). RED: 4 tests nuevos de la grilla y los de 'Nuevo artículo'/'Dar de baja' fallaban antes del codigo; GREEN: Articulos/Familias/articulos 779 tests, suite completa 8945, build y lint sin errores. Consecuencia verificada: baja logica por DeletedAt con filtro global BajaLogica, items de venta con Descripcion propia.

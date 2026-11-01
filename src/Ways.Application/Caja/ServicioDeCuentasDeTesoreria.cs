@@ -13,7 +13,8 @@ namespace Ways.Application.Caja;
 /// El pre-chequeo de nombre repetido es una cortesía de UX: el contrato real es el índice único
 /// parcial <c>ux_cuentas_tesoreria_nombre_empresa</c>, que <c>ManejadorDeErrores</c> traduce al mismo 409.
 /// </summary>
-public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
+public class ServicioDeCuentasDeTesoreria(
+    IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda, IContextoDeUsuario contexto)
 {
     public async Task<IReadOnlyList<CuentaTesoreriaListado>> ListarAsync(
         int? idEmpresa = null, CancellationToken ct = default)
@@ -76,16 +77,31 @@ public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema re
     /// <c>FOR UPDATE</c> de su fila. El primer movimiento de la cuenta toma <c>FOR KEY SHARE</c> sobre esa
     /// fila al validar su FK, así que o se comitea antes y esta consulta lo ve, o espera a que esta
     /// transacción termine: el saldo inicial no puede cambiar bajo una cadena ya iniciada. El orden es
-    /// 404, validación del cuerpo, nombre repetido y regla del saldo inicial.
+    /// 404, validación del cuerpo, nombre repetido y reglas del saldo inicial (409 <c>periodo_conciliado</c> si la empresa tiene
+    /// alguna marca de conciliación, 409 <c>saldo_inicial_con_movimientos</c> si la cuenta ya tiene movimientos). El lock
+    /// compartido de conciliación es el primero de la transacción.
     /// </summary>
     public async Task<CuentaTesoreriaListado> ActualizarAsync(
         int id, EdicionDeCuentaTesoreria datos, CancellationToken ct = default)
     {
+        var idTenant = contexto.IdTenant
+            ?? throw new InvalidOperationException(
+                "ServicioDeCuentasDeTesoreria.ActualizarAsync requiere un actor de tenant.");
+
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            // La empresa de una cuenta no cambia: se lee sin trackear solo para tomar el lock compartido de conciliación,
+            // que tiene que ser el PRIMER lock de la transacción (ver GuardaDeConciliacion).
+            var idEmpresa = await db.CuentasTesoreria
+                .Where(c => c.Id == id)
+                .Select(c => (int?)c.IdEmpresa)
+                .FirstOrDefaultAsync(ct) ?? throw SinCuenta(id);
+
+            await GuardaDeConciliacion.TomarCompartidoAsync(db, idTenant, idEmpresa, ct);
 
             await guarda.BloquearFilaAsync<CuentaTesoreria>(id, ct);
 
@@ -97,6 +113,13 @@ public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema re
             var activo = ReglasDeCuentaTesoreria.ExigirActivo(datos.Activo);
 
             await ExigirNombreLibreAsync(cuenta.IdEmpresa, nombre, excluirId: id, ct);
+
+            // El libro suma el saldo inicial a todos los saldos de la cuenta, incluidos los de períodos ya conciliados.
+            if (saldoInicial != cuenta.SaldoInicial
+                && await GuardaDeConciliacion.LeerMarcaAsync(db, cuenta.IdEmpresa, ct) is { } marca)
+            {
+                throw ReglasDeConciliacion.PeriodoConciliado(marca);
+            }
 
             if (saldoInicial != cuenta.SaldoInicial
                 && await db.MovimientosCuenta.AnyAsync(m => m.IdCuentaTesoreria == id, ct))
@@ -174,7 +197,7 @@ public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema re
             e == null ? null : e.NombreFantasia ?? e.RazonSocial,
             db.MovimientosCuenta
                 .Where(m => m.IdCuentaTesoreria == c.Id)
-                .OrderByDescending(m => m.Id)
+                .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
                 .Select(m => (decimal?)m.Final)
                 .FirstOrDefault(),
             db.MovimientosCuenta.Any(m => m.IdCuentaTesoreria == c.Id));

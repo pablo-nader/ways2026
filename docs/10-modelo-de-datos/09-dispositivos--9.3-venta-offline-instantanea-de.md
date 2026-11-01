@@ -157,10 +157,14 @@ lista. La instantánea la representa sin cambiar el significado de los campos qu
   motor real y el colapso saca los que no cambian nada, así que en cada cantidad de tres decimales el escalón que elige
   el dispositivo es la resolución del servidor (probado cantidad por cantidad en `PuntosDeQuiebreSoloMultiplosTests`). El
   dispositivo no cambia: solo recibe más escalones. En la grilla de familia los puntos de una "solo múltiplos" de familia
-  son filas (cantidad de familia) y los de una de otro alcance columnas (cantidad propia).
+  son filas (cantidad de familia) y los de una de otro alcance columnas (cantidad propia). La grilla se colapsa: una
+  fila igual a la anterior en todas sus columnas sale, y dentro de una fila una columna igual a la anterior (el
+  dispositivo toma la última fila y la última columna que entran, así que elige lo mismo). Colapsada, tiene como mucho
+  128 celdas (`MaximoDeCeldasDeFamilia`); si se pasa rige el recurso de abajo.
 - **Tope y recurso.** Una curva, o una grilla sumando sus dos ejes, agrega como mucho 64 puntos
   (`MaximoDePuntosDeQuiebre`; con un solo par y una común a un 5 % o más por debajo nunca se llega). Si se pasa,
-  si la competencia no termina (mismo descuento unitario y la estricta con menor id: gana justo en cada múltiplo) o si en
+  si la competencia no termina (dos "solo múltiplos" de distinto tamaño de grupo con el mismo descuento; una común le
+  gana el empate a una estricta, así que ese par sí termina) o si en
   la grilla una "solo múltiplos" de familia compite con una de otro alcance (depende de las dos cantidades a la vez), los
   escalones por encima de la cantidad de la línea (y las celdas, con una fila desde la cantidad de familia siguiente) se
   resuelven sin las no acumulables de la prioridad en competencia ni de las menores. El dispositivo cobra entonces igual
