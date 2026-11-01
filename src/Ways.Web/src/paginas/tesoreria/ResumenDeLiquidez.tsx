@@ -8,6 +8,7 @@ type Props = {
   /** Solo el Admin ve los botones de ajuste. */
   esAdmin: boolean
   deshabilitado: boolean
+  onAjustarEfectivo: () => void
   onAjustarCuenta: (cuenta: CuentaAAjustar) => void
 }
 
@@ -29,10 +30,14 @@ function Tarjeta({ titulo, monto, accion }: { titulo: string; monto: number; acc
 }
 
 /** Liquidez al día de hoy: el efectivo y cada cuenta, con su saldo actual (no el del final del rango). */
-export function ResumenDeLiquidez({ libro, esAdmin, deshabilitado, onAjustarCuenta }: Props) {
+export function ResumenDeLiquidez({ libro, esAdmin, deshabilitado, onAjustarEfectivo, onAjustarCuenta }: Props) {
   return (
     <div className="d-flex flex-wrap gap-3 mb-3" role="region" aria-label="Liquidez">
-      <Tarjeta titulo="Efectivo" monto={libro.saldoActual.efectivo} />
+      <Tarjeta
+        titulo="Efectivo"
+        monto={libro.saldoActual.efectivo}
+        accion={esAdmin ? { etiqueta: 'Ajustar efectivo', deshabilitado, onClick: onAjustarEfectivo } : undefined}
+      />
       {columnasDeCuentas(libro.cuentas).map((c, i) => {
         const nombre = libro.cuentas[i].nombre
         const saldoActual = saldoDeCuenta(libro.saldoActual, c.id)
