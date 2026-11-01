@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SeccionMercadoPago } from './SeccionMercadoPago'
 import { ErrorApi } from '../../api/cliente'
 import type { CuentaTesoreriaListado } from '../../api/cuentasTesoreria'
-import type { EstadoDeConexionMercadoPago } from '../../api/mercadoPago'
+import type { EstadoDeConexionMercadoPago, RetornoDeMercadoPago } from '../../api/mercadoPago'
 import type { EmpresaListado } from '../../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -425,23 +425,21 @@ describe('SeccionMercadoPago — lectura posterior a una escritura', () => {
   })
 })
 
-describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () => {
-  const HASH_COMPLETAR = '#mercadopago=completar&empresa=10&code=TG-codigo&state=estado-protegido'
-
-  function ponerHash(hash: string) {
-    window.history.replaceState(null, '', `/organizacion/empresas${hash}`)
+describe('SeccionMercadoPago — retorno de Mercado Pago recibido de la pantalla', () => {
+  const COMPLETAR: RetornoDeMercadoPago = {
+    tipo: 'completar',
+    idEmpresa: 10,
+    code: 'TG-codigo',
+    state: 'estado-protegido',
   }
 
-  it('borra el fragmento ANTES del POST, completa el canje con code y state y refresca la conexión', async () => {
-    ponerHash(HASH_COMPLETAR)
-    let hashAlPostear: string | null = null
+  it('completa el canje con code y state y refresca la conexión', async () => {
     apiPostMock.mockImplementation(() => {
-      hashAlPostear = window.location.hash
       conexiones[10] = ACTIVA
 
       return Promise.resolve(ACTIVA)
     })
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
 
     await waitFor(() =>
       expect(apiPostMock).toHaveBeenCalledWith('/empresas/10/mercadopago/conexion/completar', {
@@ -449,8 +447,6 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
         state: 'estado-protegido',
       }),
     )
-    expect(hashAlPostear).toBe('')
-    expect(window.location.pathname).toBe('/organizacion/empresas')
 
     const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
     expect(await within(tarjeta).findByText('Conectada')).toBeInTheDocument()
@@ -458,15 +454,24 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
   })
 
   it('bajo StrictMode el canje de un code de un solo uso se hace UNA vez', async () => {
-    ponerHash(HASH_COMPLETAR)
     apiPostMock.mockResolvedValue(ACTIVA)
     render(
       <StrictMode>
-        <SeccionMercadoPago empresas={[EMPRESA]} />
+        <SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />
       </StrictMode>,
     )
 
     await screen.findByText('Mercado Pago quedó conectado.')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('un re-render con el mismo retorno no canjea otra vez', async () => {
+    apiPostMock.mockResolvedValue(ACTIVA)
+    const { rerender } = render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
+    await screen.findByText('Mercado Pago quedó conectado.')
+    rerender(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
+    await esperarDatos()
+
     expect(apiPostMock).toHaveBeenCalledTimes(1)
   })
 
@@ -477,22 +482,19 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
     ['mercadopago_estado_ajeno', /otra sesión o otra empresa/],
     ['mercadopago_estado_invalido', /venció o no es válido/],
   ])('con %s muestra el mensaje mapeado y vuelve a leer la conexión', async (codigo, mensaje) => {
-    ponerHash(HASH_COMPLETAR)
     apiPostMock.mockRejectedValue(new ErrorApi(409, codigo, 'texto del servidor'))
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
 
     expect(await screen.findByText(mensaje)).toBeInTheDocument()
-    expect(window.location.hash).toBe('')
     const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
     await within(tarjeta).findByText('Mercado Pago no está conectado.')
     expect(screen.queryByText('texto del servidor')).not.toBeInTheDocument()
   })
 
   it('mientras el canje está en vuelo la tarjeta queda inerte y avisa', async () => {
-    ponerHash(HASH_COMPLETAR)
     let resolver: (valor: EstadoDeConexionMercadoPago) => void = () => undefined
     apiPostMock.mockReturnValue(new Promise<EstadoDeConexionMercadoPago>((r) => (resolver = r)))
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={COMPLETAR} />)
 
     expect(await screen.findByText('Completando la conexión con Mercado Pago…')).toBeInTheDocument()
     const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
@@ -505,17 +507,14 @@ describe('SeccionMercadoPago — retorno de Mercado Pago en el fragmento', () =>
   })
 
   it('mercadopago=cancelado informa que no se guardó nada y no llama a la API de completar', async () => {
-    ponerHash('#mercadopago=cancelado&empresa=10')
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={{ tipo: 'cancelado', idEmpresa: 10 }} />)
 
     expect(await screen.findByText('Se canceló la conexión con Mercado Pago. No se guardó nada.')).toBeInTheDocument()
-    expect(window.location.hash).toBe('')
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('un fragmento incompleto no canjea nada y se deja como está', async () => {
-    ponerHash('#mercadopago=completar&empresa=10&code=solo-el-code')
-    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+  it('sin retorno no canjea nada', async () => {
+    render(<SeccionMercadoPago empresas={[EMPRESA]} retorno={null} />)
     await esperarDatos()
 
     expect(apiPostMock).not.toHaveBeenCalled()

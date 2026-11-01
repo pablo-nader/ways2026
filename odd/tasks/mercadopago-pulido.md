@@ -145,3 +145,20 @@ Judgment-day over the T2 slice, then PR (stacked on T1) with auto-merge and Auto
 - No `|| bloqueado` guard in `confirmarDesconexion`: the confirm button is disabled, so no test can kill it (dead guard not shipped).
 - The Admin-with-unmounted-section case cannot happen today (`esAdmin && cargada` always becomes true); only the non-Admin path needs the cleanup.
 - Residual: `Reintentar` and the "Completando la conexión…" label are small additions beyond the five items.
+
+## Judgment-day T2 round 1
+
+- **PT2-1** (both judges, confirmed): for an Admin the return fragment (`#mercadopago=completar&empresa&code&state`) could stay in the
+  URL: the section only cleared it for a valid return (a malformed/partial one was left), and `Empresas` mounts the section only when
+  `esAdmin && cargada`, so a failed or slow empresas load left the `code` in the bar.
+- **Fix**: `Empresas.tsx` takes the return once on mount (`tomarRetornoDeMercadoPago()` in `fragmentoMercadoPago.ts`, guarded by a ref
+  so StrictMode's second effect run does not overwrite it). Any hash with a `mercadopago` key is cleared at landing, valid or not, for
+  every user, before anything awaits. Only an Admin passes the parsed return to `SeccionMercadoPago` as the `retorno` prop; the section
+  no longer reads `window.location.hash` and a ref makes the exchange run at most once per return (StrictMode-safe). If the load fails
+  the captured code is never exchanged (the Admin connects again). `descartarRetornoDeMercadoPago` was replaced by the new function.
+- **Tests (RED first, 16 failures observed before the fix)**: Admin with malformed fragment -> hash cleared and the section gets no
+  return; Admin whose empresas load fails -> hash cleared; Admin happy path -> hash cleared and section receives the return; section
+  exchanges exactly once (StrictMode and re-render); non-Admin still cleared.
+- **Mutation evidence**: `if (retorno) limpiarFragmento()` (clear only for a valid return) -> the malformed-fragment tests in
+  `Empresas.test.tsx` and `fragmentoMercadoPago.test.ts` fail; Empresas effect neutered (`setRetornoDeMercadoPago(null)`) -> the four
+  fragment tests in `Empresas.test.tsx` fail. Both reverted.

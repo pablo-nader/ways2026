@@ -1,17 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { clienteDeCuentasTesoreria, type CuentaTesoreriaListado } from '../../api/cuentasTesoreria'
 import {
   AVISO_DE_CONEXION_CANCELADA,
   AVISO_DE_CONEXION_COMPLETADA,
   clienteDeMercadoPago,
   copiaDeFalloDeMercadoPago,
-  leerRetornoDeMercadoPago,
   type RetornoDeMercadoPago,
 } from '../../api/mercadoPago'
 import type { EmpresaListado } from '../../api/tipos'
 import { Box } from '../../componentes/Box'
 import { ConexionMercadoPago } from './ConexionMercadoPago'
-import { limpiarFragmento } from './fragmentoMercadoPago'
 
 type Resultado = { tipo: 'exito' | 'error' | 'info'; texto: string }
 
@@ -28,12 +26,17 @@ const COPIA_CUENTAS_NO_CARGADAS = 'No se pudieron cargar las cuentas de tesorer�
  * edición porque la conexión tiene su propio ciclo de vida (OAuth, redirecciones, desconexión) y no se guarda con el botón
  * "Guardar" de la empresa.
  *
- * Al montarse lee el fragmento de la URL: si es el retorno de Mercado Pago, lo borra de la barra ANTES de la primera espera
- * y completa el canje con un POST autenticado (el servidor lo ata a la sesión que inició el flujo). El borrado es
- * síncrono, así que la segunda corrida del efecto bajo StrictMode ya no encuentra nada que canjear: un `code` es de un solo
- * uso y no se manda dos veces.
+ * El retorno de Mercado Pago llega ya leído (y borrado de la URL) por la pantalla; acá se completa el canje con un POST
+ * autenticado (el servidor lo ata a la sesión que inició el flujo). Un `code` es de un solo uso: una referencia recuerda el
+ * retorno ya canjeado, que sobrevive a la segunda corrida del efecto bajo StrictMode.
  */
-export function SeccionMercadoPago({ empresas }: { empresas: readonly EmpresaListado[] }) {
+export function SeccionMercadoPago({
+  empresas,
+  retorno = null,
+}: {
+  empresas: readonly EmpresaListado[]
+  retorno?: RetornoDeMercadoPago | null
+}) {
   const [cuentas, setCuentas] = useState<readonly CuentaTesoreriaListado[]>([])
   const [errorDeCuentas, setErrorDeCuentas] = useState('')
   const [resultado, setResultado] = useState<Resultado | null>(null)
@@ -58,13 +61,13 @@ export function SeccionMercadoPago({ empresas }: { empresas: readonly EmpresaLis
     }
   }, [])
 
+  const retornoProcesado = useRef<RetornoDeMercadoPago | null>(null)
   useEffect(() => {
-    const retorno = leerRetornoDeMercadoPago(window.location.hash)
-    if (!retorno) return
+    if (!retorno || retornoProcesado.current === retorno) return
 
-    limpiarFragmento()
+    retornoProcesado.current = retorno
     void procesar(retorno)
-  }, [])
+  }, [retorno])
 
   async function procesar(retorno: RetornoDeMercadoPago) {
     if (retorno.tipo === 'cancelado') {

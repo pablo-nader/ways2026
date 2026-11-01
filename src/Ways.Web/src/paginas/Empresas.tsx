@@ -10,6 +10,7 @@ import {
   seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
+import type { RetornoDeMercadoPago } from '../api/mercadoPago'
 import type { EmpresaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -33,7 +34,7 @@ import {
   type FormularioDeEmpresa,
 } from './empresaFormulario'
 import { ModalDeEmpresa } from './organizacion/ModalDeEmpresa'
-import { descartarRetornoDeMercadoPago } from './organizacion/fragmentoMercadoPago'
+import { tomarRetornoDeMercadoPago } from './organizacion/fragmentoMercadoPago'
 import { SeccionMercadoPago } from './organizacion/SeccionMercadoPago'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -156,10 +157,20 @@ export function Empresas() {
     void cargar(++generacion.current)
   }, [cargar])
 
-  /** Sin Admin no hay sección que canjee el retorno de Mercado Pago: el fragmento (con el `code`) se borra igual. */
+  /**
+   * El retorno de Mercado Pago se toma y se borra de la URL al llegar, para cualquier usuario y antes de cualquier espera:
+   * no depende de que la carga termine ni de que la sección se monte. Solo un Admin lo pasa a la sección para canjearlo;
+   * si la carga falla el `code` simplemente no se canjea (el Admin vuelve a conectar). La referencia hace que la segunda
+   * corrida del efecto bajo StrictMode no pise lo ya leído.
+   */
+  const retornoLeido = useRef(false)
+  const [retornoDeMercadoPago, setRetornoDeMercadoPago] = useState<RetornoDeMercadoPago | null>(null)
   useEffect(() => {
-    if (usuario && !esAdmin) descartarRetornoDeMercadoPago()
-  }, [usuario, esAdmin])
+    if (retornoLeido.current) return
+
+    retornoLeido.current = true
+    setRetornoDeMercadoPago(tomarRetornoDeMercadoPago())
+  }, [])
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga `ocupado`: de
@@ -442,7 +453,7 @@ export function Empresas() {
         )}
       </Box>
 
-      {esAdmin && cargada && <SeccionMercadoPago empresas={items} />}
+      {esAdmin && cargada && <SeccionMercadoPago empresas={items} retorno={retornoDeMercadoPago} />}
     </div>
   )
 }

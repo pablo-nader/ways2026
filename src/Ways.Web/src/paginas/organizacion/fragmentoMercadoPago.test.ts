@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { descartarRetornoDeMercadoPago, limpiarFragmento } from './fragmentoMercadoPago'
+import { limpiarFragmento, tomarRetornoDeMercadoPago } from './fragmentoMercadoPago'
 
 afterEach(() => window.history.replaceState(null, '', '/'))
 
@@ -17,25 +17,30 @@ describe('limpiarFragmento', () => {
   })
 })
 
-describe('descartarRetornoDeMercadoPago', () => {
-  it('borra un fragmento de retorno de Mercado Pago', () => {
+describe('tomarRetornoDeMercadoPago', () => {
+  it('devuelve el retorno válido y borra el fragmento', () => {
     ponerUrl('/organizacion/empresas#mercadopago=completar&empresa=10&code=TG-1&state=s')
-    descartarRetornoDeMercadoPago()
 
+    expect(tomarRetornoDeMercadoPago()).toEqual({ tipo: 'completar', idEmpresa: 10, code: 'TG-1', state: 's' })
     expect(window.location.hash).toBe('')
   })
 
-  it('borra también un retorno incompleto: el code no debe quedar en la URL', () => {
+  it('borra también un retorno incompleto o con empresa inválida y no devuelve nada', () => {
     ponerUrl('/organizacion/empresas#mercadopago=completar&code=solo-el-code')
-    descartarRetornoDeMercadoPago()
 
+    expect(tomarRetornoDeMercadoPago()).toBeNull()
+    expect(window.location.hash).toBe('')
+
+    ponerUrl('/organizacion/empresas#mercadopago=completar&empresa=abc&code=x&state=y')
+
+    expect(tomarRetornoDeMercadoPago()).toBeNull()
     expect(window.location.hash).toBe('')
   })
 
   it('no toca un fragmento que no es de Mercado Pago', () => {
     ponerUrl('/organizacion/empresas#seccion-2')
-    descartarRetornoDeMercadoPago()
 
+    expect(tomarRetornoDeMercadoPago()).toBeNull()
     expect(window.location.hash).toBe('#seccion-2')
   })
 })
