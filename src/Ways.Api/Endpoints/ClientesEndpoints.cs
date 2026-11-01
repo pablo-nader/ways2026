@@ -54,6 +54,16 @@ public static class ClientesEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Crea un cliente. El numero lo asigna el servidor (contador atómico por tenant).");
 
+        grupo.MapPost("/rapido", async (
+            ServicioDeClientes servicio, AltaRapidaDeCliente datos, CancellationToken ct) =>
+        {
+            var creado = await servicio.CrearRapidoAsync(datos, ct);
+            return Results.Created($"/api/clientes/{creado.Id}", creado);
+        })
+        .WithSummary(
+            "Alta rápida desde el POS (Vendedor, Supervisor, Admin): nombre, telefono y domicilio. " +
+            "Siempre Consumidor Final, lista por defecto, sin cuenta corriente.");
+
         grupo.MapPut("/{id:int}", (
             ServicioDeClientes servicio, int id, EdicionCliente datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
