@@ -218,6 +218,9 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
             ["tenant.baja"] = "Baja de tenant",
             ["empresa.baja"] = "Baja de empresa",
             ["pv.baja"] = "Baja de punto de venta",
+            ["venta.medios"] = "Cambio de medios de pago de venta",
+            ["retiro.edicion"] = "Edición de retiro",
+            ["retiro.baja"] = "Baja de retiro",
         };
 
     private static readonly Expression<Func<Unido, string>> AccionVisible = ConstruirAccionVisible();

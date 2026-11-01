@@ -3516,6 +3516,9 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'tenant.baja', etiqueta: 'Baja de tenant' },
   { valor: 'empresa.baja', etiqueta: 'Baja de empresa' },
   { valor: 'pv.baja', etiqueta: 'Baja de punto de venta' },
+  { valor: 'venta.medios', etiqueta: 'Cambio de medios de pago de venta' },
+  { valor: 'retiro.edicion', etiqueta: 'Edición de retiro' },
+  { valor: 'retiro.baja', etiqueta: 'Baja de retiro' },
 ]
 
 // --- Órdenes de compra (stage-16-ordenes-de-compra, Slice 6) --------------------------------
