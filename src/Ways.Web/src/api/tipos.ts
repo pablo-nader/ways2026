@@ -298,8 +298,16 @@ export type TipoComprobanteListado = {
 
 // --- Parámetros operativos (ADR-13) ---
 
-export type ParametroListado = { id: number; clave: string; valor: string; idPuntoVenta: number | null }
-export type ParametroAlta = { clave: string; valor: string; idPuntoVenta: number | null }
+export type ParametroListado = {
+  id: number
+  clave: string
+  valor: string
+  idPuntoVenta: number | null
+  idSucursal: number | null
+}
+/** Una clave de alcance caja lleva `idPuntoVenta` (o ninguno: default de la empresa); una de alcance sucursal, `idSucursal`
+ * (o ninguno). Mandar los dos, o el que no corresponde a la clave, es 400. */
+export type ParametroAlta = { clave: string; valor: string; idPuntoVenta: number | null; idSucursal: number | null }
 export type ParametroResuelto = { clave: string; valor: string }
 
 /** Espejo de `ParametroConocido` (Ways.Domain.Catalogos): clave, tipo declarado y default
@@ -308,42 +316,63 @@ export type ParametroResuelto = { clave: string; valor: string }
  * `'booleano'` (stage-12-lotes-vencimientos, Slice 15) es el primer tipo `bool` del registro —
  * `lotes_habilitado`, viaja como `true`/`false` JSON crudo, sin comillas (mismo criterio de
  * `JsonSerializer.Deserialize<bool>` que el resto de los lectores tipados del backend). */
+export type AlcanceDeParametro = 'caja' | 'sucursal'
+
 export const PARAMETROS_CONOCIDOS: {
   clave: string
   etiqueta: string
   tipo: 'entero' | 'decimal' | 'texto' | 'booleano'
+  /** Espejo de `ParametroConocido.Alcance`: una clave de sucursal se configura por sucursal y la comparten todas sus
+   * cajas; una de caja, por punto de venta. */
+  alcance: AlcanceDeParametro
   porDefecto: string
 }[] = [
-  { clave: 'tolerancia_pago', etiqueta: 'Tolerancia de pago ($)', tipo: 'decimal', porDefecto: '10' },
+  { clave: 'tolerancia_pago', etiqueta: 'Tolerancia de pago ($)', tipo: 'decimal', alcance: 'caja', porDefecto: '10' },
   {
     clave: 'importe_adicional_recarga',
     etiqueta: 'Adicional por operación de recarga ($)',
     tipo: 'decimal',
+    alcance: 'caja',
     porDefecto: '5',
   },
-  { clave: 'importe_envio', etiqueta: 'Importe del envío ($)', tipo: 'decimal', porDefecto: '0' },
-  { clave: 'slots_tickets_espera', etiqueta: 'Tickets en espera (cantidad)', tipo: 'entero', porDefecto: '10' },
+  { clave: 'importe_envio', etiqueta: 'Importe del envío ($)', tipo: 'decimal', alcance: 'caja', porDefecto: '0' },
+  {
+    clave: 'slots_tickets_espera',
+    etiqueta: 'Tickets en espera (cantidad)',
+    tipo: 'entero',
+    alcance: 'caja',
+    porDefecto: '10',
+  },
   {
     clave: 'zona_horaria',
     etiqueta: 'Zona horaria',
     tipo: 'texto',
+    alcance: 'sucursal',
     porDefecto: 'America/Argentina/Buenos_Aires',
   },
-  { clave: 'comision_porcentaje', etiqueta: 'Comisión (%)', tipo: 'decimal', porDefecto: '0' },
+  { clave: 'comision_porcentaje', etiqueta: 'Comisión (%)', tipo: 'decimal', alcance: 'caja', porDefecto: '0' },
   // stage-12-lotes-vencimientos (Slice 15, espejo de `ParametroConocido.LotesHabilitado`/
-  // `.DiasAlertaVencimiento`): interruptor del módulo de lotes a nivel empresa + horizonte de
-  // alerta del reporte de vencimientos.
-  { clave: 'lotes_habilitado', etiqueta: 'Control de lotes habilitado', tipo: 'booleano', porDefecto: 'false' },
+  // `.DiasAlertaVencimiento`): interruptor del módulo de lotes + horizonte de alerta del reporte de vencimientos,
+  // los dos de la sucursal.
+  {
+    clave: 'lotes_habilitado',
+    etiqueta: 'Control de lotes habilitado',
+    tipo: 'booleano',
+    alcance: 'sucursal',
+    porDefecto: 'false',
+  },
   {
     clave: 'dias_alerta_vencimiento',
     etiqueta: 'Días de alerta de vencimiento',
     tipo: 'entero',
+    alcance: 'sucursal',
     porDefecto: '30',
   },
   {
     clave: 'redondeo_sugerencia_precio',
     etiqueta: 'Redondeo de la sugerencia de precio (múltiplo, $)',
     tipo: 'decimal',
+    alcance: 'caja',
     porDefecto: '100',
   },
   // E4 de pagos y aplicaciones (espejo de `ParametroConocido.ToleranciaRedondeoPagoProveedor`): hasta cuánto se perdona o
@@ -352,6 +381,7 @@ export const PARAMETROS_CONOCIDOS: {
     clave: 'tolerancia_redondeo_pago_proveedor',
     etiqueta: 'Tolerancia de redondeo en pagos a proveedores ($)',
     tipo: 'decimal',
+    alcance: 'caja',
     porDefecto: '500',
   },
 ]
@@ -3056,7 +3086,7 @@ export type FilaDeVencimiento = {
  * `zonaHoraria` son la fecha y la zona efectivamente resueltas para clasificar cada fila — "hoy"
  * se calcula en la zona horaria del punto de venta, NUNCA en UTC. `diasDeAlerta` es el horizonte
  * efectivamente aplicado: el parámetro `dias` de la query si vino, si no el
- * `dias_alerta_vencimiento` resuelto (PV → empresa → default). */
+ * `dias_alerta_vencimiento` resuelto (sucursal → empresa → default). */
 export type Vencimientos = {
   idSucursal: number
   nombreSucursal: string
