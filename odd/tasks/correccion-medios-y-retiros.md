@@ -54,7 +54,7 @@ Each slice passes judgment-day before its PR.
 
 - [x] T1 — Backend: change a venta's medios (service, POS + admin endpoints, guards, facturación
   acumulados, closed-turno arqueo + cuenta compensation, audit, offline dedup), with tests.
-- [ ] T2 — Backend: retiros list (filters + sort) and admin edit/delete (soft delete, arqueo
+- [x] T2 — Backend: retiros list (filters + sort) and admin edit/delete (soft delete, arqueo
   recalc, tesorería Ajuste, audit), with tests and migration.
 - [ ] T3 — Backend: back-office ventas list with per-column filters and sort, with tests.
 - [ ] T4 — Web: reusable sortable header + POS `VentasDelTurno` sort and "cambiar medio" modal.
@@ -73,6 +73,7 @@ Each slice passes judgment-day before its PR.
 | Task | Route | Commit | Review | Checks |
 |------|-------|--------|--------|--------|
 | T1 | delegated (writer: 2+ non-trivial files) | a672d216 (refactor), f5e2fc1d (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2258/2258; Application.Tests 1639/1639; integration CambioDeMedios + SuperficieDeAutorizacion + regression (pagos edición, checkout, anulación, offline/reservas, facturación, cuentas, conciliación, sin reintento) 430/430; 5 mutants killed |
+| T2 | delegated (writer: 2+ non-trivial files) | e7e0ab43 (fix, audit labels), 712ed19e (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2298/2298; Application.Tests 1641/1641; integration new (RetirosDeAdministracion + ListadoDeRetiros) 43/43; regression (Caja, Turno, Libro, Conciliacion, Pago, Auditoria, Superficie, Aislamiento, SinReintento, CambioDeMedios, FiscalSchema, Tesoreria, Historico, Reportes) 1617/1617; web tsc clean, vitest tipos + Auditoria 28/28; mutants killed: 11 filter clauses, sort switch, 3 deleted_at/guard clauses, conciliación guard, backfill SET LOCAL |
 
 ## T1 notes
 
@@ -86,6 +87,24 @@ Each slice passes judgment-day before its PR.
   credited medio, or cierre rows for a medio the cierre never credited.
 - Open: behavioral transient-retry test for the new non-retrying site (structural guard only).
 
+## T2 notes
+
+- Endpoints: `GET /api/caja/retiros` (LecturaDeReportes: Supervisor + Admin, same as the libro), `PUT /api/caja/retiros/{id}`
+  body `{importe, motivo}` → 200 `FilaDeRetiro`, `DELETE /api/caja/retiros/{id}` → 204 (both GestionDeCatalogo, Admin).
+- List params: `desde`, `hasta` (creado_el, inclusive), `idPuntoVenta`, `idTurnoCaja`, `idEmpleado`, `importeDesde`, `importeHasta`,
+  `motivo` (accent/case-insensitive), `turnoCerrado`, `conciliado`, `esRetiroDeCierre`, `pagina` (1), `tamanio` (25, max 200),
+  `orden` (fecha, puntoVenta, turno, empleado, importe, motivo, estadoTurno, conciliado, esRetiroDeCierre), `direccion`
+  (ascendente/descendente). Default order fecha desc, id desc; with orden, id asc tiebreak. Envelope `{items, total, pagina, tamanio}`.
+- Codes: 404 `no_encontrado` (missing, other tenant, deleted, refuerzo/apertura) before the body; 409 `retiro_de_cierre_no_editable`;
+  400 `movimiento_de_caja_importe_invalido` / `movimiento_de_caja_sin_motivo`; 409 `periodo_conciliado`; 400 `orden_invalido`,
+  `direccion_invalida`, `direccion_sin_orden`.
+- Schema: `movimientos_caja.deleted_at` (EF `BajaLogica` filter on MovimientoCaja) and `es_retiro_de_cierre` (set by
+  CerrarPorRetiro; backfill by fixed motivo + creado_el = fecha_cierre). Libro date = turno fecha_cierre, or now if open.
+- Locks: conciliación shared → turno FOR UPDATE → retiro FOR UPDATE + single EF read → (closed) recalculation + tesorería advisory.
+  Closed turno: `RecalculoDeArqueoDeTurnoCerrado` + `movimientos_tesoreria` Ajuste for the difference. Only Retiro is editable.
+- Finding: `IgnoreQueryFilters(["BajaLogica"])` disables the filter for the WHOLE query, so queries that use it exclude deleted
+  rows by hand.
+
 ## Next step
 
-T2.
+T3.
