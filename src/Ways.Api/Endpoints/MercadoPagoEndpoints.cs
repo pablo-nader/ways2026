@@ -18,6 +18,10 @@ public static class MercadoPagoEndpoints
 {
     public const string RutaDelCallback = "/api/integraciones/mercadopago/callback";
 
+    public const string RutaDelWebhook = "/api/integraciones/mercadopago/webhook";
+
+    private const int LimiteDelCuerpoDelWebhook = 16 * 1024;
+
     /// <summary>Pantalla del back office donde el Admin ve y administra las empresas; vuelve acá con
     /// <c>#mercadopago=&lt;completar|cancelado&gt;&amp;empresa=&lt;id&gt;</c>.</summary>
     public const string RutaDeRetorno = "/organizacion/empresas";
@@ -218,7 +222,75 @@ public static class MercadoPagoEndpoints
             "Retorno de OAuth de Mercado Pago: no canjea nada. Redirige a la pantalla de la empresa con el code y el state en el " +
             "fragmento de la URL (#mercadopago=completar|cancelado), para que la sesión de Ways complete el canje.");
 
+        app.MapPost(RutaDelWebhook, async (
+            HttpContext contexto,
+            ServicioDeAvisosDeMercadoPago servicio,
+            CancellationToken ct) =>
+        {
+            var consulta = contexto.Request.Query;
+            var tipo = consulta["type"].ToString();
+            var aviso = new AvisoDeMercadoPago(
+                contexto.Request.Headers["x-signature"].ToString(),
+                contexto.Request.Headers["x-request-id"].ToString(),
+                consulta["data.id"].ToString(),
+                tipo.Length > 0 ? tipo : null,
+                tokenCuerpo => LeerTipoDelCuerpoAsync(contexto.Request, tokenCuerpo));
+
+            return await servicio.ProcesarAsync(aviso, ct) switch
+            {
+                ResultadoDelAviso.Atendido => Results.Ok(),
+                ResultadoDelAviso.NoConfigurado => throw new ErrorDominio(
+                    "mercadopago_no_configurado", "Los avisos de Mercado Pago no están configurados en este entorno.",
+                    StatusCodes.Status503ServiceUnavailable),
+                _ => throw new ErrorDominio(
+                    "mercadopago_firma_invalida", "La firma del aviso de Mercado Pago no es válida.", StatusCodes.Status401Unauthorized)
+            };
+        })
+        .AllowAnonymous()
+        .WithSummary(
+            "Aviso (webhook) de Mercado Pago, anónimo: la firma x-signature (HMAC-SHA256 de id, x-request-id y ts con el secreto de la " +
+            "aplicación, ts dentro de 10 minutos atrás y 2 adelante) es la única credencial. Con firma válida refresca el cobro de la orden " +
+            "avisada (solo el tópico order; una orden desconocida o de otro tópico se ignora) y contesta 200 aunque el refresco falle. " +
+            "401 mercadopago_firma_invalida, 503 mercadopago_no_configurado.");
+
         return app;
+    }
+
+    /// <summary>El <c>type</c> del cuerpo JSON, solo cuando la URL no lo trae. Se invoca únicamente después de una firma válida, y el
+    /// cuerpo se lee acotado: lo que no es un objeto JSON chico con un <c>type</c> de texto no tiene tipo.</summary>
+    private static async Task<string?> LeerTipoDelCuerpoAsync(HttpRequest solicitud, CancellationToken ct)
+    {
+        var buffer = new byte[LimiteDelCuerpoDelWebhook + 1];
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var leidos = await solicitud.Body.ReadAsync(buffer.AsMemory(total), ct);
+            if (leidos == 0)
+            {
+                break;
+            }
+
+            total += leidos;
+        }
+
+        if (total is 0 or > LimiteDelCuerpoDelWebhook)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var documento = System.Text.Json.JsonDocument.Parse(buffer.AsMemory(0, total));
+            return documento.RootElement is { ValueKind: System.Text.Json.JsonValueKind.Object } raiz
+                && raiz.TryGetProperty("type", out var tipo)
+                && tipo.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? tipo.GetString()
+                    : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Un 23505 de alguno de los dos índices únicos de la conexión, clasificado por <see cref="ManejadorDeErrores"/>

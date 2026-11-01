@@ -15,6 +15,10 @@ public class OpcionesDeMercadoPago
     /// <summary>Debe coincidir exactamente con una URI registrada en la aplicación de Mercado Pago.</summary>
     public string? RedirectUri { get; set; }
 
+    /// <summary>Secreto con el que Mercado Pago firma los avisos (panel de la aplicación, Webhooks). Sin él el webhook responde 503.
+    /// Nunca se registra ni se devuelve.</summary>
+    public string? SecretoWebhook { get; set; }
+
     public string UrlAutorizacion { get; set; } = "https://auth.mercadopago.com/authorization";
 
     public string UrlApi { get; set; } = "https://api.mercadopago.com";
