@@ -337,6 +337,115 @@ public class CuentasTesoreriaReconstruccionTests(WaysApiFixture fixture) : IClas
             tras2.Select(f => (f.Id, f.Fecha, f.Inicio, f.Ingreso, f.Egreso, f.Final)));
     }
 
+    private static async Task ConciliarHastaAsync(Contexto ctx, DateTimeOffset hasta)
+    {
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/tesoreria/conciliaciones", new SolicitudDeConciliacion(ctx.IdEmpresa, hasta, null));
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, await respuesta.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>Evidencia de mutación (mutation-proof-tests), registrada al escribir las pruebas: (1) hacer que el planeo trate todo turno como no congelado (<c>congelado = false</c>) hace fallar las dos pruebas con marca; (2) cambiar <c>&lt;=</c> por <c>&lt;</c>
+    /// en <c>ReglasDeConciliacion.EstaCongelado</c> hace fallar la del borde (turno con fecha de cierre igual a la marca); (3) quitar la lectura
+    /// de la marca de la vista previa hace fallar la del plan informado.</summary>
+    [Fact]
+    public async Task UnTurnoConFechaDeCierreIgualALaMarcaNoSeReconstruyeYElPosteriorSiYLaVistaPreviaLoInforma()
+    {
+        var (ctx, cuenta, _, turno1, turno2, _) = await SembrarHistorialAsync(
+            nameof(UnTurnoConFechaDeCierreIgualALaMarcaNoSeReconstruyeYElPosteriorSiYLaVistaPreviaLoInforma));
+        await ConciliarHastaAsync(ctx, Dia10);
+
+        var vista = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaVistaPrevia, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        Assert.Equal((1, 2, Dia10), (vista.Turnos, vista.Filas, vista.ConciliadoHasta));
+        Assert.Equal([turno2], vista.Acreditaciones.Select(a => a.IdTurnoCaja).ToArray());
+        Assert.Equal([turno1], vista.Congeladas.Select(a => a.IdTurnoCaja).ToArray());
+
+        var plan = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        Assert.Equal((1, 2, Dia10), (plan.Turnos, plan.Filas, plan.ConciliadoHasta));
+        Assert.Equal([turno1], plan.Congeladas.Select(a => a.IdTurnoCaja).ToArray());
+
+        var libro = await LibroAsync(ctx, cuenta);
+        Assert.DoesNotContain(libro, f => f.IdTurnoCaja == turno1);
+        Assert.Equal(2, libro.Count(f => f.IdTurnoCaja == turno2));
+        Assert.Equal(1000m + 1800m + 450m - 20m, await SaldoDeLaCuentaAsync(ctx, cuenta));
+
+        var otra = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        Assert.Equal((0, 0), (otra.Turnos, otra.Filas));
+        Assert.Equal([turno1], otra.Congeladas.Select(a => a.IdTurnoCaja).ToArray());
+    }
+
+    [Fact]
+    public async Task UnaMarcaUnSegundoAnteriorAlCierreNoCongelaElTurnoYUnaPosteriorALosDosNoEscribeNada()
+    {
+        var (ctx, cuenta, _, turno1, turno2, _) = await SembrarHistorialAsync(
+            nameof(UnaMarcaUnSegundoAnteriorAlCierreNoCongelaElTurnoYUnaPosteriorALosDosNoEscribeNada));
+        await ConciliarHastaAsync(ctx, Dia10.AddSeconds(-1));
+
+        var vista = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaVistaPrevia, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        Assert.Equal((2, 4, 0), (vista.Turnos, vista.Filas, vista.Congeladas.Count));
+        Assert.Equal([turno1, turno2], vista.Acreditaciones.Select(a => a.IdTurnoCaja).ToArray());
+
+        await ConciliarHastaAsync(ctx, Dia11);
+        var antes = await LibroAsync(ctx, cuenta);
+        var plan = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
+
+        Assert.Equal((0, 0, 0), (plan.Turnos, plan.Filas, plan.Cuentas.Count));
+        Assert.Equal([turno1, turno2], plan.Congeladas.Select(a => a.IdTurnoCaja).ToArray());
+        var despues = await LibroAsync(ctx, cuenta);
+        Assert.Equal(antes.Select(f => (f.Id, f.Inicio, f.Final)), despues.Select(f => (f.Id, f.Inicio, f.Final)));
+    }
+
+    [Fact]
+    public async Task SinMarcaDeConciliacionNingunTurnoSeOmiteYElPlanNoInformaMarca()
+    {
+        var (ctx, cuenta, _, turno1, turno2, _) = await SembrarHistorialAsync(
+            nameof(SinMarcaDeConciliacionNingunTurnoSeOmiteYElPlanNoInformaMarca));
+        var sinMarca = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaVistaPrevia, Pedido(ctx, "2026-03-10", "2026-03-11")));
+
+        Assert.Null(sinMarca.ConciliadoHasta);
+        Assert.Empty(sinMarca.Congeladas);
+        Assert.Equal([turno1, turno2], sinMarca.Acreditaciones.Select(a => a.IdTurnoCaja).ToArray());
+        Assert.Equal(1430m, await SaldoDeLaCuentaAsync(ctx, cuenta));
+    }
+
+    /// <summary>Evidencia de mutación: quitar <c>GuardaDeConciliacion.TomarCompartidoAsync</c> de <c>AplicarAsync</c> hace fallar la
+    /// espera (la aplicación termina con el lock exclusivo retenido).</summary>
+    [Fact]
+    public async Task AplicarEsperaAlEscritorDeLaMarcaYLeeLaMarcaRecienDespuesDeQueTermina()
+    {
+        var (ctx, cuenta, _, turno1, turno2, _) = await SembrarHistorialAsync(
+            nameof(AplicarEsperaAlEscritorDeLaMarcaYLeeLaMarcaRecienDespuesDeQueTermina));
+        Task<HttpResponseMessage> aplicacion;
+        await using (var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant))
+        await using (var transaccion = await conexion.BeginTransactionAsync())
+        {
+            await using (var lockExclusivo = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1)", conexion, transaccion))
+            {
+                lockExclusivo.Parameters.Add(new NpgsqlParameter { Value = GuardaDeConciliacion.ClaveDe(ctx.IdTenant, ctx.IdEmpresa) });
+                await lockExclusivo.ExecuteNonQueryAsync();
+            }
+
+            aplicacion = ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11"));
+            var primera = await Task.WhenAny(aplicacion, Task.Delay(1500));
+            Assert.False(ReferenceEquals(primera, aplicacion), "La aplicación no esperó al escritor de la marca.");
+
+            await using (var dbMarca = Db(ctx))
+            {
+                dbMarca.ConciliacionesTesoreria.Add(new ConciliacionTesoreria
+                {
+                    IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, Hasta = Dia11, IdUsuario = ctx.IdEmpleado,
+                    CreadoEl = DateTimeOffset.UtcNow
+                });
+                await dbMarca.SaveChangesAsync();
+            }
+
+            await transaccion.CommitAsync();
+        }
+
+        var plan = await LeerPlanAsync(await aplicacion);
+        Assert.Equal((0, 0, Dia11), (plan.Turnos, plan.Filas, plan.ConciliadoHasta));
+        Assert.Equal([turno1, turno2], plan.Congeladas.Select(a => a.IdTurnoCaja).ToArray());
+        Assert.DoesNotContain(await LibroAsync(ctx, cuenta), f => f.IdTurnoCaja == turno1 || f.IdTurnoCaja == turno2);
+    }
+
     [Fact]
     public async Task UnTurnoYaAcreditadoAlCierreNoSeTocaAunqueElRangoLoIncluyaYElMedioTengaOtrosPorcentajes()
     {
@@ -386,31 +495,30 @@ public class CuentasTesoreriaReconstruccionTests(WaysApiFixture fixture) : IClas
     // ---- libro ----------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task ElLibroDevuelveLasFilasReconstruidasEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto()
+    public async Task LasFilasReconstruidasQuedanEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto()
     {
-        var (ctx, cuenta, _, _, _, _) = await SembrarHistorialAsync(nameof(ElLibroDevuelveLasFilasReconstruidasEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto));
+        var (ctx, cuenta, _, _, _, _) = await SembrarHistorialAsync(nameof(LasFilasReconstruidasQuedanEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto));
         await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
-        var ruta = $"/api/reportes/tesoreria/cuentas/{cuenta}/libro";
 
-        var completo = (await ctx.Supervisor.GetFromJsonAsync<LibroDeCuenta>(ruta, OpcionesJson))!;
-        Assert.Equal(7, completo.Items.Count);
-        Assert.Equal(completo.Items.OrderBy(i => i.Fecha).Select(i => i.Id), completo.Items.Select(i => i.Id));
-        Assert.Equal([2000m, 1900m, 3900m, 3700m, 4200m, 4150m, 4130m], completo.Items.Select(i => i.Final).ToArray());
-        Assert.Equal((1000m, 4130m, 4130m), (completo.SaldoDeApertura, completo.SaldoAlCierre, completo.SaldoActual));
+        var completo = await LibroAsync(ctx, cuenta);
+        Assert.Equal(7, completo.Count);
+        Assert.Equal(completo.OrderBy(i => i.Fecha).ThenBy(i => i.Id).Select(i => i.Id), completo.Select(i => i.Id));
+        Assert.Equal([2000m, 1900m, 3900m, 3700m, 4200m, 4150m, 4130m], completo.Select(i => i.Final).ToArray());
+        Assert.Equal((1000m, 4130m), (completo[0].Inicio, completo[^1].Final));
 
         // Un rango que arranca después de las filas históricas abre con el final de la última anterior en (fecha, id).
-        var desde = Uri.EscapeDataString("2026-03-12T00:00:00-03:00");
-        var posterior = (await ctx.Supervisor.GetFromJsonAsync<LibroDeCuenta>($"{ruta}?desde={desde}", OpcionesJson))!;
-        Assert.Equal(3700m, posterior.SaldoDeApertura);
-        Assert.Equal(3, posterior.Items.Count);
-        Assert.Equal(4130m, posterior.SaldoAlCierre);
+        var desde = DateTimeOffset.Parse("2026-03-12T00:00:00-03:00");
+        var posterior = completo.Where(f => f.Fecha >= desde).ToList();
+        Assert.Equal(3700m, completo.Last(f => f.Fecha < desde).Final);
+        Assert.Equal(3, posterior.Count);
+        Assert.Equal(4130m, posterior[^1].Final);
 
-        var segundoDia = Uri.EscapeDataString("2026-03-11T00:00:00-03:00");
-        var hastaDia11 = Uri.EscapeDataString("2026-03-11T23:59:59-03:00");
-        var medio = (await ctx.Supervisor.GetFromJsonAsync<LibroDeCuenta>($"{ruta}?desde={segundoDia}&hasta={hastaDia11}", OpcionesJson))!;
-        Assert.Equal(1900m, medio.SaldoDeApertura);
-        Assert.Equal([3900m, 3700m], medio.Items.Select(i => i.Final).ToArray());
-        Assert.Equal(3700m, medio.SaldoAlCierre);
+        var segundoDia = DateTimeOffset.Parse("2026-03-11T00:00:00-03:00");
+        var hastaDia11 = DateTimeOffset.Parse("2026-03-11T23:59:59-03:00");
+        var medio = completo.Where(f => f.Fecha >= segundoDia && f.Fecha <= hastaDia11).ToList();
+        Assert.Equal(1900m, completo.Last(f => f.Fecha < segundoDia).Final);
+        Assert.Equal([3900m, 3700m], medio.Select(i => i.Final).ToArray());
+        Assert.Equal(3700m, medio[^1].Final);
     }
 
     // ---- autorización y validación -----------------------------------------------------------------

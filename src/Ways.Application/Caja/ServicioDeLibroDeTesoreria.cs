@@ -108,8 +108,10 @@ public class ServicioDeLibroDeTesoreria(IWaysDbContext db)
             .OrderBy(c => c.Nombre).ThenBy(c => c.Id)
             .ToList();
 
+        var conciliadoHasta = await GuardaDeConciliacion.LeerMarcaAsync(db, idEmpresa, ct);
+
         return new LibroDeTesoreria(
-            idEmpresa, desde, hasta,
+            idEmpresa, desde, hasta, conciliadoHasta,
             delLibro.Select(c => new CuentaDelLibro(c.Id, c.Nombre, c.Activo)).ToList(),
             Saldos(anterior, delLibro),
             Saldos(actual, delLibro),

@@ -180,3 +180,116 @@
 .marca-de-ofertas__texto[data-lado='abajo']::before {
   bottom: 100%;
 }
+
+/* Libro de tesorería: importe negativo con el rojo del tema (contraste >= 5,4:1 sobre las superficies de tabla en claro y oscuro). */
+.libro-importe--negativo {
+  color: var(--ws-danger);
+}
+
+/* Conciliación: la fila congelada usa la superficie hundida del tema (el rojo de importe conserva >= 5,4:1 sobre ella en claro y oscuro). */
+.libro-conciliacion {
+  color: var(--ws-ink-muted);
+}
+
+.libro-tabla tr.libro-fila--conciliada > td {
+  background-color: var(--ws-surface-sunken);
+}
+
+.libro-candado {
+  display: inline-flex;
+  margin-right: var(--ws-space-1, 0.25rem);
+  color: var(--ws-ink-muted);
+  vertical-align: -1px;
+}
+
+.libro-tabla th,
+.libro-tabla td {
+  white-space: nowrap;
+}
+
+.libro-tabla td.libro-detalle {
+  white-space: normal;
+}
+
+.libro-tarjeta {
+  min-width: 11rem;
+  padding: var(--ws-space-3);
+  border: 1px solid var(--ws-line);
+  border-radius: var(--ws-radius-md);
+  background: var(--ws-surface);
+}
+
+.libro-tarjeta__monto {
+  font-size: 1.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Globo de detalle del libro: misma mecánica que IconoDeAyuda (fijo, con puente sobre la separación), con colores de superficie. */
+.globo-libro {
+  display: inline-block;
+}
+
+.globo-libro__texto {
+  position: fixed;
+  z-index: 2000;
+  width: max-content;
+  max-width: 28rem;
+  transform: translate(-50%, 0);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--ws-line-control);
+  border-radius: var(--ws-radius-md);
+  background: var(--ws-surface-raised);
+  color: var(--ws-ink);
+  box-shadow: var(--ws-shadow-overlay);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+}
+
+.globo-libro__texto[data-lado='arriba'] {
+  transform: translate(-50%, -100%);
+}
+
+.globo-libro__texto::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--globo-libro-separacion);
+}
+
+.globo-libro__texto[data-lado='abajo']::before {
+  bottom: 100%;
+}
+
+.globo-libro__texto[data-lado='arriba']::before {
+  top: 100%;
+}
+
+.globo-libro__tabla {
+  border-collapse: collapse;
+}
+
+.globo-libro__tabla th,
+.globo-libro__tabla td {
+  padding: 0.125rem 0.5rem;
+}
+
+.globo-libro__tabla th {
+  font-weight: 600;
+  color: var(--ws-ink-muted);
+  text-align: right;
+}
+
+.globo-libro__tabla th:first-child,
+.globo-libro__tabla td:first-child {
+  text-align: left;
+}
+
+.globo-libro__tabla td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

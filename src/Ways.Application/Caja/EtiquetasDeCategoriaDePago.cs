@@ -3,7 +3,7 @@ using Ways.Domain.Pagos;
 namespace Ways.Application.Caja;
 
 /// <summary>Única fuente del lado del servidor de las etiquetas en español de <see cref="CategoriaPago"/>:
-/// las usan el export del libro de tesorería y el orden por concepto de <c>GET /api/reportes/tesoreria</c>.
+/// las usa el detalle de un pago del libro de tesorería.
 /// Espejo de <c>CATEGORIAS_PAGO</c> en <c>Ways.Web/src/api/tipos.ts</c>; que no se desfasen lo cuidan
 /// <c>EtiquetasDeCategoriaDePagoTests</c> (backend) y el test de <c>CATEGORIAS_PAGO</c> en
 /// <c>tipos.test.ts</c> (web), que fijan la misma lista literal.</summary>

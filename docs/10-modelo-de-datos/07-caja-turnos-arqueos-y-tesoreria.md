@@ -120,11 +120,10 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > administración (`ServicioDePagos.RegistrarDeAdministracionAsync`, mismo camino de
 > `EscriturasDeTesoreria` que un pago de origen `tesoreria` del POS): cierre de turno
 > (`tipo = 'retiro_caja'`, `egreso` SIEMPRE 0), pago de origen `tesoreria` desde el POS y pago de
-> administración (ambos `tipo = 'pago'`, `egreso = importe`). La lectura
-> (`ServicioDeTesoreria.ListarAsync`/`GET /api/reportes/tesoreria`) toma `id_empresa` como filtro
-> OBLIGATORIO (ADR-8) y admite `id_punto_venta` como filtro OPCIONAL adicional sobre esa misma
-> cadena — un filtro por punto de venta muestra un SUBCONJUNTO de filas (las originadas ahí), que
-> no se encadenan entre sí porque la cadena entera vive a nivel empresa, nunca por punto de venta.
+> administración (ambos `tipo = 'pago'`, `egreso = importe`). La cadena vive a nivel empresa, nunca
+> por punto de venta. Ya no tiene un reporte propio: el libro de tesorería
+> (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`) se calcula desde las fuentes y de
+> esta tabla solo lee los `ajuste_manual`.
 
 ### Cuentas de tesorería
 
@@ -220,13 +219,10 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > escribe dos filas (el del mismo saldo objetivo no, porque la segunda diferencia da cero) y la protección es la guarda de
 > re-entrada de la pantalla; un 5xx no se reintenta solo. Es el camino para corregir lo que el libro todavía no refleja.
 >
-> **Lectura (`GET /api/reportes/tesoreria/cuentas?idEmpresa=` y `.../cuentas/{id}/libro`, Supervisor y Admin).**
-> `ServicioDeLibroDeCuentas`. Las cuentas vivas de la empresa con su saldo (`final` del último movimiento por id, o
-> `saldo_inicial`) y la fecha de ese movimiento, más el aviso de los medios electrónicos activos sin cuenta utilizable (sin cuenta,
-> con una dada de baja o con una de otra empresa: la misma regla con la que el cierre descarta una cuenta). El libro de una cuenta
-> se ordena por id y nunca por fecha, usa el rango inclusivo del libro de efectivo y trae el saldo de apertura (el `final` del
-> último movimiento por id con fecha anterior al rango, o el saldo inicial) y los totales por tipo de TODO el rango. Un medio o un
-> usuario dado de baja deja su nombre en `null` y conserva el id. No hay exportación.
+> **Lectura.** La cadena de cada cuenta ya no tiene un reporte propio. El libro de tesorería
+> (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`, Supervisor y Admin) lee de esta tabla los cobros, las
+> comisiones y las retenciones de cada cierre, agrupados por turno, y los `ajuste` manuales. Su saldo se calcula desde las fuentes,
+> no desde `final`.
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
@@ -278,6 +274,59 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 >   cuando el cuerpo no los envía, y rechaza con 400 si los envía con valor.
 > - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
 > - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
+
+### Conciliación de la tesorería
+
+```sql
+conciliaciones_tesoreria (    -- [operativa — marcas append-only] una fila por conciliación de una empresa
+    id_conciliacion_tesoreria, id_empresa,
+    hasta timestamptz NOT NULL,              -- instante hasta el cual la tesorería está conciliada, inclusive
+    id_usuario,                              -- el Admin que concilió
+    creado_el timestamptz NOT NULL,
+    nota text NULL                           -- hasta 500 caracteres, la valida el servicio
+);
+```
+
+> **Estado (libro de tesorería, T5a).** Un Admin marca que la tesorería de una empresa está revisada hasta un instante; la marca
+> vigente de la empresa es el mayor `hasta`. Todo lo que alimenta el libro de tesorería con fecha menor o igual (inclusive) queda
+> congelado y se corrige con movimientos nuevos (ajustes manuales, pagos nuevos). Las marcas no se editan ni se borran. Tabla de
+> tenant sin baja lógica (como `movimientos_tesoreria`), RLS estándar, FK compuesta `fk_conciliaciones_tesoreria_empresa` y simples
+> `fk_conciliaciones_tesoreria_tenant` y `fk_conciliaciones_tesoreria_usuario`, todas RESTRICT. Índices:
+> `ix_conciliaciones_tesoreria_tenant`, `ix_conciliaciones_tesoreria_empresa_hasta` `(id_empresa, id_tenant, hasta)` (soporte de la FK y
+> lectura del máximo) e `ix_conciliaciones_tesoreria_usuario`. Sin índice único: la monotonía la sostiene el lock del escritor, y
+> ninguna FK recibe un id del cliente sin validar (la empresa se resuelve con 404 antes de escribir).
+>
+> **Endpoint (`POST /api/tesoreria/conciliaciones`, solo Admin).** Cuerpo `{ idEmpresa, hasta, nota? }`, responde 201. Orden: 404 de la
+> empresa, 400 del cuerpo (`hasta_requerido`, `nota_muy_larga`) y 409: `conciliacion_futura` (`hasta` posterior a la hora del
+> servidor), `conciliacion_anterior` (`hasta` menor o igual a la marca vigente) y `conciliacion_con_turno_abierto` (algún turno
+> abierto de la empresa con `fecha_apertura <= hasta`). `GET /api/reportes/libro-tesoreria` trae `conciliadoHasta` (la marca vigente,
+> sin importar el rango pedido; `null` si nunca se concilió).
+>
+> **Qué se congela.** Solo lo que cambia los números del libro: la edición y la baja de un pago (POS o administración) con
+> `fecha` menor o igual a la marca, o cuyo turno cerró en o antes de ella (409 `periodo_conciliado`); el alta de un pago con una fecha
+> menor o igual (el pago de administración con fecha pasada, el pago de una compra, el pago de personal con origen tesorería, y
+> cualquier alta del POS que pierda la carrera contra la marca); el cierre de un turno fechado en o antes de la marca (solo por
+> carrera: la marca no se puede poner con un turno abierto que empezó antes); y el cambio de cuenta o de comportamiento de un medio
+> de pago que tiene líneas de pago o movimientos de cuenta fechados en o antes de la marca de SU empresa; el saldo inicial de una cuenta de
+> tesorería (409 `periodo_conciliado` apenas la empresa tiene alguna marca, porque el libro lo suma a todos los saldos; nombre y estado siguen
+> editables); y los ajustes manuales de efectivo y de cuenta, que van fechados "ahora" y solo pueden chocar si la marca se confirma entre su
+> reloj y su commit. Siguen editables porque no
+> cambian lo que el libro lee: compras (edición y anulación), aplicaciones y desaplicaciones, redondeos, vincular compra, reasignar
+> personal, cobros y ventas. El pago de administración fechado hoy (en la zona de la empresa) toma la hora actual como `fecha` y no la
+> medianoche local: así queda siempre posterior a una marca puesta antes durante el día; las fechas pasadas conservan la medianoche local.
+>
+> **Locks.** `GuardaDeConciliacion`: lock advisory de transacción `pg_advisory_xact_lock(bigint)` sobre una clave de `(tenant, empresa)`
+> (bit alto encendido, distinta del advisory de tesorería y del de familias). El escritor de la marca lo toma EXCLUSIVO y no toma ningún
+> otro; todo escritor protegido lo toma COMPARTIDO como PRIMER lock de su transacción (antes de turno, compra, pago, proveedor y del
+> advisory de tesorería), lee la marca y recién ahí decide. El orden "primero" es obligatorio porque PostgreSQL encola un pedido
+> compartido detrás de un exclusivo que espera: quien pidiera la marca reteniendo otro lock podría cerrar un ciclo con el escritor de la
+> marca. Los escritores cuya empresa no se conoce antes de los locks (pago de una compra, cierre de turno, edición de un pago) la
+> pre-leen sin lock (la empresa de un pago y el punto de venta de un turno no cambian; la de una compra se verifica de nuevo bajo su lock). La edición de un medio de pago toma el compartido de TODAS las empresas del tenant, en id
+> ascendente. La edición de una cuenta de tesorería y los dos ajustes manuales lo toman como primer lock (la edición pre-lee la empresa de la
+> cuenta, que no cambia). La reconstrucción de cuentas (`POST /api/cuentas-tesoreria/reconstruccion` y su vista previa) omite los turnos con
+> `fecha_cierre <=` la marca de la empresa (igual a la marca = congelado) en lugar de rechazar el pedido: la respuesta trae
+> `conciliadoHasta` y `congeladas` (las acreditaciones pendientes omitidas, sin contarlas en `turnos` ni `filas`). La aplicación toma el
+> compartido como PRIMER lock, antes del advisory de tesorería y de los locks de medios y cuentas, y lee la marca una sola vez bajo él.
 
 ### Conexiones con Mercado Pago
 

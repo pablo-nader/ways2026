@@ -216,12 +216,11 @@ public static class DependencyInjection
 
         // stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation): G3, el
         // libro de tesorería — cero derivación, solo lectura encadenada por Id.
-        services.AddScoped<ServicioDeTesoreria>();
         services.AddScoped<ServicioDeCuentasDeTesoreria>();
-        services.AddScoped<ServicioDeLibroDeCuentas>();
         services.AddScoped<ServicioDeAjusteDeCuentaDeTesoreria>();
         services.AddScoped<ServicioDeReconstruccionDeCuentas>();
         services.AddScoped<ServicioDeAjusteDeEfectivoDeTesoreria>();
+        services.AddScoped<ServicioDeConciliacionDeTesoreria>();
         services.AddScoped<ServicioDeLibroDeTesoreria>();
 
         // stage-11-exportacion-reportes, Slice 9 (proposal decisión 10, droppable a Etapa 13):

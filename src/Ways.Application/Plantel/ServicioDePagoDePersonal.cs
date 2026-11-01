@@ -96,6 +96,14 @@ public sealed class ServicioDePagoDePersonal(
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
+        // Solo el pago de sueldo entra al libro (el pago solo de descuento no tiene origen ni pago). La marca de conciliación es el
+        // primer lock (ver GuardaDeConciliacion); el pago de cajón lleva el instante real y el de tesorería, la fecha de negocio.
+        if (plan.OrigenFondos is { } origenDelPago)
+        {
+            var fechaDelPago = origenDelPago == OrigenFondosPago.Tesoreria ? entorno.FechaDeNegocio : momento;
+            await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, entorno.IdEmpresa, fechaDelPago, ct);
+        }
+
         if (entorno.IdTurnoCaja is { } idTurnoCaja)
         {
             await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(idTurnoCaja, ct);

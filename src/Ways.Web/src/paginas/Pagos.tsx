@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import {
   advertenciasDePagoDeAdministracion,
   aSolicitudDePagoDeAdministracion,
@@ -59,6 +59,13 @@ function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
+/** Identificador del pago de `?id=N`, o `null` si falta o no es un entero positivo. */
+function idDePagoDeLaUrl(valor: string | null): number | null {
+  if (valor === null || !/^\d+$/.test(valor)) return null
+  const id = Number(valor)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
 function formatearFecha(iso: string): string {
   return new Date(iso).toLocaleDateString('es-AR')
 }
@@ -99,6 +106,9 @@ function mediosValidosParaPagoDeAdministracion(medios: MedioPagoListado[]): Medi
  */
 export function Pagos() {
   const navigate = useNavigate()
+  const [parametros, setParametros] = useSearchParams()
+  const idDeLaUrl = idDePagoDeLaUrl(parametros.get('id'))
+  const [errorDelEnlace, setErrorDelEnlace] = useState('')
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
@@ -356,6 +366,53 @@ export function Pagos() {
     setMostrarFormulario(false)
   }
 
+  const quitarIdDeLaUrl = useCallback(() => {
+    setParametros(
+      (previos) => {
+        const siguientes = new URLSearchParams(previos)
+        siguientes.delete('id')
+        return siguientes
+      },
+      { replace: true },
+    )
+  }, [setParametros])
+
+  const catalogosListos = medios !== null
+
+  // Enlace profundo `?id=N` (libro de tesorería): espera a los catálogos que el modal necesita y abre la edición de ese pago.
+  useEffect(() => {
+    if (idDeLaUrl === null || !catalogosListos) return
+
+    let vigente = true
+    setErrorDelEnlace('')
+
+    clienteDePagosDeAdministracion
+      .obtener(idDeLaUrl)
+      .then((pago) => {
+        if (!vigente) return
+        if (esPagoOriginadoEnPersonal(pago)) {
+          setErrorDelEnlace(MOTIVO_PAGO_ORIGINADO_EN_PERSONAL)
+          quitarIdDeLaUrl()
+        } else if (escribiendoRef.current || guardandoRef.current || vinculandoRef.current) {
+          setErrorDelEnlace('Hay una operación en curso: volvé a abrir el pago cuando termine.')
+          quitarIdDeLaUrl()
+        } else {
+          setAviso('')
+          setErrorEdicion('')
+          setEdicion(pago)
+        }
+      })
+      .catch((e) => {
+        if (!vigente) return
+        setErrorDelEnlace(e instanceof ErrorApi ? e.message : 'No se pudo cargar el pago.')
+        quitarIdDeLaUrl()
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idDeLaUrl, catalogosListos, quitarIdDeLaUrl])
+
   function ocupadoEscribiendo() {
     return escribiendoRef.current || guardandoRef.current || vinculandoRef.current
   }
@@ -371,6 +428,7 @@ export function Pagos() {
     if (escribiendoRef.current) return
     setEdicion(null)
     setErrorEdicion('')
+    quitarIdDeLaUrl()
   }
 
   async function guardarEdicion(solicitud: SolicitudDeEdicionDePagoConLineas) {
@@ -393,6 +451,7 @@ export function Pagos() {
       }
 
       setEdicion(null)
+      quitarIdDeLaUrl()
       setAviso('Pago actualizado.')
       // regla 6: el refresco está aislado de la escritura; si falla, `error` lo dice aparte y el
       // aviso de éxito se mantiene.
@@ -542,6 +601,7 @@ export function Pagos() {
       <Box titulo="Pagos" variante="inverse" herramientas={herramientas}>
         {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
+        {errorDelEnlace && <div className="alert alert-danger">{errorDelEnlace}</div>}
 
         {baja && (
           <ConfirmacionDeBaja

@@ -6,79 +6,11 @@ namespace Ways.Application.Caja;
 
 /// <summary>
 /// Mappers puros de un listado de caja ya materializado a <see cref="TablaExportable"/> — la
-/// etapa 11 nunca vuelve a consultar la base para exportar (design decisión 11). Slice 7 abre este
-/// archivo con el mapper del libro de tesorería (G3); G2 (listado/detalle) lo extiende en una
-/// slice de seguimiento (5a.4/5b.4, ver el APPLY-RUN NOTE de <c>tasks.md</c>).
+/// etapa 11 nunca vuelve a consultar la base para exportar (design decisión 11). Hoy cubre el histórico
+/// de cajas y el detalle de un turno.
 /// </summary>
 public static class ExportacionDeCaja
 {
-    private static readonly IReadOnlyList<ColumnaExportable> ColumnasTesoreria =
-    [
-        new ColumnaExportable("Tipo", TipoDeColumna.Texto),
-        new ColumnaExportable("Inicio", TipoDeColumna.Moneda),
-        new ColumnaExportable("Ingreso", TipoDeColumna.Moneda),
-        new ColumnaExportable("Egreso", TipoDeColumna.Moneda),
-        new ColumnaExportable("Final", TipoDeColumna.Moneda),
-        new ColumnaExportable("Concepto", TipoDeColumna.Texto),
-        new ColumnaExportable("Punto de venta", TipoDeColumna.Texto),
-        new ColumnaExportable("Empleado", TipoDeColumna.Entero),
-        new ColumnaExportable("Fecha", TipoDeColumna.FechaHora)
-    ];
-
-    private static string EtiquetaDeTipoMovimiento(TipoMovimientoTesoreria tipo) => tipo switch
-    {
-        TipoMovimientoTesoreria.RetiroCaja => "Retiro de caja",
-        TipoMovimientoTesoreria.Deposito => "Depósito",
-        TipoMovimientoTesoreria.Pago => "Gasto",
-        TipoMovimientoTesoreria.Ajuste => "Ajuste",
-        TipoMovimientoTesoreria.AjusteManual => "Ajuste manual",
-        _ => tipo.ToString()
-    };
-
-    /// <summary>judgment-day PR5, hallazgo #2: mismas etiquetas en español que
-    /// <c>CATEGORIAS_PAGO</c> (<c>Ways.Web/src/api/tipos.ts</c>) — no existía ningún mapeo de
-    /// <see cref="CategoriaPago"/> a etiqueta del lado del servidor (se buscó en
-    /// <c>Ways.Application.Exportacion</c>/<c>Ways.Application.Reportes</c>, ninguno lo tenía), así
-    /// que este mapeo nace acá, junto al único lugar que hoy lo necesita.</summary>
-    private static string EtiquetaDeCategoriaPago(CategoriaPago categoria) => EtiquetasDeCategoriaDePago.De(categoria);
-
-    /// <summary>stage-tesoreria-por-empresa (PR5): mismo criterio de "concepto efectivo" que
-    /// <c>Tesoreria.tsx</c> — una fila de tipo <see cref="TipoMovimientoTesoreria.Pago"/> muestra
-    /// la categoría/concepto del pago de origen (más legible que el <c>Concepto</c> genérico del
-    /// movimiento); cualquier otra fila muestra su propio <c>Concepto</c>. judgment-day hallazgo
-    /// #2: la categoría usa <see cref="EtiquetaDeCategoriaPago"/> — antes interpolaba el enum
-    /// crudo (p.ej. "Viaticos") en vez de la etiqueta en español que ya muestra la UI
-    /// ("Viáticos").</summary>
-    private static string ConceptoEfectivo(MovimientoTesoreriaListado f) =>
-        f.PagoConcepto is null || f.PagoCategoria is null
-            ? f.Concepto
-            : $"{EtiquetaDeCategoriaPago(f.PagoCategoria.Value)} — {f.PagoConcepto}";
-
-    /// <summary>Libro de tesorería (G3, spec tesoreria: The Book Has An Export Sibling Equal To
-    /// Its JSON) — misma orden de columnas que la tabla del libro (design: Slice 7 task 7.5,
-    /// extendida en PR5 con "tipo"/"punto de venta"), en el MISMO orden de filas que
-    /// <see cref="ServicioDeTesoreria.ListarAsync"/> devuelve (cadena por <c>Id</c> ascendente,
-    /// nunca re-ordenado acá).</summary>
-    public static TablaExportable De(IReadOnlyList<MovimientoTesoreriaListado> filas, ContextoDeExportacion ctx, TimeZoneInfo zona)
-    {
-        var celdas = filas
-            .Select(f => (IReadOnlyList<Celda>)
-            [
-                Celda.Texto(EtiquetaDeTipoMovimiento(f.Tipo)),
-                Celda.Moneda(f.Inicio),
-                Celda.Moneda(f.Ingreso),
-                Celda.Moneda(f.Egreso),
-                Celda.Moneda(f.Final),
-                Celda.Texto(ConceptoEfectivo(f)),
-                Celda.Texto(f.NombrePuntoVenta ?? "—"),
-                Celda.Entero(f.IdEmpleado),
-                Celda.FechaHora(f.Fecha, zona)
-            ])
-            .ToList();
-
-        return new TablaExportable("Tesorería", ctx, ColumnasTesoreria, celdas);
-    }
-
     private static readonly IReadOnlyList<ColumnaExportable> ColumnasHistoricoDeCajas =
     [
         new ColumnaExportable("Turno", TipoDeColumna.Entero),
@@ -88,7 +20,11 @@ public static class ExportacionDeCaja
         new ColumnaExportable("Esperado", TipoDeColumna.Moneda),
         new ColumnaExportable("Declarado", TipoDeColumna.Moneda),
         new ColumnaExportable("Diferencia", TipoDeColumna.Moneda),
-        new ColumnaExportable("Retiros", TipoDeColumna.Moneda)
+        new ColumnaExportable("Retiros", TipoDeColumna.Moneda),
+        new ColumnaExportable("Digitales", TipoDeColumna.Moneda),
+        new ColumnaExportable("Efectivo facturado", TipoDeColumna.Moneda),
+        new ColumnaExportable("Cuenta corriente", TipoDeColumna.Moneda),
+        new ColumnaExportable("Total facturado", TipoDeColumna.Moneda)
     ];
 
     /// <summary>G2 listado (spec historico-de-cajas: G2 Listing Export Figures Equal The JSON
@@ -110,7 +46,11 @@ public static class ExportacionDeCaja
                     Celda.Moneda(f.Esperado),
                     Celda.Moneda(f.Declarado),
                     Celda.Moneda(f.Diferencia),
-                    Celda.Moneda(f.Egresos.Retiros)
+                    Celda.Moneda(f.Egresos.Retiros),
+                    Celda.Moneda(f.Digitales),
+                    Celda.Moneda(f.Efectivo),
+                    Celda.Moneda(f.CuentaCorriente),
+                    Celda.Moneda(f.TotalFacturado)
                 ])
                 .ToList());
 
@@ -154,7 +94,7 @@ public static class ExportacionDeCaja
             filas.Add(
             [
                 Celda.Texto("Medios de pago"),
-                Celda.Texto($"Medio {medio.IdMedioPago}"),
+                Celda.Texto(medio.Nombre),
                 Celda.FechaHora(null, zona),
                 Celda.Moneda(medio.ImporteEsperado)
             ]);
@@ -190,7 +130,7 @@ public static class ExportacionDeCaja
             Celda.Moneda(respuesta.Resumen.Egresos.Retiros)
         ]);
 
-        foreach (var ticket in respuesta.Tickets)
+        foreach (var ticket in respuesta.Tickets.OrderBy(t => t.Fecha).ThenBy(t => t.Id))
         {
             filas.Add(
             [
