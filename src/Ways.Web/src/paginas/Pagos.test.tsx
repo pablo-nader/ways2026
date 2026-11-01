@@ -12,6 +12,7 @@ import type {
   MedioPagoListado,
   OpcionDeProveedor,
   PaginaDePagosDeAdministracion,
+  PersonalListado,
   PuntoVentaListado,
 } from '../api/tipos'
 
@@ -180,6 +181,7 @@ function mockearRutas(opciones: {
   medios?: MedioPagoListado[]
   areas?: AreaListado[]
   proveedores?: OpcionDeProveedor[]
+  personal?: PersonalListado[]
   pagina?: PaginaDePagosDeAdministracion
 }) {
   apiGetMock.mockImplementation((ruta: string) => {
@@ -188,6 +190,10 @@ function mockearRutas(opciones: {
     if (ruta === '/catalogos/medios-pago') return Promise.resolve(opciones.medios ?? [medioEfectivo, medioCuentaCorriente])
     if (ruta === '/catalogos/areas') return Promise.resolve(opciones.areas ?? [areaFixture()])
     if (ruta === '/proveedores/opciones') return Promise.resolve(opciones.proveedores ?? [proveedorFixture()])
+    if (ruta.startsWith('/personal')) {
+      const items = opciones.personal ?? []
+      return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 200 })
+    }
     if (ruta.startsWith('/pagos/administracion')) return Promise.resolve(opciones.pagina ?? paginaFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
@@ -1448,5 +1454,166 @@ describe('Pagos (administración) — enlace profundo ?id=N', () => {
     await screen.findByRole('option', { name: 'Empresa Demo SA' })
     expect(apiGetMock.mock.calls.some((c) => /^\/pagos\/administracion\/\w+$/.test(c[0] as string))).toBe(false)
     expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Pagos (administración) — sueldos a un empleado', () => {
+  const empleados = [
+    { id: 12, nombre: 'Marta Gómez', idEmpresa: null },
+    { id: 13, nombre: 'Ana Pérez', idEmpresa: 1 },
+  ] as PersonalListado[]
+
+  function dialogo() {
+    return screen.getByRole('dialog', { name: 'Nuevo pago' })
+  }
+
+  async function abrirEnSueldos() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Categoría'), 'Sueldos')
+  }
+
+  async function cargarImporte() {
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '1500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+  }
+
+  it('con la categoría Sueldos muestra el empleado en lugar del proveedor', async () => {
+    mockearRutas({ personal: empleados })
+    renderPagos()
+
+    await abrirEnSueldos()
+    await within(dialogo()).findByRole('option', { name: 'Ana Pérez' }) // espera al dato: el personal llega después del modal
+
+    expect(within(dialogo()).getByLabelText('Empleado (opcional)')).toBeInTheDocument()
+    expect(within(dialogo()).getByRole('option', { name: 'Sin empleado' })).toBeInTheDocument()
+    expect(within(dialogo()).queryByLabelText('Proveedor (opcional)')).not.toBeInTheDocument()
+  })
+
+  it('con otra categoría sigue el proveedor y no hay empleado', async () => {
+    mockearRutas({ personal: empleados })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+    await screen.findByRole('option', { name: 'Efectivo' })
+
+    expect(within(dialogo()).getByLabelText('Proveedor (opcional)')).toBeInTheDocument()
+    expect(within(dialogo()).queryByLabelText('Empleado (opcional)')).not.toBeInTheDocument()
+  })
+
+  it('guardar con un empleado registra un pago de personal de la tesorería y no el pago de administración', async () => {
+    mockearRutas({ personal: empleados })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderPagos()
+
+    await abrirEnSueldos()
+    await within(dialogo()).findByRole('option', { name: 'Ana Pérez' })
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Empleado (opcional)'), 'Ana Pérez')
+    await cargarImporte()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/personal/13/pagos', {
+        fecha: fechaLocal(new Date()),
+        idEmpresa: 1,
+        origenFondos: 'Tesoreria',
+        lineas: [{ idMedioPago: 1, importe: 1500 }],
+      }),
+    )
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock).not.toHaveBeenCalledWith('/pagos/administracion', expect.anything())
+    await toastDeExito('Pago registrado.')
+  })
+
+  it('con un empleado oculta concepto, área y factura, que no se guardan en un pago de personal', async () => {
+    mockearRutas({ personal: empleados })
+    renderPagos()
+
+    await abrirEnSueldos()
+    await within(dialogo()).findByRole('option', { name: 'Ana Pérez' })
+    expect(within(dialogo()).getByLabelText('Concepto')).toBeInTheDocument()
+
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Empleado (opcional)'), 'Ana Pérez')
+
+    expect(within(dialogo()).queryByLabelText('Concepto')).not.toBeInTheDocument()
+    expect(within(dialogo()).queryByLabelText('Área')).not.toBeInTheDocument()
+    expect(within(dialogo()).queryByLabelText('N° de factura (opcional)')).not.toBeInTheDocument()
+    expect(within(dialogo()).getByLabelText('Detalle (opcional)')).toBeInTheDocument()
+  })
+
+  it('"Sin empleado" mantiene el pago de sueldos común contra el endpoint de administración', async () => {
+    mockearRutas({ personal: empleados })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderPagos()
+
+    await abrirEnSueldos()
+    await within(dialogo()).findByRole('option', { name: 'Ana Pérez' })
+    await userEvent.type(screen.getByLabelText('Concepto'), 'Aguinaldo')
+    await cargarImporte()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith(
+        '/pagos/administracion',
+        expect.objectContaining({ categoria: 'Sueldos', concepto: 'Aguinaldo', idProveedor: null }),
+      ),
+    )
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('cambiar la categoría limpia el empleado elegido', async () => {
+    mockearRutas({ personal: empleados })
+    renderPagos()
+
+    await abrirEnSueldos()
+    await within(dialogo()).findByRole('option', { name: 'Ana Pérez' })
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Empleado (opcional)'), 'Ana Pérez')
+
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Categoría'), 'Otros')
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Categoría'), 'Sueldos')
+
+    expect(within(dialogo()).getByLabelText('Empleado (opcional)')).toHaveValue('')
+    expect(within(dialogo()).getByLabelText('Concepto')).toBeInTheDocument()
+  })
+
+  it('pasar a Sueldos limpia el proveedor elegido', async () => {
+    mockearRutas({ personal: empleados })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+    await screen.findByRole('option', { name: 'Efectivo' })
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Categoría'), 'Sueldos')
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Categoría'), 'Servicios')
+
+    expect(within(dialogo()).getByLabelText('Proveedor (opcional)')).toHaveValue('')
+  })
+
+  it('un rechazo del pago de personal se muestra dentro del modal con el copy de la cuenta del personal', async () => {
+    mockearRutas({ personal: empleados })
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_no_abierto', 'x'))
+    renderPagos()
+
+    await abrirEnSueldos()
+    await within(dialogo()).findByRole('option', { name: 'Ana Pérez' })
+    await userEvent.selectOptions(within(dialogo()).getByLabelText('Empleado (opcional)'), 'Ana Pérez')
+    await cargarImporte()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    expect(await within(dialogo()).findByText(/No hay un turno abierto/)).toBeInTheDocument()
+  })
+
+  it('si el personal no se pudo leer avisa y deja el pago de sueldos común', async () => {
+    mockearRutas({})
+    const respuestaBase = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/personal') ? Promise.reject(new ErrorApi(500, 'error', 'Falla del servidor')) : respuestaBase(ruta),
+    )
+    renderPagos()
+
+    await abrirEnSueldos()
+
+    expect(await within(dialogo()).findByText('No se pudo cargar el personal.')).toBeInTheDocument()
+    expect(within(dialogo()).getByRole('option', { name: 'Sin empleado' })).toBeInTheDocument()
   })
 })
