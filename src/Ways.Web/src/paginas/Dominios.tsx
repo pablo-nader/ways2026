@@ -23,6 +23,7 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { ModalDeDominio } from './dominios/ModalDeDominio'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const SIN_DOMINIOS: readonly DominioListado[] = []
@@ -85,12 +86,11 @@ export function Dominios() {
   /** El alta vive en un modal: mientras está abierta la pantalla queda inerte (`bloqueado`). */
   const [altaAbierta, setAltaAbierta] = useState(false)
 
-  // `limpiarMensajes` borra el rechazo del alta, el de la acción (verificar y eliminar comparten ese
-  // slot) y el aviso. El error de lectura solo lo escriben `elegirTenant` y `cargarDominios`.
+  // `limpiarMensajes` borra el rechazo del alta y el de la eliminación (los dos viven dentro de su
+  // diálogo). El error de lectura solo lo escriben `elegirTenant` y `cargarDominios`.
   const [errorDeLectura, setErrorDeLectura] = useState('')
   const [errorDeAlta, setErrorDeAlta] = useState('')
-  const [errorDeAccion, setErrorDeAccion] = useState('')
-  const [aviso, setAviso] = useState('')
+  const [errorDeEliminacion, setErrorDeEliminacion] = useState('')
 
   const [ocupado, setOcupado] = useState(false)
   /** Solo para el texto del botón de alta: la inercia la gobierna `ocupado`. */
@@ -141,8 +141,7 @@ export function Dominios() {
 
   function limpiarMensajes() {
     setErrorDeAlta('')
-    setErrorDeAccion('')
-    setAviso('')
+    setErrorDeEliminacion('')
   }
 
   function elegirTenant(valor: string) {
@@ -161,11 +160,11 @@ export function Dominios() {
   /** El refresco va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
    * reporta como fallida (regla 6). */
   async function refrescarTrasEscribir(id: number, mensajeOk: string) {
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargarDominios(id, ++generacionDominios.current, true)
     } catch {
-      setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
+      toast.advertencia(AVISO_REFRESCO_FALLIDO)
     }
   }
 
@@ -234,7 +233,7 @@ export function Dominios() {
       try {
         await clienteDeOrganizacion.verificarDominio(dominio.idTenant, dominio.id)
       } catch (e) {
-        setErrorDeAccion(copiaDeFalloDeDominio(e, `No se pudo marcar "${dominio.host}" como verificado.`))
+        toast.error(copiaDeFalloDeDominio(e, `No se pudo marcar "${dominio.host}" como verificado.`))
         if (debeReleerTrasFallo(e)) await releerTrasFallo(dominio.idTenant)
 
         return
@@ -259,7 +258,7 @@ export function Dominios() {
       } catch (e) {
         // La puerta queda abierta y muestra el motivo adentro: el operador ve por qué no se pudo sin
         // perder de vista qué estaba por eliminar.
-        setErrorDeAccion(copiaDeFalloDeBaja(e, 'el dominio'))
+        setErrorDeEliminacion(copiaDeFalloDeBaja(e, 'el dominio'))
         if (debeReleerTrasFallo(e)) await releerTrasFallo(dominio.idTenant)
 
         return
@@ -318,8 +317,6 @@ export function Dominios() {
             )}
           </div>
         )}
-        {errorDeAccion && !confirmacion && <div className="alert alert-danger">{errorDeAccion}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {confirmacion && (
           <ConfirmacionDeBaja
@@ -330,7 +327,7 @@ export function Dominios() {
             etiquetaEnCurso="Eliminando…"
             ocupado={ocupado}
             disparador={disparadorDeLaPuerta}
-            error={errorDeAccion}
+            error={errorDeEliminacion}
             onConfirmar={() => void eliminar(confirmacion)}
             onCancelar={cancelarEliminar}
           />

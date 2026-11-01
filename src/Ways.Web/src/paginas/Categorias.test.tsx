@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Categorias } from './Categorias'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import type { CategoriaListado } from '../api/tipos'
 
@@ -63,7 +64,7 @@ function editarDe(nombre: string) {
 describe('Categorias — alta y edición en una modal', () => {
   it('la primera pantalla es solo la grilla: ni formulario ni diálogo', async () => {
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
 
@@ -73,7 +74,7 @@ describe('Categorias — alta y edición en una modal', () => {
 
   it('"Nueva categoría raíz" abre la modal con el título de alta y el formulario vacío', async () => {
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -85,7 +86,7 @@ describe('Categorias — alta y edición en una modal', () => {
 
   it('"+ Subcategoría" abre la modal con el padre elegido', async () => {
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.click(screen.getByRole('button', { name: '+ Subcategoría' }))
@@ -95,7 +96,7 @@ describe('Categorias — alta y edición en una modal', () => {
 
   it('editar abre la modal con el título de edición y la fila cargada', async () => {
     apiGetMock.mockResolvedValue([categoriaFixture({ activo: false, orden: 7 })])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.click(editarDe('Bebidas'))
@@ -109,7 +110,7 @@ describe('Categorias — alta y edición en una modal', () => {
   it('cancelar cierra la modal sin escribir nada', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -121,7 +122,7 @@ describe('Categorias — alta y edición en una modal', () => {
     expect(apiPutMock).not.toHaveBeenCalled()
   })
 
-  it('un guardado exitoso cierra la modal, deja el aviso en la pantalla y recarga el listado', async () => {
+  it('un guardado exitoso cierra la modal, avisa con un toast y recarga el listado', async () => {
     const usuario = userEvent.setup()
     let cargas = 0
     apiGetMock.mockImplementation(() => {
@@ -131,14 +132,15 @@ describe('Categorias — alta y edición en una modal', () => {
       )
     })
     apiPostMock.mockResolvedValue(undefined)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Se creó "Limpieza".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se creó "Limpieza".')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock.mock.calls[0][0]).toBe('/catalogos/categorias')
@@ -150,7 +152,7 @@ describe('Categorias — alta y edición en una modal', () => {
    * lo que hace que el navegador envíe con Enter. */
   it('el Guardar del pie pertenece al formulario del cuerpo', async () => {
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -163,7 +165,7 @@ describe('Categorias — alta y edición en una modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -180,7 +182,7 @@ describe('Categorias — alta y edición en una modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -204,14 +206,15 @@ describe('Categorias — alta y edición en una modal', () => {
         : Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
     apiPostMock.mockResolvedValue(undefined)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Se creó "Limpieza". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    await screen.findByText('Se creó "Limpieza".')
+    await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -219,7 +222,7 @@ describe('Categorias — alta y edición en una modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
     apiPostMock.mockImplementation(() => new Promise<void>(() => {}))
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -245,7 +248,7 @@ describe('Categorias — el warning de subcategorías huérfanas se retiró', ()
   it('la puerta de confirmación no menciona que las subcategorías quedan sin padre visible', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(bajaDe('Bebidas'))
@@ -261,7 +264,7 @@ describe('Categorias — baja lógica', () => {
   it('el botón de baja no llama a la API hasta que se confirma', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(bajaDe('Bebidas'))
@@ -275,7 +278,7 @@ describe('Categorias — baja lógica', () => {
   it('cancelar cierra la puerta y no llama nunca a la API', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(bajaDe('Bebidas'))
@@ -289,7 +292,7 @@ describe('Categorias — baja lógica', () => {
   it('un segundo click sobre la confirmación en vuelo se descarta', async () => {
     apiGetMock.mockResolvedValue([categoriaFixture()])
     apiDeleteMock.mockImplementation(() => new Promise<void>(() => {}))
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.setup().click(bajaDe('Bebidas'))
@@ -325,7 +328,7 @@ describe('Categorias — baja lógica', () => {
         }),
     )
 
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
     await screen.findByText('Bebidas')
 
     await usuario.click(bajaDe('Bebidas'))
@@ -371,15 +374,14 @@ describe('Categorias — baja lógica', () => {
 
       return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
     await screen.findByText('Bebidas')
 
     await usuario.click(bajaDe('Bebidas'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText(
-      'Se dio de baja "Bebidas". Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-    )
+    await screen.findByText('Se dio de baja "Bebidas".')
+    await screen.findByText('Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.')
   })
 
   /** Cláusula bajo prueba: la elección de copia por `codigo` — `categoria_en_uso` es la que el
@@ -390,7 +392,7 @@ describe('Categorias — baja lógica', () => {
     apiDeleteMock.mockRejectedValue(
       new ErrorApi(409, 'categoria_en_uso', 'No se puede dar de baja la categoría porque tiene subcategorías.'),
     )
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(bajaDe('Bebidas'))
@@ -408,7 +410,7 @@ describe('Categorias — baja lógica', () => {
     apiDeleteMock.mockRejectedValue(
       new ErrorApi(409, 'categoria_en_uso', 'No se puede dar de baja la categoría porque tiene subcategorías.'),
     )
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(bajaDe('Bebidas'))
@@ -424,7 +426,7 @@ describe('Categorias — baja lógica', () => {
   it('la baja de la categoría que se está editando se lleva también su formulario', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(within(screen.getByText('Bebidas').closest('li') as HTMLElement).getByRole('button', { name: 'Editar' }))
@@ -443,7 +445,7 @@ describe('Categorias — error y foco de la modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -456,7 +458,7 @@ describe('Categorias — error y foco de la modal', () => {
 
   it('al abrir, el foco queda en el primer campo y no en la ×', async () => {
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -477,7 +479,7 @@ describe('Categorias — error y foco de la modal', () => {
           })
     })
     apiPostMock.mockResolvedValue(undefined)
-    const { container } = render(<Categorias />)
+    const { container } = render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -498,7 +500,7 @@ describe('Categorias — error y foco de la modal', () => {
   it('cancelar devuelve el foco al botón que abrió la modal', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     const abrir = screen.getByRole('button', { name: 'Nueva categoría raíz' })
@@ -526,7 +528,7 @@ describe('Categorias — lectura en vuelo al guardar', () => {
     let lecturas = 0
     apiGetMock.mockImplementation(() => (++lecturas === 1 ? inicial.promesa : Promise.resolve([categoriaFixture()])))
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
@@ -548,7 +550,7 @@ describe('Categorias — lectura en vuelo al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
@@ -565,7 +567,7 @@ describe('Categorias — empresa de la fila al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture({ idEmpresa: 5 })])
     apiPutMock.mockResolvedValue(undefined)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(editarDe('Bebidas'))
@@ -580,7 +582,7 @@ describe('Categorias — empresa de la fila al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture({ idEmpresa: null })])
     apiPutMock.mockResolvedValue(undefined)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(editarDe('Bebidas'))
@@ -594,7 +596,7 @@ describe('Categorias — empresa de la fila al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([categoriaFixture({ idEmpresa: 5 })])
     apiPostMock.mockResolvedValue(undefined)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.click(editarDe('Bebidas'))
@@ -625,7 +627,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
 
   it('filtrar por nombre conserva la coincidencia y sus ancestros, y oculta el resto', async () => {
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'cola')
@@ -637,7 +639,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
 
   it('el filtro ignora acentos y mayúsculas', async () => {
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'ALMACEN')
@@ -648,7 +650,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
   it('sin coincidencias muestra el mensaje de filtros, y limpiar los filtros devuelve el árbol', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
@@ -665,7 +667,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
   it('el botón de orden recorre ascendente, descendente y orden original dentro de cada nivel', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     expect(screen.getByRole('button', { name: 'Nombre (orden original)' })).toBeInTheDocument()
@@ -683,7 +685,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
   it('el filtro y el orden descendente se aplican juntos', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'o')
@@ -696,7 +698,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
   it('con el árbol filtrado, el selector de padre del formulario sigue ofreciendo todas las categorías', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'almacen')
@@ -713,7 +715,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
 
   it('el filtro queda inerte con la puerta de baja abierta', async () => {
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.setup().click(bajaDe('Almacén'))
@@ -723,7 +725,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
 
   it('Limpiar filtros se habilita con cualquier texto, aunque sea solo espacios', async () => {
     apiGetMock.mockResolvedValue(ARBOL)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), ' ')
@@ -744,7 +746,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
             liberarRecarga = resolver
           })
     })
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     const filtro = screen.getByRole('searchbox', { name: 'Filtrar por nombre' })
@@ -772,7 +774,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
       return Promise.resolve(cargas === 1 ? ARBOL : [...ARBOL, categoriaFixture({ id: 9, nombre: 'Limpieza', orden: 3 })])
     })
     apiPostMock.mockResolvedValue(undefined)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'beb')
@@ -793,7 +795,7 @@ describe('Categorias — filtro por nombre y orden de hermanas', () => {
       return Promise.resolve(cargas === 1 ? ARBOL : [...ARBOL, categoriaFixture({ id: 9, nombre: 'Bebidas Light', orden: 3 })])
     })
     apiPostMock.mockResolvedValue(undefined)
-    render(<Categorias />)
+    render(<><Categorias /><Toaster /></>)
 
     await screen.findByText('Bebidas')
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'beb')

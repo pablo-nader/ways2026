@@ -96,9 +96,9 @@ describe('etiquetaDeAccion', () => {
   // pantalla renderizaba `tenant.baja` en crudo y el `<select>` no podía filtrar por ninguna de
   // las tres bajas de organización. El front lista un subconjunto del catálogo del back (que tiene
   // más entradas): esta prueba congela el que se ofrece en el `<select>`.
-  // Mutation target: sacar cualquiera de las 22 entradas.
-  it('el catálogo del front ofrece las 22 acciones esperadas, las bajas, las de pagos y las de cobros incluidas', () => {
-    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(22)
+  // Mutation target: sacar cualquiera de las 23 entradas.
+  it('el catálogo del front ofrece las 23 acciones esperadas, las bajas, las de pagos y las de cobros incluidas', () => {
+    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(23)
 
     expect(CATALOGO_DE_ACCIONES_AUDITADAS.map((a) => a.valor)).toEqual([
       'precio.cambio',
@@ -109,6 +109,7 @@ describe('etiquetaDeAccion', () => {
       'pago.aplicacion',
       'pago.desaplicacion',
       'pago.redondeo',
+      'pago.reasignacion',
       'cobro.aplicacion',
       'cobro.desaplicacion',
       'stock.ajuste',
@@ -273,7 +274,7 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     renderAuditoria()
 
     expect(await screen.findByText('#7')).toBeInTheDocument()
-    const celdaPv = screen.getByTitle('Evento de todo el tenant')
+    const celdaPv = screen.getByTitle('Evento de toda la cuenta')
     expect(within(celdaPv).getByText('—')).toBeInTheDocument()
     // Sugerencia 1 (judgment-day ronda 1): `etiquetaDeAccion` es reducible a `return accion` sin
     // fallar ningún test previo — la celda de acción debe mostrar la etiqueta en español del

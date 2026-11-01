@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Empresas } from './Empresas'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import { ETIQUETA_SIN_DUENIO } from '../api/organizacion'
 import { ROL } from '../api/tipos'
@@ -29,6 +30,13 @@ vi.mock('../api/cliente', () => ({
       this.codigo = codigo
     }
   },
+}))
+
+// La sección de Mercado Pago tiene sus propias pruebas (organizacion/SeccionMercadoPago.test.tsx): acá solo se prueba su cableado.
+vi.mock('./organizacion/SeccionMercadoPago', () => ({
+  SeccionMercadoPago: ({ empresas }: { empresas: readonly { id: number }[] }) => (
+    <div data-testid="seccion-mercadopago">{empresas.map((e) => e.id).join(',')}</div>
+  ),
 }))
 
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
@@ -96,7 +104,7 @@ function montar(items: EmpresaListado[] = [empresaSur, empresaAnexo, empresaEste
     return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
   })
 
-  return render(<Empresas />)
+  return render(<><Empresas /><Toaster /></>)
 }
 
 function razonesSocialesVisibles() {
@@ -203,7 +211,7 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
         }),
     )
 
-    render(<Empresas />)
+    render(<><Empresas /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
 
     await usuario.click(screen.getAllByRole('button', { name: 'Editar' })[0])
@@ -324,7 +332,7 @@ describe('Empresas (stage-20, slice 5 — baja lógica)', () => {
         }),
     )
 
-    render(<Empresas />)
+    render(<><Empresas /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
 
     await usuario.click(botonDeBajaDe('Sur SRL'))
@@ -385,19 +393,14 @@ describe('Empresas (stage-20, slice 5 — baja lógica)', () => {
       return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
 
-    render(<Empresas />)
+    render(<><Empresas /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
 
     await usuario.click(botonDeBajaDe('Sur SRL'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(
-          'Se dio de baja la empresa "Sur SRL". Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-        ),
-      ).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText('Se dio de baja la empresa "Sur SRL".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.')).toBeInTheDocument())
   })
 
   /**
@@ -743,7 +746,8 @@ describe('Empresas — edición en un modal', () => {
     expect(apiPutMock).toHaveBeenCalledTimes(1)
     expect(apiPutMock.mock.calls[0][0]).toBe('/empresas/10')
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ razonSocial: 'Sur Nueva SRL' })
-    expect(await screen.findByText('Se actualizó "Sur Nueva SRL".')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Se actualizó "Sur Nueva SRL".')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(apiGetMock.mock.calls).toHaveLength(antes + 1)
   })
 
@@ -820,8 +824,11 @@ describe('Empresas — edición en un modal', () => {
     await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    const aviso = await screen.findByText('Se actualizó "Sur SRL".')
-    expect(aviso.closest('[tabindex="-1"]')).toHaveFocus()
+    await screen.findByText('Se actualizó "Sur SRL".')
+    const foco = document.activeElement as HTMLElement
+    expect(foco).toHaveAttribute('tabindex', '-1')
+    expect(foco.closest('.ws-toaster')).toBeNull()
+    expect(foco.closest('.container-fluid')).not.toBeNull()
   })
 })
 
@@ -1011,7 +1018,7 @@ describe('Empresas — filtros por columna y orden', () => {
       })
     })
     apiPutMock.mockResolvedValue(alfa)
-    render(<Empresas />)
+    render(<><Empresas /><Toaster /></>)
     await esperarFilas()
 
     const filtro = screen.getByLabelText('Filtrar por razón social')
@@ -1046,7 +1053,7 @@ describe('Empresas — filtros por columna y orden', () => {
           resolverPut = resolver
         }),
     )
-    render(<Empresas />)
+    render(<><Empresas /><Toaster /></>)
     await esperarFilas()
 
     await usuario.type(screen.getByLabelText('Filtrar por razón social'), 'alp')
@@ -1070,3 +1077,25 @@ describe('Empresas — filtros por columna y orden', () => {
     expect(screen.getByLabelText('Filtrar por cuit')).toBeDisabled()
   })
 })
+
+describe('Empresas — sección de Mercado Pago', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  it('un Admin de tenant ve la sección con las empresas cargadas', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([empresaSur, empresaAnexo])
+
+    expect(await screen.findByTestId('seccion-mercadopago')).toHaveTextContent('10,11')
+  })
+
+  it('Root no ve la sección: los endpoints de Mercado Pago necesitan un tenant en la sesión', async () => {
+    montar([empresaSur])
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    expect(screen.queryByTestId('seccion-mercadopago')).not.toBeInTheDocument()
+  })
+})
+

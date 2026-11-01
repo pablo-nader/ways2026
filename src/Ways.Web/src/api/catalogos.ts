@@ -201,15 +201,15 @@ export function avisoDeLasCuentas(
 
   return {
     texto:
-      'No hay cuentas para este medio: un medio de todo el tenant solo puede tener cuenta si el tenant tiene una sola ' +
-      'empresa, y uno de una empresa solo toma cuentas de esa empresa.',
+      'No hay cuentas para este medio: un medio de todas las empresas solo puede tener cuenta si la cuenta tiene una ' +
+      'sola empresa, y uno de una empresa solo toma cuentas de esa empresa.',
     error: false,
   }
 }
 
 const AYUDA_DE_LA_CUENTA =
   'Lo cobrado con este medio entra a la cuenta neto de la comisión y las retenciones. Sin cuenta, no entra a ninguna. ' +
-  'Un medio de todo el tenant solo puede tener cuenta si hay una sola empresa.'
+  'Un medio de todas las empresas solo puede tener cuenta si hay una sola empresa.'
 
 const AYUDA_DE_LA_COMISION = 'La comisión y las retenciones se descuentan de lo cobrado; sumadas no pueden superar el 100%.'
 

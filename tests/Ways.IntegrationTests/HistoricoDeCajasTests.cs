@@ -270,6 +270,176 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(30m, fila.Diferencia); // (500-470) + (200-200)
     }
 
+    // ---- facturado por turno: efectivo / digitales / cuenta corriente --------------------------
+
+    private sealed record CobroSembrado(int IdMedioPago, decimal Importe, decimal Vuelto = 0m);
+
+    /// <summary>Siembra un comprobante de venta del tipo pedido (TX, NCX o RC) con sus cobros y devuelve su id.</summary>
+    private async Task<int> SembrarComprobanteAsync(
+        Contexto ctx, int idTurno, string codigoTipo, decimal total, IReadOnlyList<CobroSembrado> cobros,
+        int? idAsociado = null, EstadoComprobante estado = EstadoComprobante.Emitido)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idTipo = await db.TiposComprobante.Where(t => t.Codigo == codigoTipo).Select(t => t.Id).FirstAsync();
+
+        var comprobante = new ComprobanteVenta
+        {
+            IdTenant = ctx.IdTenant,
+            IdTipoComprobante = idTipo,
+            Numero = Interlocked.Increment(ref _numeroSecuencial) + (codigoTipo == "TX" ? 0 : codigoTipo == "NCX" ? 100_000 : 200_000),
+            Fecha = ahora,
+            IdPuntoVenta = ctx.IdPuntoVenta,
+            IdTurnoCaja = idTurno,
+            IdEmpleado = ctx.IdEmpleadoAdmin,
+            IdCliente = ctx.IdCliente,
+            IdComprobanteAsociado = idAsociado,
+            Subtotal = total,
+            DescuentoTotal = 0m,
+            Total = total,
+            Estado = estado,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.ComprobantesVenta.Add(comprobante);
+        await db.SaveChangesAsync();
+
+        foreach (var cobro in cobros)
+        {
+            db.Cobros.Add(new Cobro
+            {
+                IdTenant = ctx.IdTenant,
+                IdComprobanteVenta = comprobante.Id,
+                IdMedioPago = cobro.IdMedioPago,
+                Importe = cobro.Importe,
+                Vuelto = cobro.Vuelto,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return comprobante.Id;
+    }
+
+    private async Task<(int Digital, int CuentaCorriente)> MediosDigitalYCuentaCorrienteAsync(Contexto ctx)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var digital = await db.MediosPago
+            .Where(m => m.Comportamiento == ComportamientoMedioPago.Electronico).Select(m => m.Id).FirstAsync();
+        var medioCuentaCorriente = new MedioPago
+        {
+            IdTenant = ctx.IdTenant, Nombre = "Cuenta corriente", Orden = 3,
+            Comportamiento = ComportamientoMedioPago.CuentaCorriente, AdmiteVuelto = false, RequiereReferencia = false,
+            Activo = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        };
+        db.MediosPago.Add(medioCuentaCorriente);
+        await db.SaveChangesAsync();
+        return (digital, medioCuentaCorriente.Id);
+    }
+
+    /// <summary>Turno con ventas de pagos mixtos y vuelto, una venta cobrada de menos dentro de la tolerancia, una venta
+    /// a cuenta corriente, una nota de crédito que espeja a la primera venta, un recibo de cobranza y una venta anulada:
+    /// los cubos reparten solo TX y NCX emitidas y suman exactamente Σ total.</summary>
+    [Fact]
+    public async Task ElHistoricoRepartePorCuboLoFacturadoYLaSumaEsElTotalDeLasVentasYNotasDeCredito()
+    {
+        var ctx = await PrepararAsync(nameof(ElHistoricoRepartePorCuboLoFacturadoYLaSumaEsElTotalDeLasVentasYNotasDeCredito));
+        var (digital, cuentaCorriente) = await MediosDigitalYCuentaCorrienteAsync(ctx);
+        var turno = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 100m);
+
+        // 1000 = efectivo 700 con vuelto 100 (neto 600) + digital 400.
+        var tx1 = await SembrarComprobanteAsync(
+            ctx, turno.Id, "TX", 1000m, [new(ctx.IdMedioEfectivo, 700m, 100m), new(digital, 400m)]);
+        // 500 cobrado de menos (245 + 245) dentro de la tolerancia: se prorratea 50/50.
+        await SembrarComprobanteAsync(ctx, turno.Id, "TX", 500m, [new(ctx.IdMedioEfectivo, 245m), new(digital, 245m)]);
+        await SembrarComprobanteAsync(ctx, turno.Id, "TX", 200m, [new(cuentaCorriente, 200m)]);
+        // La nota de crédito no lleva cobros: espeja el 60/40 de la venta original.
+        await SembrarComprobanteAsync(ctx, turno.Id, "NCX", -300m, [], idAsociado: tx1);
+        // Fuera del facturado: un recibo de cobranza y una venta anulada.
+        await SembrarComprobanteAsync(ctx, turno.Id, "RC", 999m, [new(ctx.IdMedioEfectivo, 999m)]);
+        await SembrarComprobanteAsync(
+            ctx, turno.Id, "TX", 777m, [new(ctx.IdMedioEfectivo, 777m)], estado: EstadoComprobante.Anulado);
+
+        await CerrarTurnoAsync(
+            ctx, turno.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 0m), new ConteoDeclarado(digital, 0m)]);
+
+        var listado = await ListarAsync(ctx.Admin);
+
+        var fila = Assert.Single(listado!.Items, f => f.IdTurnoCaja == turno.Id);
+        // efectivo: 600 + 250 - 180; digitales: 400 + 250 - 120; cuenta corriente: 200.
+        Assert.Equal((530m, 670m, 200m), (fila.Digitales, fila.Efectivo, fila.CuentaCorriente));
+        Assert.Equal(1400m, fila.TotalFacturado); // 1000 + 500 + 200 - 300
+        Assert.Equal(fila.Digitales + fila.Efectivo + fila.CuentaCorriente, fila.TotalFacturado);
+    }
+
+    /// <summary>La nota de crédito de un turno corrige una venta de OTRO turno: usa las proporciones de cobro de esa venta.</summary>
+    [Fact]
+    public async Task UnaNotaDeCreditoDeOtroTurnoEspejaElRepartoDeLaVentaOriginal()
+    {
+        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoDeOtroTurnoEspejaElRepartoDeLaVentaOriginal));
+        var (digital, _) = await MediosDigitalYCuentaCorrienteAsync(ctx);
+
+        var turnoVenta = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 0m);
+        var tx = await SembrarComprobanteAsync(
+            ctx, turnoVenta.Id, "TX", 100m, [new(ctx.IdMedioEfectivo, 50m), new(digital, 50m)]);
+        await CerrarTurnoAsync(
+            ctx, turnoVenta.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 50m), new ConteoDeclarado(digital, 50m)]);
+
+        var turnoDevolucion = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 100m);
+        await SembrarComprobanteAsync(ctx, turnoDevolucion.Id, "NCX", -100m, [], idAsociado: tx);
+        await CerrarTurnoAsync(ctx, turnoDevolucion.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m)]);
+
+        var listado = await ListarAsync(ctx.Admin);
+
+        var devolucion = Assert.Single(listado!.Items, f => f.IdTurnoCaja == turnoDevolucion.Id);
+        Assert.Equal((-50m, -50m, 0m, -100m), (devolucion.Digitales, devolucion.Efectivo, devolucion.CuentaCorriente, devolucion.TotalFacturado));
+        var venta = Assert.Single(listado.Items, f => f.IdTurnoCaja == turnoVenta.Id);
+        Assert.Equal((50m, 50m, 0m, 100m), (venta.Digitales, venta.Efectivo, venta.CuentaCorriente, venta.TotalFacturado));
+    }
+
+    /// <summary>Una nota de crédito sin venta asociada y un turno sin comprobantes: todo al efectivo / en cero.</summary>
+    [Fact]
+    public async Task UnaNotaDeCreditoHuerfanaVaAlEfectivoYUnTurnoSinVentasFacturaCero()
+    {
+        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoHuerfanaVaAlEfectivoYUnTurnoSinVentasFacturaCero));
+
+        var vacio = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 100m);
+        await CerrarTurnoAsync(ctx, vacio.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m)]);
+
+        var huerfana = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 100m);
+        await SembrarComprobanteAsync(ctx, huerfana.Id, "NCX", -40m, []);
+        await CerrarTurnoAsync(ctx, huerfana.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m)]);
+
+        var listado = await ListarAsync(ctx.Admin);
+
+        var filaVacia = Assert.Single(listado!.Items, f => f.IdTurnoCaja == vacio.Id);
+        Assert.Equal((0m, 0m, 0m, 0m), (filaVacia.Digitales, filaVacia.Efectivo, filaVacia.CuentaCorriente, filaVacia.TotalFacturado));
+        var filaHuerfana = Assert.Single(listado.Items, f => f.IdTurnoCaja == huerfana.Id);
+        Assert.Equal((0m, -40m, 0m, -40m), (filaHuerfana.Digitales, filaHuerfana.Efectivo, filaHuerfana.CuentaCorriente, filaHuerfana.TotalFacturado));
+    }
+
+    /// <summary>Lo facturado de un tenant no se mezcla con el de otro aunque ambos tengan turnos cerrados.</summary>
+    [Fact]
+    public async Task LoFacturadoDeOtroTenantNoApareceEnElHistorico()
+    {
+        var ctxA = await PrepararAsync(nameof(LoFacturadoDeOtroTenantNoApareceEnElHistorico) + "A");
+        var ctxB = await PrepararAsync(nameof(LoFacturadoDeOtroTenantNoApareceEnElHistorico) + "B");
+
+        var turnoB = await AbrirTurnoAsync(ctxB, ctxB.IdPuntoVenta, 0m);
+        await SembrarComprobanteAsync(ctxB, turnoB.Id, "TX", 321m, [new(ctxB.IdMedioEfectivo, 321m)]);
+        await CerrarTurnoAsync(ctxB, turnoB.Id, [new ConteoDeclarado(ctxB.IdMedioEfectivo, 321m)]);
+
+        var turnoA = await AbrirTurnoAsync(ctxA, ctxA.IdPuntoVenta, 0m);
+        await SembrarComprobanteAsync(ctxA, turnoA.Id, "TX", 55m, [new(ctxA.IdMedioEfectivo, 55m)]);
+        await CerrarTurnoAsync(ctxA, turnoA.Id, [new ConteoDeclarado(ctxA.IdMedioEfectivo, 55m)]);
+
+        var listado = await ListarAsync(ctxA.Admin);
+
+        var fila = Assert.Single(listado!.Items);
+        Assert.Equal(55m, fila.TotalFacturado);
+    }
+
     // ---- task 5a.10: rol un escalón debajo del gate -----------------------------------------
 
     [Fact]
@@ -360,8 +530,11 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
         // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
         Assert.Equal(
-            ["Turno", "Punto de venta", "Apertura", "Cierre", "Esperado", "Declarado", "Diferencia", "Retiros"],
-            Enumerable.Range(1, 8).Select(c => hoja.Cell(6, c).GetString()));
+            [
+                "Turno", "Punto de venta", "Apertura", "Cierre", "Esperado", "Declarado", "Diferencia", "Retiros",
+                "Digitales", "Efectivo facturado", "Cuenta corriente", "Total facturado"
+            ],
+            Enumerable.Range(1, 12).Select(c => hoja.Cell(6, c).GetString()));
 
         // Las 8 columnas completas, no solo Diferencia — Apertura/Cierre se comparan
         // zone-converted (mismo patrón que VentasListadoExportTests) porque el mapper convierte
@@ -370,7 +543,8 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         const int primeraFilaDeDatos = 7;
         var filasPorTurno = new Dictionary<int, (
             int IdPuntoVenta, DateTime Apertura, DateTime Cierre, decimal Esperado, decimal Declarado,
-            decimal Diferencia, decimal Retiros)>();
+            decimal Diferencia, decimal Retiros, decimal Digitales, decimal Efectivo, decimal CuentaCorriente,
+            decimal TotalFacturado)>();
         for (var fila = primeraFilaDeDatos; !hoja.Cell(fila, 1).Value.IsBlank; fila++)
         {
             filasPorTurno[hoja.Cell(fila, 1).GetValue<int>()] = (
@@ -380,7 +554,11 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 hoja.Cell(fila, 5).GetValue<decimal>(),
                 hoja.Cell(fila, 6).GetValue<decimal>(),
                 hoja.Cell(fila, 7).GetValue<decimal>(),
-                hoja.Cell(fila, 8).GetValue<decimal>());
+                hoja.Cell(fila, 8).GetValue<decimal>(),
+                hoja.Cell(fila, 9).GetValue<decimal>(),
+                hoja.Cell(fila, 10).GetValue<decimal>(),
+                hoja.Cell(fila, 11).GetValue<decimal>(),
+                hoja.Cell(fila, 12).GetValue<decimal>());
         }
 
         foreach (var item in listado.Items)
@@ -399,6 +577,9 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
             Assert.Equal(item.Declarado, fila.Declarado);
             Assert.Equal(item.Diferencia, fila.Diferencia);
             Assert.Equal(item.Egresos.Retiros, fila.Retiros);
+            Assert.Equal(
+                (item.Digitales, item.Efectivo, item.CuentaCorriente, item.TotalFacturado),
+                (fila.Digitales, fila.Efectivo, fila.CuentaCorriente, fila.TotalFacturado));
         }
     }
 

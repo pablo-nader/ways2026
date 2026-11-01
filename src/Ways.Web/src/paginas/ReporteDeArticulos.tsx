@@ -29,6 +29,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable } from '../componentes/grilla'
 import { siguienteOrden } from '../componentes/grilla/ordenamiento'
+import { pluralizar } from '../formato/pluralizar'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
@@ -444,7 +445,7 @@ export function ReporteDeArticulos() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} artículo(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'artículo')}
               </span>
               <div className="d-flex gap-2">
                 <button

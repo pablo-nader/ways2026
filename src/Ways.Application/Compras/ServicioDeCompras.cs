@@ -75,14 +75,9 @@ public partial class ServicioDeCompras(
     }
 
     public async Task<PaginaDeCompras> ListarAsync(
-        int? idProveedor = null,
-        EstadoCompra? estado = null,
-        DateTimeOffset? desde = null,
-        DateTimeOffset? hasta = null,
-        int? idEmpresa = null,
+        FiltrosDeListadoDeCompras? filtros = null,
         int pagina = 1,
         int tamanio = 25,
-        OrigenCompra? origen = null,
         string? orden = null,
         string? direccion = null,
         CancellationToken ct = default)
@@ -92,33 +87,25 @@ public partial class ServicioDeCompras(
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa, origen);
+        var query = ConstruirQuery(filtros ?? new FiltrosDeListadoDeCompras());
 
         var total = await query.CountAsync(ct);
 
         var items = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen, null, c.FechaComprobante))
             .ToListAsync(ct);
 
-        var conSaldo = await ConSaldoPendienteAsync(items, ct);
-        var proveedores = await ReferenciasDeListado.ProveedoresVisiblesAsync(
-            db, contexto, conSaldo.Select(c => c.IdProveedor).ToList(), ct);
-        var conProveedor = conSaldo
-            .Select(c => c with { NombreProveedor = proveedores.GetValueOrDefault(c.IdProveedor) })
-            .ToList();
-
-        return new PaginaDeCompras(conProveedor, total, pagina, tamanio);
+        return new PaginaDeCompras(await CompletarAsync(items, ct), total, pagina, tamanio);
     }
 
     /// <summary>Sin orden pedido: <c>Id</c> descendente (el orden de siempre del listado y de su export). Con
     /// orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. El número ordena por el número
     /// externo (una compra sin número, que la pantalla rotula con su id, va al final en las dos direcciones);
-    /// proveedor y tipo, por lo que muestra la celda (razón social, código); un proveedor dado de baja o con
-    /// FK colgante llega vacío (<c>db.Proveedores</c> ya excluye las bajas) y va al final; el estado, por su
-    /// etiqueta. "Estado de pago" no es ordenable: la pantalla lo deriva de otra consulta (el saldo del
-    /// proveedor) y solo lo muestra con un proveedor filtrado.</summary>
+    /// proveedor y tipo, por lo que muestra la celda (nombre de fantasía o razón social, código); un
+    /// proveedor dado de baja o con FK colgante no entra en la clave (<c>db.Proveedores</c> ya excluye las bajas) y va al final; el estado, por su
+    /// etiqueta. "Estado de pago" no es ordenable: se deriva de lo pagado, que no es una columna.</summary>
     private IOrderedQueryable<ComprobanteCompra> Ordenar(
         IQueryable<ComprobanteCompra> query, OrdenDeListado<ColumnaDeOrdenDeCompras>? orden)
     {
@@ -133,7 +120,9 @@ public partial class ServicioDeCompras(
             ColumnaDeOrdenDeCompras.Numero => OrdenarPor.ClaveConVacios(query, c => c.NumeroExterno, desc),
             ColumnaDeOrdenDeCompras.Proveedor => OrdenarPor.ClaveConVacios(
                 query,
-                c => db.Proveedores.Where(p => p.Id == c.IdProveedor).Select(p => p.RazonSocial).FirstOrDefault(),
+                c => db.Proveedores.Where(p => p.Id == c.IdProveedor)
+                    .Select(p => p.NombreFantasia != null && p.NombreFantasia.Trim() != "" ? p.NombreFantasia.Trim() : p.RazonSocial)
+                    .FirstOrDefault(),
                 desc),
             ColumnaDeOrdenDeCompras.Tipo => OrdenarPor.ClaveConVacios(
                 query,
@@ -166,16 +155,9 @@ public partial class ServicioDeCompras(
     /// segundo <see cref="GuardaDeTope.Exigir"/> es el backstop de carrera contra un
     /// <c>COUNT(*)</c> desactualizado.</summary>
     public async Task<IReadOnlyList<CompraListada>> ListarParaExportacionAsync(
-        int? idProveedor,
-        EstadoCompra? estado,
-        DateTimeOffset? desde,
-        DateTimeOffset? hasta,
-        int topeDeFilas,
-        int? idEmpresa = null,
-        OrigenCompra? origen = null,
-        CancellationToken ct = default)
+        FiltrosDeListadoDeCompras filtros, int topeDeFilas, CancellationToken ct = default)
     {
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa, origen);
+        var query = ConstruirQuery(filtros);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
@@ -183,35 +165,66 @@ public partial class ServicioDeCompras(
         var items = await query
             .OrderByDescending(c => c.Id)
             .Take(topeDeFilas + 1)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen, null, c.FechaComprobante))
             .ToListAsync(ct);
 
         GuardaDeTope.Exigir(items.Count, topeDeFilas);
 
-        return await ConSaldoPendienteAsync(items, ct);
+        return await CompletarAsync(items, ct);
     }
 
-    /// <summary>Completa el saldo pendiente de una página ya leída con UNA consulta de pagado para
-    /// todas sus compras confirmadas (nunca una por fila).</summary>
-    private async Task<List<CompraListada>> ConSaldoPendienteAsync(List<CompraListada> items, CancellationToken ct)
+    /// <summary>Completa una página ya leída: saldo pendiente y estado de pago desde UNA consulta de pagado para
+    /// todas sus compras confirmadas (nunca una por fila), y el nombre del proveedor desde UNA consulta por página.</summary>
+    private async Task<List<CompraListada>> CompletarAsync(List<CompraListada> items, CancellationToken ct)
     {
         var idsConfirmadas = items.Where(c => c.Estado == EstadoCompra.Confirmada).Select(c => c.Id).ToList();
         var pagadoPorCompra = await LectorDePagadoPorCompra.LeerAsync(db, idsConfirmadas, ct);
+        var nombres = await NombresDeProveedorAsync(items.Select(c => c.IdProveedor).ToList(), ct);
 
         return items
-            .Select(c => c with
+            .Select(c =>
             {
-                SaldoPendiente = ReglaDePagoDeCompra.SaldoPendiente(c.Estado, c.Total, pagadoPorCompra.GetValueOrDefault(c.Id, 0m))
+                var pagado = pagadoPorCompra.GetValueOrDefault(c.Id, 0m);
+                return c with
+                {
+                    SaldoPendiente = ReglaDePagoDeCompra.SaldoPendiente(c.Estado, c.Total, pagado),
+                    EstadoPago = ReglaDePagoDeCompra.EstadoDePago(c.Estado, c.Total, pagado)?.ToString(),
+                    NombreProveedor = nombres.GetValueOrDefault(c.IdProveedor)
+                };
             })
             .ToList();
     }
 
+    /// <summary>Nombre de fantasía recortado si no está en blanco, si no la razón social. Igual que
+    /// <see cref="ReferenciasDeListado.ProveedoresVisiblesAsync"/>, solo Admin lo recibe y un proveedor dado de baja o
+    /// colgante llega vacío (la pantalla rotula la fila por su id).</summary>
+    private async Task<IReadOnlyDictionary<int, string>> NombresDeProveedorAsync(
+        IReadOnlyCollection<int> ids, CancellationToken ct)
+    {
+        if (contexto.Rol != RolConocido.Admin || ids.Count == 0)
+        {
+            return new Dictionary<int, string>();
+        }
+
+        var distintos = ids.Distinct().ToList();
+        var filas = await db.Proveedores.AsNoTracking()
+            .Where(p => distintos.Contains(p.Id))
+            .Select(p => new { p.Id, p.NombreFantasia, p.RazonSocial })
+            .ToListAsync(ct);
+
+        return filas.ToDictionary(
+            p => p.Id,
+            p => string.IsNullOrWhiteSpace(p.NombreFantasia) ? p.RazonSocial : p.NombreFantasia.Trim());
+    }
+
     /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
     /// <see cref="ListarParaExportacionAsync"/> (design decisión 7).</summary>
-    private IQueryable<ComprobanteCompra> ConstruirQuery(
-        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta, int? idEmpresa = null,
-        OrigenCompra? origen = null)
+    private IQueryable<ComprobanteCompra> ConstruirQuery(FiltrosDeListadoDeCompras filtros)
     {
+        var (idProveedor, estado, desde, hasta, idEmpresa, origen) =
+            (filtros.IdProveedor, filtros.Estado, filtros.Desde, filtros.Hasta, filtros.IdEmpresa, filtros.Origen);
+        var estadoDePago = InterpretarEstadoDePago(filtros.EstadoPago);
+
         var query = db.ComprobantesCompra.AsQueryable();
 
         if (idProveedor is { } p)
@@ -248,8 +261,55 @@ public partial class ServicioDeCompras(
             query = query.Where(c => db.PuntosVenta.Any(pv => pv.Id == c.IdPuntoVenta && pv.IdEmpresa == emp));
         }
 
+        if (!string.IsNullOrWhiteSpace(filtros.Numero))
+        {
+            var patron = "%" + filtros.Numero.Trim().ToLowerInvariant().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            query = query.Where(c => c.NumeroExterno != null && EF.Functions.Like(c.NumeroExterno.ToLower(), patron));
+        }
+
+        if (filtros.IdTipoComprobante is { } tipo)
+        {
+            query = query.Where(c => c.IdTipoComprobante == tipo);
+        }
+
+        if (filtros.FechaComprobanteDesde is { } fd)
+        {
+            query = query.Where(c => c.FechaComprobante >= fd);
+        }
+
+        if (filtros.FechaComprobanteHasta is { } fh)
+        {
+            query = query.Where(c => c.FechaComprobante <= fh);
+        }
+
+        if (estadoDePago is { } ep)
+        {
+            // Mismo pagado que LectorDePagadoPorCompra (aplicaciones vivas más lo perdonado por redondeo, que se
+            // guarda con importe negativo) y la misma resta que ReglaDePagoDeCompra.EstadoDePago; la baja lógica de
+            // las aplicaciones la filtra el modelo también dentro de la subconsulta.
+            var pagadas = ep == EstadoDePagoDeCompra.Pagada;
+            query = query.Where(c => c.Estado == EstadoCompra.Confirmada
+                && (c.Total
+                    - (db.AplicacionesPago.Where(a => a.IdComprobanteCompra == c.Id).Sum(a => (decimal?)a.Importe) ?? 0m)
+                    + (db.MovimientosCuentaCorrienteProveedor
+                        .Where(m => m.Tipo == TipoMovimientoCcProveedor.Redondeo && m.IdComprobanteCompra == c.Id)
+                        .Sum(m => (decimal?)m.Importe) ?? 0m)
+                    <= 0m) == pagadas);
+        }
+
         return query;
     }
+
+    private static EstadoDePagoDeCompra? InterpretarEstadoDePago(string? valor) =>
+        string.IsNullOrWhiteSpace(valor)
+            ? null
+            : valor.Trim().ToLowerInvariant() switch
+            {
+                "pagada" => EstadoDePagoDeCompra.Pagada,
+                "pendiente" => EstadoDePagoDeCompra.Pendiente,
+                _ => throw new ErrorDominio(
+                    "estado_pago_invalido", "estadoPago debe ser pagada o pendiente.", 400)
+            };
 
     // ---- borrador: crear + replace-set (design decisión 2) ---------------------------------------
 

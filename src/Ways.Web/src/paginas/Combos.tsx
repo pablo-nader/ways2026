@@ -37,6 +37,7 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { ModalDeCombo } from './combos/ModalDeCombo'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO ='No se pudo actualizar el listado. Volvé a entrar para ver el cambio.'
 const AVISO_ALTA_CONFIRMADA_POR_LECTURA = 'El combo se creó. No se pudo confirmar la respuesta del servidor.'
@@ -101,8 +102,8 @@ export function Combos() {
   const [avisosCatalogos, setAvisosCatalogos] = useState<string[]>([])
   const [cargando, setCargando] = useState(true)
   const [errorDeCarga, setErrorDeCarga] = useState('')
-  const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
+  /** El rechazo de la baja vive dentro de la confirmación que sigue abierta. */
+  const [errorDeBaja, setErrorDeBaja] = useState('')
   const [formulario, setFormulario] = useState<FormularioCombo | null>(null)
   const [mostrarErrores, setMostrarErrores] = useState(false)
   const [errorGeneral, setErrorGeneral] = useState('')
@@ -164,7 +165,7 @@ export function Combos() {
       .catch(() => {
         setEmpresas([])
         agregarAvisoCatalogo(
-          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (el combo se crea para todo el tenant).',
+          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (el combo se crea para todas las empresas).',
         )
       })
   }, [cargar])
@@ -184,8 +185,6 @@ export function Combos() {
     setMostrarErrores(false)
     setErrorDeServidor(null)
     setErrorGeneral('')
-    setAviso('')
-    setError('')
   }
 
   function abrirNuevo() {
@@ -206,11 +205,11 @@ export function Combos() {
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
    * reporta como fallida (`react-async-state` regla 6). */
   async function refrescarTrasEscribir(mensajeOk: string) {
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(++generacionRef.current, true)
     } catch {
-      setError(AVISO_REFRESCO_FALLIDO)
+      toast.advertencia(AVISO_REFRESCO_FALLIDO)
     }
   }
 
@@ -244,8 +243,6 @@ export function Combos() {
     const idsPrevios = combos === null ? null : new Set(combos.map((c) => c.id))
     ocupadoRef.current = true
     setGuardando(true)
-    setError('')
-    setAviso('')
     setErrorGeneral('')
     setErrorDeServidor(null)
     try {
@@ -257,14 +254,14 @@ export function Combos() {
         if (esComboInexistente(e)) {
           // Guardar sobre algo que dejó de existir no tiene salida: se cierra el formulario y se vuelve a leer el listado.
           setFormulario(null)
-          setError(MENSAJE_COMBO_INEXISTENTE)
+          toast.error(MENSAJE_COMBO_INEXISTENTE)
           await cargar(++generacionRef.current)
           return
         }
         if (datos.id === null && idsPrevios !== null && esResultadoIncierto(e) && (await altaConfirmadaPorLectura(aSolicitudDeCombo(datos), idsPrevios))) {
           // El POST no tiene idempotencia: si el combo ya figura, reintentar crearía un segundo.
           setFormulario(null)
-          setAviso(AVISO_ALTA_CONFIRMADA_POR_LECTURA)
+          toast.advertencia(AVISO_ALTA_CONFIRMADA_POR_LECTURA)
           return
         }
         const rechazo = errorDeServidorDeCombo(e)
@@ -288,8 +285,7 @@ export function Combos() {
     if (bloqueado) return
     setDisparadorDeLaPuerta(disparador)
     setBajaPendiente(combo)
-    setError('')
-    setAviso('')
+    setErrorDeBaja('')
   }
 
   function cancelarBaja() {
@@ -304,17 +300,20 @@ export function Combos() {
     const combo = bajaPendiente
     ocupadoRef.current = true
     setEliminando(true)
-    setError('')
+    setErrorDeBaja('')
     try {
       try {
         await clienteDeCombosAbm.eliminar(combo.id)
       } catch (e) {
-        setError(mensajeDeFalloDeBajaDeCombo(e))
+        const mensaje = mensajeDeFalloDeBajaDeCombo(e)
         // El combo ya no existe: no hay nada que confirmar, así que la puerta se cierra y se vuelve a leer el listado.
         // Con cualquier otro fallo la puerta queda abierta para reintentar.
         if (esComboInexistente(e)) {
+          toast.error(mensaje)
           setBajaPendiente(null)
           await cargar(++generacionRef.current)
+        } else {
+          setErrorDeBaja(mensaje)
         }
         return
       }
@@ -342,8 +341,6 @@ export function Combos() {
         </p>
 
         {errorDeCarga && <div className="alert alert-danger">{errorDeCarga}</div>}
-        {error && !bajaPendiente && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {avisosCatalogos.length > 0 && <div className="alert alert-warning">{avisosCatalogos.join(' ')}</div>}
 
         {bajaPendiente && (
@@ -351,7 +348,7 @@ export function Combos() {
             titulo={`el combo "${bajaPendiente.nombre}"`}
             ocupado={eliminando}
             disparador={disparadorDeLaPuerta}
-            error={error}
+            error={errorDeBaja}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

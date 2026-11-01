@@ -42,7 +42,11 @@ export function mensajeDeLoQueImpideGuardar(
 
   const incompletas = lineasIncompletas(lineas).length
   if (incompletas > 0) {
-    frases.push(`Hay ${incompletas} línea(s) incompleta(s): complételas o quítelas antes de guardar.`)
+    frases.push(
+      incompletas === 1
+        ? 'Hay 1 línea incompleta: complétela o quítela antes de guardar.'
+        : `Hay ${incompletas} líneas incompletas: complételas o quítelas antes de guardar.`,
+    )
   }
 
   return frases.length === 0 ? null : frases.join(' ')

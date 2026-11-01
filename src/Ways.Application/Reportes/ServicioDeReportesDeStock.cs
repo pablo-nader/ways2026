@@ -16,7 +16,7 @@ namespace Ways.Application.Reportes;
 /// Under The Same Gate): <c>GET /api/reportes/stock/existencias</c> — LINQ puro sobre
 /// <c>stock</c> ⋈ <c>articulos</c> para UN punto de venta, cubierto por <c>ix_stock_punto_venta</c>.
 /// Sin <c>idArticulo</c> (spec: Existencias Needs No idArticulo, Unlike GET /api/stock) y sin
-/// <c>idEmpresa</c> (mismo criterio que <c>ServicioDeTesoreria</c>: la ruta solo pide
+/// <c>idEmpresa</c> (la ruta solo pide
 /// <c>idPuntoVenta</c>, la empresa se resuelve del lado HTTP cuando hace falta para el export).
 /// Los filtros globales de <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre
 /// <c>articulos</c>; <c>stock</c> usa su propio filtro de tenant manual
@@ -53,7 +53,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     {
         // Cláusula bajo prueba (mutation-proof-tests): el filtro por la sucursal del punto de venta
         // es lo único que discrimina una sucursal de otra — mezclar dos del mismo tenant en una sola
-        // respuesta rompería el significado del reporte tanto como en ServicioDeTesoreria (design
+        // respuesta rompería el significado del reporte tanto como en una cadena de tesorería (design
         // decisión 11, misma familia de bug). Las cajas de una misma sucursal ven el mismo stock.
         var crudas = await db.Stock
             .Where(s => db.PuntosVenta.Any(pv => pv.Id == idPuntoVenta && pv.IdSucursal == s.IdSucursal))

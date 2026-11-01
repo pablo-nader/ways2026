@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Clientes } from './Clientes'
+import { Toaster } from '../toasts/Toaster'
 import type { ClienteListado, PaginaDe } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -95,7 +96,7 @@ function rutasDeClientes() {
 }
 
 function renderClientes() {
-  return render(<Clientes />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<><Clientes /><Toaster /></>, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
 beforeEach(() => {
@@ -381,15 +382,15 @@ describe('Clientes — paginación en el servidor', () => {
     renderClientes()
     await screen.findByText('Luis Pérez')
 
-    expect(screen.getByText('Página 1 de 3 — 60 cliente(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 1 de 3 — 60 clientes')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
     await waitFor(() => expect(rutasDeClientes().at(-1)).toBe('/clientes?pagina=2'))
-    expect(await screen.findByText('Página 2 de 3 — 60 cliente(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 3 — 60 clientes')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
-    expect(await screen.findByText('Página 3 de 3 — 60 cliente(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 3 de 3 — 60 clientes')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Anterior' }))
@@ -407,7 +408,7 @@ describe('Clientes — paginación en el servidor', () => {
     await usuario.selectOptions(screen.getByLabelText('Filas por página'), '50')
 
     await waitFor(() => expect(rutasDeClientes().at(-1)).toBe('/clientes?tamanio=50'))
-    expect(await screen.findByText('Página 1 de 2 — 60 cliente(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 1 de 2 — 60 clientes')).toBeInTheDocument()
   })
 
   it('con una página fuera de rango pide la última válida en vez de mostrar una página vacía', async () => {
@@ -422,9 +423,9 @@ describe('Clientes — paginación en el servidor', () => {
 
     renderClientes()
 
-    expect(await screen.findByText('Página 2 de 2 — 50 cliente(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 2 — 50 clientes')).toBeInTheDocument()
     expect(rutasDeClientes()).toEqual(['/clientes', '/clientes?pagina=2'])
-    expect(screen.queryByText('Página 3 de 2 — 50 cliente(s)')).toBeNull()
+    expect(screen.queryByText('Página 3 de 2 — 50 clientes')).toBeNull()
   })
 })
 

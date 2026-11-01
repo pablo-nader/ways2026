@@ -64,9 +64,17 @@ public class ModeloDeCuentasDeTesoreriaTests
         using var db = CrearContexto();
         var entidad = db.Model.FindEntityType(typeof(CuentaTesoreria))!;
 
-        var clave = entidad.GetKeys().Single(k => !k.IsPrimaryKey());
+        var claves = entidad.GetKeys().Where(k => !k.IsPrimaryKey()).ToList();
+        Assert.Equal(2, claves.Count);
+
+        var clave = claves.Single(k => k.Properties.Count == 2);
         Assert.Equal(["Id", "IdTenant"], clave.Properties.Select(p => p.Name));
         Assert.Equal("ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant", clave.GetName());
+
+        // Destino de la FK compuesta de conexiones_mercadopago: la base rechaza una cuenta de otra empresa.
+        var conEmpresa = claves.Single(k => k.Properties.Count == 3);
+        Assert.Equal(["Id", "IdEmpresa", "IdTenant"], conEmpresa.Properties.Select(p => p.Name));
+        Assert.Equal("ak_cuentas_tesoreria_id_cuenta_tesoreria_id_empresa_id_tenant", conEmpresa.GetName());
 
         var fk = entidad.GetForeignKeys().Single(f => f.PrincipalEntityType.ClrType == typeof(Empresa));
         Assert.Equal(["IdEmpresa", "IdTenant"], fk.Properties.Select(p => p.Name));
@@ -139,8 +147,8 @@ public class ModeloDeCuentasDeTesoreriaTests
         var indices = entidad.GetIndexes().ToDictionary(i => i.GetDatabaseName()!);
 
         Assert.Equal(
-            ["IdCuentaTesoreria", "IdTenant", "Id"], indices["ix_movimientos_cuenta_cuenta_id"].Properties.Select(p => p.Name));
-        Assert.False(indices["ix_movimientos_cuenta_cuenta_id"].IsUnique);
+            ["IdCuentaTesoreria", "IdTenant", "Fecha", "Id"], indices["ix_movimientos_cuenta_cuenta_fecha_id"].Properties.Select(p => p.Name));
+        Assert.False(indices["ix_movimientos_cuenta_cuenta_fecha_id"].IsUnique);
 
         var cierre = indices["ux_movimientos_cuenta_cierre"];
         Assert.True(cierre.IsUnique);
