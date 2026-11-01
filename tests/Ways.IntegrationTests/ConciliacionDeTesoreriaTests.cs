@@ -6,11 +6,16 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Caja;
 using Ways.Application.Catalogos;
+using Ways.Application.Compras;
 using Ways.Application.Pagos;
+using Ways.Application.Plantel;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Pagos;
+using Ways.Domain.Proveedores;
+using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.IntegrationTests;
 
@@ -24,6 +29,23 @@ namespace Ways.IntegrationTests;
 /// <see cref="LaMarcaDeUnaEmpresaNoCongelaLaDeOtraDelMismoTenant"/>; (3) tomar la fecha del pago en vez de la menor entre la del pago y la del
 /// cierre de su turno en <c>ServicioDePagos.EjecutarEscrituraAsync</c> hace fallar <see cref="UnPagoConFechaPosteriorAlCierreDeSuTurnoConciliadoSeRechaza"/>;
 /// (4) quitar el <c>FechaDeNegocioAInstante</c> de hoy (medianoche local otra vez) hace fallar <see cref="UnPagoAdministrativoDeHoyTomaLaHoraActualYSigueLibreDespuesDeLaMarca"/>.
+///
+/// Sitios que solo una marca puesta a mano ejercita (la prueba inserta la marca con un <c>hasta</c> futuro directo en la base, salteando el
+/// chequeo del servicio): comentar la guarda de cada sitio hace fallar, respectivamente, (5) <c>ServicioDePagos.EjecutarPagoDeCompraAsync</c>:
+/// <see cref="PagarUnaCompraConFechaPasadaDespuesDeLaMarcaSeRechazaYNoEscribeNada"/>; (6) <c>EjecutarPagoDeCompraConAplicacionesAsync</c>:
+/// <see cref="PagarUnaCompraConUnPagoNuevoDeFechaPasadaDespuesDeLaMarcaSeRechazaYNoEscribeNada"/>; (7) <c>ServicioDePagoDePersonal.EjecutarAsync</c>:
+/// <see cref="UnPagoDeSueldoDeTesoreriaConFechaPasadaDespuesDeLaMarcaSeRechazaYNoEscribeNada"/>; (8) <c>ServicioDePagos.InsertarPagoAsync</c>:
+/// <see cref="UnPagoDelPosConUnaMarcaPuestaEnLaVentanaDelAltaSeRechazaYNoEscribeNada"/>; (9) <c>EjecutarEscrituraAsync</c> (modo POS):
+/// <see cref="EditarUnPagoDelPosDeUnTurnoAbiertoFechadoEnOAntesDeLaMarcaSeRechazaYNoLoCambia"/> (y las pruebas administrativas); (10) y (11) los
+/// dos cierres de <c>ServicioDeTurnos</c>: <see cref="ElCierreClasicoDeUnTurnoConUnaMarcaPuestaEnLaVentanaDelCierreSeRechazaYElTurnoSigueAbierto"/> y
+/// <see cref="ElCierrePorRetiroDeUnTurnoConUnaMarcaPuestaEnLaVentanaDelCierreSeRechazaYElTurnoSigueAbierto"/>; (12) la rama de movimientos de cuenta
+/// (<c>enCuentas</c>) de <c>ServicioDeMediosPago</c>: <see cref="ReasignarLaCuentaDeUnMedioConSoloMovimientosDeCuentaConciliadosSeRechaza"/>;
+/// (13) el chequeo de marca del saldo inicial en <c>ServicioDeCuentasDeTesoreria.ActualizarAsync</c>:
+/// <see cref="ElSaldoInicialDeUnaCuentaSinMovimientosNoCambiaDespuesDeConciliarPeroSuNombreYEstadoSi"/>; (14) y (15) la guarda de los ajustes manuales de
+/// efectivo y de cuenta: <see cref="UnAjusteManualDeEfectivoConUnaMarcaPuestaEnLaVentanaDelAjusteSeRechazaYNoEscribeNada"/> y
+/// <see cref="UnAjusteManualDeCuentaConUnaMarcaPuestaEnLaVentanaDelAjusteSeRechazaYNoEscribeNada"/>; (16) <c>FechaApertura &lt;= hasta</c> cambiado a
+/// <c>&lt;</c> en <c>ServicioDeConciliacionDeTesoreria</c> hace fallar <see cref="UnTurnoAbiertoQueEmpezoEnOAntesDelInstanteImpideConciliarYUnoPosteriorNo"/>
+/// (el instante exacto sale de la apertura leída de la base). Las doce mutaciones se aplicaron juntas, cada una falló al menos su prueba y se revirtieron.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ConciliacionDeTesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -139,6 +161,73 @@ public class ConciliacionDeTesoreriaTests(WaysApiFixture fixture) : IClassFixtur
         return empresa.Id;
     }
 
+    /// <summary>Inserta una marca directo en la base, salteando el chequeo de futuro del servicio: con un <c>hasta</c> posterior al
+    /// instante que fija el escritor, el sitio guardado la ve de forma determinista (el caso de una marca que se confirma entre el
+    /// reloj del escritor y su commit).</summary>
+    private static async Task SembrarMarcaAsync(ContextoDeTesoreriaDePrueba ctx, DateTimeOffset hasta)
+    {
+        await using var db = ctx.Db();
+        db.ConciliacionesTesoreria.Add(new ConciliacionTesoreria
+        {
+            IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, Hasta = hasta, IdUsuario = ctx.IdUsuarioAdmin, CreadoEl = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<int> AbrirTurnoAsync(ContextoDeTesoreriaDePrueba ctx, int idPuntoVenta)
+    {
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/caja/turnos", new SolicitudDeApertura(idPuntoVenta, 0m, null));
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, await respuesta.Content.ReadAsStringAsync());
+        return (await respuesta.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+    }
+
+    private static SolicitudDePagoConLineas AltaPos(int idPuntoVenta, int idMedio) =>
+        new(idPuntoVenta, CategoriaPago.Otros, null, null, "Gasto POS", null, null, [new LineaDePago(idMedio, 100m, null)]);
+
+    private async Task<int> SembrarCompraConfirmadaAsync(ContextoDeTesoreriaDePrueba ctx)
+    {
+        int idAlicuota;
+        int idTipo;
+        int idProveedor;
+        await using (var plataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            idAlicuota = await plataforma.AlicuotasIva.Where(a => a.Nombre == "21%").Select(a => a.Id).FirstAsync();
+            idTipo = await plataforma.TiposComprobante.Where(t => t.Codigo == "C-FA").Select(t => t.Id).SingleAsync();
+            var proveedor = new Proveedor
+            {
+                IdTenant = ctx.IdTenant, RazonSocial = "Proveedor de prueba",
+                IdCondicionFiscal = await plataforma.CondicionesFiscales.Select(c => c.Id).FirstAsync(), CreatedAt = ahora, UpdatedAt = ahora
+            };
+            plataforma.Proveedores.Add(proveedor);
+            await plataforma.SaveChangesAsync();
+            idProveedor = proveedor.Id;
+        }
+
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/compras", new SolicitudDeCompra(
+            idProveedor, idTipo, await PuntoVentaAsync(ctx), "0001-00000001", FechaDelNegocio.Hoy(), null,
+            [new LineaDeCompraSolicitada(null, "Concepto de prueba", 1m, null, null, 1000m, 0m, idAlicuota)]));
+        var cuerpo = await alta.Content.ReadAsStringAsync();
+        Assert.True(alta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var idCompra = JsonDocument.Parse(cuerpo).RootElement.GetProperty("id").GetInt32();
+        var confirmada = await ctx.Admin.PostAsync($"/api/compras/{idCompra}/confirmar", null);
+        Assert.True(confirmada.StatusCode == HttpStatusCode.OK, await confirmada.Content.ReadAsStringAsync());
+        return idCompra;
+    }
+
+    private static async Task<int> SembrarCuentaAsync(ContextoDeTesoreriaDePrueba ctx, int idEmpresa, string nombre, decimal saldoInicial = 0m)
+    {
+        await using var db = ctx.Db();
+        var ahora = DateTimeOffset.UtcNow;
+        var cuenta = new CuentaTesoreria
+        {
+            IdTenant = ctx.IdTenant, IdEmpresa = idEmpresa, Nombre = nombre, SaldoInicial = saldoInicial, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.CuentasTesoreria.Add(cuenta);
+        await db.SaveChangesAsync();
+        return cuenta.Id;
+    }
+
     // ---- la marca ----------------------------------------------------------------------------------
 
     [Fact]
@@ -210,18 +299,23 @@ public class ConciliacionDeTesoreriaTests(WaysApiFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task UnTurnoAbiertoQueEmpezoAntesDelInstanteImpideConciliarYUnoPosteriorNo()
+    public async Task UnTurnoAbiertoQueEmpezoEnOAntesDelInstanteImpideConciliarYUnoPosteriorNo()
     {
         var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcTurnoAbierto");
-        await SembrarTurnoAsync(ctx, await PuntoVentaAsync(ctx), Instante(TimeSpan.FromHours(-2)), null, await MedioEfectivoAsync(ctx));
+        var idTurno = await SembrarTurnoAsync(ctx, await PuntoVentaAsync(ctx), Instante(TimeSpan.FromHours(-2)), null, await MedioEfectivoAsync(ctx));
+        DateTimeOffset apertura;
+        await using (var db = ctx.Db())
+        {
+            apertura = (await db.TurnosCaja.AsNoTracking().SingleAsync(t => t.Id == idTurno)).FechaApertura;
+        }
 
-        var despuesDeAbrir = await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromHours(-1)));
-        var exactoAlAbrir = await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromHours(-2)));
-        var antesDeAbrir = await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromHours(-3)));
+        var despuesDeAbrir = await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, apertura.AddHours(1));
+        var exactoAlAbrir = await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, apertura);
+        var antesDeAbrir = await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, apertura.AddHours(-1));
 
         Assert.Equal((HttpStatusCode.Conflict, "conciliacion_con_turno_abierto"), (despuesDeAbrir.StatusCode, await CodigoAsync(despuesDeAbrir)));
+        Assert.Equal((HttpStatusCode.Conflict, "conciliacion_con_turno_abierto"), (exactoAlAbrir.StatusCode, await CodigoAsync(exactoAlAbrir)));
         Assert.Equal(HttpStatusCode.Created, antesDeAbrir.StatusCode);
-        Assert.NotEqual(HttpStatusCode.Created, exactoAlAbrir.StatusCode);
         Assert.Single(await MarcasAsync(ctx));
     }
 
@@ -484,6 +578,211 @@ public class ConciliacionDeTesoreriaTests(WaysApiFixture fixture) : IClassFixtur
 
         Assert.Equal(HttpStatusCode.OK, permitido.StatusCode);
         Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (rechazado.StatusCode, await CodigoAsync(rechazado)));
+    }
+
+    // ---- sitios guardados que solo se ejercitan con una marca puesta a mano ---------------------------
+
+    [Fact]
+    public async Task PagarUnaCompraConFechaPasadaDespuesDeLaMarcaSeRechazaYNoEscribeNada()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcPagarCompra");
+        var medio = await MedioEfectivoAsync(ctx);
+        var idCompra = await SembrarCompraConfirmadaAsync(ctx);
+        Assert.Equal(HttpStatusCode.Created, (await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromMinutes(-2)))).StatusCode);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/compras/{idCompra}/pagos", new SolicitudDePagoDeCompra(FechaDelNegocio.Hoy().AddDays(-2), 100m, medio, null));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Empty(await db.Pagos.ToListAsync());
+        Assert.Empty(await db.MovimientosTesoreria.ToListAsync());
+        Assert.Empty(await db.MovimientosCuentaCorrienteProveedor.Where(m => m.Tipo == TipoMovimientoCcProveedor.Pago).ToListAsync());
+    }
+
+    [Fact]
+    public async Task PagarUnaCompraConUnPagoNuevoDeFechaPasadaDespuesDeLaMarcaSeRechazaYNoEscribeNada()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcPagarCompraAplic");
+        var medio = await MedioEfectivoAsync(ctx);
+        var idCompra = await SembrarCompraConfirmadaAsync(ctx);
+        Assert.Equal(HttpStatusCode.Created, (await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromMinutes(-2)))).StatusCode);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/pagos/de-compra/{idCompra}",
+            new SolicitudDePagoDeCompraConLineas(FechaDelNegocio.Hoy().AddDays(-2), [new LineaDePago(medio, 100m, null)], null));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Empty(await db.Pagos.ToListAsync());
+        Assert.Empty(await db.MovimientosTesoreria.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UnPagoDeSueldoDeTesoreriaConFechaPasadaDespuesDeLaMarcaSeRechazaYNoEscribeNada()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcSueldo");
+        var medio = await MedioEfectivoAsync(ctx);
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/personal", new DatosDePersonal("Ana", null, null, null, 1000m, null, null, null));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var idPersonal = (await alta.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+        Assert.Equal(HttpStatusCode.Created, (await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromMinutes(-2)))).StatusCode);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/personal/{idPersonal}/pagos", new
+        {
+            fecha = FechaDelNegocio.Hoy().AddDays(-2).ToString("yyyy-MM-dd"), idEmpresa = ctx.IdEmpresa, origenFondos = "Tesoreria",
+            lineas = new[] { new { idMedioPago = medio, importe = 300m, referencia = (string?)null } }
+        });
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Empty(await db.Pagos.ToListAsync());
+        Assert.Empty(await db.MovimientosTesoreria.ToListAsync());
+        Assert.Empty(await db.MovimientosPersonal.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UnPagoDelPosConUnaMarcaPuestaEnLaVentanaDelAltaSeRechazaYNoEscribeNada()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcPosAlta");
+        var medio = await MedioEfectivoAsync(ctx);
+        var idPuntoVenta = await PuntoVentaAsync(ctx);
+        await AbrirTurnoAsync(ctx, idPuntoVenta);
+        await SembrarMarcaAsync(ctx, DateTimeOffset.UtcNow.AddHours(1));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos", AltaPos(idPuntoVenta, medio));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Empty(await db.Pagos.ToListAsync());
+    }
+
+    [Fact]
+    public async Task EditarUnPagoDelPosDeUnTurnoAbiertoFechadoEnOAntesDeLaMarcaSeRechazaYNoLoCambia()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcPosEdicion");
+        var medio = await MedioEfectivoAsync(ctx);
+        var idPuntoVenta = await PuntoVentaAsync(ctx);
+        await AbrirTurnoAsync(ctx, idPuntoVenta);
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/pagos", AltaPos(idPuntoVenta, medio));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var idPago = (await alta.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+        await SembrarMarcaAsync(ctx, DateTimeOffset.UtcNow.AddHours(1));
+
+        var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/pagos/{idPago}", Edicion(medio));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        var intacto = await db.Pagos.AsNoTracking().SingleAsync(p => p.Id == idPago);
+        Assert.Equal(("Gasto POS", 100m), (intacto.Concepto, intacto.Importe));
+    }
+
+    [Fact]
+    public async Task ElCierreClasicoDeUnTurnoConUnaMarcaPuestaEnLaVentanaDelCierreSeRechazaYElTurnoSigueAbierto()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcCierreClasico");
+        var medio = await MedioEfectivoAsync(ctx);
+        var idTurno = await AbrirTurnoAsync(ctx, await PuntoVentaAsync(ctx));
+        await SembrarMarcaAsync(ctx, DateTimeOffset.UtcNow.AddHours(1));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/caja/turnos/{idTurno}/cierre", new SolicitudDeCierre([new ConteoDeclarado(medio, 0m)], null));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Equal(EstadoTurno.Abierto, (await db.TurnosCaja.AsNoTracking().SingleAsync(t => t.Id == idTurno)).Estado);
+        Assert.Empty(await db.MovimientosTesoreria.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ElCierrePorRetiroDeUnTurnoConUnaMarcaPuestaEnLaVentanaDelCierreSeRechazaYElTurnoSigueAbierto()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcCierreRetiro");
+        var idTurno = await AbrirTurnoAsync(ctx, await PuntoVentaAsync(ctx));
+        await SembrarMarcaAsync(ctx, DateTimeOffset.UtcNow.AddHours(1));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{idTurno}/cierre-por-retiro", new SolicitudDeCierrePorRetiro(0m, null));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Equal(EstadoTurno.Abierto, (await db.TurnosCaja.AsNoTracking().SingleAsync(t => t.Id == idTurno)).Estado);
+        Assert.Empty(await db.MovimientosTesoreria.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ReasignarLaCuentaDeUnMedioConSoloMovimientosDeCuentaConciliadosSeRechaza()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcMedioEnCuentas");
+        var (medio, cuentaA, cuentaB) = await SembrarMedioConCuentaAsync(ctx, "Solo movimientos");
+        await using (var db = ctx.Db())
+        {
+            var fecha = Instante(TimeSpan.FromDays(-3));
+            db.MovimientosCuenta.Add(new MovimientoCuenta
+            {
+                IdTenant = ctx.IdTenant, IdCuentaTesoreria = cuentaA, IdMedioPago = medio, Fecha = fecha, Tipo = TipoMovimientoCuenta.Cobro,
+                Concepto = "Cobro sembrado", Inicio = 0m, Ingreso = 100m, Egreso = 0m, Final = 100m, IdEmpleado = ctx.IdUsuarioAdmin
+            });
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(HttpStatusCode.Created, (await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromMinutes(-5)))).StatusCode);
+
+        var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/catalogos/medios-pago/{medio}", CuerpoDeMedio("Solo movimientos", cuentaB));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var lectura = ctx.Db();
+        Assert.Equal(cuentaA, (await lectura.MediosPago.AsNoTracking().SingleAsync(m => m.Id == medio)).IdCuentaTesoreria);
+    }
+
+    // ---- saldo inicial y ajustes manuales -----------------------------------------------------------
+
+    [Fact]
+    public async Task ElSaldoInicialDeUnaCuentaSinMovimientosNoCambiaDespuesDeConciliarPeroSuNombreYEstadoSi()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcSaldoInicial");
+        var cuenta = await SembrarCuentaAsync(ctx, ctx.IdEmpresa, "Banco", saldoInicial: 10m);
+        var otra = await CrearEmpresaAsync(ctx, "Empresa sin marca");
+        var cuentaDeOtra = await SembrarCuentaAsync(ctx, otra, "Banco ajeno", saldoInicial: 10m);
+        Assert.Equal(HttpStatusCode.OK, (await ctx.Admin.PutAsJsonAsync($"/api/cuentas-tesoreria/{cuenta}", new EdicionDeCuentaTesoreria("Banco", 20m, true))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await ConciliarAsync(ctx.Admin, ctx.IdEmpresa, Instante(TimeSpan.FromMinutes(-2)))).StatusCode);
+
+        var cambioDeSaldo = await ctx.Admin.PutAsJsonAsync($"/api/cuentas-tesoreria/{cuenta}", new EdicionDeCuentaTesoreria("Banco", 30m, true));
+        var cambioDeNombreYEstado = await ctx.Admin.PutAsJsonAsync($"/api/cuentas-tesoreria/{cuenta}", new EdicionDeCuentaTesoreria("Banco renombrado", 20m, false));
+        var cuentaDeEmpresaSinMarca = await ctx.Admin.PutAsJsonAsync($"/api/cuentas-tesoreria/{cuentaDeOtra}", new EdicionDeCuentaTesoreria("Banco ajeno", 30m, true));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (cambioDeSaldo.StatusCode, await CodigoAsync(cambioDeSaldo)));
+        Assert.Equal(HttpStatusCode.OK, cambioDeNombreYEstado.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, cuentaDeEmpresaSinMarca.StatusCode);
+        await using var db = ctx.Db();
+        var guardada = await db.CuentasTesoreria.AsNoTracking().SingleAsync(c => c.Id == cuenta);
+        Assert.Equal((20m, "Banco renombrado", false), (guardada.SaldoInicial, guardada.Nombre, guardada.Activo));
+    }
+
+    [Fact]
+    public async Task UnAjusteManualDeEfectivoConUnaMarcaPuestaEnLaVentanaDelAjusteSeRechazaYNoEscribeNada()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcAjusteEfectivoCarrera");
+        await SembrarMarcaAsync(ctx, DateTimeOffset.UtcNow.AddHours(1));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/tesoreria/efectivo/ajustes", new SolicitudDeAjusteDeEfectivo(ctx.IdEmpresa, "Corrección", 75m));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Empty(await db.MovimientosTesoreria.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UnAjusteManualDeCuentaConUnaMarcaPuestaEnLaVentanaDelAjusteSeRechazaYNoEscribeNada()
+    {
+        var ctx = await ContextoDeTesoreriaDePrueba.PrepararAsync(fixture, "ConcAjusteCuentaCarrera");
+        var cuenta = await SembrarCuentaAsync(ctx, ctx.IdEmpresa, "Banco");
+        await SembrarMarcaAsync(ctx, DateTimeOffset.UtcNow.AddHours(1));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/cuentas-tesoreria/{cuenta}/ajustes", new SolicitudDeAjusteDeCuenta("Corrección", -20m, null));
+
+        Assert.Equal((HttpStatusCode.Conflict, "periodo_conciliado"), (respuesta.StatusCode, await CodigoAsync(respuesta)));
+        await using var db = ctx.Db();
+        Assert.Empty(await db.MovimientosCuenta.ToListAsync());
     }
 
     // ---- locks --------------------------------------------------------------------------------------

@@ -311,7 +311,10 @@ conciliaciones_tesoreria (    -- [operativa — marcas append-only] una fila por
 > menor o igual (el pago de administración con fecha pasada, el pago de una compra, el pago de personal con origen tesorería, y
 > cualquier alta del POS que pierda la carrera contra la marca); el cierre de un turno fechado en o antes de la marca (solo por
 > carrera: la marca no se puede poner con un turno abierto que empezó antes); y el cambio de cuenta o de comportamiento de un medio
-> de pago que tiene líneas de pago o movimientos de cuenta fechados en o antes de la marca de SU empresa. Siguen editables porque no
+> de pago que tiene líneas de pago o movimientos de cuenta fechados en o antes de la marca de SU empresa; el saldo inicial de una cuenta de
+> tesorería (409 `periodo_conciliado` apenas la empresa tiene alguna marca, porque el libro lo suma a todos los saldos; nombre y estado siguen
+> editables); y los ajustes manuales de efectivo y de cuenta, que van fechados "ahora" y solo pueden chocar si la marca se confirma entre su
+> reloj y su commit. Siguen editables porque no
 > cambian lo que el libro lee: compras (edición y anulación), aplicaciones y desaplicaciones, redondeos, vincular compra, reasignar
 > personal, cobros y ventas. El pago de administración fechado hoy (en la zona de la empresa) toma la hora actual como `fecha` y no la
 > medianoche local: así queda siempre posterior a una marca puesta antes durante el día; las fechas pasadas conservan la medianoche local.
@@ -323,7 +326,8 @@ conciliaciones_tesoreria (    -- [operativa — marcas append-only] una fila por
 > compartido detrás de un exclusivo que espera: quien pidiera la marca reteniendo otro lock podría cerrar un ciclo con el escritor de la
 > marca. Los escritores cuya empresa no se conoce antes de los locks (pago de una compra, cierre de turno, edición de un pago) la
 > pre-leen sin lock (la empresa de un pago y el punto de venta de un turno no cambian; la de una compra se verifica de nuevo bajo su lock). La edición de un medio de pago toma el compartido de TODAS las empresas del tenant, en id
-> ascendente. La reconstrucción de cuentas (`POST /api/cuentas-tesoreria/reconstruccion` y su vista previa) omite los turnos con
+> ascendente. La edición de una cuenta de tesorería y los dos ajustes manuales lo toman como primer lock (la edición pre-lee la empresa de la
+> cuenta, que no cambia). La reconstrucción de cuentas (`POST /api/cuentas-tesoreria/reconstruccion` y su vista previa) omite los turnos con
 > `fecha_cierre <=` la marca de la empresa (igual a la marca = congelado) en lugar de rechazar el pedido: la respuesta trae
 > `conciliadoHasta` y `congeladas` (las acreditaciones pendientes omitidas, sin contarlas en `turnos` ni `filas`). La aplicación toma el
 > compartido como PRIMER lock, antes del advisory de tesorería y de los locks de medios y cuentas, y lee la marca una sola vez bajo él.

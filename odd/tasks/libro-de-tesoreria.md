@@ -103,7 +103,7 @@ pago row together. The freeze removes this once conciliated.
   (retiros, pagos del cajón, movimientos de cuenta y arqueo), ajustes manuales y el ruteo medio -> efectivo/cuenta. Siguen editables
   (no cambian lo que el libro lee): compras, aplicaciones, redondeos, vincular compra, reasignar personal, cobros y ventas.
 - Sitios con guarda (409 `periodo_conciliado`): `ServicioDePagos.EjecutarEscrituraAsync` (edición y baja, POS y administración; fecha del pago o
-  del cierre de su turno, la menor), `InsertarPagoAsync` (alta del POS, solo carrera), `InsertarPagoDeAdministracionAsync`,
+  del cierre de su turno, la menor), `InsertarPagoAsync` (alta del POS, solo carrera), `InsertarPagoDeAdministracionAsync`, los dos ajustes manuales (efectivo y cuenta; solo carrera), la edición de `cuentas_tesoreria.saldo_inicial`,
   `EjecutarPagoDeCompraAsync`, `EjecutarPagoDeCompraConAplicacionesAsync` (solo con pago nuevo), `ServicioDePagoDePersonal.EjecutarAsync`
   (pago de sueldo), `ServicioDeTurnos` (los dos cierres, solo carrera), `ServicioDeMediosPago` (cambio de cuenta o comportamiento).
 - Pago de administración fechado hoy: `Fecha` = instante actual (antes, medianoche local); las fechas pasadas conservan la medianoche local.
@@ -114,9 +114,11 @@ pago row together. The freeze removes this once conciliated.
   `congeladas` (acreditaciones omitidas, fuera de `turnos`/`filas`). La aplicación toma el compartido de conciliación como primer lock y lee
   la marca bajo él. Pruebas: borde igual a la marca, marca un segundo antes, sin marca, y espera al escritor de la marca; mutaciones
   registradas en `CuentasTesoreriaReconstruccionTests`.
-- Fuera del congelamiento (decisión de alcance, no del dueño): el ajuste manual de efectivo y el de cuenta van fechados "ahora" y no llevan guarda
-  propia (solo una marca puesta en la ventana entre su `reloj.Ahora` y el commit podría alcanzarlos); `cuentas_tesoreria.saldo_inicial` ya no se
-  puede editar con movimientos, pero sí mientras la cuenta no tenga ninguno.
+- Judgment-day de T5a (JD-T5-1..5, corregidos): `saldo_inicial` no se puede cambiar (409 `periodo_conciliado`) apenas la empresa tiene una marca, con
+  o sin movimientos, porque el libro lo suma a todos los saldos; nombre y estado siguen editables. Los ajustes manuales de efectivo y de cuenta toman
+  el compartido de conciliación como primer lock, leen la marca y rechazan una fecha menor o igual (solo carrera). Cada sitio guardado tiene su
+  prueba de integración con la mutación registrada en el doc-comment de `ConciliacionDeTesoreriaTests`; la prueba del turno abierto usa el
+  instante exacto de la apertura.
 
 ## Next step
 

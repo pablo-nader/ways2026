@@ -272,7 +272,8 @@ public class ServicioDeTurnos(
         await ExigirCierreNoConciliadoAsync(idTurnoCaja, idTenant, momento, ct);
 
         // 1. UPDATE ... WHERE estado = 'abierto' RETURNING id_punto_venta — lock EXCLUSIVO de
-        // fila, PRIMER statement (design decisión 1), sostenido hasta el COMMIT. 0 filas: ¿existe
+        // fila, primer statement sobre el turno (design decisión 1), justo después de la guarda de
+        // conciliación, cuyo lock compartido es el primero de la transacción; sostenido hasta el COMMIT. 0 filas: ¿existe
         // el turno? no -> 404; sí -> 409 turno_ya_cerrado (Orchestrator Decision 2, tasks.md —
         // distinto de turno_no_abierto: el turno EXISTE, solo que ya no está abierto). El mismo
         // UPDATE también acumula solicitud.Observaciones a continuación de las de la apertura,

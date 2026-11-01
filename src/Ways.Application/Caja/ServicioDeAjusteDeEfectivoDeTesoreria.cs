@@ -44,12 +44,18 @@ public class ServicioDeAjusteDeEfectivoDeTesoreria(IWaysDbContext db, IContextoD
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
+            // Primer lock de la transacción (ver GuardaDeConciliacion).
+            await GuardaDeConciliacion.TomarCompartidoAsync(db, idTenant, solicitud.IdEmpresa, ct);
+
             await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(
                 db.Database.GetDbConnection(), transaccion.GetDbTransaction(), idTenant, solicitud.IdEmpresa, ct);
 
             var fila = await EscriturasDeTesoreria.ApendearAsync(
                 db, idTenant, solicitud.IdEmpresa, idPuntoVenta: null, reloj.Ahora, TipoMovimientoTesoreria.AjusteManual,
                 idTurnoCaja: null, idPago: null, concepto, ingreso, egreso, idEmpleado, ct);
+
+            // Un ajuste fechado en o antes de la marca (solo si se confirmó entre el reloj y el commit) se deshace.
+            await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, solicitud.IdEmpresa, fila.Fecha, ct);
 
             await transaccion.CommitAsync(ct);
 
