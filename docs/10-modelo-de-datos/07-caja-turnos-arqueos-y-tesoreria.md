@@ -323,8 +323,10 @@ conciliaciones_tesoreria (    -- [operativa — marcas append-only] una fila por
 > compartido detrás de un exclusivo que espera: quien pidiera la marca reteniendo otro lock podría cerrar un ciclo con el escritor de la
 > marca. Los escritores cuya empresa no se conoce antes de los locks (pago de una compra, cierre de turno, edición de un pago) la
 > pre-leen sin lock (la empresa de un pago y el punto de venta de un turno no cambian; la de una compra se verifica de nuevo bajo su lock). La edición de un medio de pago toma el compartido de TODAS las empresas del tenant, en id
-> ascendente. La reconstrucción de cuentas (PR #582) tendrá que saltear los turnos con `fecha_cierre <=` la marca cuando ambas
-> ramas estén en `main`.
+> ascendente. La reconstrucción de cuentas (`POST /api/cuentas-tesoreria/reconstruccion` y su vista previa) omite los turnos con
+> `fecha_cierre <=` la marca de la empresa (igual a la marca = congelado) en lugar de rechazar el pedido: la respuesta trae
+> `conciliadoHasta` y `congeladas` (las acreditaciones pendientes omitidas, sin contarlas en `turnos` ni `filas`). La aplicación toma el
+> compartido como PRIMER lock, antes del advisory de tesorería y de los locks de medios y cuentas, y lee la marca una sola vez bajo él.
 
 ### Conexiones con Mercado Pago
 

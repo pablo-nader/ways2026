@@ -109,8 +109,11 @@ pago row together. The freeze removes this once conciliated.
 - Pago de administración fechado hoy: `Fecha` = instante actual (antes, medianoche local); las fechas pasadas conservan la medianoche local.
 - Medios de pago: el catálogo es del tenant (`id_empresa` NULL = compartido), así que el chequeo mira, por cada empresa con marca, las líneas de
   pago y los movimientos de cuenta del medio fechados en o antes de ESA marca; una edición toma el lock compartido de todas las empresas.
-- Pendiente fuera de esta rama: `ServicioDeReconstruccionDeCuentas` (PR #582, no mergeado) debe saltear los turnos con `FechaCierre <= marca`
-  cuando ambas ramas estén en `main`.
+- Reconstrucción de cuentas (PR #582, ya en `main`): omite los turnos con `FechaCierre <= marca` (borde inclusivo) en la vista previa y en la
+  aplicación, en vez de responder 409: el pedido sigue sirviendo para el resto del rango y la respuesta informa `conciliadoHasta` y
+  `congeladas` (acreditaciones omitidas, fuera de `turnos`/`filas`). La aplicación toma el compartido de conciliación como primer lock y lee
+  la marca bajo él. Pruebas: borde igual a la marca, marca un segundo antes, sin marca, y espera al escritor de la marca; mutaciones
+  registradas en `CuentasTesoreriaReconstruccionTests`.
 - Fuera del congelamiento (decisión de alcance, no del dueño): el ajuste manual de efectivo y el de cuenta van fechados "ahora" y no llevan guarda
   propia (solo una marca puesta en la ventana entre su `reloj.Ahora` y el commit podría alcanzarlos); `cuentas_tesoreria.saldo_inicial` ya no se
   puede editar con movimientos, pero sí mientras la cuenta no tenga ninguno.
