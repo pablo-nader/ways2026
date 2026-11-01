@@ -257,6 +257,7 @@ export function Tesoreria() {
         <ModalDeAjusteDeCuenta
           idEmpresa={idEmpresa}
           cuenta={cuentaAAjustar}
+          soloImporte
           onCerrar={() => setCuentaAAjustar(null)}
           onAjustado={() => alAjustar(`Ajuste de ${cuentaAAjustar.nombre} registrado.`)}
           onIncierto={() => alSerIncierto(cuentaAAjustar.nombre)}

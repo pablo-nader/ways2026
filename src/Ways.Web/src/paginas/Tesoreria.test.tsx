@@ -549,6 +549,36 @@ describe('Tesoreria — libro: ajustes (Admin)', () => {
     expect(await screen.findByRole('dialog', { name: 'Ajustar saldo de Mercado Pago' })).toBeInTheDocument()
   })
 
+  it('ajustar una cuenta desde el libro manda un importe con signo, sin saldoObjetivo ni releer la cadena, y recarga el libro', async () => {
+    let lecturas = 0
+    mockearRutas({
+      libro: () =>
+        Promise.resolve(
+          ++lecturas === 1
+            ? libroFixture()
+            : libroFixture({ saldoActual: { efectivo: 8500, porCuenta: [{ idCuentaTesoreria: 1, importe: 1940 }] } }),
+        ),
+    })
+    apiPostMock.mockResolvedValue({ saldoActual: 1940, movimiento: {} })
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: 'Ajustar Mercado Pago' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Ajustar saldo de Mercado Pago' }))
+    expect(dialogo.queryByRole('radio')).not.toBeInTheDocument()
+    expect(dialogo.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 2.000,00')
+    await usuario.type(dialogo.getByLabelText(/Importe/), '-60')
+    await usuario.type(dialogo.getByLabelText('Concepto'), 'Retiro')
+    await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(await screen.findByText('Ajuste de Mercado Pago registrado.')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/1/ajustes', { concepto: 'Retiro', importe: -60 })
+    expect(apiGetMock.mock.calls.some((c) => (c[0] as string).startsWith('/reportes/tesoreria/cuentas'))).toBe(false)
+    expect(await screen.findByText('$ 1.940,00')).toBeInTheDocument()
+    expect(llamadasAlLibro()).toHaveLength(2)
+  })
+
   it('mientras un modal está abierto no se puede abrir otro ajuste', async () => {
     mockearRutas()
     renderTesoreria()
