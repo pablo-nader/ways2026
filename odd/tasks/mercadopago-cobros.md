@@ -385,3 +385,15 @@ Fix commit `fix(mercadopago): el webhook respeta el intervalo de consulta y no l
 - T4-1 replay amplification: `ActualizarPorAvisoAsync` now refreshes with `respetarIntervalo: true`, so N replays of a captured notification cause at most one Mercado Pago call per 2 s per charge (`fecha_ultima_consulta`). The doc comment and the design bullet above are updated. The test that asserted the bypass was replaced by `ElAvisoRespetaElIntervaloDeConsultaDelCobro` (a notification right after a device poll does not call; one after 3 s does) and `DiezAvisosRepetidosCausanUnaSolaConsultaAMercadoPago`.
 - T4-2 work before the signature: `AvisoDeMercadoPago` carries a lazy `LectorDeTipo`; the service invokes it only after `Verificar` succeeds and only when the query has no `type`. The endpoint no longer reads or parses the body up front. Rejected signatures log at Debug; Warning stays for "secret not configured" and Error for refresh failures after a valid signature. Tests: `ServicioDeAvisosDeMercadoPagoTests` (reader never invoked with an invalid signature or without secret; deterministic, service level) and `UnCuerpoEnormeConFirmaInvalidaEsUn401`.
 - Mutation evidence (one per run, each killed): `respetarIntervalo: false` in the webhook refresh (2 integration tests); reader invoked before the signature check (3 application tests).
+
+## Judgment-day E3-T4 verdict
+
+- 2026-11-01: **APPROVED** after one fix round. Both judges confirmed two WARNINGs: replaying a captured signed notification
+  forced unthrottled Mercado Pago calls, and the endpoint read the body (and logged at Warning) before the signature; fixed in
+  527f3823 (the webhook refresh respects the 2 s interval; a lazy body reader runs only after a valid signature; rejections log at
+  Debug). Scoped re-judgment: both clean.
+- Accepted (both, by design): a valid notification within 2 s of the last consultation is acknowledged and dropped; the device
+  poll (source of truth) refreshes the charge on its next tick.
+- Owner configuration for production: MP Developers -> Webhooks: URL `https://aipos.site/api/integraciones/mercadopago/webhook`,
+  topic "Order (Mercado Pago)", copy the secret; EasyPanel: `Ways__MercadoPago__SecretoWebhook=<secret>`. Until then the endpoint
+  answers 503 and polling keeps working.
