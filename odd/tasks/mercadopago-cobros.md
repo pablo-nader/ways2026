@@ -45,7 +45,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 - [x] E3-T1 — Backend charges: `medios_pago.proveedor`; table `cobros_mercadopago`; device endpoints create / read (refresh
   from Mercado Pago) / cancel a QR charge.
-- [ ] E3-T2 — Backend sale: `PagoDeVenta.IdCobroMercadoPago`; the sale validates and links the approved charge (unique).
+- [x] E3-T2 — Backend sale: `PagoDeVenta.IdCobroMercadoPago`; the sale validates and links the approved charge (unique).
 - [ ] E3-T3 — Web: the medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close +
   print.
 - [ ] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
@@ -61,7 +61,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E3-T2: `PagoDeVenta.IdCobroMercadoPago` and the sale validating and linking the approved charge (unique). See "E3-T1 progress" for what T2 can rely on.
+E3-T3: web. The medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close and print, sending `idCobroMercadoPago` in the payment row. See "E3-T2 progress" for the sale contract (codes, `numeroPreasignado` required, no client `referencia`).
 
 ## E3-T1 design (2026-11-01)
 
@@ -158,3 +158,16 @@ Branch `pnader/mercadopago-e3-t2`, stacked on E3-T1. Backend only.
 - Idempotent retry of the same sale (same `NumeroPreasignado` and content) succeeds: a charge already linked to THIS sale is
   fine. Annulling a sale leaves the charge linked (the money was received; refunds are E6).
 - The offline outbox carries `IdCobroMercadoPago` inside `SolicitudDeVenta` unchanged (no POS change in this task).
+
+## E3-T2 progress (2026-11-01)
+
+Done on `pnader/mercadopago-e3-t2`, commit `feat(ventas): la venta cobrada con Mercado Pago vincula su cobro aprobado` (hash in git log). Migration `CobroMercadoPagoLigadoALaVenta`.
+
+- Model: `cobros.id_cobro_mercadopago` (nullable, FK `fk_cobros_cobro_mercadopago` composite with tenant, RESTRICT, index `ix_cobros_cobro_mercadopago`); `cobros_mercadopago.id_comprobante_venta` (nullable, FK `fk_cobros_mercadopago_comprobante_venta`, RESTRICT) with UNIQUE `ux_cobros_mercadopago_comprobante_venta` on `(id_comprobante_venta, id_tenant)` (composite so it also indexes the FK; the sale id is globally unique, so it is "one charge per sale"); new alternate key `ak_cobros_mercadopago_id_id_tenant`. 23505 -> 409 `cobro_mercadopago_ya_usado`; the FKs fall in the generic 23503 -> 400. docs/10 §4 and §7 updated. No golden-inventory change was needed (guards pass).
+- Sale (`ServicioDeVentas.EmitirAsync`): `PagoDeVenta.IdCobroMercadoPago` (also `PagoEmitido`). Form rules in `ReglaDeCobroEnVenta` (domain): provider medio without charge 400 `cobro_mercadopago_requerido`; charge on a medio without provider 400 `..._en_medio_sin_proveedor`; charge without `NumeroPreasignado` 400 `..._sin_numero_preasignado`; client `Referencia` with a charge 400 `..._referencia_no_admitida`; same charge twice 400 `..._repetido`. In the transaction (step 1.6, after turno, before the comprobante): `FOR UPDATE` of the charge rows in ascending id, single read, then 400 `..._inexistente` or 409 `..._de_otra_venta` (PV, numero or medio differ), `..._no_aprobado`, `..._ya_usado`, `..._importe_distinto` (payment `Importe` must equal `importe_pagado`). After the comprobante insert the charge is linked and the payment row gets `id_cobro_mercadopago` and `referencia` = Mercado Pago payment id. Zero extra statements without charges.
+- Lock order: the charge service takes advisory PV -> advisory charge -> charge row and never waits on sale locks; an approved charge is no longer modified, so the sale's row lock cannot close a cycle.
+- Idempotent retry: `ExigirMismoContenido` compares `IdCobroMercadoPago`; the `Referencia` of a payment with charge is ignored (server-set). A concurrent identical pair ends 201 + (201 | 409 `cobro_mercadopago_ya_usado`), one sale.
+- Credit notes: a charge is rejected (`..._no_admitido_en_devolucion`) but a provider medio is accepted as the refund medio without charge (refunds are E6). Decision to confirm.
+- Other writers of `Cobro` rows: `ServicioDeCambioDeMedios` (409 `pago_mercadopago_no_editable` when any live payment has a charge; new payments go through the same form rule), `ServicioDeFacturacionDeRemitos` (form rule, no numero -> provider medio rejected), `ServicioDeCuentaCorriente` receipts (provider medio rejected). A structural guard (`EscritoresDePagosDeVentaEstructuralTests`) requires every `new Cobro` file to call the rule.
+- Mutation evidence (one per run, all killed): PV, numero, medio, estado, importe, ya_usado, requerido, sin_proveedor, sin_numero, referencia, repetido, esDevolucion (domain test only), identity ignoring referencia, identity ignoring the charge, link skipped, referencia from the MP payment, id persisted on the payment, `FOR UPDATE` removed (race test), cambio-de-medios guard, its form rule, receipts, remitos.
+- Not exercised: nothing against the real Mercado Pago API; POS bundle/offline engine unchanged (T3 sends the field).
