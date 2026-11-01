@@ -25,6 +25,7 @@ public class ParametroConfiguration : IEntityTypeConfiguration<Parametro>
         builder.Property(p => p.IdTenant).HasColumnName("id_tenant").IsRequired();
         builder.Property(p => p.IdEmpresa).HasColumnName("id_empresa").IsRequired();
         builder.Property(p => p.IdPuntoVenta).HasColumnName("id_punto_venta");
+        builder.Property(p => p.IdSucursal).HasColumnName("id_sucursal");
 
         builder.Property(p => p.Clave)
             .HasColumnName("clave")
@@ -64,6 +65,19 @@ public class ParametroConfiguration : IEntityTypeConfiguration<Parametro>
             .HasConstraintName("fk_parametros_punto_venta")
             .OnDelete(DeleteBehavior.Restrict);
 
+        // FK compuesta opcional a sucursales: además del tenant, la sucursal tiene que ser de la misma
+        // empresa que el parámetro (la base rechaza la de otra empresa).
+        builder.HasOne<Sucursal>()
+            .WithMany()
+            .HasForeignKey(p => new { p.IdSucursal, p.IdEmpresa, p.IdTenant })
+            .HasPrincipalKey(su => new { su.Id, su.IdEmpresa, su.IdTenant })
+            .HasConstraintName("fk_parametros_sucursal")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Un parámetro es de un solo nivel: de la empresa (ambos NULL), de un punto de venta o de una sucursal.
+        builder.ToTable(t => t.HasCheckConstraint(
+            "ck_parametros_un_solo_alcance", "id_punto_venta IS NULL OR id_sucursal IS NULL"));
+
         builder.HasIndex(p => p.IdTenant).HasDatabaseName("ix_parametros_tenant");
         builder.HasIndex(p => new { p.IdEmpresa, p.IdTenant }).HasDatabaseName("ix_parametros_empresa");
 
@@ -77,9 +91,16 @@ public class ParametroConfiguration : IEntityTypeConfiguration<Parametro>
             .HasFilter("id_punto_venta IS NOT NULL AND deleted_at IS NULL")
             .IsUnique();
 
+        builder.HasIndex(p => new { p.IdSucursal, p.IdEmpresa, p.IdTenant }).HasDatabaseName("ix_parametros_sucursal");
+
+        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.IdSucursal, p.Clave })
+            .HasDatabaseName("ux_parametros_sucursal")
+            .HasFilter("id_sucursal IS NOT NULL AND deleted_at IS NULL")
+            .IsUnique();
+
         builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.Clave })
             .HasDatabaseName("ux_parametros_empresa")
-            .HasFilter("id_punto_venta IS NULL AND deleted_at IS NULL")
+            .HasFilter("id_punto_venta IS NULL AND id_sucursal IS NULL AND deleted_at IS NULL")
             .IsUnique();
     }
 }

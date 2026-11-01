@@ -579,6 +579,67 @@ public class MercadoPagoConexionTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(fila.FechaDesconexion, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).FechaDesconexion);
     }
 
+
+    [Fact]
+    public async Task DesconectarRegistraQuienLoHizo()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-desconexion-quien");
+        var (_, estado) = await IniciarAsync(ctx);
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
+        Assert.Null(Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).IdUsuarioDesconecto);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+
+        var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        Assert.Equal(ctx.IdUsuarioAdmin, fila.IdUsuarioDesconecto);
+        Assert.Equal(ctx.IdUsuarioAdmin, fila.IdUsuarioConecto);
+    }
+
+    [Fact]
+    public async Task UnaConexionQueRequiereReconexionSePuedeDesconectarYQuedaConQuienYCuando()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-desconexion-requiere");
+        var marcada = DateTimeOffset.UtcNow.AddHours(-3);
+        await _apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, NuevoIdUsuario(), ctx.IdUsuarioAdmin,
+            estado: "requiere_reconexion", sinMaterial: true, fechaRequiereReconexion: marcada);
+
+        var respuesta = await ctx.Admin.DeleteAsync(ctx.Ruta);
+
+        Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
+        var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        Assert.Equal("desconectada", fila.Estado);
+        Assert.NotNull(fila.FechaDesconexion);
+        Assert.Equal(ctx.IdUsuarioAdmin, fila.IdUsuarioDesconecto);
+        Assert.Equal(marcada.ToUnixTimeMilliseconds(), fila.FechaRequiereReconexion!.Value.ToUnixTimeMilliseconds());
+        Assert.False((await ctx.Admin.GetFromJsonAsync<EstadoDeConexionMercadoPago>(ctx.Ruta))!.Conectada);
+        Assert.Null((await ctx.Admin.GetFromJsonAsync<EstadoDeConexionMercadoPago>(ctx.Ruta))!.Estado);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+    }
+
+    [Fact]
+    public async Task UnaConexionYaDesconectadaNoCambiaNiPierdeQuienLaDesconecto()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-desconexion-ya");
+        var (_, estado) = await IniciarAsync(ctx);
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+        var antes = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+
+        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync(ctx.Ruta)).StatusCode);
+
+        Assert.Equal(antes, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)), new IgualdadDeFilas());
+    }
+
+    private sealed class IgualdadDeFilas : IEqualityComparer<FilaDeConexion>
+    {
+        public bool Equals(FilaDeConexion? x, FilaDeConexion? y) =>
+            x is not null && y is not null && x.Estado == y.Estado && x.FechaDesconexion == y.FechaDesconexion
+            && x.IdUsuarioDesconecto == y.IdUsuarioDesconecto;
+
+        public int GetHashCode(FilaDeConexion obj) => obj.Id;
+    }
     [Fact]
     public async Task LaCuentaDeTesoreriaConUnaConexionNoSeDaDeBajaNiActivaNiDesconectada()
     {

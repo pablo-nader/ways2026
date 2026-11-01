@@ -876,8 +876,8 @@ public class RemitosSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
                 await using var comando = cruda.CreateCommand();
                 comando.CommandText =
                     "INSERT INTO movimientos_stock " +
-                    "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_empleado, observaciones, creado_el) " +
-                    "VALUES ($1, $2, $3, 1, $4::motivo_stock, $5, $6, now())";
+                    "(id_tenant, id_articulo, id_punto_venta, id_sucursal, cantidad, motivo, id_empleado, observaciones, creado_el) " +
+                    "VALUES ($1, $2, $3, " + SucursalDePrueba.Sql("$3") + ", 1, $4::motivo_stock, $5, $6, now())";
                 comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
                 comando.Parameters.Add(new NpgsqlParameter { Value = e.IdArticulo });
                 comando.Parameters.Add(new NpgsqlParameter { Value = e.IdPuntoVenta });
@@ -1091,6 +1091,7 @@ public class RemitosSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             IdTenant = e.IdTenant,
             IdArticulo = e.IdArticulo,
             IdPuntoVenta = e.IdPuntoVenta,
+            IdSucursal = await SucursalDePrueba.DeAsync(db, e.IdPuntoVenta),
             Cantidad = -1m,
             Motivo = MotivoStock.Ajuste,
             IdEmpleado = e.IdEmpleado,

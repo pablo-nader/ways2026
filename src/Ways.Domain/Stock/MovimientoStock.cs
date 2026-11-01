@@ -24,6 +24,14 @@ public class MovimientoStock
     public int IdTenant { get; set; }
 
     public int IdArticulo { get; set; }
+
+    /// <summary>Sucursal cuyo stock movió este asiento: la clave de <see cref="Stock"/> y <see cref="StockLote"/>. Se
+    /// resuelve del punto de venta al escribir y queda fija: una reversa usa ESTA sucursal, nunca la que el punto de
+    /// venta tenga después.</summary>
+    public int IdSucursal { get; set; }
+
+    /// <summary>La caja que originó el movimiento, conservada para trazabilidad; el saldo vive en
+    /// <see cref="IdSucursal"/>.</summary>
     public int IdPuntoVenta { get; set; }
 
     /// <summary>Con signo: venta negativa, ajuste/anulación según corresponda (design: The Sale
@@ -46,6 +54,10 @@ public class MovimientoStock
     /// recién en stage-8 Slice 3 (<c>ServicioDeStock.TransferirAsync</c>): las dos filas
     /// espejadas de una transferencia llevan acá el destino (design decisión 5 del proposal).</summary>
     public int? IdPuntoVentaDestino { get; set; }
+
+    /// <summary>Sucursal de <see cref="IdPuntoVentaDestino"/> en una transferencia; nula en cualquier otro
+    /// motivo.</summary>
+    public int? IdSucursalDestino { get; set; }
 
     /// <summary>Etapa 12 (proposal decisión 5, gate §C): dimensión de lote del movimiento, con
     /// FK compuesta <c>fk_movimientos_stock_lote</c> sobre <c>(id_lote, id_articulo, id_tenant)</c>

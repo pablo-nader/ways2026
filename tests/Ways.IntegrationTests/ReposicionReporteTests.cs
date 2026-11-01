@@ -131,9 +131,10 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
     {
         var tenant = idTenant ?? ctx.IdTenant;
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, tenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdTenant = tenant, IdPuntoVenta = idPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            IdTenant = tenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = cantidad,
             Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();

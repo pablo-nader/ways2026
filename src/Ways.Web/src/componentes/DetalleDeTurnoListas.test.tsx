@@ -12,9 +12,13 @@ function ticket(id: number, sobrescribir: Partial<TicketDeTurno> = {}): TicketDe
     numeroVisible: `T-${id}`,
     estado: 'Emitido',
     fecha: '2026-09-16T12:00:00Z',
-    idPuntoVenta: 1,
     idCliente: 1,
+    nombreCliente: 'Cliente 1',
     total: 100,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
+    mediosDePago: [],
+    estadoNotaDeCredito: null,
     ...sobrescribir,
   }
 }
@@ -123,5 +127,21 @@ describe('DetalleDeTurnoListas — medios del pago', () => {
     const [, pagos] = screen.getAllByRole('table')
 
     expect(within(pagos).getByRole('cell', { name: '—' })).toBeInTheDocument()
+  })
+})
+
+describe('DetalleDeTurnoListas — acciones de los tickets', () => {
+  it('sin alReimprimir solo ofrece ver el detalle: ni Reimprimir ni Anular', () => {
+    render(<DetalleDeTurnoListas tickets={[ticket(1), ticket(2, { estado: 'Anulado' })]} pagos={[]} />)
+
+    expect(screen.getAllByRole('button', { name: 'Detalle' })).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /anular/i })).not.toBeInTheDocument()
+  })
+
+  it('con alReimprimir solo los tickets emitidos ofrecen Reimprimir', () => {
+    render(<DetalleDeTurnoListas tickets={[ticket(1), ticket(2, { estado: 'Anulado' })]} pagos={[]} alReimprimir={() => {}} />)
+
+    expect(screen.getAllByRole('button', { name: 'Reimprimir' })).toHaveLength(1)
   })
 })

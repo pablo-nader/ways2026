@@ -188,6 +188,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
       titulo: 'Organización',
       enlaces: [
         ['Empresas', '/organizacion/empresas'],
+        ['Sucursales', '/organizacion/sucursales'],
         ['Puntos de venta', '/organizacion/puntos-venta'],
         ['Equipos POS', '/organizacion/equipos-pos'],
         ['Vitrina', '/organizacion/vitrina'],
@@ -208,6 +209,7 @@ const ADMINISTRACION_DE_ROOT: Resumen = {
       titulo: 'Organización',
       enlaces: [
         ['Empresas', '/organizacion/empresas'],
+        ['Sucursales', '/organizacion/sucursales'],
         ['Puntos de venta', '/organizacion/puntos-venta'],
         ['Vitrina', '/organizacion/vitrina'],
         ['Tenants', '/organizacion/tenants'],

@@ -61,7 +61,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         int IdMedioTransferencia,
         int IdMedioCuentaCorriente,
         int IdClienteConsumidorFinal,
-        int IdListaPrecioConsumidorFinal);
+        int IdListaPrecioConsumidorFinal,
+        int IdSucursal);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -129,9 +130,11 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         var cf = await db.Clientes.FirstAsync(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal);
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, resultado.IdPuntoVenta);
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
-            lista.Id, idMedioEfectivo, idMedioTransferencia, medioCc.Id, cf.Id, cf.IdListaPrecio);
+            lista.Id, idMedioEfectivo, idMedioTransferencia, medioCc.Id, cf.Id, cf.IdListaPrecio, idSucursal);
     }
 
     private async Task<int> SembrarArticuloConPrecioAsync(
@@ -185,7 +188,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
             .Select(s => s.Cantidad)
             .FirstOrDefaultAsync();
         var saldo = await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).FirstAsync();

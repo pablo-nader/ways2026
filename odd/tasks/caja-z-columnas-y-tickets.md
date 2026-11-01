@@ -52,7 +52,7 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
   - `/caja/turnos/{id}/detalle`: medios carry `Nombre`; tickets carry the
     `VentaDeTurnoListado` properties (cliente, medios, desc./recargo manual, estado fiscal).
   - Checks: integration tests (histórico, detalle), unit tests, structural guards.
-- [ ] **T2 — Web** (delegated: 2+ non-trivial files) — branch `pnader/caja-z-columnas-s2`
+- [x] **T2 — Web** (delegated: 2+ non-trivial files) — branch `pnader/caja-z-columnas-s2`
   - Histórico columns; Caja Z medios by name; ticket table with Ver detalle + Reimprimir
     (web: `VistaDeTicket` + print; POS desktop: thermal queue). No Anular.
   - Checks: Vitest for HistoricoDeCajas, CajaZ, extracted components.
@@ -74,6 +74,22 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
   respeta la baja lógica (la línea desaparece igual); XLSX de detalle lista anulados sin estado; el ancla del turno
   original de una NCX no tiene test que la mate.
 
+- T2 DONE (route: delegated; trigger: 2+ non-trivial files). Histórico: columnas Digitales / Efectivo / Cta. cte. / Total
+  (sin orden en el servidor: el backend no las ordena). Caja Z: medios por `nombre`; tickets con las columnas y marcas de
+  `VentasDelTurno` + Ver detalle y Reimprimir (nunca Anular). Extraídos `componentes/DetalleDeVenta.tsx` (modal de detalle y
+  marcas de estado, ahora compartidos con `VentasDelTurno`) y `lineasDeTicketDeVenta` (mismo armado que `ticketDeVenta`).
+  Reimpresión: escritorio por la cola FIFO de `ShellPos.alReimprimirVenta` (prop nueva de `CajaZ`); web con `VistaDeTicket` +
+  `window.print()`. En el modal "Cierres de caja" del POS solo se agrega Ver detalle (sin Reimprimir: no tiene seam de impresión).
+  Verificación: `npx tsc -b` 0 errores; `npx vitest run` 9223 OK + 1 intermitente (GrillaDeItemsDeCompra, ajeno, pasa solo).
+
+- S2 judgment-day ronda 1: sin CRITICAL; JUDGMENT: APPROVED. Info coincidente (ambos jueces, WARNING): la reimpresión web
+  del ticket (CajaZ.reimprimirTicket) no tiene guarda de generación y una respuesta tardía tras cambiar de turno puede
+  imprimir el ticket viejo. Otras info: el ticket reimpreso dice 'Cajero' = quien reimprime, no el cajero del turno;
+  depende de resumen-de-cierre para el encabezado; detalle viejo visible al cambiar de turno; medios caídos sin aviso;
+  test de reimpresión web no fija el número del ticket; espacio de más en un import de VentasDelTurno.
+
+- S3 (rama pnader/caja-z-reimpresion-s3, commit 248567a3): la reimpresión de un ticket en Caja Z lleva como cajero el del turno (resumen.vendedor) en web y escritorio, y se descarta si mientras tanto se cargó otro turno (generacionDelDetalle). Vitest CajaZ 33 OK, tsc OK; mutaciones: quitar la guarda mata 1 test, quitar el cajero mata 2. Judgment-day: A y B sin CRITICAL → JUDGMENT: APPROVED. Info: un clic en la lista vieja mientras carga el turno nuevo se descarta sin aviso; la guarda del camino web no tiene test propio.
+
 ## Next step
 
-PR de S1; T2 web en curso.
+PR de S2 apilado sobre S1; seguimiento: guarda de generación y cajero del turno en la reimpresión.

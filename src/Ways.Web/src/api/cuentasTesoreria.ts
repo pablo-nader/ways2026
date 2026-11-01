@@ -395,3 +395,153 @@ export function errorAlAjustar(e: unknown): ErrorDeAjuste {
 
   return { campo: 'general', mensaje: e.message.trim() || COPIA_AJUSTE_GENERICA }
 }
+
+// ---- Reconstrucción histórica de las cuentas (solo Admin) --------------------------------------
+
+/** Tope del rango que acepta el servidor: la diferencia entre `hasta` y `desde`, en días. */
+export const DIAS_MAXIMOS_DE_RECONSTRUCCION = 366
+
+export type TipoDeComponenteDeReconstruccion =
+  | 'Cobro'
+  | 'Comision'
+  | 'RetencionIibb'
+  | 'RetencionIva'
+  | 'RetencionGanancias'
+  | 'Ajuste'
+  | 'Transferencia'
+  | 'Deposito'
+  | 'Retiro'
+
+export type ComponenteDeReconstruccion = {
+  tipo: TipoDeComponenteDeReconstruccion
+  ingreso: number
+  egreso: number
+  porcentajeAplicado: number | null
+}
+
+export type AcreditacionDeReconstruccion = {
+  idTurnoCaja: number
+  fechaCierre: string
+  idMedioPago: number
+  nombreMedio: string
+  idCuentaTesoreria: number
+  nombreCuenta: string
+  baseBruta: number
+  neto: number
+  componentes: ComponenteDeReconstruccion[]
+}
+
+export type CuentaDeReconstruccion = {
+  idCuentaTesoreria: number
+  nombre: string
+  filas: number
+  neto: number
+  saldoAntes: number
+  saldoDespues: number
+}
+
+export type PlanDeReconstruccion = {
+  idEmpresa: number
+  desde: string
+  hasta: string
+  turnos: number
+  filas: number
+  acreditaciones: AcreditacionDeReconstruccion[]
+  cuentas: CuentaDeReconstruccion[]
+}
+
+/** `desde` y `hasta` son `yyyy-MM-dd`, ambos inclusivos, en la zona horaria de la empresa. */
+export type SolicitudDeReconstruccion = { idEmpresa: number; desde: string; hasta: string }
+
+export const clienteDeReconstruccion = {
+  vistaPrevia: (solicitud: SolicitudDeReconstruccion) =>
+    api.post<PlanDeReconstruccion>('/cuentas-tesoreria/reconstruccion/vista-previa', solicitud),
+  aplicar: (solicitud: SolicitudDeReconstruccion) =>
+    api.post<PlanDeReconstruccion>('/cuentas-tesoreria/reconstruccion', solicitud),
+}
+
+function aIso(fecha: Date): string {
+  const mes = String(fecha.getMonth() + 1).padStart(2, '0')
+  const dia = String(fecha.getDate()).padStart(2, '0')
+
+  return `${fecha.getFullYear()}-${mes}-${dia}`
+}
+
+/** Del primer día del mes de `hoy` hasta `hoy`. */
+export function rangoDeReconstruccionPorDefecto(hoy: Date = new Date()): { desde: string; hasta: string } {
+  return { desde: aIso(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), hasta: aIso(hoy) }
+}
+
+function diasEntre(desde: string, hasta: string): number {
+  const [ad, md, dd] = desde.split('-').map(Number)
+  const [ah, mh, dh] = hasta.split('-').map(Number)
+
+  return Math.round((Date.UTC(ah, mh - 1, dh) - Date.UTC(ad, md - 1, dd)) / 86_400_000)
+}
+
+/** Reglas que el servidor también aplica; acá solo evitan el viaje de ida y vuelta. */
+export function validarRangoDeReconstruccion(idEmpresa: string, desde: string, hasta: string): string | null {
+  if (idEmpresa === '') return 'Elegí la empresa.'
+  if (desde === '' || hasta === '') return 'Indicá las fechas desde y hasta.'
+  if (desde > hasta) return 'La fecha "desde" no puede ser posterior a "hasta".'
+  if (diasEntre(desde, hasta) > DIAS_MAXIMOS_DE_RECONSTRUCCION) {
+    return `El rango no puede superar los ${DIAS_MAXIMOS_DE_RECONSTRUCCION} días.`
+  }
+
+  return null
+}
+
+/** Clave de lo que el usuario ve en los campos: la vista previa solo vale para la clave con la que se pidió. */
+export function claveDeReconstruccion(idEmpresa: string, desde: string, hasta: string): string {
+  return `${idEmpresa}|${desde}|${hasta}`
+}
+
+const TIPOS_DE_RETENCION: ReadonlySet<TipoDeComponenteDeReconstruccion> = new Set([
+  'RetencionIibb',
+  'RetencionIva',
+  'RetencionGanancias',
+])
+
+function descontado(componentes: readonly ComponenteDeReconstruccion[], incluye: (c: ComponenteDeReconstruccion) => boolean) {
+  const centavos = componentes.filter(incluye).reduce((suma, c) => suma + aCentavos(c.egreso) - aCentavos(c.ingreso), 0)
+
+  return centavos / 100
+}
+
+/** Comisión y retenciones de una acreditación, en positivo cuando se descuentan. */
+export function descuentosDeAcreditacion(a: AcreditacionDeReconstruccion): { comision: number; retenciones: number } {
+  return {
+    comision: descontado(a.componentes, (c) => c.tipo === 'Comision'),
+    retenciones: descontado(a.componentes, (c) => TIPOS_DE_RETENCION.has(c.tipo)),
+  }
+}
+
+export function errorAlReconstruir(e: unknown, escritura: boolean): string {
+  const generico = escritura ? 'No se pudo reconstruir el historial.' : 'No se pudo generar la vista previa.'
+  if (!(e instanceof ErrorApi)) {
+    return escritura ? `${generico} ${COPIA_RESULTADO_INCIERTO}` : generico
+  }
+
+  switch (e.codigo) {
+    case 'rango_invalido':
+      return 'La fecha "desde" no puede ser posterior a "hasta".'
+    case 'rango_demasiado_amplio':
+      return `El rango no puede superar los ${DIAS_MAXIMOS_DE_RECONSTRUCCION} días.`
+    case 'reconstruccion_concurrente':
+      return 'Otra reconstrucción está en curso. Esperá unos segundos y generá la vista previa de nuevo.'
+  }
+
+  if (e.estado === 404) return 'La empresa ya no existe. Actualizá la pantalla.'
+  if (e.estado === 403) return 'Solo un administrador puede reconstruir el historial de las cuentas.'
+
+  if (e.estado >= 500) {
+    if (!escritura) return generico
+
+    const delServidor = e.message.trim()
+    const esCommitAmbiguo = e.codigo === CODIGO_RESULTADO_INCIERTO && delServidor.length > 0
+
+    return esCommitAmbiguo ? delServidor : `${generico} ${COPIA_RESULTADO_INCIERTO}`
+  }
+
+  return e.message.trim() || generico
+}

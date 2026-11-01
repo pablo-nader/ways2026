@@ -574,7 +574,7 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
         {
             IdTenant = idTenant,
             IdArticulo = articulo.Id,
-            IdPuntoVenta = idPuntoVenta,
+            IdSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta),
             Cantidad = 7m
         });
         await db.SaveChangesAsync();

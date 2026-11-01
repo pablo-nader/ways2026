@@ -316,9 +316,9 @@ public class ServicioDeRenovacionDeConexionesMercadoPago(
         }
     }
 
-    /// <summary>Anota el intento cuando la transacción de la renovación ya no sirve (la rotación se perdió): un UPDATE aparte, que si
+    /// <summary>Anota el intento cuando la transacción de la renovación ya no sirve (la rotación se perdió o escapó una falla inesperada): un UPDATE aparte, que si
     /// falla solo se registra.</summary>
-    private async Task RegistrarIntentoAparteAsync(int idConexion, int idTenant, DateTimeOffset ahora)
+    public async Task RegistrarIntentoAparteAsync(int idConexion, int idTenant, DateTimeOffset ahora)
     {
         try
         {

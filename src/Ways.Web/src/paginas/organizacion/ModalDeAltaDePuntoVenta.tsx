@@ -1,5 +1,5 @@
 import { MODOS_PUNTO_VENTA } from '../../api/tipos'
-import type { EmpresaListado, ModoPuntoVenta } from '../../api/tipos'
+import type { EmpresaListado, ModoPuntoVenta, SucursalListado } from '../../api/tipos'
 import { ETIQUETA_SIN_DUENIO } from '../../api/organizacion'
 import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
@@ -15,6 +15,8 @@ type Props = {
   /** Empresas ofrecidas; `null` mientras la lectura no aterrizó. */
   empresas: EmpresaListado[] | null
   errorEmpresas: string
+  /** Sucursales ofrecidas (se filtran por la empresa elegida); `null` mientras la lectura no aterrizó. */
+  sucursales: SucursalListado[] | null
   /** El actor de plataforma ve además el tenant dueño de cada empresa. */
   esPlataforma: boolean
   /** Hay una escritura en vuelo: cambia el rótulo del botón. */
@@ -35,6 +37,7 @@ export function ModalDeAltaDePuntoVenta({
   valor,
   empresas,
   errorEmpresas,
+  sucursales,
   esPlataforma,
   guardando,
   bloqueado,
@@ -88,7 +91,7 @@ export function ModalDeAltaDePuntoVenta({
               id="pv-alta-empresa"
               className="form-select"
               value={valor.idEmpresa}
-              onChange={(e) => onCambio({ ...valor, idEmpresa: e.target.value })}
+              onChange={(e) => onCambio({ ...valor, idEmpresa: e.target.value, idSucursal: '' })}
               disabled={empresas === null}
               required
             >
@@ -112,6 +115,27 @@ export function ModalDeAltaDePuntoVenta({
               onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
               required
             />
+          </div>
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="pv-alta-sucursal">
+              Sucursal
+            </label>
+            <select
+              id="pv-alta-sucursal"
+              className="form-select"
+              value={valor.idSucursal}
+              onChange={(e) => onCambio({ ...valor, idSucursal: e.target.value })}
+              disabled={sucursales === null || valor.idEmpresa === ''}
+            >
+              <option value="">Una nueva, con el nombre del punto de venta</option>
+              {(sucursales ?? [])
+                .filter((s) => String(s.idEmpresa) === valor.idEmpresa)
+                .map((s) => (
+                  <option key={s.id} value={String(s.id)}>
+                    {s.nombre}
+                  </option>
+                ))}
+            </select>
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="pv-alta-modo">

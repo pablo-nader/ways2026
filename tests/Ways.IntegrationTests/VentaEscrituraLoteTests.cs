@@ -50,7 +50,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
 
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, HttpClient Admin, int IdArea, int IdAlicuotaIva,
-        int IdListaPrecio, int IdMedioEfectivo, int IdCliente);
+        int IdListaPrecio, int IdMedioEfectivo, int IdCliente, int IdSucursal);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -115,9 +115,11 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         db.Clientes.Add(cliente);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, resultado.IdPuntoVenta);
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
-            lista.Id, idMedioEfectivo, cliente.Id);
+            lista.Id, idMedioEfectivo, cliente.Id, idSucursal);
     }
 
     private async Task<int> SembrarArticuloAsync(Contexto ctx, string nombre, decimal precio, bool controlaLote)
@@ -165,7 +167,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = ctx.IdSucursal, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
     }
@@ -179,7 +181,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         db.Stock.Add(new Stock
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = ctx.IdSucursal, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
     }
@@ -229,12 +231,12 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
-            var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
                 .Select(s => s.Cantidad).FirstAsync();
             Assert.Equal(6m, stock);
 
             var stockLote = await db.StockLotes
-                .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+                .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLote)
                 .Select(sl => sl.Cantidad).FirstAsync();
             Assert.Equal(6m, stockLote);
         }
@@ -243,12 +245,12 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
-            var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
                 .Select(s => s.Cantidad).FirstAsync();
             Assert.Equal(10m, stock);
 
             var stockLote = await db.StockLotes
-                .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+                .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLote)
                 .Select(sl => sl.Cantidad).FirstAsync();
             Assert.Equal(10m, stockLote);
         }
@@ -302,7 +304,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
 
             // (3) El saldo por lote, restaurado.
             var stockLote = await db.StockLotes
-                .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+                .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLote)
                 .Select(sl => sl.Cantidad).FirstAsync();
             Assert.Equal(10m, stockLote);
         }
@@ -402,11 +404,11 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
 
         await using var transaccionBloqueo = await conexionBloqueo.BeginTransactionAsync();
         await using (var comandoBloqueo = new NpgsqlCommand(
-            "SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_punto_venta = $2 AND id_lote = $3 FOR UPDATE",
+            "SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_sucursal = $2 AND id_lote = $3 FOR UPDATE",
             conexionBloqueo, transaccionBloqueo))
         {
             comandoBloqueo.Parameters.AddWithValue(idArticulo);
-            comandoBloqueo.Parameters.AddWithValue(ctx.IdPuntoVenta);
+            comandoBloqueo.Parameters.AddWithValue(ctx.IdSucursal);
             comandoBloqueo.Parameters.AddWithValue(idLote);
             await comandoBloqueo.ExecuteScalarAsync();
         }
@@ -479,7 +481,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Single(emitido.Items);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+        var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(9m, stock);
     }
@@ -560,17 +562,17 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(idLoteMayor, movimientos[1].IdLote);
         Assert.Equal(3m, movimientos[1].Cantidad * -1);
 
-        var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+        var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(12m, stock);
 
         var stockLoteMenor = await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMenor)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLoteMenor)
             .Select(sl => sl.Cantidad).FirstAsync();
         Assert.Equal(5m, stockLoteMenor);
 
         var stockLoteMayor = await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMayor)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLoteMayor)
             .Select(sl => sl.Cantidad).FirstAsync();
         Assert.Equal(7m, stockLoteMayor);
     }
@@ -670,12 +672,12 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(idLoteMenor, movimientoLoteMenor.IdLote);
 
         var stockLoteMayor = await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMayor)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLoteMayor)
             .Select(sl => sl.Cantidad).FirstAsync();
         Assert.Equal(10m, stockLoteMayor);
 
         var stockLoteMenor = await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMenor)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLoteMenor)
             .Select(sl => sl.Cantidad).FirstAsync();
         Assert.Equal(10m, stockLoteMenor);
     }
@@ -734,7 +736,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Null(movimientoSinLote.IdLote);
 
         var stockLote = await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticuloConLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == idArticuloConLote && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).FirstAsync();
         Assert.Equal(10m, stockLote);
     }

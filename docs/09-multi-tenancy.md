@@ -28,9 +28,40 @@ tenant  (el cliente que paga: "Supermercados Pérez SRL")
 > **Estado (sucursales, T1):** la tabla `sucursales` y `puntos_venta.id_sucursal NOT NULL` existen
 > y cada punto de venta tiene la suya (1:1, con su nombre; el backfill de la migración
 > `Sucursales` creó una por cada punto de venta existente y cualquier alta nueva crea la suya en
-> la misma transacción). **El stock sigue colgado del punto de venta**: `stock`, `stock_lotes` y
-> `movimientos_stock` no cambian en esta etapa y pasan a la sucursal en T2. Alcance de `sucursales`:
+> la misma transacción). Desde T2 el stock es de la sucursal: `stock` y `stock_lotes` se claven
+> por `id_sucursal` y `movimientos_stock` guarda la sucursal además de la caja (doc 10 §6). Alcance de `sucursales`:
 > `id_tenant` + `id_empresa` no-nulos (misma forma que `puntos_venta`); detalle en doc 10 §1.
+
+> **API y movimiento de cajas (sucursales, T4).** `GET /api/sucursales[?idEmpresa=]` (misma policy de lectura que
+> los puntos de venta, porque los filtros de las pantallas de stock lo usan), `POST /api/sucursales`,
+> `PUT /api/sucursales/{id}` (renombre) y `DELETE /api/sucursales/{id}` son de `GestionDeOrganizacion`. El alta
+> de un punto de venta acepta `idSucursal` opcional (viva y de la misma empresa: 404 si no existe o es de otro
+> tenant, 409 `sucursal_de_otra_empresa` si es de otra empresa); sin él nace con la propia. Mover una caja es
+> `POST /api/puntos-venta/{id}/sucursal` con `{idSucursal}`: el destino tiene que ser de la misma empresa y el
+> stock no viaja con la caja, queda en la sucursal. Si la caja era la última viva de su sucursal, esa sucursal
+> cae con el movimiento (`sucursal.baja` con `por_cascada`) salvo que tenga uso: ahí el movimiento se rechaza con
+> 409 `sucursal_en_uso`. Locks: advisory del tenant (el de las bajas) + `FOR UPDATE` sobre la fila del punto de
+> venta, que los escritores que asientan cantidades toman en modo compartido (`FOR SHARE`) al resolver su sucursal
+> (ventas, remitos, compras, ajustes, conteos, transferencias).
+> Transferencias: `POST /api/stock/transferencias` acepta dos puntos de venta (el POS empaquetado) o dos
+> sucursales, nunca mezcladas (400 `transferencia_origen_destino_invalido`). Dentro de su transacción la
+> transferencia vuelve a leer la sucursal de cada caja (`FOR SHARE`, en orden de id de caja) y rechaza con 409
+> `sucursal_cambio_durante_transferencia` una caja que cambió de sucursal desde que se la eligió.
+>
+> **Fusión (sucursales, T5).** `POST /api/sucursales/{id}/fusionar` con `{idSucursalDestino}`
+> (`GestionDeOrganizacion`) absorbe la sucursal `{id}` en otra viva de su MISMA empresa: 404 para un origen o destino
+> inexistente, dado de baja o de otro tenant (el origen antes de mirar el cuerpo), 409 `sucursal_de_otra_empresa`,
+> 400 `sucursal_destino_requerida` y 400 `fusion_misma_sucursal`. En una sola transacción las cajas vivas del origen
+> pasan al destino, todo su stock pasa con un par de movimientos de transferencia por saldo (agregados, lotes y
+> negativos; el origen queda en cero) y el origen queda dado de baja con un solo rastro `sucursal.fusion` y con
+> `id_sucursal_fusion` = destino (FK compuesta `fk_sucursales_fusion`: misma empresa y mismo tenant). Locks: el
+> advisory del tenant, después `FOR UPDATE` sobre las cajas de las dos sucursales en orden de id, después
+> `FOR UPDATE` sobre las dos sucursales en orden de id, y recién después el stock en el orden de `EscritorDeStock`. Un
+> asiento nuevo toma su caja con `FOR SHARE` antes de cualquier fila de stock, así que una venta en vuelo termina
+> antes de la fusión o espera sin haber tomado stock, y después escribe en el destino. Una reversa (anulación de
+> venta, remito o compra, edición de una compra confirmada) toma sus cajas y después su sucursal guardada con
+> `FOR SHARE`, también antes del stock, y sigue `id_sucursal_fusion` hasta una sucursal sin fusión: nunca devuelve
+> stock al origen fusionado. Es el camino para el cliente que tiene dos cajas de un local partidas en dos sucursales.
 
 El negocio actual (Ways/Alsina) es el tenant 1: una empresa, dos puntos de venta (cada uno con su sucursal).
 
@@ -285,9 +316,12 @@ falta, `id_empresa NULL` se reinterpreta como "ámbito default" sin romper datos
 
 ### Operativa: siempre por punto de venta
 
-> Con sucursales, el stock (y su reposición) se muda del punto de venta a la sucursal en T2; las
-> ventas, turnos, numeración y dispositivos siguen siendo por punto de venta. Hasta T2 esta
-> sección vale tal cual.
+> Con sucursales (T2), el stock y su reposición son de la sucursal: las cajas de una sucursal comparten
+> `stock`/`stock_lotes`, y cada movimiento de stock guarda su sucursal y la caja que lo originó (doc 10
+> §6). Las ventas, turnos, numeración y dispositivos siguen siendo por punto de venta. Con T3 las lecturas de
+> stock (reportes de existencias, vencimientos, reposición y rotación, y la ficha de artículo) también hablan de
+> sucursal: aceptan `idSucursal` o un `idPuntoVenta` que se resuelve a la suya, y una sucursal dada de baja es
+> inexistente para ellos.
 
 Ventas, gastos, turnos, stock y movimientos nacen en un punto de venta y no se comparten
 jamás. Ya era la regla 10 del legacy ("toda operación scopeada por `id_punto_venta`") y
@@ -385,7 +419,9 @@ y editar; desde esta etapa también se puede **dar de baja**, con una única sem
 - **Las sucursales siguen la misma cascada (T1).** La baja de una empresa o de un tenant marca
   sus sucursales con el mismo instante que el resto. La baja de un punto de venta marca su
   sucursal en la misma escritura solo si no le queda otro punto de venta vivo. La sucursal es
-  ancla del inspector (sus dependientes suben por `puntos_venta`) y no tiene endpoint de baja propio todavía.
+  ancla del inspector (sus dependientes suben por `puntos_venta`); desde T4 tiene además su propia baja
+  (`DELETE /api/sucursales/{id}`), que se rechaza con 409 mientras tenga cajas vivas
+  (`sucursal_con_puntos_venta`) o uso: stock, lotes o movimientos (`sucursal_en_uso`).
 - **El conjunto de dependientes se descubre de la metadata de EF, nunca de una lista a mano.**
   Cada tipo que referencia a la entidad cae en exactamente uno de tres buckets (directo,
   puenteado, ignorado) o el build falla, y hay un inventario ordenado versionado como golden:

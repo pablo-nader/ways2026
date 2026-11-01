@@ -849,9 +849,10 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
     private async Task SembrarStockAsync(Entorno e, int idArticulo, decimal cantidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, e.IdPuntoVenta);
         db.Stock.Add(new Stock
         {
-            IdArticulo = idArticulo, IdPuntoVenta = e.IdPuntoVenta, IdTenant = e.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = idSucursal, IdTenant = e.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
     }
@@ -890,9 +891,10 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
             Assert.Equal(2, await db.MovimientosStock.CountAsync(
                 m => m.IdArticulo == id && m.IdPuntoVenta == e.IdPuntoVenta && m.Motivo == MotivoStock.Reclasificacion));
 
+            var idSucursal = await SucursalDePrueba.DeAsync(db, e.IdPuntoVenta);
             var loteSinIdentificar = await db.Lotes.SingleAsync(l => l.IdArticulo == id && l.EsSinIdentificar);
             var stockLote = await db.StockLotes.SingleAsync(
-                sl => sl.IdArticulo == id && sl.IdPuntoVenta == e.IdPuntoVenta && sl.IdLote == loteSinIdentificar.Id);
+                sl => sl.IdArticulo == id && sl.IdSucursal == idSucursal && sl.IdLote == loteSinIdentificar.Id);
             Assert.Equal(cantidad, stockLote.Cantidad);
         }
 

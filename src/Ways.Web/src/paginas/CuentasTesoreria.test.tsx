@@ -890,3 +890,37 @@ describe('CuentasTesoreria — orden y filtros por columna', () => {
     expect(screen.getByRole('combobox', { name: 'Filtrar por estado' })).toBeDisabled()
   })
 })
+
+describe('CuentasTesoreria — reconstruir historial', () => {
+  it('abre el modal, reconstruye y vuelve a leer las cuentas con un aviso', async () => {
+    const usuario = userEvent.setup()
+    mockearRutas()
+    const planEscrito = {
+      idEmpresa: 7,
+      desde: '2026-10-01',
+      hasta: '2026-10-31',
+      turnos: 2,
+      filas: 6,
+      acreditaciones: [],
+      cuentas: [],
+    }
+    apiPostMock.mockImplementation((ruta: string) =>
+      Promise.resolve(ruta.endsWith('/vista-previa') ? { ...planEscrito, acreditaciones: [], cuentas: [] } : planEscrito),
+    )
+    renderPagina()
+    await screen.findByText('Mercado Pago')
+    const boton = screen.getByRole('button', { name: 'Reconstruir historial' })
+    await waitFor(() => expect(boton).toBeEnabled())
+    expect(llamadasAlListado()).toBe(1)
+
+    await usuario.click(boton)
+    await usuario.click(await screen.findByRole('button', { name: 'Vista previa' }))
+    const confirmar = screen.getByRole('button', { name: 'Confirmar reconstrucción' })
+    await waitFor(() => expect(confirmar).toBeEnabled())
+    await usuario.click(confirmar)
+
+    await waitFor(() => expect(llamadasAlListado()).toBe(2))
+    const aviso = await screen.findByText(/Historial reconstruido: 6 filas de 2 turnos\./)
+    expect(aviso.closest('.ws-toaster [role="status"]')).not.toBeNull()
+  })
+})

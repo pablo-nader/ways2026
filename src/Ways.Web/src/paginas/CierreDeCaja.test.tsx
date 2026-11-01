@@ -74,7 +74,7 @@ function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTu
   return {
     idTurnoCaja: 501,
     idMedioAncla: 1,
-    medios: [{ idMedioPago: 1, importeEsperado: 640 }],
+    medios: [{ idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' }],
     cantidadTickets: 0,
     primerTicket: null,
     ultimoTicket: null,
@@ -351,8 +351,8 @@ describe('CierreDeCaja — checklist desactualizado tras un rechazo del servidor
     // actividad en un medio nuevo — el próximo GET /resumen ya lo refleja.
     resumenActual = resumenFixture({
       medios: [
-        { idMedioPago: 1, importeEsperado: 640 },
-        { idMedioPago: 2, importeEsperado: 300 },
+        { idMedioPago: 1, importeEsperado: 640, nombre: 'Medio 1' },
+        { idMedioPago: 2, importeEsperado: 300, nombre: 'Medio 2' },
       ],
     })
 

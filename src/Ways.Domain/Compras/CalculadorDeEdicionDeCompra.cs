@@ -1,13 +1,14 @@
 namespace Ways.Domain.Compras;
 
-/// <summary>Cantidad que una compra tiene (o tendrá) puesta en el stock de un artículo, en un punto de venta y, si el
-/// artículo controla lote, en un lote. Un asiento del libro de stock de la compra y una línea de la compra editada
-/// se expresan igual, para poder compararlos por clave.</summary>
-public sealed record CantidadDeStockDeCompra(int IdArticulo, int IdPuntoVenta, int? IdLote, decimal Cantidad);
+/// <summary>Cantidad que una compra tiene (o tendrá) puesta en el stock de un artículo, en la sucursal y por la caja
+/// (punto de venta) que lo recibió y, si el artículo controla lote, en un lote. Un asiento del libro de stock de la
+/// compra y una línea de la compra editada se expresan igual, para poder compararlos por clave. La sucursal de un
+/// asiento del libro es la que quedó guardada en su movimiento, no la que su punto de venta tenga hoy.</summary>
+public sealed record CantidadDeStockDeCompra(int IdArticulo, int IdSucursal, int IdPuntoVenta, int? IdLote, decimal Cantidad);
 
 /// <summary>Lo que hay que sumar (positivo) o restar (negativo) al stock de una clave para pasar de lo que la compra tenía
 /// puesto a lo que tendrá. Nunca es cero: una clave que no cambia no figura.</summary>
-public sealed record DiferenciaDeStockDeCompra(int IdArticulo, int IdPuntoVenta, int? IdLote, decimal Delta);
+public sealed record DiferenciaDeStockDeCompra(int IdArticulo, int IdSucursal, int IdPuntoVenta, int? IdLote, decimal Delta);
 
 /// <summary>Asiento <c>compra</c> de la cuenta corriente de un proveedor, ligado a la compra.</summary>
 public sealed record AsientoDeCuentaDeCompra(int IdProveedor, decimal Importe);
@@ -65,35 +66,37 @@ public readonly record struct LineaDeCostoDeCompra(
 /// </summary>
 public static class CalculadorDeEdicionDeCompra
 {
-    /// <summary>Diferencia por clave <c>(artículo, punto de venta, lote)</c> entre lo que el libro de stock de la compra
-    /// ya tiene sumado (<paramref name="original"/>) y lo que tendrá la compra editada (<paramref name="nueva"/>). Las
-    /// cantidades de una misma clave se netean antes de comparar —así +10 y −4 en el libro valen +6 y no dos
-    /// diferencias—, y la clave cuya diferencia es cero no figura. El resultado va en orden ascendente por artículo,
-    /// punto de venta y lote (sin lote primero): el orden en que el servicio toma los locks de stock. Con
+    /// <summary>Diferencia por clave <c>(artículo, sucursal, punto de venta, lote)</c> entre lo que el libro de stock de
+    /// la compra ya tiene sumado (<paramref name="original"/>) y lo que tendrá la compra editada (<paramref name="nueva"/>).
+    /// Las cantidades de una misma clave se netean antes de comparar —así +10 y −4 en el libro valen +6 y no dos
+    /// diferencias—, y la clave cuya diferencia es cero no figura. El resultado va en orden ascendente por sucursal,
+    /// artículo, lote (sin lote primero) y punto de venta: el orden en que el servicio toma los locks de stock. Con
     /// <paramref name="nueva"/> vacío es la reversa exacta de lo asentado (la que usa la anulación).</summary>
     public static IReadOnlyList<DiferenciaDeStockDeCompra> DiferenciasDeStock(
         IEnumerable<CantidadDeStockDeCompra> original, IEnumerable<CantidadDeStockDeCompra> nueva)
     {
-        var neto = new Dictionary<(int IdArticulo, int IdPuntoVenta, int? IdLote), decimal>();
+        var neto = new Dictionary<(int IdArticulo, int IdSucursal, int IdPuntoVenta, int? IdLote), decimal>();
 
         foreach (var asiento in original)
         {
-            var clave = (asiento.IdArticulo, asiento.IdPuntoVenta, asiento.IdLote);
+            var clave = (asiento.IdArticulo, asiento.IdSucursal, asiento.IdPuntoVenta, asiento.IdLote);
             neto[clave] = neto.GetValueOrDefault(clave) - asiento.Cantidad;
         }
 
         foreach (var linea in nueva)
         {
-            var clave = (linea.IdArticulo, linea.IdPuntoVenta, linea.IdLote);
+            var clave = (linea.IdArticulo, linea.IdSucursal, linea.IdPuntoVenta, linea.IdLote);
             neto[clave] = neto.GetValueOrDefault(clave) + linea.Cantidad;
         }
 
         return neto
             .Where(par => par.Value != 0m)
-            .Select(par => new DiferenciaDeStockDeCompra(par.Key.IdArticulo, par.Key.IdPuntoVenta, par.Key.IdLote, par.Value))
-            .OrderBy(d => d.IdArticulo)
-            .ThenBy(d => d.IdPuntoVenta)
+            .Select(par => new DiferenciaDeStockDeCompra(
+                par.Key.IdArticulo, par.Key.IdSucursal, par.Key.IdPuntoVenta, par.Key.IdLote, par.Value))
+            .OrderBy(d => d.IdSucursal)
+            .ThenBy(d => d.IdArticulo)
             .ThenBy(d => d.IdLote)
+            .ThenBy(d => d.IdPuntoVenta)
             .ToList();
     }
 
