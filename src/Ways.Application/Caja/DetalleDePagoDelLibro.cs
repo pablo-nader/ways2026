@@ -4,7 +4,7 @@ namespace Ways.Application.Caja;
 
 /// <summary>El texto que identifica un pago en el libro: la categoría y, si el pago tiene proveedor o persona, su nombre; si no,
 /// el concepto. Un proveedor o una persona dados de baja siguen referenciados por el pago: se muestran como
-/// no disponibles, igual que la pantalla de pagos.</summary>
+/// no disponibles.</summary>
 public static class DetalleDePagoDelLibro
 {
     public const string ProveedorNoDisponible = "(proveedor no disponible)";
