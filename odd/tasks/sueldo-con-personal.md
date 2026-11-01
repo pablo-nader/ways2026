@@ -38,7 +38,7 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
 - [x] T1 — Back office create form: Sueldos shows the employee picker and saves as pago de
   personal. Route: delegated writer. Evidence: PR #600 (merged 2026-11-01), commit 7de0bb53,
   judgment-day APPROVED.
-- [ ] T2 — POS: personal options for the cashier + pago de personal from `CajaTurno` allowed to
+- [x] T2 — POS: personal options for the cashier + pago de personal from `CajaTurno` allowed to
   the POS role (no CC discount); web picker in the POS payment screen. Route: delegated writer
   (backend + web, 2+ non-trivial files). Branch `pnader/sueldo-personal-pos`.
   Evidence (writer, uncommitted): separate POS routes `GET /api/pos/personal/opciones` (id + nombre, vivos) and
@@ -49,7 +49,7 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
   shows `Empleado (opcional)` on Sueldos, saves via `/pos/personal/{id}/pagos`, offline disables it. Results: dotnet build ok;
   Application.Tests 1638, Domain.Tests 2322 passed; integration (PagoDePersonal*, CuentaDePersonal*, AislamientoDeTenant,
   SuperficieDeAutorizacion, RutasDeLaSpa, PersonalEndpoints, OpenApi) 194 passed; vitest 308 files / 9415 tests passed;
-  tsc -b ok; lint 0 errors.
+  tsc -b ok; lint 0 errors. Commits 7f8a2d75 + 883729c3 (fixes F1 saldo, F2 retrofecha, F3 offline) + doc; judgment-day APPROVED (round 1 scoped re-judgment clean).
   Judgment-day fixes (status fixed): F1 the POS route answers `ReciboDePagoDePersonalDelPos` (idMovimiento, fecha, importe),
   never the employee balance; back office unchanged. F2 the POS date is always today in the PV zone: `fecha` may be omitted
   (the web no longer sends it) and any other date answers 400 `fecha_no_es_hoy`; the test rejects past and future dates and
