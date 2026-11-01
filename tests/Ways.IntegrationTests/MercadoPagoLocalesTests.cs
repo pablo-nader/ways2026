@@ -405,7 +405,7 @@ public class MercadoPagoLocalesTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(3, claves.Distinct().Count());
     }
 
-    // Clausula: un 404 del PUT (el local se borro en Mercado Pago) busca por external_id y adopta.
+    // Clausula: un 404 del PUT (el local se borro en Mercado Pago) busca por external_id y adopta, con otra clave que la del PUT fallido.
     [Fact]
     public async Task SiElLocalSeBorroEnMercadoPagoElRegistroLoAdoptaPorExternalIdYActualizaElVinculo()
     {
@@ -426,6 +426,7 @@ public class MercadoPagoLocalesTests(WaysApiFixture fixture) : IClassFixture<Way
         var nuevas = Llamadas(r.Ctx).Skip(previas).ToList();
         Assert.Equal(["PUT", "GET", "PUT"], nuevas.Select(l => l.Metodo.Method));
         Assert.EndsWith("/888001", nuevas[2].Uri.AbsolutePath);
+        Assert.NotEqual(nuevas[0].ClaveDeIdempotencia, nuevas[2].ClaveDeIdempotencia);
         Assert.DoesNotContain(nuevas, l => l.Metodo == HttpMethod.Post);
         Assert.Equal(888_001, Assert.Single(await FilasAsync(r.IdSucursal)).IdStore);
         Assert.Contains("\"operacion\": \"adopcion\"", (await AuditoriaAsync(r.IdSucursal)).Valor);

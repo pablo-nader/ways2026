@@ -204,8 +204,9 @@ public class ServicioDeLocalesMercadoPago(
         return (await CrearAsync(idEmpresa, ruta, cuerpo, idSucursal, ct), "alta");
     }
 
-    private static string HuellaDe(SolicitudDeLocalMercadoPago cuerpo) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cuerpo))))[..16];
+    private static string HuellaDe(SolicitudDeLocalMercadoPago cuerpo) => HuellaDeTexto(JsonSerializer.Serialize(cuerpo));
+
+    private static string HuellaDeTexto(string texto) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(texto)))[..16];
 
     /// <summary>La clave cambia con el contenido: Mercado Pago contesta 409 si la misma clave llega con otro cuerpo dentro de las 24 h,
     /// así que un alta con datos editados no puede reusar la clave del intento anterior.</summary>
@@ -224,14 +225,15 @@ public class ServicioDeLocalesMercadoPago(
         return creado.Id;
     }
 
-    /// <summary>La clave lleva el contenido y el estado de la sucursal (su <c>updated_at</c>): reintentar el mismo intento repite la
-    /// clave, pero volver a un contenido anterior (A, B, A) después de una edición no recibe la respuesta guardada del primero.</summary>
+    /// <summary>La clave lleva el local de destino, el contenido y el estado de la sucursal (su <c>updated_at</c>): reintentar el mismo
+    /// intento repite la clave, volver a un contenido anterior (A, B, A) después de una edición no recibe la respuesta guardada del
+    /// primero, y la adopción que sigue a un 404 no reusa la clave del PUT que falló contra el local borrado.</summary>
     private async Task ActualizarAsync(
         int idEmpresa, string ruta, long idStore, SolicitudDeLocalMercadoPago cuerpo, int idSucursal, long estadoDeLaSucursal,
         CancellationToken ct) =>
         await api.EnviarAsync<LocalDeMercadoPago>(
             idEmpresa, HttpMethod.Put, $"{ruta}/{idStore}", cuerpo,
-            $"ways-local-{idSucursal}-{HuellaDe(cuerpo)}-{estadoDeLaSucursal}", ct);
+            $"ways-local-{idSucursal}-act-{HuellaDeTexto($"{idStore}|{HuellaDe(cuerpo)}|{estadoDeLaSucursal}")}", ct);
 
     /// <summary>El local que un intento anterior dejó creado en Mercado Pago sin llegar a guardar el vínculo, si hay uno con el
     /// mismo <c>external_id</c>.</summary>

@@ -120,10 +120,22 @@ public class LocalParaMercadoPagoTests
     [InlineData("s/n")]
     [InlineData("SN")]
     [InlineData("S N")]
+    [InlineData("S.N.")]
+    [InlineData("s-n")]
+    [InlineData("Sin número")]
+    [InlineData("Sin nro.")]
+    [InlineData("N/A")]
+    [InlineData("0")]
     public void UnaAlturaSinNumeroCuentaComoFaltanteParaMercadoPago(string altura)
     {
         Assert.Equal(["altura"], LocalParaMercadoPago.CamposFaltantes("Centro", Completa() with { Altura = altura }));
     }
+
+    [Theory]
+    [InlineData("10")]
+    [InlineData("1234 bis")]
+    public void UnaAlturaConNumeroNoEsSinNumero(string altura) =>
+        Assert.Empty(LocalParaMercadoPago.CamposFaltantes("Centro", Completa() with { Altura = altura }));
 
     [Fact]
     public void UnaAlturaConNumeroYBarraNoEsSinNumero() =>

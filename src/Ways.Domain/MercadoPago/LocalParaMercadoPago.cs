@@ -76,10 +76,15 @@ public sealed record LocalParaMercadoPago(
         return faltantes;
     }
 
-    /// <summary>"S/N" (ya saneado: "S N" o "SN") significa sin número, y Mercado Pago exige el número de la calle.</summary>
+    /// <summary>Las formas de "sin número" ("S/N", "S.N.", "s-n", "Sin número", "Sin nro", "0"), comparadas sin separadores ni
+    /// tildes: Mercado Pago exige el número de la calle.</summary>
+    private static readonly HashSet<string> FormasDeSinNumero = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SN", "SINNUMERO", "SINNRO", "SINN", "SINNUM", "NA", "0",
+    };
+
     private static bool EsSinNumero(string alturaSaneada) =>
-        alturaSaneada.Equals("S N", StringComparison.OrdinalIgnoreCase)
-        || alturaSaneada.Equals("SN", StringComparison.OrdinalIgnoreCase);
+        FormasDeSinNumero.Contains(new string(alturaSaneada.Where(char.IsLetterOrDigit).ToArray()));
 
     /// <summary>400 <see cref="CodigoDeDireccionIncompleta"/> nombrando lo que falta, o el local listo para enviar.</summary>
     public static LocalParaMercadoPago Armar(string nombre, DireccionDeSucursal direccion)
