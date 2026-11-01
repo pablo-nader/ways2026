@@ -24,6 +24,7 @@ import type {
   Rotacion,
   TopArticulos,
   Vencimientos,
+  TicketsDeArticulo,
   VentasPorArticulo,
   VentasPorHora,
   VentasPorMedioPago,
@@ -173,6 +174,12 @@ export const clienteDeReportes = {
     api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros, orden)}`),
   ventasPorArticulo: (filtros: FiltrosDeVentasPorArticulo) =>
     api.get<VentasPorArticulo>(`/reportes/ventas/por-articulo${construirQueryDeVentasPorArticulo(filtros)}`),
+  /** Tickets donde se vendió un artículo, con la empresa, el punto de venta y el rango del reporte (sin área, grupo,
+   * categoría ni artículo). */
+  ticketsDeArticulo: (idArticulo: number, filtros: FiltrosDeTicketsDeArticulo) =>
+    api.get<TicketsDeArticulo>(
+      `/reportes/ventas/por-articulo/${idArticulo}/tickets${construirQueryDeTicketsDeArticulo(filtros)}`,
+    ),
   ventasPorHora: (filtros: FiltrosDeVentasPorHora) =>
     api.get<VentasPorHora>(`/reportes/ventas/por-hora${construirQueryDeVentasPorHora(filtros)}`),
   libroIvaCompras: (filtros: FiltrosDeLibroIva) =>
@@ -343,6 +350,20 @@ export function construirQueryDeVentasPorArticulo(filtros: FiltrosDeVentasPorArt
   if (filtros.idGrupo !== null) parametros.set('idGrupo', String(filtros.idGrupo))
   if (filtros.idCategoria !== null) parametros.set('idCategoria', String(filtros.idCategoria))
   if (filtros.idArticulo !== null) parametros.set('idArticulo', String(filtros.idArticulo))
+  return `?${parametros.toString()}`
+}
+
+/** Filtro de `GET /api/reportes/ventas/por-articulo/{idArticulo}/tickets`: el mismo recorte de empresa, punto de venta
+ * y rango que el reporte; el artículo viaja en la ruta. */
+export type FiltrosDeTicketsDeArticulo = Pick<FiltrosDeVentasPorArticulo, 'idEmpresa' | 'idPuntoVenta' | 'desde' | 'hasta'>
+
+/** Mismos nombres de parámetro que `construirQueryDeVentasPorArticulo`; el punto de venta se omite si no hay. */
+export function construirQueryDeTicketsDeArticulo(filtros: FiltrosDeTicketsDeArticulo): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
   return `?${parametros.toString()}`
 }
 
