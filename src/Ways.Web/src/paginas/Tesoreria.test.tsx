@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tesoreria } from './Tesoreria'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type { EmpresaListado, FilaDelLibro, LibroDeTesoreria, UsuarioAutenticado } from '../api/tipos'
@@ -174,8 +175,23 @@ function renderTesoreria() {
   return render(
     <MemoryRouter>
       <Tesoreria />
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
+
+/** La marca de conciliación de la pantalla; los toasts también son `status` y se excluyen. */
+function marcaDeConciliacion(): HTMLElement {
+  const marcas = screen.getAllByRole('status').filter((e) => !e.closest('.ws-toaster'))
+  expect(marcas).toHaveLength(1)
+  return marcas[0]
 }
 
 function llamadasAlLibro(): string[] {
@@ -533,7 +549,7 @@ describe('Tesoreria — libro: ajustes (Admin)', () => {
     await usuario.type(dialogo.getByLabelText('Concepto'), 'Conteo')
     await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
 
-    expect(await screen.findByText('Ajuste de efectivo registrado.')).toBeInTheDocument()
+    await toastDeExito('Ajuste de efectivo registrado.')
     expect(apiPostMock).toHaveBeenCalledWith('/tesoreria/efectivo/ajustes', { idEmpresa: 1, concepto: 'Conteo', importe: 1499 })
     expect(screen.queryByRole('dialog', { name: 'Ajustar efectivo' })).not.toBeInTheDocument()
     expect(await screen.findByText('$ 9.999,00')).toBeInTheDocument()
@@ -591,7 +607,7 @@ describe('Tesoreria — libro: ajustes (Admin)', () => {
     await usuario.type(dialogo.getByLabelText('Concepto'), 'Retiro')
     await usuario.click(dialogo.getByRole('button', { name: 'Registrar ajuste' }))
 
-    expect(await screen.findByText('Ajuste de Mercado Pago registrado.')).toBeInTheDocument()
+    await toastDeExito('Ajuste de Mercado Pago registrado.')
     expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/1/ajustes', { concepto: 'Retiro', importe: -60 })
     expect(apiGetMock.mock.calls.every((c) => c[0] === '/empresas' || (c[0] as string).startsWith('/reportes/libro-tesoreria?'))).toBe(true)
     expect(await screen.findByText('$ 1.940,00')).toBeInTheDocument()
@@ -628,7 +644,7 @@ describe('Tesoreria — libro: conciliación', () => {
     renderTesoreria()
     await esperarElLibro()
 
-    expect(screen.getByRole('status')).toHaveTextContent('Sin conciliar')
+    expect(marcaDeConciliacion()).toHaveTextContent('Sin conciliar')
     expect(screen.queryByRole('img', { name: 'Conciliado' })).not.toBeInTheDocument()
   })
 
@@ -637,7 +653,7 @@ describe('Tesoreria — libro: conciliación', () => {
     renderTesoreria()
     await esperarElLibro()
 
-    expect(screen.getByRole('status')).toHaveTextContent(`Conciliado hasta ${fechaHoraATexto(MARCA)}`)
+    expect(marcaDeConciliacion()).toHaveTextContent(`Conciliado hasta ${fechaHoraATexto(MARCA)}`)
   })
 
   it('congela con candado las filas hasta la marca inclusive y el saldo anterior si el rango empieza antes', async () => {
@@ -691,12 +707,12 @@ describe('Tesoreria — libro: conciliación', () => {
     await usuario.click(dialogo.getByLabelText('Entiendo que no se puede deshacer'))
     await usuario.click(dialogo.getByRole('button', { name: 'Conciliar' }))
 
-    expect(await screen.findByText('Conciliación registrada.')).toBeInTheDocument()
+    await toastDeExito('Conciliación registrada.')
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock.mock.calls[0][0]).toBe('/tesoreria/conciliaciones')
     expect(apiPostMock.mock.calls[0][1]).toMatchObject({ idEmpresa: 1 })
     expect(screen.queryByRole('dialog', { name: 'Conciliar tesorería' })).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Conciliado hasta'))
+    await waitFor(() => expect(marcaDeConciliacion()).toHaveTextContent('Conciliado hasta'))
     expect(llamadasAlLibro()).toHaveLength(2)
   })
 

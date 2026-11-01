@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaDePersonal } from './CuentaDePersonal'
+import { Toaster } from '../toasts/Toaster'
 import { fechaDeHoyParaPago } from '../api/compras'
 import { ROL } from '../api/tipos'
 import { ErrorApi } from '../api/cliente'
@@ -67,8 +68,23 @@ function renderCuenta(ruta = '/personal/1/cuenta') {
         <Route path="/personal/:id/cuenta" element={<CuentaDePersonal />} />
         <Route path="*" element={<SondaDeRuta />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El refresco fallido tras una escritura confirmada queda en un banner persistente, nunca en un toast. */
+async function bannerDeRefrescoFallido() {
+  const aviso = await screen.findByText('No se pudo actualizar la vista. Recargá la pantalla.')
+  expect(aviso.closest('[role="alert"]')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).toBeNull()
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 function diferido<T>() {
@@ -559,7 +575,7 @@ describe('CuentaDePersonal — según el rol', () => {
     const horas = await abrir(evento, 'Cargar horas')
     await evento.type(within(horas).getByLabelText('Horas'), '8')
     await evento.click(within(horas).getByRole('button', { name: 'Cargar horas' }))
-    await screen.findByText('Horas cargadas.')
+    await toastDeExito('Horas cargadas.')
     expect(apiPostMock).toHaveBeenLastCalledWith('/personal/1/horas', { fecha: HOY, horas: 8, valorHora: 3500 })
 
     const ajuste = await abrir(evento, 'Ajuste manual')
@@ -567,7 +583,7 @@ describe('CuentaDePersonal — según el rol', () => {
     await evento.type(within(ajuste).getByLabelText('Importe'), '100')
     await evento.type(within(ajuste).getByLabelText(/^Detalle/), 'Horas olvidadas')
     await evento.click(within(ajuste).getByRole('button', { name: 'Registrar ajuste' }))
-    await screen.findByText('Ajuste registrado.')
+    await toastDeExito('Ajuste registrado.')
     expect(apiPostMock).toHaveBeenLastCalledWith('/personal/1/ajustes', { fecha: HOY, importe: 100, detalle: 'Horas olvidadas' })
     expect(apiPostMock).toHaveBeenCalledTimes(2)
   })
@@ -599,7 +615,7 @@ describe('CuentaDePersonal — cargar horas', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(apiPostMock).toHaveBeenCalledWith('/personal/1/horas', { fecha: HOY, horas: 0.7, valorHora: 1.15, detalle: 'extra' })
-    expect(await screen.findByText('Horas cargadas.')).toBeInTheDocument()
+    await toastDeExito('Horas cargadas.')
   })
 
   /** Cláusula bajo prueba: `pagina: 1` del refresco posterior a una escritura. Se escribe parado en la página dos. */
@@ -620,7 +636,7 @@ describe('CuentaDePersonal — cargar horas', () => {
     await evento.type(within(dialogo).getByLabelText('Horas'), '8')
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
-    await screen.findByText('Horas cargadas.')
+    await toastDeExito('Horas cargadas.')
     await screen.findByText('Página 1 de 3 — 60 movimientos')
     expect(lecturasDeCuenta()).toHaveLength(antesCuenta + 1)
     expect(lecturasDeCuenta().at(-1)?.[0]).toContain('pagina=1&')
@@ -816,7 +832,7 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
       await escritura.promesa
     })
 
-    expect(await screen.findByText('Horas cargadas.')).toBeInTheDocument()
+    await toastDeExito('Horas cargadas.')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     for (const nombre of ['Cargar horas', 'Ajuste manual', 'Registrar pago', 'Siguiente', 'Anterior']) {
       expect(screen.getByRole('button', { name: nombre })).toBeDisabled()
@@ -845,9 +861,9 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
     expect(screen.getByTestId('ruta')).toHaveTextContent('/personal')
   })
 
-  /** Cláusula bajo prueba: la rama `catch` de `refrescarTrasEscribir`. Una escritura confirmada nunca se
+  /** Cláusula bajo prueba: `avisoDeRefrescoFallido`. Una escritura confirmada nunca se
    * reporta como fallida, aunque el refresco posterior explote. */
-  it('un refresco fallido después de escribir avisa que se registró y cierra la modal', async () => {
+  it('un refresco fallido después de escribir deja un banner persistente y cierra la modal', async () => {
     let lecturasHechas = 0
     mockearRutas({
       cuenta: () => (++lecturasHechas === 1 ? Promise.resolve(paginaDeCuenta()) : Promise.reject(new ErrorApi(500, 'error', 'Se cayó.'))),
@@ -859,14 +875,13 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
 
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
-    expect(
-      await screen.findByText('Horas cargadas. Pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+    await toastDeExito('Horas cargadas.')
+    await bannerDeRefrescoFallido()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.queryByText('Se cayó.')).not.toBeInTheDocument()
   })
 
-  it('un refresco de la deuda del cliente fallido también avisa', async () => {
+  it('un refresco de la deuda del cliente fallido también deja el banner persistente', async () => {
     let lecturasDeDeuda = 0
     mockearRutas({
       cliente: () => (++lecturasDeDeuda === 1 ? Promise.resolve(cliente(750)) : Promise.reject(new ErrorApi(500, 'error', 'Se cayó.'))),
@@ -879,9 +894,8 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
 
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
-    expect(
-      await screen.findByText('Horas cargadas. Pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+    await toastDeExito('Horas cargadas.')
+    await bannerDeRefrescoFallido()
   })
 
   it('el rechazo de un envío anterior desaparece apenas empieza el reintento, antes de que responda', async () => {
@@ -931,21 +945,6 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
     expect(
       within(nueva).queryByText('Las horas deben ser mayores que 0 y hasta 24, con hasta dos decimales.'),
     ).not.toBeInTheDocument()
-  })
-
-  it('el aviso de una escritura anterior no sobrevive a abrir la siguiente', async () => {
-    apiPostMock.mockResolvedValue(MOV_HORAS)
-    const evento = userEvent.setup()
-    renderCuenta()
-    const dialogo = await prepararCargaDeHoras(evento)
-    await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
-    await screen.findByText('Horas cargadas.')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Ajuste manual' })).toBeEnabled())
-
-    await evento.click(screen.getByRole('button', { name: 'Ajuste manual' }))
-
-    await screen.findByRole('dialog', { name: 'Ajuste manual' })
-    expect(screen.queryByText('Horas cargadas.')).not.toBeInTheDocument()
   })
 })
 
@@ -1002,7 +1001,7 @@ describe('CuentaDePersonal — ajuste', () => {
       importe: -250,
       detalle: 'Corrección de una carga',
     })
-    expect(await screen.findByText('Ajuste registrado.')).toBeInTheDocument()
+    await toastDeExito('Ajuste registrado.')
   })
 
   it('"a favor" manda el importe positivo', async () => {
@@ -1131,7 +1130,7 @@ describe('CuentaDePersonal — pago', () => {
         { idMedioPago: 5, importe: 250.5 },
       ],
     })
-    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
+    await toastDeExito('Pago registrado.')
   })
 
   it('caja del turno: manda el punto de venta de la sesión y nunca la empresa', async () => {
@@ -1784,7 +1783,7 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
     const otra = await abrir(evento, 'Cargar horas')
     await evento.type(within(otra).getByLabelText('Horas'), '8')
     await evento.click(within(otra).getByRole('button', { name: 'Cargar horas' }))
-    await screen.findByText('Horas cargadas.')
+    await toastDeExito('Horas cargadas.')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled())
     await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
     await screen.findByText('Página 2 de 3 — 60 movimientos')
@@ -1847,9 +1846,8 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
 
       await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
-      expect(
-        await screen.findByText(`Horas cargadas. Se amplió el rango del estado de cuenta para incluir el ${FECHA_VIEJA.texto}.`),
-      ).toBeInTheDocument()
+      await toastDeExito('Horas cargadas.')
+      await toastDeExito(`Se amplió el rango del estado de cuenta para incluir el ${FECHA_VIEJA.texto}.`)
       expect(lecturasDeCuenta().at(-1)?.[0]).toBe(`/personal/1/cuenta?desde=${FECHA_VIEJA.iso}&pagina=1&tamanio=25`)
       expect(screen.getByLabelText('Desde')).toHaveValue(FECHA_VIEJA.texto)
     })
@@ -1905,7 +1903,7 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
 
       await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
-      expect(await screen.findByText('Horas cargadas.')).toBeInTheDocument()
+      await toastDeExito('Horas cargadas.')
       expect(screen.getByLabelText('Desde')).toHaveValue(desdeAntes)
     })
   })

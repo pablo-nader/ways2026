@@ -14,6 +14,7 @@ import { ModalDeConciliacion } from '../componentes/ModalDeConciliacion'
 import { fechaHoraATexto } from '../formato/fechas'
 import { ResumenDeLiquidez } from './tesoreria/ResumenDeLiquidez'
 import { TablaDelLibro } from './tesoreria/TablaDelLibro'
+import { toast } from '../toasts/toasts'
 
 type Filtros = { idEmpresa: number | null; desde: string; hasta: string }
 
@@ -48,7 +49,6 @@ export function Tesoreria() {
   const [ajustandoEfectivo, setAjustandoEfectivo] = useState(false)
   const [cuentaAAjustar, setCuentaAAjustar] = useState<CuentaAAjustar | null>(null)
   const [conciliando, setConciliando] = useState(false)
-  const [confirmacion, setConfirmacion] = useState('')
   const [avisoIncierto, setAvisoIncierto] = useState('')
 
   const { idEmpresa, desde, hasta } = filtros
@@ -111,7 +111,6 @@ export function Tesoreria() {
   function cambiarFiltros(cambios: Partial<Filtros>) {
     generacionRef.current += 1
     setLibro(null)
-    setConfirmacion('')
     setFiltros((previos) => ({ ...previos, ...cambios }))
   }
 
@@ -119,14 +118,13 @@ export function Tesoreria() {
     setAjustandoEfectivo(false)
     setCuentaAAjustar(null)
     setAvisoIncierto('')
-    setConfirmacion(mensaje)
+    toast.exito(mensaje)
     cargar()
   }
 
   function alSerIncierto(que: string) {
     setAjustandoEfectivo(false)
     setCuentaAAjustar(null)
-    setConfirmacion('')
     setAvisoIncierto(`No se pudo confirmar el ajuste de ${que}. Ya se volvió a cargar el libro: verificá si figura antes de reintentarlo.`)
     cargar()
   }
@@ -134,13 +132,12 @@ export function Tesoreria() {
   function alConciliar() {
     setConciliando(false)
     setAvisoIncierto('')
-    setConfirmacion('Conciliación registrada.')
+    toast.exito('Conciliación registrada.')
     cargar()
   }
 
   function alSerInciertaLaConciliacion() {
     setConciliando(false)
-    setConfirmacion('')
     setAvisoIncierto(
       'No se pudo confirmar la conciliación. Ya se volvió a cargar el libro: verificá si figura como conciliado antes de reintentarla.',
     )
@@ -241,14 +238,6 @@ export function Tesoreria() {
               </div>
             )}
 
-            {confirmacion && (
-              <div className="alert alert-success py-2 px-3 small d-flex justify-content-between align-items-center">
-                <span>{confirmacion}</span>
-                <button type="button" className="btn btn-sm btn-outline-success" onClick={() => setConfirmacion('')}>
-                  Cerrar aviso
-                </button>
-              </div>
-            )}
 
             {avisoIncierto && (
               <div className="alert alert-warning py-2 px-3 small d-flex justify-content-between align-items-center">

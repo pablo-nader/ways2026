@@ -35,6 +35,7 @@ import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
 import { pluralizar } from '../formato/pluralizar'
+import { toast } from '../toasts/toasts'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -231,7 +232,6 @@ function PantallaCuentaCorrienteDeProveedor({
 
   const [modalAjusteAbierto, setModalAjusteAbierto] = useState(false)
   const [compraAPagar, setCompraAPagar] = useState<{ idCompra: number; saldoPendiente: number } | null>(null)
-  const [aviso, setAviso] = useState('')
 
   const { usuario } = useAuth()
   const esSupervisorOAdmin = usuario !== null && puedeSupervisarCuentaDeProveedor(usuario.rolId)
@@ -323,7 +323,6 @@ function PantallaCuentaCorrienteDeProveedor({
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {error && <div className="alert alert-danger">{error}</div>}
         {errorProveedor && (
           <div className="alert alert-warning py-1 px-2 small">
@@ -358,10 +357,7 @@ function PantallaCuentaCorrienteDeProveedor({
                     className="btn btn-outline-secondary"
                     disabled={!puedeAjustar}
                     title={motivoBloqueoAjuste}
-                    onClick={() => {
-                      setAviso('')
-                      setModalAjusteAbierto(true)
-                    }}
+                    onClick={() => setModalAjusteAbierto(true)}
                   >
                     Ajuste manual
                   </button>
@@ -452,10 +448,7 @@ function PantallaCuentaCorrienteDeProveedor({
                             <button
                               type="button"
                               className="btn btn-sm btn-primary"
-                              onClick={() => {
-                                setAviso('')
-                                setCompraAPagar(compraPagableDelMovimiento(m))
-                              }}
+                              onClick={() => setCompraAPagar(compraPagableDelMovimiento(m))}
                             >
                               Pagar
                             </button>
@@ -510,7 +503,7 @@ function PantallaCuentaCorrienteDeProveedor({
           onCerrar={() => setCompraAPagar(null)}
           onPagado={(resultado) => {
             setCompraAPagar(null)
-            setAviso(textoDePagoRegistrado(resultado, formatearMoneda))
+            toast.exito(textoDePagoRegistrado(resultado, formatearMoneda))
             cargar()
           }}
         />
@@ -527,9 +520,9 @@ function PantallaCuentaCorrienteDeProveedor({
           }}
           onRegistrado={(movimiento) => {
             setModalAjusteAbierto(false)
-            setAviso(`Ajuste registrado: ${formatearMoneda(movimiento.importe)}.`)
+            toast.exito(`Ajuste registrado: ${formatearMoneda(movimiento.importe)}.`)
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal — si
-            // falla, no pisa el aviso de éxito de arriba.
+            // falla, no pisa el toast de éxito de arriba.
             cargar()
           }}
         />

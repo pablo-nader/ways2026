@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ESPERA_MAXIMA_DEL_RECIBO_MS, ModalCuentaCorrientePos } from './ModalCuentaCorrientePos'
+import { Toaster } from '../toasts/Toaster'
 import type { PagoACuentaRegistrado } from './ModalCuentaCorrientePos'
 import type { ClienteListado, ComprobanteEmitido, EstadoDeCuenta, MedioPagoListado, MovimientoDeCuentaCorriente, PuntoVentaListado } from '../api/tipos'
 
@@ -135,15 +136,18 @@ function montar(props: Partial<Parameters<typeof ModalCuentaCorrientePos>[0]> = 
   const onPagoRegistrado = vi.fn()
   const onReciboListo = vi.fn<(pago: PagoACuentaRegistrado) => void>()
   render(
-    <ModalCuentaCorrientePos
-      clienteInicial={CLIENTE}
-      puntoVenta={PUNTO_VENTA}
-      medios={MEDIOS}
-      onCerrar={onCerrar}
-      onPagoRegistrado={onPagoRegistrado}
-      onReciboListo={onReciboListo}
-      {...props}
-    />,
+    <>
+      <ModalCuentaCorrientePos
+        clienteInicial={CLIENTE}
+        puntoVenta={PUNTO_VENTA}
+        medios={MEDIOS}
+        onCerrar={onCerrar}
+        onPagoRegistrado={onPagoRegistrado}
+        onReciboListo={onReciboListo}
+        {...props}
+      />
+      <Toaster />
+    </>,
   )
   return { onCerrar, onPagoRegistrado, onReciboListo }
 }
@@ -387,7 +391,9 @@ describe('ModalCuentaCorrientePos — pago a cuenta y recibo', () => {
 
     await waitFor(() => expect(onReciboListo).toHaveBeenCalledTimes(1))
     expect(onReciboListo.mock.calls[0][0]).toMatchObject({ saldoEnPantalla: 500, saldoPosterior: null })
-    expect(await dialogo().findByText('Pago registrado: comprobante 0007-00000900.')).toBeInTheDocument()
+    const aviso = await screen.findByText('Pago registrado: comprobante 0007-00000900.')
+    expect(aviso.closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
   })
 
   it('el recibo sale una sola vez aunque la consulta posterior quede superada por un cambio de rango', async () => {

@@ -27,6 +27,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
+import { toast } from '../toasts/toasts'
 import {
   EncabezadoOrdenable,
   FilaDeFiltros,
@@ -88,7 +89,6 @@ export function CuentasTesoreria() {
   const [errorEmpresas, setErrorEmpresas] = useState('')
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [errorFormulario, setErrorFormulario] = useState<ErrorDeCuenta | null>(null)
   const [guardando, setGuardando] = useState(false)
@@ -150,11 +150,11 @@ export function CuentasTesoreria() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -213,7 +213,6 @@ export function CuentasTesoreria() {
 
   function abrirFormulario(valor: Formulario) {
     setFormulario(valor)
-    setAviso('')
     setError('')
     setErrorFormulario(null)
   }
@@ -236,7 +235,6 @@ export function CuentasTesoreria() {
     setDisparadorDeLaPuerta(disparador)
     setBaja(cuenta)
     setError('')
-    setAviso('')
   }
 
   function cancelarBaja() {
@@ -245,7 +243,6 @@ export function CuentasTesoreria() {
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -261,15 +258,14 @@ export function CuentasTesoreria() {
         await clienteDeCuentasTesoreria.eliminar(cuenta.id)
       } catch (e) {
         const copia = copiaDeBajaDeCuenta(e, cuenta.nombre)
-        setError(copia)
         if (e instanceof ErrorApi && e.estado === 404) {
-          // La cuenta ya no existe: la puerta no tiene qué confirmar y se recarga para quitar la fila vieja.
-          // Una lectura exitosa borra el error, así que el motivo se vuelve a poner cuando termina.
+          // La cuenta ya no existe: la puerta no tiene qué confirmar, el motivo se avisa con un toast y se
+          // recarga para quitar la fila vieja.
           setBaja(null)
-          const recarga = ++generacion.current
-          void cargar(recarga).then(() => {
-            if (generacion.current === recarga) setError(copia)
-          })
+          toast.error(copia)
+          void cargar(++generacion.current)
+        } else {
+          setError(copia)
         }
 
         return
@@ -315,10 +311,7 @@ export function CuentasTesoreria() {
       <button
         type="button"
         className="btn btn-outline-primary text-nowrap"
-        onClick={() => {
-          setAviso('')
-          setReconstruyendo(true)
-        }}
+        onClick={() => setReconstruyendo(true)}
         disabled={bloqueado || empresas === null || empresas.length === 0}
       >
         Reconstruir historial
@@ -330,7 +323,6 @@ export function CuentasTesoreria() {
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Cuentas de tesorería" variante="inverse" herramientas={herramientas}>
         {error && !baja && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {errorEmpresas && <div className="alert alert-warning">{errorEmpresas}</div>}
 
         {baja && (

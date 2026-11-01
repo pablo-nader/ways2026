@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentasTesoreria } from './CuentasTesoreria'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import type { CuentaTesoreriaListado } from '../api/cuentasTesoreria'
 import type { EmpresaListado } from '../api/tipos'
@@ -33,7 +34,20 @@ vi.mock('../api/cliente', () => ({
 afterEach(cleanup)
 
 function renderPagina() {
-  return render(<CuentasTesoreria />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(
+    <>
+      <CuentasTesoreria />
+      <Toaster />
+    </>,
+    { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> },
+  )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 /** Promesa que el test resuelve o rechaza a mano. */
@@ -172,7 +186,7 @@ describe('CuentasTesoreria — alta', () => {
         activo: true,
       }),
     )
-    expect(await screen.findByText('Cuenta "Banco Nación" creada.')).toBeInTheDocument()
+    await toastDeExito('Cuenta "Banco Nación" creada.')
     expect(await screen.findByText('Banco Nación')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -281,7 +295,7 @@ describe('CuentasTesoreria — edición y saldo inicial', () => {
         activo: false,
       }),
     )
-    expect(await screen.findByText('Cuenta "MP" actualizada.')).toBeInTheDocument()
+    await toastDeExito('Cuenta "MP" actualizada.')
   })
 
   it('con saldoInicialEditable en falso el campo es de solo lectura, se explica y se manda el valor guardado', async () => {
@@ -362,7 +376,7 @@ describe('CuentasTesoreria — la cuenta ya no existe', () => {
     expect(screen.queryByText('Mercado Pago')).not.toBeInTheDocument()
   })
 
-  it('un 404 al dar de baja recarga el listado, cierra la puerta y conserva el motivo', async () => {
+  it('un 404 al dar de baja recarga el listado, cierra la puerta y avisa el motivo con un toast de error', async () => {
     apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'x'))
     const usuarioEvento = userEvent.setup()
     renderPagina()
@@ -376,11 +390,11 @@ describe('CuentasTesoreria — la cuenta ya no existe', () => {
     await waitFor(() => expect(llamadasAlListado()).toBe(antes + 1))
     expect(await screen.findByText('Todavía no hay cuentas de tesorería.')).toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'No se pudo dar de baja la cuenta "Mercado Pago". Ya no existe o no está a tu alcance. Actualizá el listado.',
-      ),
-    ).toBeInTheDocument()
+    const aviso = screen.getByText(
+      'No se pudo dar de baja la cuenta "Mercado Pago". Ya no existe o no está a tu alcance. Actualizá el listado.',
+    )
+    expect(aviso.closest('[role="alert"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 
   it('al editar muestra la empresa de la fila si el listado de empresas no cargó', async () => {
@@ -422,7 +436,7 @@ describe('CuentasTesoreria — baja', () => {
     await usuarioEvento.click(await screen.findByRole('button', { name: 'Confirmar baja' }))
 
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/cuentas-tesoreria/1'))
-    expect(await screen.findByText('Cuenta "Mercado Pago" dada de baja.')).toBeInTheDocument()
+    await toastDeExito('Cuenta "Mercado Pago" dada de baja.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
@@ -527,7 +541,7 @@ describe('CuentasTesoreria — esqueleto asíncrono', () => {
       await delete_.promesa
     })
 
-    expect(await screen.findByText('Cuenta "Mercado Pago" dada de baja.')).toBeInTheDocument()
+    await toastDeExito('Cuenta "Mercado Pago" dada de baja.')
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
 
@@ -544,7 +558,7 @@ describe('CuentasTesoreria — esqueleto asíncrono', () => {
 
   /** Cláusula bajo prueba: la rama `catch` de `refrescarTrasEscribir`. Un guardado que ya commiteó nunca se
    * reporta como fallido, aunque el refresco posterior explote. */
-  it('un refresco fallido después de guardar avisa que se guardó y cierra la modal', async () => {
+  it('un refresco fallido después de guardar avisa el éxito y el fallo con toasts y cierra la modal', async () => {
     let cargas = 0
     mockearRutas(() => (++cargas === 1 ? Promise.resolve(filas) : Promise.reject(new Error('sin red'))))
     apiPostMock.mockResolvedValue(cuenta({ id: 2, nombre: 'Banco' }))
@@ -555,9 +569,9 @@ describe('CuentasTesoreria — esqueleto asíncrono', () => {
 
     await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(
-      await screen.findByText('Cuenta "Banco" creada. Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+    await toastDeExito('Cuenta "Banco" creada.')
+    const advertencia = await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(advertencia.closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -572,11 +586,9 @@ describe('CuentasTesoreria — esqueleto asíncrono', () => {
     await usuarioEvento.click(screen.getByRole('button', { name: 'Eliminar Mercado Pago' }))
     await usuarioEvento.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    expect(
-      await screen.findByText(
-        'Cuenta "Mercado Pago" dada de baja. Se dio de baja, pero no se pudo actualizar la vista. Recargá la pantalla.',
-      ),
-    ).toBeInTheDocument()
+    await toastDeExito('Cuenta "Mercado Pago" dada de baja.')
+    const advertencia = await screen.findByText('Se dio de baja, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(advertencia.closest('[role="status"]')).not.toBeNull()
   })
 
   it('el error de un guardado anterior no sobrevive a cancelar y reabrir', async () => {
@@ -853,7 +865,7 @@ describe('CuentasTesoreria — orden y filtros por columna', () => {
     await u.click(screen.getByRole('button', { name: 'Eliminar Caja chica' }))
     await u.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    expect(await screen.findByText('Cuenta "Caja chica" dada de baja.')).toBeInTheDocument()
+    await toastDeExito('Cuenta "Caja chica" dada de baja.')
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(campo)
     expect(campo).toHaveValue('a')
@@ -908,6 +920,7 @@ describe('CuentasTesoreria — reconstruir historial', () => {
     await usuario.click(confirmar)
 
     await waitFor(() => expect(llamadasAlListado()).toBe(2))
-    expect(await screen.findByText(/Historial reconstruido: 6 filas de 2 turnos\./)).toBeInTheDocument()
+    const aviso = await screen.findByText(/Historial reconstruido: 6 filas de 2 turnos\./)
+    expect(aviso.closest('.ws-toaster [role="status"]')).not.toBeNull()
   })
 })

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaCorriente } from './CuentaCorriente'
+import { Toaster } from '../toasts/Toaster'
 import { SeccionesDeCobros } from '../componentes/cobros/SeccionesDeCobros'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
@@ -222,8 +223,24 @@ function renderPantalla(idCliente: number | string = 5, state?: { cliente: Clien
       <Routes>
         <Route path="/clientes/:id/cuenta-corriente" element={<CuentaCorriente />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string | RegExp) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+  return aviso
+}
+
+/** Un refresco fallido tras una escritura confirmada deja el banner de carga persistente, sin toast de advertencia. */
+async function bannerDeCargaPersistente(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).toBeNull()
 }
 
 /** Rutas comunes a toda la pantalla (cliente + medios de pago + puntos de venta + estado de
@@ -534,7 +551,7 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
     await userEvent.type(screen.getByLabelText('Observaciones'), '  nota de prueba  ')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
-    await screen.findByText(/Pago registrado/)
+    await toastDeExito(/Pago registrado/)
 
     const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/clientes/5/cuenta-corriente/pagos')
     expect(llamada?.[1]).toEqual({
@@ -560,9 +577,9 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
     await abrirModalYCompletarFila()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
-    expect(await screen.findByText('Pago registrado: comprobante 0007-00000003.')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument())
-    // el aviso de éxito del pago sigue en pantalla — el fallo del refetch no lo pisa.
+    await toastDeExito('Pago registrado: comprobante 0007-00000003.')
+    await bannerDeCargaPersistente('No se pudo cargar el estado de cuenta.')
+    // el toast de éxito del pago sigue en pantalla — el fallo del refetch no lo pisa.
     expect(screen.getByText('Pago registrado: comprobante 0007-00000003.')).toBeInTheDocument()
   })
 
@@ -686,7 +703,7 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
     await userEvent.click(screen.getByLabelText(/Entiendo que este ajuste modifica el saldo/))
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
-    await screen.findByText(/Ajuste registrado/)
+    await toastDeExito(/Ajuste registrado/)
 
     const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/clientes/5/cuenta-corriente/ajustes')
     expect(llamada?.[1]).toEqual({ idPuntoVenta: 7, importe: -50, detalle: 'Descuento por reclamo' })
@@ -744,9 +761,9 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
     await userEvent.click(screen.getByLabelText(/Entiendo que este ajuste modifica el saldo/))
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
-    expect(await screen.findByText(/Ajuste registrado/)).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument())
-    // el aviso de éxito del ajuste sigue en pantalla — el fallo del refetch no lo pisa.
+    await toastDeExito(/Ajuste registrado/)
+    await bannerDeCargaPersistente('No se pudo cargar el estado de cuenta.')
+    // el toast de éxito del ajuste sigue en pantalla — el fallo del refetch no lo pisa.
     expect(screen.getByText(/Ajuste registrado/)).toBeInTheDocument()
   })
 })
@@ -819,7 +836,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
-    await screen.findByText(/Precios actualizados/)
+    await toastDeExito(/Precios actualizados/)
 
     const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/clientes/5/cuenta-corriente/reliquidacion')
     expect(llamada?.[1]).toEqual({ idPuntoVenta: 7 })
@@ -878,7 +895,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
-    expect(await screen.findByText('No había nada para actualizar.')).toBeInTheDocument()
+    await toastDeExito('No había nada para actualizar.')
   })
 
   it('una reliquidación 2xx nunca se reporta como fallo, aunque el refetch del ledger posterior falle', async () => {
@@ -904,9 +921,9 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
-    expect(await screen.findByText(/Precios actualizados/)).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument())
-    // el aviso de éxito de la reliquidación sigue en pantalla — el fallo del refetch no lo pisa.
+    await toastDeExito(/Precios actualizados/)
+    await bannerDeCargaPersistente('No se pudo cargar el estado de cuenta.')
+    // el toast de éxito de la reliquidación sigue en pantalla — el fallo del refetch no lo pisa.
     expect(screen.getByText(/Precios actualizados/)).toBeInTheDocument()
   })
 
@@ -981,7 +998,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     expect(within(dialogo).getAllByTestId('cc-reliq-ajuste-manual')).toHaveLength(2)
   })
 
-  it('Fix 4: el aviso de éxito muestra el delta EJECUTADO, nunca el delta previsualizado', async () => {
+  it('Fix 4: el toast de éxito muestra el delta EJECUTADO, nunca el delta previsualizado', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.includes('/cuenta-corriente/reliquidacion')) {
         return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture({ delta: 40 }))
@@ -1000,7 +1017,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
-    expect(await screen.findByText(/Precios actualizados: \$ 75,00/)).toBeInTheDocument()
+    await toastDeExito(/Precios actualizados: \$ 75,00/)
     expect(screen.queryByText(/Precios actualizados: \$ 40,00/)).not.toBeInTheDocument()
   })
 })
@@ -1387,7 +1404,7 @@ describe('CuentaCorriente — cobros aplicados a ventas', () => {
         { idComprobanteVenta: 11, importe: 150 },
       ],
     })
-    expect(await screen.findByText('Cobro aplicado: recibo 0007-00000021.')).toBeInTheDocument()
+    await toastDeExito('Cobro aplicado: recibo 0007-00000021.')
     expect(screen.queryByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
     await waitFor(() => {
       expect(recibosGetMock.mock.calls.length).toBeGreaterThan(recibosAntes)
@@ -1520,7 +1537,7 @@ describe('CuentaCorriente — cobros aplicados a ventas', () => {
 
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledTimes(1))
     expect(apiDeleteMock).toHaveBeenCalledWith('/cobros/21/aplicaciones/31')
-    expect(await screen.findByText('Cobro desaplicado: recibo 0007-00000021, venta 0001-00000010.')).toBeInTheDocument()
+    await toastDeExito('Cobro desaplicado: recibo 0007-00000021, venta 0001-00000010.')
     await waitFor(() => expect(llamadasAlEstado().length).toBeGreaterThan(estadoAntes))
   })
 

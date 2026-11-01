@@ -189,7 +189,7 @@ type Props = {
 
 /**
  * Secciones «Recibos» y «Ventas con saldo pendiente» de la cuenta corriente de un cliente. Cada lectura lleva su
- * propia generación (la última pedida gana) y su propio error; el refresco posterior a una escritura no pisa el aviso
+ * propia generación (la última pedida gana) y su propio error; el refresco posterior a una escritura no pisa el toast
  * de éxito del llamador.
  */
 export function SeccionesDeCobros({ idCliente, puedeSupervisar, versionExterna, onEscritura }: Props) {

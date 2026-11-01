@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaCorrienteDeProveedor } from './CuentaCorrienteDeProveedor'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type {
@@ -135,8 +136,16 @@ function renderPantalla(idProveedor: number | string = 1, state?: { proveedor: P
       <Routes>
         <Route path="/proveedores/:id/cuenta-corriente" element={<CuentaCorrienteDeProveedor />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
@@ -305,7 +314,7 @@ describe('CuentaCorrienteDeProveedor — el ajuste NUNCA depende del fetch del n
         detalle: 'motivo válido',
       }),
     )
-    expect(await screen.findByText('Ajuste registrado: -$ 50,00.')).toBeInTheDocument()
+    await toastDeExito('Ajuste registrado: -$ 50,00.')
   })
 
   it('un Supervisor sin location.state igual ve el fallback "Proveedor #id" en el título', async () => {
@@ -425,7 +434,7 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
         detalle: 'nota de ajuste',
       }),
     )
-    expect(await screen.findByText('Ajuste registrado: -$ 200,00.')).toBeInTheDocument()
+    await toastDeExito('Ajuste registrado: -$ 200,00.')
     // el refetch corre tras el 201 — dos GET del ledger (montaje + refresco).
     await waitFor(() => {
       const llamadas = apiGetMock.mock.calls.filter((c: unknown[]) => (c[0] as string).includes('/cuenta-corriente?'))
@@ -503,10 +512,13 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
     await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'motivo válido')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
-    // El ajuste 2xx se reporta como éxito (aviso visible) SIEMPRE — el refetch fallido es un
-    // problema DISTINTO, visible aparte, nunca disfrazado de fallo del ajuste (regla 6).
-    expect(await screen.findByText('Ajuste registrado: -$ 200,00.')).toBeInTheDocument()
-    expect(await screen.findByText('falló el refresco')).toBeInTheDocument()
+    // El ajuste 2xx se reporta como éxito (toast visible) SIEMPRE — el refetch fallido es un
+    // problema DISTINTO, visible aparte en el banner de carga persistente, sin toast de advertencia,
+    // nunca disfrazado de fallo del ajuste (regla 6).
+    await toastDeExito('Ajuste registrado: -$ 200,00.')
+    const banner = await screen.findByText('falló el refresco')
+    expect(banner.closest('.alert-danger')).not.toBeNull()
+    expect(banner.closest('[role="status"]')).toBeNull()
   })
 })
 
@@ -573,7 +585,7 @@ describe('CuentaCorrienteDeProveedor — pagar una compra desde su fila', () => 
     await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
-    expect(await screen.findByText('Pago registrado: $ 120,00.')).toBeInTheDocument()
+    await toastDeExito('Pago registrado: $ 120,00.')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledWith('/pagos/de-compra/10', expect.objectContaining({ lineas: [{ idMedioPago: 1, importe: 120, referencia: null }] }))
     const lecturasDelEstado = apiGetMock.mock.calls.filter((call: unknown[]) => String(call[0]).includes('/cuenta-corriente'))

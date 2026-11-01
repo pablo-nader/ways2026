@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pagos } from './Pagos'
+import { Toaster } from '../toasts/Toaster'
+import { ErrorApi } from '../api/cliente'
 import type {
   AreaListado,
   EmpresaListado,
@@ -19,8 +21,24 @@ function renderPagos() {
   return render(
     <MemoryRouter initialEntries={['/pagos']}>
       <Pagos />
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El fallo de carga queda en el banner persistente de la pantalla: ni es un toast ni hay uno con su texto. */
+async function bannerDeCargaPersistente(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 const apiGetMock = vi.fn()
@@ -419,6 +437,47 @@ describe('Pagos (administración) — alta', () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ fecha: '2026-01-15' })))
   })
 
+  it('si el listado no se puede refrescar tras el alta, el éxito va en un toast y el fallo queda en el banner', async () => {
+    mockearRutas({})
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderPagos()
+
+    await abrirYCompletarFormulario()
+    const rutasOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/pagos/administracion')
+        ? Promise.reject(new ErrorApi(503, 'no_disponible', 'El listado no responde.'))
+        : rutasOk(ruta),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await toastDeExito('Pago registrado.')
+    await bannerDeCargaPersistente('El listado no responde.')
+  })
+
+  it('un error de carga previo sigue en pantalla, sin falso vacío, cuando el refresco posterior al alta también falla', async () => {
+    mockearRutas({})
+    const rutasOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/pagos/administracion')
+        ? Promise.reject(new ErrorApi(503, 'no_disponible', 'El listado no responde.'))
+        : rutasOk(ruta),
+    )
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderPagos()
+
+    await bannerDeCargaPersistente('El listado no responde.')
+    await abrirYCompletarFormulario()
+    const llamadasAlListado = () => apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith('/pagos/administracion')).length
+    const antes = llamadasAlListado()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await toastDeExito('Pago registrado.')
+    await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+    await bannerDeCargaPersistente('El listado no responde.')
+    expect(screen.queryByText('No hay pagos que coincidan con los filtros.')).not.toBeInTheDocument()
+  })
+
   it('al confirmar con éxito, limpia y cierra el formulario, y refresca el listado', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
@@ -428,7 +487,7 @@ describe('Pagos (administración) — alta', () => {
     mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 9, importe: 1500, concepto: 'Alquiler de septiembre' })]) })
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     expect(screen.queryByLabelText('Concepto')).not.toBeInTheDocument()
     await screen.findByText('Alquiler de septiembre')
   })
@@ -581,7 +640,7 @@ describe('Pagos (administración) — alta', () => {
     await act(async () => resolverPost({ id: 1 }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
+    await toastDeExito('Pago registrado.')
     expect(screen.getByRole('button', { name: 'Nuevo pago' })).toBeEnabled()
   })
 
@@ -673,7 +732,7 @@ describe('Pagos (administración) — área del alta', () => {
     await completarYRegistrar()
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ idArea: 11 })))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     await abrirFormulario()
     expect(screen.getByLabelText('Área')).toHaveValue('10')
 
@@ -847,7 +906,7 @@ describe('Pagos (administración) — vincular a una compra existente', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Elegir' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/3/vincular-compra', { idComprobanteCompra: 9 }))
-    expect(await screen.findByText('Pago vinculado a la compra.')).toBeInTheDocument()
+    await toastDeExito('Pago vinculado a la compra.')
     // El picker se cierra tras el éxito.
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
   })
@@ -887,7 +946,7 @@ describe('Pagos (administración) — vincular a una compra existente', () => {
 
     resolverPost({ id: 3, idComprobanteCompra: 9 })
 
-    expect(await screen.findByText('Pago vinculado a la compra.')).toBeInTheDocument()
+    await toastDeExito('Pago vinculado a la compra.')
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
   })
 })
@@ -965,7 +1024,7 @@ describe('Pagos (administración) — reasignar un pago de sueldo', () => {
     const antes = llamadasAlListado()
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Reasignar' }))
 
-    expect(await screen.findByText('Pago reasignado: Pago de personal: Beto.')).toBeInTheDocument()
+    await toastDeExito('Pago reasignado: Pago de personal: Beto.')
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion/40/reasignar-personal', { idPersonal: 5 })
     expect(screen.queryByRole('dialog', { name: 'Reasignar pago' })).not.toBeInTheDocument()
@@ -998,7 +1057,10 @@ describe('Pagos (administración) — reasignar un pago de sueldo', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reasignar pago' })).not.toBeInTheDocument())
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
-    expect(screen.getByText(/No se pudo confirmar el resultado/)).toBeInTheDocument()
+    const aviso = screen.getByText(/No se pudo confirmar el resultado/)
+    expect(aviso.closest('.alert-warning')).not.toBeNull()
+    expect(aviso.closest('.ws-toaster')).toBeNull()
+    expect(screen.getAllByText(/No se pudo confirmar el resultado/)).toHaveLength(1)
   })
 
   it('un doble click en el mismo tick envía una sola solicitud y deja el modal inerte', async () => {
@@ -1070,7 +1132,7 @@ describe('Pagos (administración) — edición y baja', () => {
         }),
       ),
     )
-    await screen.findByText('Pago actualizado.')
+    await toastDeExito('Pago actualizado.')
     expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
   })
@@ -1245,9 +1307,28 @@ describe('Pagos (administración) — edición y baja', () => {
     await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
 
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/pagos/administracion/31'))
-    await screen.findByText('Pago eliminado.')
+    await toastDeExito('Pago eliminado.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+  })
+
+  it('si el listado no se puede refrescar tras eliminar, avisa el éxito con un toast y el fallo con el banner de carga persistente', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    apiDeleteMock.mockResolvedValueOnce(undefined)
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar pago Alquiler' }))
+    const confirmacion = await screen.findByRole('alertdialog', { name: 'Confirmar eliminación' })
+    const rutasOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/pagos/administracion')
+        ? Promise.reject(new ErrorApi(503, 'no_disponible', 'El listado no responde.'))
+        : rutasOk(ruta),
+    )
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
+
+    await toastDeExito('Pago eliminado.')
+    await bannerDeCargaPersistente('El listado no responde.')
   })
 
   it('cancelar la confirmación no elimina nada', async () => {

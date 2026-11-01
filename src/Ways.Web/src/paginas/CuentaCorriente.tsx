@@ -39,6 +39,7 @@ import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
 import { pluralizar } from '../formato/pluralizar'
+import { toast } from '../toasts/toasts'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -650,9 +651,6 @@ function PantallaCuentaCorriente({
   const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
   const [modalAjusteAbierto, setModalAjusteAbierto] = useState(false)
   const [modalReliquidacionAbierto, setModalReliquidacionAbierto] = useState(false)
-  // Aviso compartido por las tres acciones de escritura (pago, ajuste, reliquidación) — mismo
-  // patrón de banner único que ya usaba el pago (rule 10 sweep: el aviso de éxito aplica parejo).
-  const [aviso, setAviso] = useState('')
   // Sube tras un pago a cuenta: los recibos y las ventas pendientes de las secciones de cobros pudieron cambiar.
   const [versionCobros, setVersionCobros] = useState(0)
 
@@ -771,7 +769,6 @@ function PantallaCuentaCorriente({
           </div>
         </div>
 
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {errorEstado && <div className="alert alert-danger">{errorEstado}</div>}
         {(errorCliente || errorMedios || errorPuntosVenta) && (
           <div className="alert alert-warning py-1 px-2 small">
@@ -806,10 +803,7 @@ function PantallaCuentaCorriente({
                         className="btn btn-outline-secondary"
                         disabled={!puedeSupervisarCC}
                         title={motivoBloqueoSupervision}
-                        onClick={() => {
-                          setAviso('')
-                          setModalAjusteAbierto(true)
-                        }}
+                        onClick={() => setModalAjusteAbierto(true)}
                       >
                         Ajuste manual
                       </button>
@@ -818,10 +812,7 @@ function PantallaCuentaCorriente({
                         className="btn btn-outline-danger"
                         disabled={!puedeSupervisarCC}
                         title={motivoBloqueoSupervision}
-                        onClick={() => {
-                          setAviso('')
-                          setModalReliquidacionAbierto(true)
-                        }}
+                        onClick={() => setModalReliquidacionAbierto(true)}
                       >
                         Actualizar precios
                       </button>
@@ -832,10 +823,7 @@ function PantallaCuentaCorriente({
                     className="btn btn-primary"
                     disabled={!puedeIngresarPago}
                     title={motivoBloqueoPago}
-                    onClick={() => {
-                      setAviso('')
-                      setModalPagoAbierto(true)
-                    }}
+                    onClick={() => setModalPagoAbierto(true)}
                   >
                     Ingresar pago
                   </button>
@@ -908,7 +896,7 @@ function PantallaCuentaCorriente({
               puedeSupervisar={esSupervisorOAdmin}
               versionExterna={versionCobros}
               onEscritura={(mensaje) => {
-                setAviso(mensaje)
+                toast.exito(mensaje)
                 cargarEstado()
               }}
             />
@@ -928,10 +916,9 @@ function PantallaCuentaCorriente({
           }}
           onRegistrado={(comprobante) => {
             setModalPagoAbierto(false)
-            setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
+            toast.exito(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal — si
-            // falla, no pisa el aviso de éxito de arriba (solo el propio error de carga del
-            // ledger, que ya tiene su mensaje distinguible).
+            // falla, no pisa el toast de éxito de arriba (se avisa aparte).
             setVersionCobros((v) => v + 1)
             cargarEstado()
           }}
@@ -949,7 +936,7 @@ function PantallaCuentaCorriente({
           }}
           onRegistrado={(movimiento) => {
             setModalAjusteAbierto(false)
-            setAviso(`Ajuste registrado: ${formatearMoneda(movimiento.importe)}.`)
+            toast.exito(`Ajuste registrado: ${formatearMoneda(movimiento.importe)}.`)
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal.
             cargarEstado()
           }}
@@ -969,7 +956,7 @@ function PantallaCuentaCorriente({
             // regla 6: un commit 2xx nunca se reporta como fallo — el no-op de la carrera
             // preview↔commit (design: "a consumo committing during a run is simply picked up by
             // the next run") también es un aviso de éxito, no un error.
-            setAviso(
+            toast.exito(
               reliquidacionEsNoOp(resultado)
                 ? 'No había nada para actualizar.'
                 : `Precios actualizados: ${formatearMoneda(resultado.delta)} sobre ${pluralizar(resultado.idsMovimientosCubiertos.length, 'consumo')}.${resultado.hayMas ? ' Quedan más consumos pendientes — corré la reliquidación de nuevo.' : ''}`,
