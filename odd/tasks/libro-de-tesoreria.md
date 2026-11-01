@@ -60,9 +60,11 @@ much in each digital account the business has, nor where each movement came from
   Route: delegated.
 - [x] T4 — Delete the old reports (endpoints, services, DTOs, web, tests), keeping shared pieces
   (`ExportacionDeCaja` histórico part, `ModalDeAjusteDeCuenta`, account ABM). Route: delegated.
-- [ ] T5 — Conciliation + freeze guard on every write path that feeds the ledger. Route: delegated.
+- [x] T5a — Conciliation mark + freeze guard (backend). Route: delegated. Evidence in Progress (2026-11-01, T5a).
+- [x] T5b — Web: "Conciliado hasta" banner in the ledger, Admin "Conciliar" action with a date-time picker, frozen rows marked
+  (rows dated at or before `conciliadoHasta`). Route: delegated. Evidence in Progress (2026-11-01, T5b).
 
-## Known limitation to revisit in T5
+## Known limitation (solved by T5a once conciliated)
 
 A drawer pago edited after the close changes the Caja row (retiros + current drawer pagos) and its
 pago row together. The freeze removes this once conciliated.
@@ -93,6 +95,44 @@ pago row together. The freeze removes this once conciliated.
 - JD-T3-1 corregido: el ajuste de cuenta desde el libro usa `soloImporte` (solo importe con signo, sin releer la cadena ni enviar `saldoObjetivo`); la pantalla de cuentas conserva ambos modos.
 - 2026-11-01: T4 done: borrados `GET /api/reportes/tesoreria`, `/tesoreria/export`, `/tesoreria/cuentas` y `/tesoreria/cuentas/{id}/libro`, `ServicioDeTesoreria`, `ServicioDeLibroDeCuentas`, sus DTOs (`MovimientoTesoreriaListado`, `PaginaDeMovimientosTesoreria`, `CuentaConSaldo`, `CuentasDeLaEmpresa`, `MedioElectronicoSinCuenta`, `TotalesDeCuentaEnElRango`, `LibroDeCuenta`), la parte de tesorería de `ExportacionDeCaja` (queda histórico y detalle de turno), `TesoreriaTests`, `TesoreriaExportTests`, `CuentasTesoreriaLecturaTests` y los clientes/tipos/tests web equivalentes. `MovimientoDeCuentaListado` queda (respuesta del ajuste). `ModalDeAjusteDeCuenta` siempre es de importe con signo (sin `soloImporte` ni relectura). Los tests de reconstrucción, cierre y ajuste leen `MovimientosCuenta` directo en vez del libro viejo, con las mismas aserciones de cadena y apertura de rango. Verificación: build 0 errores; Domain 2208 y Application 1624 verdes; integración filtrada (autorización, CuentasTesoreria*, Tesoreria*, LibroDeTesoreria*, Caja*, Export*) 401 verdes; Vitest completo, build y oxlint sin hallazgos nuevos.
 
+### Conciliación y congelamiento (T5a)
+
+- Tabla `conciliaciones_tesoreria` (append-only, tenant + empresa, RLS; marca vigente = max(`hasta`)), `POST /api/tesoreria/conciliaciones`
+  (Admin; 404 empresa, 400 `hasta_requerido`/`nota_muy_larga`, 409 `conciliacion_futura`/`conciliacion_anterior`/`conciliacion_con_turno_abierto`),
+  `conciliadoHasta` en la respuesta del libro. Detalle del modelo y de los locks en el doc 10 §7 ("Conciliación de la tesorería").
+- Se congela solo lo que cambia los números del libro (verificado contra `ServicioDeLibroDeTesoreria`): pagos (fecha y líneas), turno cerrado
+  (retiros, pagos del cajón, movimientos de cuenta y arqueo), ajustes manuales y el ruteo medio -> efectivo/cuenta. Siguen editables
+  (no cambian lo que el libro lee): compras, aplicaciones, redondeos, vincular compra, reasignar personal, cobros y ventas.
+- Sitios con guarda (409 `periodo_conciliado`): `ServicioDePagos.EjecutarEscrituraAsync` (edición y baja, POS y administración; fecha del pago o
+  del cierre de su turno, la menor), `InsertarPagoAsync` (alta del POS, solo carrera), `InsertarPagoDeAdministracionAsync`, los dos ajustes manuales (efectivo y cuenta; solo carrera), la edición de `cuentas_tesoreria.saldo_inicial`,
+  `EjecutarPagoDeCompraAsync`, `EjecutarPagoDeCompraConAplicacionesAsync` (solo con pago nuevo), `ServicioDePagoDePersonal.EjecutarAsync`
+  (pago de sueldo), `ServicioDeTurnos` (los dos cierres, solo carrera), `ServicioDeMediosPago` (cambio de cuenta o comportamiento).
+- Pago de administración fechado hoy: `Fecha` = instante actual (antes, medianoche local); las fechas pasadas conservan la medianoche local.
+- Medios de pago: el catálogo es del tenant (`id_empresa` NULL = compartido), así que el chequeo mira, por cada empresa con marca, las líneas de
+  pago y los movimientos de cuenta del medio fechados en o antes de ESA marca; una edición toma el lock compartido de todas las empresas.
+- Reconstrucción de cuentas (PR #582, ya en `main`): omite los turnos con `FechaCierre <= marca` (borde inclusivo) en la vista previa y en la
+  aplicación, en vez de responder 409: el pedido sigue sirviendo para el resto del rango y la respuesta informa `conciliadoHasta` y
+  `congeladas` (acreditaciones omitidas, fuera de `turnos`/`filas`). La aplicación toma el compartido de conciliación como primer lock y lee
+  la marca bajo él. Pruebas: borde igual a la marca, marca un segundo antes, sin marca, y espera al escritor de la marca; mutaciones
+  registradas en `CuentasTesoreriaReconstruccionTests`.
+- Judgment-day de T5a (JD-T5-1..5, corregidos): `saldo_inicial` no se puede cambiar (409 `periodo_conciliado`) apenas la empresa tiene una marca, con
+  o sin movimientos, porque el libro lo suma a todos los saldos; nombre y estado siguen editables. Los ajustes manuales de efectivo y de cuenta toman
+  el compartido de conciliación como primer lock, leen la marca y rechazan una fecha menor o igual (solo carrera). Cada sitio guardado tiene su
+  prueba de integración con la mutación registrada en el doc-comment de `ConciliacionDeTesoreriaTests`; la prueba del turno abierto usa el
+  instante exacto de la apertura.
+
+### Conciliación en el libro (T5b)
+
+- 2026-11-01: T5b done (web). Banner `role=status` bajo los filtros ("Conciliado hasta {fecha y hora local}" / "Sin conciliar", color `--ws-ink-muted`);
+  botón "Conciliar" solo Admin junto a "Ajustar efectivo" (deshabilitado con cualquier modal abierto); `ModalDeConciliacion`: `datetime-local` con
+  ahora redondeado al minuto, nota con contador /500, advertencia (congela, solo ajustes corrigen, irreversible) y casilla obligatoria "Entiendo que
+  no se puede deshacer" (sin segunda pantalla); `hasta` viaja ISO con el offset local; ventana inerte, ref de reentrancia, sin reintento, incierto
+  (5xx/red) cierra, recarga y pide verificar. Errores por `codigo` (futura, anterior con la marca del libro, turno abierto, 400, 404/403).
+- Filas congeladas (`estaConciliada`, borde inclusivo, compara instantes): candado `role=img` "Conciliado" + fondo `--ws-surface-sunken` (el rojo de
+  importe conserva 5,40:1 claro / 6,95:1 oscuro sobre él); el saldo anterior también si `desde <= marca`.
+- `periodo_conciliado`: los modales de ajuste de efectivo y de cuenta muestran el mensaje del servidor (probado). No hay mapeo central código -> mensaje
+  en la web (cada módulo `api/*` tiene el suyo y cae al mensaje del servidor), así que no se agregó nada global.
+
 ## Next step
 
-T5.
+Ninguno pendiente en el libro; T5b entregada sobre T5a (#589).

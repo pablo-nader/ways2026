@@ -2117,6 +2117,8 @@ export type LibroDeTesoreria = {
   saldoAnterior: SaldosDelLibro
   saldoActual: SaldosDelLibro
   filas: FilaDelLibro[]
+  /** Marca de conciliación vigente de la empresa (instante ISO), sin importar el rango pedido; `null` si nunca se concilió. */
+  conciliadoHasta: string | null
 }
 
 // --- Existencias (stage-11-exportacion-reportes, Slice 9 — droppable a Etapa 13) — espejo de

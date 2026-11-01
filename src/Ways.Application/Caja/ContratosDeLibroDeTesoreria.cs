@@ -56,10 +56,13 @@ public sealed record FilaDelLibro(
     DatosDePagoDelLibro? Pago,
     DatosDeAjusteDelLibro? Ajuste);
 
+/// <summary><see cref="ConciliadoHasta"/> es la marca de conciliación vigente de la empresa, sin importar el rango pedido: todo lo que
+/// alimenta el libro con fecha menor o igual está congelado. <c>null</c> si la empresa nunca se concilió.</summary>
 public sealed record LibroDeTesoreria(
     int IdEmpresa,
     DateTimeOffset Desde,
     DateTimeOffset Hasta,
+    DateTimeOffset? ConciliadoHasta,
     IReadOnlyList<CuentaDelLibro> Cuentas,
     SaldosDelLibro SaldoAnterior,
     SaldosDelLibro SaldoActual,
