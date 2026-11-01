@@ -352,9 +352,37 @@ file contents verified before the run.
 Verification: `dotnet build Ways.slnx -c Release` 0 errors; Domain 2323 passed; Application 1637 passed; integration filter
 (MercadoPago|UpDownUp|Cobertura|AislamientoDeTenant|Sucursal) 284 passed, 0 failed.
 
+## Judgment-day T4 verdict
+
+- 2026-11-01: **APPROVED** after two rounds. Round 1 (both judges): wrong POS route `/pos` (verified `/v2/pos`, PATCH,
+  `data`, `qr_response`), the caja lock did not exclude a concurrent re-registration of its local, and the T3 store search
+  treated MP's 404-on-no-match as an error; fixed in d8ac17c1 (plus `id_store_mercadopago` on the caja). Re-judgment (both):
+  POS search 404 must mean no match and PATCH 404 `store_not_found` is not a deleted POS; judge B: take the sync date before
+  reading the PV; fixed in 31c9e834 with two integration tests and mutation evidence (each guard removed fails its test).
+  Final re-judgment: both clean (suggestions: any 404 on search reads as no match; the `store_not_found` literal is
+  case-sensitive). `has-pending-model-changes`: none. RDD is off.
+- Accepted (documented): moving the last PV soft-deletes the origin sucursal while its local stays as history; no
+  cross-empresa AK on `puntos_venta`.
+
+## T5 design (2026-11-01)
+
+Branch `pnader/mercadopago-e2-t5`, stacked on T4. Backend only; the web is T6. Facts: binding a Point terminal to a store +
+POS happens only in the Mercado Pago mobile app; one terminal per POS; the API lists terminals and switches their mode.
+
+- New nullable columns on `cajas_mercadopago`: `id_terminal_point varchar(80)` (`TYPE__SERIAL`) and `fecha_terminal`.
+- `GET /api/puntos-venta/{id}/mercadopago/terminales` (Admin): 404 first; needs a registered caja for the current seller
+  (else 409 `mercadopago_caja_no_registrada`); calls `GET /terminals/v1/list?pos_id={id_pos}` and returns the terminals
+  (`id`, `operatingMode`, `asignada`), plus `instrucciones` (how to bind in the app) when the list is empty.
+- `POST /api/puntos-venta/{id}/mercadopago/terminal` `{idTerminal}`: same preconditions; the terminal must be in the list for
+  that POS (else 409 `mercadopago_terminal_no_vinculada`); if its mode is not `PDV`, `PATCH /terminals/v1/setup` with
+  `{terminals:[{id, operating_mode:"PDV"}]}` (403 `store_pos_not_found` / 412 -> typed 409s with clear messages); then store
+  `id_terminal_point` + `fecha_terminal` and audit. Per-PV lock (same order as T4: sucursal -> PV).
+- `DELETE /api/puntos-venta/{id}/mercadopago/terminal`: clears the assignment in Ways (does not touch Mercado Pago).
+- The caja GET (T4) also returns `idTerminalPoint`.
+
 ## Next step
 
-T5 (Point terminals: list, assign one per PV, switch to PDV) is next; judgment-day of T4: round 1 fixes applied in `d8ac17c1`, the scoped re-judgment of the fix delta is pending (orchestrator).
+T5 implementation (delegated writer).
 
 ## Judgment-day T1 verdict
 
