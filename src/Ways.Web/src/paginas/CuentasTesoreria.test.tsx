@@ -900,9 +900,14 @@ describe('CuentasTesoreria — reconstruir historial', () => {
       desde: '2026-10-01',
       hasta: '2026-10-31',
       turnos: 2,
+      pagos: 1,
       filas: 6,
       acreditaciones: [],
+      debitos: [],
       cuentas: [],
+      conciliadoHasta: null,
+      congeladas: [],
+      debitosCongelados: [],
     }
     apiPostMock.mockImplementation((ruta: string) =>
       Promise.resolve(ruta.endsWith('/vista-previa') ? { ...planEscrito, acreditaciones: [], cuentas: [] } : planEscrito),
@@ -920,7 +925,7 @@ describe('CuentasTesoreria — reconstruir historial', () => {
     await usuario.click(confirmar)
 
     await waitFor(() => expect(llamadasAlListado()).toBe(2))
-    const aviso = await screen.findByText(/Historial reconstruido: 6 filas de 2 turnos\./)
+    const aviso = await screen.findByText(/Historial reconstruido: 6 filas de 2 turnos y 1 pago\./)
     expect(aviso.closest('.ws-toaster [role="status"]')).not.toBeNull()
   })
 })

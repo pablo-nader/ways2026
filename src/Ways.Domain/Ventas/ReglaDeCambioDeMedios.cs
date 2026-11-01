@@ -1,3 +1,4 @@
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Fiscal;
@@ -30,29 +31,47 @@ public static class ReglaDeCambioDeMedios
     public static ErrorDominio ComprobanteNoAdmitido =>
         new("comprobante_sin_cambio_de_medios", "Este comprobante no admite cambiar sus medios de pago.", 409);
 
+    public static ErrorDominio VentaCobradaConCuentaCorriente =>
+        new(
+            "cambio_de_medios_con_cuenta_corriente",
+            "La venta se cobró con cuenta corriente: sus medios no se pueden cambiar.", 409);
+
     /// <summary>Solo un comprobante de venta que cobra (signo positivo) y no es un recibo de cuenta corriente: el recibo es el
     /// cobro de una deuda y sus aplicaciones dependen de él.</summary>
     public static void ExigirComprobanteAdmitido(string codigoTipo, short signo)
     {
-        if (signo <= 0 || codigoTipo == ReglaDeAplicacionDeCobro.CodigoDeRecibo)
+        if (BloqueoDelComprobante(codigoTipo, signo) is { } bloqueo)
         {
-            throw ComprobanteNoAdmitido;
+            throw bloqueo;
         }
     }
 
+    private static ErrorDominio? BloqueoDelComprobante(string codigoTipo, short signo) =>
+        signo <= 0 || codigoTipo == ReglaDeAplicacionDeCobro.CodigoDeRecibo ? ComprobanteNoAdmitido : null;
+
     /// <summary>Con la factura aprobada el cambio se rechaza; con una en trámite también, porque puede aprobarse después.</summary>
     public static void ExigirSinFactura(ResultadoFiscal? resultadoDeLaVenta, ResultadoFiscal? resultadoDeLaFactura)
+    {
+        if (BloqueoDeLaFactura(resultadoDeLaVenta, resultadoDeLaFactura) is { } bloqueo)
+        {
+            throw bloqueo;
+        }
+    }
+
+    private static ErrorDominio? BloqueoDeLaFactura(ResultadoFiscal? resultadoDeLaVenta, ResultadoFiscal? resultadoDeLaFactura)
     {
         foreach (var resultado in new[] { resultadoDeLaVenta, resultadoDeLaFactura })
         {
             switch (resultado)
             {
                 case ResultadoFiscal.Aprobado or ResultadoFiscal.AprobadoConObservaciones:
-                    throw VentaConCae;
+                    return VentaConCae;
                 case ResultadoFiscal.Pendiente:
-                    throw VentaConFacturaEnTramite;
+                    return VentaConFacturaEnTramite;
             }
         }
+
+        return null;
     }
 
     /// <summary>Ni los cobros que tiene ni los nuevos pueden ser de cuenta corriente.</summary>
@@ -60,9 +79,7 @@ public static class ReglaDeCambioDeMedios
     {
         if (anteriores.Any(c => c.Comportamiento == ComportamientoMedioPago.CuentaCorriente))
         {
-            throw new ErrorDominio(
-                "cambio_de_medios_con_cuenta_corriente",
-                "La venta se cobró con cuenta corriente: sus medios no se pueden cambiar.", 409);
+            throw VentaCobradaConCuentaCorriente;
         }
 
         if (nuevos.Any(c => c.Comportamiento == ComportamientoMedioPago.CuentaCorriente))
@@ -71,6 +88,38 @@ public static class ReglaDeCambioDeMedios
                 "cambio_de_medios_con_cuenta_corriente",
                 "El cambio de medios no admite cuenta corriente.", 409);
         }
+    }
+
+    /// <summary>La fecha con la que el libro de tesorería asienta los cobros de la venta: la del cierre de su turno si el turno
+    /// cerró antes de la venta, y la propia venta en cualquier otro caso. Es la que decide si la conciliación la congela.</summary>
+    public static DateTimeOffset FechaQueCuentaParaElLibro(DateTimeOffset fechaDeLaVenta, DateTimeOffset? fechaDeCierreDelTurno) =>
+        fechaDeCierreDelTurno is { } cierre && cierre < fechaDeLaVenta ? cierre : fechaDeLaVenta;
+
+    /// <summary>Lo que la grilla de administración sabe de una venta para decir si sus medios se pueden cambiar.</summary>
+    public readonly record struct SituacionDeLaVenta(
+        bool Anulada,
+        string CodigoTipo,
+        short Signo,
+        ResultadoFiscal? ResultadoDeLaVenta,
+        ResultadoFiscal? ResultadoDeLaFactura,
+        bool Conciliada,
+        bool CobradaConCuentaCorriente);
+
+    /// <summary>Código del primer motivo por el que <b>hoy</b> los medios de la venta no se pueden cambiar desde administración,
+    /// o <c>null</c> si se pueden. Evalúa las mismas guardas, en el mismo orden, que <c>ServicioDeCambioDeMedios</c> (anulada,
+    /// comprobante, factura, conciliación, cuenta corriente); no mira el turno porque administración lo admite abierto o cerrado,
+    /// ni los medios nuevos, que todavía no existen.</summary>
+    public static string? MotivoDeBloqueo(SituacionDeLaVenta venta)
+    {
+        if (venta.Anulada)
+        {
+            return VentaAnulada.Codigo;
+        }
+
+        return (BloqueoDelComprobante(venta.CodigoTipo, venta.Signo)
+                ?? BloqueoDeLaFactura(venta.ResultadoDeLaVenta, venta.ResultadoDeLaFactura))?.Codigo
+            ?? (venta.Conciliada ? ReglasDeConciliacion.CodigoPeriodoConciliado : null)
+            ?? (venta.CobradaConCuentaCorriente ? VentaCobradaConCuentaCorriente.Codigo : null);
     }
 
     /// <summary>Lo cobrado (importe menos vuelto) tiene que ser lo mismo, y el conjunto nuevo tiene que diferir del que hay.</summary>

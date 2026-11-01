@@ -48,8 +48,25 @@ public sealed class ServicioDePagoDePersonal(
     IWaysDbContext db, ServicioDePagos servicioDePagos, ServicioDeTurnos servicioDeTurnos, IRelojDelSistema reloj,
     IContextoDeUsuario contexto)
 {
-    public async Task<MovimientoDePersonal> PagarAsync(
+    public Task<MovimientoDePersonal> PagarAsync(
+        int idPersonal, SolicitudDePagoDePersonal solicitud, CancellationToken ct = default) =>
+        PagarAsync(idPersonal, solicitud, delPos: false, ct);
+
+    /// <summary>
+    /// Pago de personal desde el POS (<c>OperacionDePos</c>, que incluye al Vendedor): el cajero solo paga del cajón del
+    /// turno abierto y no descuenta cuenta corriente. Es el mismo camino de escritura que el back office, con la
+    /// restricción decidida acá y para cualquier rol que llegue por la ruta del POS; el personal inexistente responde 404
+    /// antes que estos 403.
+    /// </summary>
+    public async Task<ReciboDePagoDePersonalDelPos> PagarDesdeElPosAsync(
         int idPersonal, SolicitudDePagoDePersonal solicitud, CancellationToken ct = default)
+    {
+        var movimiento = await PagarAsync(idPersonal, solicitud, delPos: true, ct);
+        return new ReciboDePagoDePersonalDelPos(movimiento.IdMovimiento, movimiento.Fecha, movimiento.Importe);
+    }
+
+    private async Task<MovimientoDePersonal> PagarAsync(
+        int idPersonal, SolicitudDePagoDePersonal solicitud, bool delPos, CancellationToken ct)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var nombre = await db.Personal
@@ -57,6 +74,11 @@ public sealed class ServicioDePagoDePersonal(
             .Select(p => p.Nombre)
             .FirstOrDefaultAsync(ct)
             ?? throw SinPersonal(idPersonal);
+
+        if (delPos)
+        {
+            ExigirSoloCajonSinDescuento(solicitud);
+        }
 
         // Pagar de la tesorería es de Admin, igual que el alta administrativa de pagos
         // (GestionDeCatalogo): el Supervisor de GestionDeCuentaDePersonal paga del cajón o descuenta de la cuenta
@@ -66,7 +88,9 @@ public sealed class ServicioDePagoDePersonal(
             throw ErrorDominio.Prohibido("Pagar de la tesorería requiere un administrador.");
         }
 
-        if (solicitud.Fecha is not { } fecha || fecha == default)
+        // Desde el POS la fecha no la decide el cajero: es el día de hoy en la zona del punto de venta, y una fecha
+        // distinta se rechaza al preparar el pago.
+        if (!delPos && (solicitud.Fecha is not { } fechaPedida || fechaPedida == default))
         {
             throw new ErrorDominio("fecha_requerida", "La fecha del pago es obligatoria.", 400);
         }
@@ -79,7 +103,7 @@ public sealed class ServicioDePagoDePersonal(
         ReglaDePagoDePersonal.ExigirUbicacion(plan, solicitud.IdEmpresa, solicitud.IdPuntoVenta);
 
         var entorno = await servicioDePagos.PrepararPagosDeSueldoAsync(
-            plan.OrigenFondos, solicitud.IdEmpresa, solicitud.IdPuntoVenta, fecha,
+            plan.OrigenFondos, solicitud.IdEmpresa, solicitud.IdPuntoVenta, solicitud.Fecha, exigirHoy: delPos,
             plan.Lineas.Select(l => l.IdMedioPago).ToList(), ct);
 
         var idEmpleado = contexto.UsuarioId;
@@ -87,13 +111,15 @@ public sealed class ServicioDePagoDePersonal(
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
-            await EjecutarAsync(idTenant, idPersonal, nombre, fecha, plan, entorno, idEmpleado, momento, ct));
+            await EjecutarAsync(idTenant, idPersonal, nombre, plan, entorno, idEmpleado, momento, ct));
     }
 
     private async Task<MovimientoDePersonal> EjecutarAsync(
-        int idTenant, int idPersonal, string nombre, DateOnly fecha, PlanDePagoDePersonal plan,
+        int idTenant, int idPersonal, string nombre, PlanDePagoDePersonal plan,
         EntornoDePagoDeSueldo entorno, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
+        var fecha = entorno.FechaDelPago;
+
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
         // Solo el pago de sueldo entra al libro (el pago solo de descuento no tiene origen ni pago). La marca de conciliación es el
@@ -162,6 +188,19 @@ public sealed class ServicioDePagoDePersonal(
         return new MovimientoDePersonal(
             idMovimiento, fecha, TipoMovimientoPersonal.Pago, Horas: null, ValorHora: null, -plan.Total, personal.Saldo,
             plan.Detalle, momento, new DesgloseDePago(plan.DescuentoDeCuentaCorriente, lineas));
+    }
+
+    private static void ExigirSoloCajonSinDescuento(SolicitudDePagoDePersonal solicitud)
+    {
+        if (solicitud.OrigenFondos != OrigenFondosPago.CajaTurno)
+        {
+            throw ErrorDominio.Prohibido("Desde el POS solo se paga al personal del cajón del turno.");
+        }
+
+        if (solicitud.DescuentoDeCuentaCorriente is not null)
+        {
+            throw ErrorDominio.Prohibido("Descontar la cuenta corriente del personal no se hace desde el POS.");
+        }
     }
 
     /// <summary>Un cliente dado de baja se trata como sin vincular.</summary>

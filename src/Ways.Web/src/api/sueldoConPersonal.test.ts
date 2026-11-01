@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { FormularioDePagoDeAdministracion } from './registroDePagos'
 import {
   aSolicitudDePagoDePersonalDesdeAdministracion,
+  aSolicitudDePagoDePersonalDesdeElPos,
   cambiosAlElegirCategoria,
   elegiblesComoPersonal,
   esPagoAPersonal,
+  MOTIVO_PAGO_A_PERSONAL_SIN_CONEXION,
   ofreceElegirPersonal,
+  pagoAPersonalDisponible,
 } from './sueldoConPersonal'
 import type { PersonalListado } from './tipos'
 
@@ -115,5 +118,46 @@ describe('elegiblesComoPersonal', () => {
   it('ordena por nombre sin distinguir tildes ni mayúsculas', () => {
     const lista = [empleado(1, 'Zoe'), empleado(2, 'Álvaro'), empleado(3, 'beto')]
     expect(elegiblesComoPersonal(lista).map((p) => p.nombre)).toEqual(['Álvaro', 'beto', 'Zoe'])
+  })
+})
+
+describe('aSolicitudDePagoDePersonalDesdeElPos', () => {
+  const lineas = [
+    { clave: 1, idMedioPago: 1, importe: 500, referencia: '  ' },
+    { clave: 2, idMedioPago: 3, importe: 250.5, referencia: ' cup-1 ' },
+  ]
+
+  it('sale siempre del cajón del turno, sin empresa ni descuento de cuenta corriente', () => {
+    const solicitud = aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, lineas, observaciones: '' })
+
+    expect(solicitud).toEqual({
+      idPuntoVenta: 7,
+      origenFondos: 'CajaTurno',
+      lineas: [
+        { idMedioPago: 1, importe: 500 },
+        { idMedioPago: 3, importe: 250.5, referencia: 'cup-1' },
+      ],
+    })
+    expect(solicitud).not.toHaveProperty('idEmpresa')
+    expect(solicitud).not.toHaveProperty('descuentoDeCuentaCorriente')
+    expect(solicitud).not.toHaveProperty('fecha')
+  })
+
+  it('las observaciones recortadas viajan como detalle y en blanco se omiten', () => {
+    expect(aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, lineas, observaciones: '  adelanto ' }).detalle).toBe('adelanto')
+    expect(aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, lineas, observaciones: '   ' })).not.toHaveProperty(
+      'detalle',
+    )
+  })
+})
+
+describe('pagoAPersonalDisponible', () => {
+  it('sin conexión no se puede pagar a un empleado y dice por qué', () => {
+    expect(pagoAPersonalDisponible({ enLinea: false })).toEqual({ habilitado: false, motivo: MOTIVO_PAGO_A_PERSONAL_SIN_CONEXION })
+    expect(MOTIVO_PAGO_A_PERSONAL_SIN_CONEXION).toMatch(/conexión/)
+  })
+
+  it('con conexión queda habilitado', () => {
+    expect(pagoAPersonalDisponible({ enLinea: true }).habilitado).toBe(true)
   })
 })

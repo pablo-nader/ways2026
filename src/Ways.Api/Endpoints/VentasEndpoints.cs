@@ -154,10 +154,27 @@ public static class VentasEndpoints
             "Export XLSX de GET /api/ventas: mismo filtro, sin paginado bajo el tope, gate " +
             "OperacionDePos heredado por co-locación.");
 
-        // Back office: solo Admin, con el turno de la venta abierto o cerrado.
+        // Back office: la grilla la leen Supervisor y Admin (el gate de los reportes de tesorería); cambiar los medios, solo Admin,
+        // con el turno de la venta abierto o cerrado.
         var administracion = app.MapGroup("/api/ventas/administracion")
             .WithTags("Ventas")
-            .RequireAuthorization(Politicas.GestionDeCatalogo);
+            .RequireAuthorization(Politicas.LecturaDeReportes);
+
+        administracion.MapGet("/", (
+            ServicioDeVentasDeAdministracion servicio, DateTimeOffset? desde, DateTimeOffset? hasta, long? numero,
+            int? idTipoComprobante, int? idPuntoVenta, int? idTurnoCaja, string? cliente, int? idEmpleado, int? idMedioPago,
+            decimal? totalDesde, decimal? totalHasta, EstadoComprobante? estado, string? estadoFiscal, bool? turnoCerrado,
+            bool? conciliado, int? pagina, int? tamanio, string? orden, string? direccion, CancellationToken ct) =>
+            servicio.ListarAsync(
+                new FiltrosDeVentasDeAdministracion(
+                    desde, hasta, numero, idTipoComprobante, idPuntoVenta, idTurnoCaja, cliente, idEmpleado, idMedioPago,
+                    totalDesde, totalHasta, estado, estadoFiscal, turnoCerrado, conciliado),
+                pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
+        .WithSummary(
+            "Lista los comprobantes de venta (sin las facturas espejo) con un filtro por columna y si sus medios se pueden " +
+            "cambiar. orden (fecha, numero, tipo, puntoVenta, turno, cliente, empleado, medios, total, estado, estadoFiscal, " +
+            "estadoTurno, conciliado) y direccion (ascendente, descendente) ordenan todo el conjunto filtrado antes de paginar; " +
+            "400 si no son válidos. Los cobros de una venta se leen con GET /api/ventas/{id}.");
 
         administracion.MapPut("/{id:int}/medios", async (
             ServicioDeCambioDeMedios servicio, ServicioDeFacturacionDeVentas facturacion, int id,
@@ -166,6 +183,7 @@ public static class VentasEndpoints
             var venta = await servicio.CambiarDeAdministracionAsync(id, solicitud, ct);
             return Results.Ok(venta with { Fiscal = await facturacion.LeerEstadoDeVentaAsync(id, ct) });
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
             "Reemplaza los medios de pago de cualquier venta sin cambiar lo cobrado. Con el turno cerrado recalcula el arqueo " +
             "(con la marca del recálculo) y compensa las cuentas de tesorería de los medios electrónicos.");

@@ -86,6 +86,15 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
         return new PaginaDe<PersonalListado>(filas.Select(Armar).ToList(), total, pagina, tamanio);
     }
 
+    /// <summary>Fuente de <c>GET /api/pos/personal/opciones</c>: solo id y nombre del personal vivo del tenant (la baja
+    /// lógica y el alcance de tenant los aplican los filtros globales de <c>db.Personal</c>).</summary>
+    public async Task<List<OpcionDePersonal>> ListarOpcionesAsync(CancellationToken ct = default) =>
+        await db.Personal
+            .OrderBy(p => p.Nombre)
+            .ThenBy(p => p.Id)
+            .Select(p => new OpcionDePersonal(p.Id, p.Nombre))
+            .ToListAsync(ct);
+
     private static IQueryable<Personal> FiltrarPropias(IQueryable<Personal> personal, FiltrosDePersonal filtros)
     {
         if (FiltrosDeListado.PatronONulo(filtros.Nombre) is { } nombre)
