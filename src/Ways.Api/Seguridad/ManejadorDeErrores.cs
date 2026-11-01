@@ -209,6 +209,11 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_cajas_mercadopago_punto_venta_usuario" } =>
                 (StatusCodes.Status409Conflict, "El punto de venta ya está registrado en esa cuenta de Mercado Pago.", "mercadopago_caja_duplicada"),
 
+            // Backstop del cobro con Mercado Pago de una venta: el lock por punto de venta serializa las creaciones, así que solo lo
+            // alcanza una escritura que no pase por `ServicioDeCobrosMercadoPago`. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_vivo_numero" or "ux_cobros_mercadopago_intento" } =>
+                (StatusCodes.Status409Conflict, "Esa venta ya tiene un cobro con Mercado Pago en curso.", "cobro_mercadopago_en_curso"),
+
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
             // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas
@@ -620,6 +625,14 @@ public class ManejadorDeErrores(
 
             { SqlState: "23514", ConstraintName: "ck_medios_pago_cuenta_solo_electronico" } =>
                 (StatusCodes.Status400BadRequest, "La cuenta de tesorería, la comisión y las retenciones solo se admiten en medios de pago electrónicos.", "cuenta_solo_electronico"),
+
+            // Backstops del proveedor de cobro del medio de pago: `ProveedorDeCobro.Resolver` rechaza antes con los mismos códigos;
+            // esto atrapa una escritura cruda.
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_proveedor" } =>
+                (StatusCodes.Status400BadRequest, "El proveedor de cobro tiene que ser mercadopago_qr o mercadopago_point.", "proveedor_cobro_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_proveedor_solo_electronico" } =>
+                (StatusCodes.Status400BadRequest, "El proveedor de cobro solo se admite en medios de pago electrónicos.", "proveedor_solo_electronico"),
 
             // Backstop de la base del costo de lista del artículo: ServicioDeArticulos rechaza antes
             // (costo_lista_por_invalido) cualquier valor fuera de Unidad/Bulto; esto atrapa una escritura cruda.

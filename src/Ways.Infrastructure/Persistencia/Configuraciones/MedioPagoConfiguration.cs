@@ -58,6 +58,8 @@ public class MedioPagoConfiguration : ConfiguracionDeCatalogo<MedioPago>
             .HasDefaultValue(0m)
             .IsRequired();
 
+        builder.Property(m => m.Proveedor).HasColumnName("proveedor").HasMaxLength(30);
+
         builder.ToTable(t =>
         {
             t.HasCheckConstraint(
@@ -78,6 +80,12 @@ public class MedioPagoConfiguration : ConfiguracionDeCatalogo<MedioPago>
                 "ck_medios_pago_cuenta_solo_electronico",
                 "comportamiento = 'electronico' OR (id_cuenta_tesoreria IS NULL AND comision_porcentaje = 0 " +
                 "AND retencion_iibb_porcentaje = 0 AND retencion_iva_porcentaje = 0 AND retencion_ganancias_porcentaje = 0)");
+
+            t.HasCheckConstraint(
+                "ck_medios_pago_proveedor", "proveedor IS NULL OR proveedor IN ('mercadopago_qr', 'mercadopago_point')");
+
+            t.HasCheckConstraint(
+                "ck_medios_pago_proveedor_solo_electronico", "proveedor IS NULL OR comportamiento = 'electronico'");
         });
 
         builder.HasIndex(m => new { m.IdCuentaTesoreria, m.IdTenant })

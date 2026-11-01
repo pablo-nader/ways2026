@@ -394,6 +394,8 @@ medios_pago (                 -- [catálogo]
     retencion_iibb_porcentaje      numeric(6,3) NOT NULL DEFAULT 0,
     retencion_iva_porcentaje       numeric(6,3) NOT NULL DEFAULT 0,
     retencion_ganancias_porcentaje numeric(6,3) NOT NULL DEFAULT 0,
+    proveedor       varchar(30) NULL,        -- quién cobra: 'mercadopago_qr' | 'mercadopago_point'; NULL = referencia a mano.
+                    -- Solo con comportamiento electronico (CHECK ck_medios_pago_proveedor_solo_electronico)
     orden, activo
 )
 ```
@@ -425,5 +427,12 @@ decisión de qué tickets se facturan es de una etapa posterior.
 > `cuenta_tesoreria_requiere_empresa`) y no está inactiva (400 `cuenta_tesoreria_inactiva`; un medio que ya apuntaba a una
 > cuenta desactivada después se guarda sin cambiarla). La asignación toma `FOR KEY SHARE` sobre la fila viva de la
 > cuenta, que choca con el `FOR UPDATE` de su baja: una cuenta no queda dada de baja con un medio apuntándole.
+>
+> **Proveedor de cobro.** `proveedor` (`mercadopago_qr` o `mercadopago_point`) hace que elegir el medio en el POS inicie un cobro con
+> Mercado Pago (tabla `cobros_mercadopago`, §7) en vez de pedir una referencia. El ABM lo guarda y lo devuelve (`proveedor`, visible para
+> todos los roles: el POS lo necesita); una edición que lo omite conserva lo guardado, enviado en `null` o en blanco lo quita. Un valor
+> distinto de los dos se rechaza (400 `proveedor_cobro_invalido`) y solo un medio `electronico` puede tenerlo (400 `proveedor_solo_electronico`);
+> cambiar el comportamiento sin enviarlo lo limpia. Dos CHECK de respaldo, `ck_medios_pago_proveedor` y
+> `ck_medios_pago_proveedor_solo_electronico`, traducidas a los mismos códigos. La instantánea del POS todavía no lo lleva.
 
 ---

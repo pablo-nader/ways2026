@@ -53,6 +53,12 @@ public sealed record MedioPagoAlta(
     /// null (<c>EsquemaDeCampoOpcional</c>).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public CampoOpcional<int?> IdCuentaTesoreria { get; init; }
+
+    /// <summary>Quién cobra por el medio (<see cref="ProveedorDeCobro"/>): <c>mercadopago_qr</c> o <c>mercadopago_point</c>. Ausente, la
+    /// edición conserva lo guardado; enviado en null o en blanco lo quita. Solo un medio electrónico puede tenerlo: ver
+    /// <see cref="ProveedorDeCobro.Resolver"/>. Propiedad y no parámetro por la misma razón que <see cref="IdCuentaTesoreria"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public CampoOpcional<string?> Proveedor { get; init; }
 }
 
 /// <summary>Listado de medios de pago. Una cuenta dada de baja se lista como "sin cuenta" (<c>IdCuentaTesoreria</c>
@@ -78,7 +84,8 @@ public sealed record MedioPagoListado(
     decimal? RetencionIvaPorcentaje,
     decimal? RetencionGananciasPorcentaje,
     string? NombreCuentaTesoreria = null,
-    bool? CuentaTesoreriaInactiva = null) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
+    bool? CuentaTesoreriaInactiva = null,
+    string? Proveedor = null) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
 
 public sealed record CategoriaAlta(
     string Nombre, int? IdEmpresa, int Orden, int? IdCategoriaPadre, bool Activo = true)

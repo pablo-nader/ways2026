@@ -74,6 +74,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // por rol real lo cubre
         // RendicionDeColaEndpointsTests.UnCajeroVendedorDeDispositivoRindeSuColaYQuedaPersistida.
         ("POST", "/api/pos/rendicion-de-cola"),
+        // Cobros con QR de Mercado Pago del dispositivo: mismo grupo /api/pos y mismo criterio que la rendición de cola (los hace el cajero
+        // Vendedor del dispositivo, no un admin), con RequiereDispositivo en su lugar. Los positivos por rol real los cubre
+        // MercadoPagoCobrosTests (un cajero de dispositivo crea y cancela; una sesión web recibe 403).
+        ("POST", "/api/pos/mercadopago/cobros/"),
+        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/cancelar"),
         // Alta rápida de cliente desde el POS: mismo grupo /api/clientes (OperacionDePos), sin
         // GestionDeCatalogo apilado porque la hace el Vendedor. El positivo por rol real es
         // ClientesEndpointsTests.UnVendedorCreaUnClienteRapidoConLosDefaultsForzados.
@@ -377,7 +382,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
     private static readonly (string Metodo, string Ruta, string PolicyAdicionalExigida)[] RutasConPolicyAdicionalSobreSuGrupo =
     [
         ("POST", "/api/ventas/reservas-numeracion", Politicas.RequiereDispositivo),
-        ("POST", "/api/pos/rendicion-de-cola", Politicas.RequiereDispositivo)
+        ("POST", "/api/pos/rendicion-de-cola", Politicas.RequiereDispositivo),
+        ("POST", "/api/pos/mercadopago/cobros/", Politicas.RequiereDispositivo),
+        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/cancelar", Politicas.RequiereDispositivo)
     ];
 
     [Fact]

@@ -48,6 +48,20 @@ public class MedioPagoAltaJsonTests
     }
 
     [Fact]
+    public void SinLaClaveElProveedorQuedaAusenteYConLaClaveEnNullEstaPresenteYVacio()
+    {
+        Assert.False(Leer(string.Empty).Proveedor.Presente);
+
+        var enNull = Leer(",\"proveedor\":null");
+        Assert.True(enNull.Proveedor.Presente);
+        Assert.Null(enNull.Proveedor.Valor);
+
+        var conValor = Leer(",\"proveedor\":\"mercadopago_qr\"");
+        Assert.True(conValor.Proveedor.Presente);
+        Assert.Equal("mercadopago_qr", conValor.Proveedor.Valor);
+    }
+
+    [Fact]
     public void AlSerializarLaCuentaAusenteNoSeEscribeYLaPresenteSi()
     {
         var sin = new MedioPagoAlta("QR", null, 1, Ways.Domain.Catalogos.ComportamientoMedioPago.Electronico, false, false, null);

@@ -42,7 +42,8 @@ public class ServicioDeMediosPago(
         entidad.Id, entidad.Nombre, entidad.Activo, entidad.IdEmpresa, entidad.Orden,
         entidad.Comportamiento, entidad.AdmiteVuelto, entidad.RequiereReferencia, entidad.RecargoPorcentaje,
         entidad.PorcentajeFacturacion, entidad.IdCuentaTesoreria, entidad.ComisionPorcentaje,
-        entidad.RetencionIibbPorcentaje, entidad.RetencionIvaPorcentaje, entidad.RetencionGananciasPorcentaje);
+        entidad.RetencionIibbPorcentaje, entidad.RetencionIvaPorcentaje, entidad.RetencionGananciasPorcentaje,
+        Proveedor: entidad.Proveedor);
 
     protected override MedioPago Instanciar(string nombre, int? idEmpresa, bool activo, DateTimeOffset ahora) =>
         new() { Nombre = nombre, IdEmpresa = idEmpresa, Activo = activo, CreatedAt = ahora, UpdatedAt = ahora };
@@ -53,6 +54,8 @@ public class ServicioDeMediosPago(
         var porcentaje = datos.PorcentajeFacturacion ?? entidad.PorcentajeFacturacion;
         ExigirPorcentajeDeFacturacionValido(porcentaje);
         var cuenta = ResolverCuenta(entidad, datos);
+        var proveedor = ProveedorDeCobro.Resolver(
+            datos.Comportamiento, entidad.Proveedor, datos.Proveedor.Presente, datos.Proveedor.Valor);
 
         entidad.Orden = datos.Orden;
         entidad.Comportamiento = datos.Comportamiento;
@@ -65,6 +68,7 @@ public class ServicioDeMediosPago(
         entidad.RetencionIibbPorcentaje = cuenta.RetencionIibb;
         entidad.RetencionIvaPorcentaje = cuenta.RetencionIva;
         entidad.RetencionGananciasPorcentaje = cuenta.RetencionGanancias;
+        entidad.Proveedor = proveedor;
     }
 
     /// <summary>Entre 0 y 100 con hasta 2 decimales, que es lo que guarda <c>numeric(5,2)</c>: más

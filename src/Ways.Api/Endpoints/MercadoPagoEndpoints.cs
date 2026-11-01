@@ -151,6 +151,32 @@ public static class MercadoPagoEndpoints
             "Quita la terminal asignada al punto de venta en Ways; no toca Mercado Pago. 404 punto de venta inexistente, 409 " +
             "mercadopago_no_conectada|mercadopago_requiere_reconexion|mercadopago_caja_no_registrada.");
 
+        var cobros = app.MapGroup("/api/pos/mercadopago/cobros")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.OperacionDePos)
+            .RequireAuthorization(Politicas.RequiereDispositivo);
+
+        cobros.MapPost("/", async (ServicioDeCobrosMercadoPago servicio, SolicitudDeCobroMercadoPago solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.CrearAsync(solicitud, ct)))
+        .WithSummary(
+            "Dispositivo: cobra una venta con QR dinámico de Mercado Pago (el punto de venta es el del dispositivo). Con un cobro pendiente " +
+            "del mismo número, medio e importe devuelve ese mismo cobro. 400 cobro_mercadopago_medio_invalido|cobro_mercadopago_importe_invalido|" +
+            "cobro_mercadopago_numero_invalido, 403 sin dispositivo vigente, 409 cobro_mercadopago_en_curso|cobro_mercadopago_ya_aprobado|" +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion|mercadopago_caja_no_registrada|punto_venta_modo_incompatible, " +
+            "502 mercadopago_solicitud_rechazada|mercadopago_respuesta_invalida, 503 mercadopago_no_disponible.");
+
+        cobros.MapGet("/{idCobro:int}", async (ServicioDeCobrosMercadoPago servicio, int idCobro, CancellationToken ct) =>
+            Results.Ok(await servicio.ObtenerAsync(idCobro, ct)))
+        .WithSummary(
+            "Dispositivo: estado de un cobro de su punto de venta. Un cobro pendiente se refresca desde Mercado Pago a lo sumo una vez " +
+            "cada 2 segundos. 404 si el cobro no existe o es de otro punto de venta, 403 sin dispositivo vigente.");
+
+        cobros.MapPost("/{idCobro:int}/cancelar", async (ServicioDeCobrosMercadoPago servicio, int idCobro, CancellationToken ct) =>
+            Results.Ok(await servicio.CancelarAsync(idCobro, ct)))
+        .WithSummary(
+            "Dispositivo: cancela un cobro pendiente. Si Mercado Pago ya no puede cancelarlo (409) lee la orden y devuelve su estado real, " +
+            "que puede ser aprobado. 404 si el cobro no existe o es de otro punto de venta, 409 cobro_mercadopago_ya_aprobado si ya estaba aprobado.");
+
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,
             string? code,

@@ -550,3 +550,54 @@ cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa 
 > en `PDV` o suspendida) es 409 `mercadopago_caja_con_terminal_en_pdv`. Con la terminal ya en `PDV` no se manda el `PATCH`. Registra
 > `pv.terminalmercadopago` (anterior y nueva terminal, si cambió el modo; sin tokens). `DELETE .../mercadopago/terminal` borra la asignación en Ways y no toca Mercado Pago. Sin caja
 > registrada, las tres rutas responden 409 `mercadopago_caja_no_registrada`. Verificado contra la referencia (2026-11-01), no en vivo.
+
+### Cobros con Mercado Pago (dispositivo del POS)
+
+```sql
+cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una fila por orden pedida a Mercado Pago
+    id_cobro_mercadopago, id_tenant, id_empresa,
+    id_punto_venta,                          -- FK compuesta (id_punto_venta, id_tenant); el del dispositivo que cobra, nunca el del cuerpo
+    id_dispositivo,                          -- FK compuesta (id_dispositivo, id_tenant) a dispositivos (clave alterna existente)
+    id_medio_pago,                           -- FK compuesta (id_medio_pago, id_tenant) a medios_pago (proveedor 'mercadopago_qr')
+    numero_preasignado bigint,               -- el número de venta que el dispositivo reservó (SolicitudDeVenta.NumeroPreasignado)
+    intento integer,                         -- 1, y +1 por cada cobro nuevo del mismo número después de uno cancelado o vencido
+    tipo varchar(10),                        -- 'qr' | 'point' (CHECK ck_cobros_mercadopago_tipo)
+    importe numeric(18,2),                   -- > 0; lo que se pidió cobrar
+    external_reference varchar(64),          -- 'W{tenant}P{punto de venta}N{número}I{intento}'; vuelve en los informes de Mercado Pago
+    id_orden_mercadopago varchar(64),        -- id de la orden (ORD…)
+    estado varchar(20),                      -- 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto'
+    id_pago_mercadopago varchar(64) NULL,    -- id del pago dentro de la orden
+    referencia_pago_mercadopago bigint NULL, -- reference_id numérico del pago (para /v1/payments y los informes)
+    importe_pagado numeric(18,2) NULL,       -- lo que Mercado Pago dice que se pagó; puede diferir de importe
+    qr_data text NULL,                       -- contenido EMVCo del QR dinámico; solo se devuelve mientras el cobro está pendiente
+    expira_en,                               -- creación + 10 minutos (expiration_time PT10M)
+    fecha_ultima_consulta NULL,              -- última lectura de la orden; limita el refresco a una cada 2 segundos por cobro
+    fecha_aprobacion NULL,
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_cobros_mercadopago_tenant` (simple), `_empresa` (`(id_empresa, id_tenant)`), `_punto_venta`, `_dispositivo` y `_medio_pago`
+> (todas compuestas con `id_tenant`, RESTRICT, sobre claves alternas existentes). CHECK de respaldo `ck_cobros_mercadopago_tipo`, `_estado`,
+> `_importe` (> 0), `_importe_pagado` (nulo o >= 0), `_intento` (>= 1), `_numero` (> 0) y `_aprobacion` (un cobro aprobado tiene `fecha_aprobacion`).
+> Único parcial `ux_cobros_mercadopago_vivo_numero` `(id_punto_venta, numero_preasignado) WHERE estado IN ('pendiente', 'aprobado')`: a lo sumo
+> un cobro vivo por número de venta; y único `ux_cobros_mercadopago_intento` `(id_punto_venta, numero_preasignado, intento)`. Ambos 23505 se
+> traducen a 409 `cobro_mercadopago_en_curso` en `ManejadorDeErrores` (el servicio serializa las creaciones con un lock por punto de venta, así que
+> solo los alcanza una escritura que no pase por él). Índices de soporte `ix_cobros_mercadopago_tenant`, `_empresa`, `_dispositivo` y `_medio_pago`.
+> RLS estándar. Efecto: como toda FK del modelo, un punto de venta, empresa o medio de pago con cobros cuenta como en uso y no se da de baja
+> (`inventario-de-dependientes.txt`, clasificación `marcado`). La tabla no se audita: es en sí el registro de cada intento y sus estados.
+>
+> **Endpoints (sesión de dispositivo; `OperacionDePos` + `RequiereDispositivo`).** `POST /api/pos/mercadopago/cobros` `{ idMedioPago,
+> numeroPreasignado, importe }`; `GET /api/pos/mercadopago/cobros/{id}`; `POST /api/pos/mercadopago/cobros/{id}/cancelar`. Responden `{ idCobro,
+> estado, qrData, expiraEn, importe, importePagado, importeDistinto }`. Un cobro de otro punto de venta o de otro tenant es 404. Crear: el medio tiene que
+> estar activo, ser de la empresa del punto de venta y tener `proveedor = 'mercadopago_qr'` (400 `cobro_mercadopago_medio_invalido`), importe > 0 con
+> hasta 2 decimales (400 `cobro_mercadopago_importe_invalido`), número > 0 (400 `cobro_mercadopago_numero_invalido`); el punto de venta tiene que ser
+> el del dispositivo y de modo escritorio (409 `punto_venta_modo_incompatible`). Bajo un lock por punto de venta: un cobro pendiente con el mismo medio e
+> importe se devuelve tal cual; con otro es 409 `cobro_mercadopago_en_curso`; uno aprobado es 409 `cobro_mercadopago_ya_aprobado`; un pendiente vencido se consulta antes
+> de decidir. Después, conexión activa (409 `mercadopago_no_conectada` o `mercadopago_requiere_reconexion`) y caja del punto de venta para el vendedor actual (409
+> `mercadopago_caja_no_registrada`). `POST /v1/orders` con `type: "qr"`, `external_reference`, `total_amount` y `unit_price` como cadena con 2 decimales,
+> `expiration_time: "PT10M"`, `config.qr.external_pos_id` = `external_id` de la caja, `mode: "dynamic"` y un ítem "Venta {número}" (`quantity` 1, `unit_measure`
+> `unit`); la `X-Idempotency-Key` deriva de (punto de venta, número, intento, importe). Consultar: un cobro pendiente se refresca con `GET /v1/orders/{id}` a lo sumo cada
+> 2 segundos, bajo un lock por cobro: `processed` → `aprobado` (pago, `reference_id`, importe pagado; si difiere de `importe`, `importeDistinto`), `canceled` → `cancelado`,
+> `expired` → `expirado`, `refunded` → `devuelto`; cualquier otro estado lo deja pendiente. Cancelar: un pendiente llama a `POST /v1/orders/{id}/cancel`; si Mercado Pago contesta
+> 409 se lee la orden y se devuelve su estado real (puede ser `aprobado`); un cobro aprobado es 409 `cobro_mercadopago_ya_aprobado`. Verificado contra la referencia (2026-11-01), no en vivo.
