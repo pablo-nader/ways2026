@@ -518,4 +518,16 @@ public class ValidadorDePagosTests
             [Efectivo(50m), Tarjeta(100m, requiereReferencia: true, referencia: "OP-1")],
             tolerancia: 0m);
     }
+
+    /// <summary>Un cliente de alta rápida (límite 0, sin crédito ilimitado, saldo 0) no puede
+    /// consumir cuenta corriente: regla 6.</summary>
+    [Fact]
+    public void UnClienteConLimiteCeroNoPuedePagarEnCuentaCorriente()
+    {
+        var ex = Assert.Throws<ErrorDominio>(() => ValidadorDePagos.Validar(
+            100m, [CuentaCorriente(100m)], 0m, esConsumidorFinal: false,
+            saldoCliente: 0m, limiteCredito: 0m, creditoIlimitado: false));
+
+        Assert.Equal("limite_credito_excedido", ex.Codigo);
+    }
 }

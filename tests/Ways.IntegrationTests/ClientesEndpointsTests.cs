@@ -391,4 +391,93 @@ public class ClientesEndpointsTests(WaysApiFixture fixture) : IClassFixture<Ways
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("consumidor_final_protegido", problema.GetProperty("codigo").GetString());
     }
+
+    [Fact]
+    public async Task UnVendedorCreaUnClienteRapidoConLosDefaultsForzados()
+    {
+        var (idTenant, idCondicionFiscalCf, idListaPrecioGeneral, _, _) =
+            await AprovisionarTenantAsync(nameof(UnVendedorCreaUnClienteRapidoConLosDefaultsForzados));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorCreaUnClienteRapidoConLosDefaultsForzados));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        // limiteCredito y creditoIlimitado no existen en el contrato: el binder los ignora y el servidor los fija.
+        var cuerpo = JsonContent.Create(new
+        {
+            nombre = "  Ana Pos  ",
+            telefono = " 11 5555 0000 ",
+            domicilio = "  Calle 1 234 ",
+            limiteCredito = 5000,
+            creditoIlimitado = true,
+            idEmpresa = 1,
+            idCondicionFiscal = 99
+        });
+
+        var respuesta = await vendedor.PostAsync("/api/clientes/rapido", cuerpo);
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var creado = await respuesta.Content.ReadFromJsonAsync<ClienteListado>();
+        Assert.NotNull(creado);
+        Assert.Equal($"/api/clientes/{creado.Id}", respuesta.Headers.Location?.OriginalString);
+        Assert.Equal("Ana Pos", creado.Nombre);
+        Assert.Equal("11 5555 0000", creado.Telefono);
+        Assert.Equal("Calle 1 234", creado.Domicilio);
+        Assert.Null(creado.Celular);
+        Assert.Equal(idCondicionFiscalCf, creado.IdCondicionFiscal);
+        Assert.Equal(idListaPrecioGeneral, creado.IdListaPrecio);
+        Assert.Null(creado.IdEmpresa);
+        Assert.Equal(0m, creado.LimiteCredito);
+        Assert.False(creado.CreditoIlimitado);
+        Assert.True(creado.Activo);
+        Assert.False(creado.EsConsumidorFinal);
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var persistido = await db.Clientes.SingleAsync(c => c.Id == creado.Id);
+        Assert.Equal(idTenant, persistido.IdTenant);
+        Assert.Equal(0m, persistido.LimiteCredito);
+        Assert.False(persistido.CreditoIlimitado);
+    }
+
+    [Fact]
+    public async Task ElClienteRapidoConTelefonoYDomicilioEnBlancoLosGuardaNulos()
+    {
+        var (idTenant, _, _, _, _) =
+            await AprovisionarTenantAsync(nameof(ElClienteRapidoConTelefonoYDomicilioEnBlancoLosGuardaNulos));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(ElClienteRapidoConTelefonoYDomicilioEnBlancoLosGuardaNulos));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.PostAsJsonAsync(
+            "/api/clientes/rapido", new AltaRapidaDeCliente("Solo nombre", "   ", null));
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var creado = await respuesta.Content.ReadFromJsonAsync<ClienteListado>();
+        Assert.Null(creado!.Telefono);
+        Assert.Null(creado.Domicilio);
+    }
+
+    [Fact]
+    public async Task ElClienteRapidoSinNombreDevuelve400ConElCodigoDelAlta()
+    {
+        var (idTenant, _, _, _, _) =
+            await AprovisionarTenantAsync(nameof(ElClienteRapidoSinNombreDevuelve400ConElCodigoDelAlta));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(ElClienteRapidoSinNombreDevuelve400ConElCodigoDelAlta));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.PostAsJsonAsync(
+            "/api/clientes/rapido", new AltaRapidaDeCliente("   ", "123", "Calle"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("nombre_requerido", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task ElClienteRapidoSinSesionDevuelve401()
+    {
+        using var anonimo = fixture.CreateClient();
+
+        var respuesta = await anonimo.PostAsJsonAsync(
+            "/api/clientes/rapido", new AltaRapidaDeCliente("Sin sesión", null, null));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+    }
 }
