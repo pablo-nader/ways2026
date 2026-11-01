@@ -81,8 +81,8 @@ y encadena tesorería. Todo en una transacción.
 ```sql
 movimientos_tesoreria (       -- [operativa] — ex cajaz: el fondo fuera de la caja diaria
     id_movimiento, id_empresa, id_punto_venta, fecha,
-    tipo tipo_movimiento_tesoreria,          -- enum: retiro_caja | deposito | pago | ajuste
-    id_turno_caja NULL, id_pago NULL, concepto,
+    tipo tipo_movimiento_tesoreria,          -- enum: retiro_caja | deposito | pago | ajuste | ajuste_manual
+    id_turno_caja NULL, id_pago NULL, concepto,   -- ajuste = compensación del sistema (edición/baja de un pago); ajuste_manual = ajuste del Admin (POST /api/tesoreria/efectivo/ajustes)
     inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_empresa)
     id_empleado
 );

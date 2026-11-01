@@ -301,6 +301,7 @@ app.MapearClientes();
 app.MapearProveedores();
 app.MapearPersonal();
 app.MapearCuentasTesoreria();
+app.MapearTesoreria();
 app.MapearMercadoPago();
 app.MapearCuentaDePersonal();
 app.MapearCargaSemanalDeHoras();
