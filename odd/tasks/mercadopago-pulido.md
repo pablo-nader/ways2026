@@ -33,7 +33,7 @@ a stale 401 that marks a healthy connection as `requiere_reconexion` would cut c
   6. An unexpected exception during the pre-use renewal still records `fecha_ultimo_intento_renovacion`
      (best-effort, separate write), so the backoff applies.
   7. The callback comment says exactly what it guarantees; `ResultadoDeCarrera` evaluated once in the callback catch.
-- [ ] T2 — Web follow-ups (stacked on T1). Route: delegated.
+- [x] T2 — Web follow-ups (stacked on T1). Route: delegated (several non-trivial files). Done 2026-10-31.
   1. Going back from Mercado Pago with the browser's Back (bfcache) never leaves the card stuck in "Conectando…".
   2. If the re-read after connect/disconnect fails, the card shows an error, not the old state.
   3. The `#mercadopago=completar…` fragment is cleared on landing even when the Admin section does not mount (non-Admin,
@@ -108,7 +108,7 @@ tests pass, and judgment-day returns APPROVED for each PR.
 
 ## Next step
 
-T2 (web follow-ups, delegated, stacked on this branch; uses the T1.3 `DELETE` for a `requiere_reconexion` card).
+Judgment-day over the T2 slice, then PR (stacked on T1) with auto-merge and Auto-fix.
 
 ## Judgment-day T1 verdict
 
@@ -117,3 +117,31 @@ T2 (web follow-ups, delegated, stacked on this branch; uses the T1.3 `DELETE` fo
   surfaces at the send, already mapped. Suspect (B only): disconnect also closes an older `requiere_reconexion` row that coexists with
   a newer `activa` one, giving it the same actor and date; follow-up (close the old row when reconnecting). Suggestions: retry skipped
   when the empresa reconnected in between (new `IdConexion`) or the expiry did not change; both fail safe (`requiere_reconexion`).
+
+### T2 evidence
+
+- `npm run build`: OK. `npx oxlint src/paginas/organizacion`: no output (clean). `npx vitest run` (full): the first run had 1 failure
+  in an unrelated file (a `Yerba nueva` field assertion, line ~2108); a second full run was entirely green (flaky, not touched here).
+- Item 1: `ConexionMercadoPago` listens to `pageshow`; with `persisted` and a connect in flight (`navegandoRef`) it frees `ocupado` and
+  re-reads (new generation). A non-persisted `pageshow` changes nothing (test).
+- Item 2: a failed read now clears `estado`, so the card shows the read error (with a "Reintentar" button) instead of the stale state.
+- Item 3: `Empresas.tsx` calls `descartarRetornoDeMercadoPago()` (new `fragmentoMercadoPago.ts`, which also hosts `limpiarFragmento`)
+  when the user is known and is not Admin. For Admin the section always mounts once the list settles (`cargada`) and consumes it. A hash
+  without a `mercadopago` param is left alone.
+- Item 4: the confirmation gets `ocupado={inerte}` (so `bloqueado` disables its confirm button; label "Completando la conexión…").
+- Item 5: a `requiere_reconexion` card renders "Desconectar" next to the reconnect form, same confirmation and same DELETE.
+
+### T2 mutation evidence
+
+- Item 1: listener not registered -> `una restauración libera la tarjeta y vuelve a leer el estado` fails; reverted.
+- Item 2: `setEstado(null)` in the read catch removed -> `si la lectura que sigue a desconectar falla...` fails; reverted.
+- Item 3: the effect in `Empresas.tsx` neutered -> `un usuario que no es Admin no deja el code...` fails; reverted.
+- Item 4: `ocupado={ocupado}` instead of `inerte` -> `ConexionMercadoPago.test.tsx` fails; reverted.
+- Item 5: button not rendered -> the two reconexión tests fail.
+
+### T2 decisions and residuals
+
+- `Empresas.tsx`/`Empresas.test.tsx` live in `src/Ways.Web/src/paginas/`, not in `paginas/organizacion/` (the allowed list had the wrong path).
+- No `|| bloqueado` guard in `confirmarDesconexion`: the confirm button is disabled, so no test can kill it (dead guard not shipped).
+- The Admin-with-unmounted-section case cannot happen today (`esAdmin && cargada` always becomes true); only the non-Admin path needs the cleanup.
+- Residual: `Reintentar` and the "Completando la conexión…" label are small additions beyond the five items.

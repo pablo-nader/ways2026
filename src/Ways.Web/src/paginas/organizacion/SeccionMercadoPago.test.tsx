@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SeccionMercadoPago } from './SeccionMercadoPago'
@@ -157,6 +157,27 @@ describe('SeccionMercadoPago — estados', () => {
     expect(within(tarjeta).getByRole('button', { name: 'Conectar Mercado Pago' })).toBeInTheDocument()
   })
 
+  it('si requiere reconexión ofrece Desconectar con la misma confirmación, y desconectar vuelve a leer el estado', async () => {
+    conexiones[10] = REQUIERE_RECONEXION
+    apiDeleteMock.mockImplementation(() => {
+      conexiones[10] = SIN_CONEXION
+
+      return Promise.resolve(undefined)
+    })
+    const usuario = userEvent.setup()
+    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    const tarjeta = await esperarDatos()
+
+    await usuario.click(await within(tarjeta).findByRole('button', { name: 'Desconectar' }))
+    const puerta = await screen.findByRole('alertdialog')
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    await usuario.click(within(puerta).getByRole('button', { name: 'Desconectar' }))
+
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/empresas/10/mercadopago/conexion'))
+    expect(await within(tarjeta).findByText('Mercado Pago no está conectado.')).toBeInTheDocument()
+    expect(within(tarjeta).queryByRole('button', { name: 'Desconectar' })).not.toBeInTheDocument()
+  })
+
   it('sin cuentas de tesorería activas explica que hay que crear una y enlaza a su pantalla, sin selector', async () => {
     cuentas = [cuenta(32, 10, 'Cuenta vieja', false)]
     render(<SeccionMercadoPago empresas={[EMPRESA]} />)
@@ -216,6 +237,50 @@ describe('SeccionMercadoPago — conectar', () => {
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock).toHaveBeenCalledWith('/empresas/10/mercadopago/conexion/inicio', { idCuentaTesoreria: 34 })
     expect(within(tarjeta).getByRole('button', { name: 'Conectando…' })).toBeDisabled()
+  })
+
+  describe('al volver de Mercado Pago con "Atrás" (caché de ida y vuelta)', () => {
+    function restaurarPagina(persisted: boolean) {
+      const evento = new Event('pageshow')
+      Object.defineProperty(evento, 'persisted', { value: persisted })
+      act(() => {
+        window.dispatchEvent(evento)
+      })
+    }
+
+    async function conectarYSalir() {
+      vi.stubGlobal('location', { hash: '', pathname: '/organizacion/empresas', search: '', assign: vi.fn() })
+      apiPostMock.mockResolvedValue({ urlAutorizacion: 'https://auth.mercadopago.com/authorization?state=abc' })
+      const usuario = userEvent.setup()
+      render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+      const tarjeta = await esperarDatos()
+      await usuario.click(await within(tarjeta).findByRole('button', { name: 'Conectar Mercado Pago' }))
+      expect(await within(tarjeta).findByRole('button', { name: 'Conectando…' })).toBeDisabled()
+
+      return tarjeta
+    }
+
+    const lecturasDeConexion = () => apiGetMock.mock.calls.filter(([ruta]) => /conexion$/.test(String(ruta))).length
+
+    it('una restauración libera la tarjeta y vuelve a leer el estado', async () => {
+      const tarjeta = await conectarYSalir()
+      const lecturasAntes = lecturasDeConexion()
+
+      restaurarPagina(true)
+
+      await waitFor(() => expect(within(tarjeta).getByRole('button', { name: 'Conectar Mercado Pago' })).toBeEnabled())
+      await waitFor(() => expect(lecturasDeConexion()).toBe(lecturasAntes + 1))
+    })
+
+    it('un pageshow que no es una restauración no toca la tarjeta', async () => {
+      const tarjeta = await conectarYSalir()
+      const lecturasAntes = lecturasDeConexion()
+
+      restaurarPagina(false)
+
+      expect(within(tarjeta).getByRole('button', { name: 'Conectando…' })).toBeDisabled()
+      expect(lecturasDeConexion()).toBe(lecturasAntes)
+    })
   })
 
   it('un doble clic en el mismo tick inicia UNA sola conexión', async () => {
@@ -319,6 +384,44 @@ describe('SeccionMercadoPago — desconectar', () => {
 
     expect(await within(puerta).findByText(/ya no existe/)).toBeInTheDocument()
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+})
+
+describe('SeccionMercadoPago — lectura posterior a una escritura', () => {
+  it('si la lectura que sigue a desconectar falla, la tarjeta muestra el error y no el estado viejo', async () => {
+    conexiones[10] = ACTIVA
+    apiDeleteMock.mockResolvedValue(undefined)
+    const usuario = userEvent.setup()
+    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    const tarjeta = await esperarDatos()
+
+    await usuario.click(await within(tarjeta).findByRole('button', { name: 'Desconectar' }))
+    const puerta = await screen.findByRole('alertdialog')
+    apiGetMock.mockImplementation((ruta: string) =>
+      /conexion$/.test(ruta) ? Promise.reject(new ErrorApi(500, 'error_interno', 'x')) : Promise.resolve(cuentas),
+    )
+    await usuario.click(within(puerta).getByRole('button', { name: 'Desconectar' }))
+
+    expect(await within(tarjeta).findByText('No se pudo leer el estado de Mercado Pago.')).toBeInTheDocument()
+    expect(within(tarjeta).queryByText('Conectada')).not.toBeInTheDocument()
+  })
+
+  it('el error de lectura ofrece Reintentar, que vuelve a leer', async () => {
+    let falla = true
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/cuentas-tesoreria') return Promise.resolve(cuentas)
+      if (falla) return Promise.reject(new ErrorApi(500, 'error_interno', 'x'))
+
+      return Promise.resolve(ACTIVA)
+    })
+    const usuario = userEvent.setup()
+    render(<SeccionMercadoPago empresas={[EMPRESA]} />)
+    const tarjeta = await screen.findByRole('region', { name: 'Mercado Pago de Sur SRL' })
+
+    falla = false
+    await usuario.click(await within(tarjeta).findByRole('button', { name: 'Reintentar' }))
+
+    expect(await within(tarjeta).findByText('Conectada')).toBeInTheDocument()
   })
 })
 

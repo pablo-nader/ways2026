@@ -11,6 +11,7 @@ import {
 import type { EmpresaListado } from '../../api/tipos'
 import { Box } from '../../componentes/Box'
 import { ConexionMercadoPago } from './ConexionMercadoPago'
+import { limpiarFragmento } from './fragmentoMercadoPago'
 
 type Resultado = { tipo: 'exito' | 'error' | 'info'; texto: string }
 
@@ -21,11 +22,6 @@ const CLASE_DE_AVISO: Readonly<Record<Resultado['tipo'], string>> = {
 }
 
 const COPIA_CUENTAS_NO_CARGADAS = 'No se pudieron cargar las cuentas de tesorería.'
-
-/** Quita el fragmento de la barra sin recargar ni sumar una entrada al historial: el code no debe quedar visible ni volver con "Atrás". */
-function limpiarFragmento() {
-  window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
-}
 
 /**
  * Mercado Pago de las empresas del tenant (solo Admin), debajo de la grilla de empresas. Decidido acá y no en el modal de

@@ -33,6 +33,7 @@ import {
   type FormularioDeEmpresa,
 } from './empresaFormulario'
 import { ModalDeEmpresa } from './organizacion/ModalDeEmpresa'
+import { descartarRetornoDeMercadoPago } from './organizacion/fragmentoMercadoPago'
 import { SeccionMercadoPago } from './organizacion/SeccionMercadoPago'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -154,6 +155,11 @@ export function Empresas() {
   useEffect(() => {
     void cargar(++generacion.current)
   }, [cargar])
+
+  /** Sin Admin no hay sección que canjee el retorno de Mercado Pago: el fragmento (con el `code`) se borra igual. */
+  useEffect(() => {
+    if (usuario && !esAdmin) descartarRetornoDeMercadoPago()
+  }, [usuario, esAdmin])
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga `ocupado`: de

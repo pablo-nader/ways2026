@@ -1091,6 +1091,26 @@ describe('Empresas — sección de Mercado Pago', () => {
     expect(await screen.findByTestId('seccion-mercadopago')).toHaveTextContent('10,11')
   })
 
+  it('un usuario que no es Admin no deja el code de Mercado Pago en la URL aunque la sección no se monte', async () => {
+    window.history.replaceState(null, '', '/organizacion/empresas#mercadopago=completar&empresa=10&code=TG-1&state=s')
+    usuarioActual = usuarioFixture({ id: 5, usuario: 'sup', rolId: ROL.Supervisor, rol: 'Supervisor', idTenant: 2 })
+    montar([empresaSur])
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    expect(window.location.hash).toBe('')
+    expect(screen.queryByTestId('seccion-mercadopago')).not.toBeInTheDocument()
+  })
+
+  it('un Admin conserva el fragmento: lo consume la sección, no la pantalla', async () => {
+    window.history.replaceState(null, '', '/organizacion/empresas#mercadopago=completar&empresa=10&code=TG-1&state=s')
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([empresaSur])
+    await screen.findByTestId('seccion-mercadopago')
+
+    expect(window.location.hash).toContain('code=TG-1')
+    window.history.replaceState(null, '', '/')
+  })
+
   it('Root no ve la sección: los endpoints de Mercado Pago necesitan un tenant en la sesión', async () => {
     montar([empresaSur])
     await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
