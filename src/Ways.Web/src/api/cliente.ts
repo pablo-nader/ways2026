@@ -30,12 +30,16 @@ import {
 export class ErrorApi extends Error {
   readonly estado: number
   readonly codigo: string
+  /** Datos estructurados que algunos rechazos 409 adjuntan al ProblemDetails (p. ej. los dos costos nominales);
+   * `undefined` si el servidor no mandó ninguno. Su forma depende del `codigo`: quien lo lee la valida. */
+  readonly datos: Record<string, unknown> | undefined
 
-  constructor(estado: number, codigo: string, mensaje: string) {
+  constructor(estado: number, codigo: string, mensaje: string, datos?: Record<string, unknown>) {
     super(mensaje)
     this.name = 'ErrorApi'
     this.estado = estado
     this.codigo = codigo
+    this.datos = datos
   }
 
   get esNoAutenticado() {
@@ -69,6 +73,12 @@ type ProblemDetails = {
   title?: string
   detail?: string
   codigo?: string
+  datos?: unknown
+}
+
+/** `datos` solo cuenta si es un objeto: un arreglo, un texto o `null` del servidor se descartan. */
+function datosDelProblema(datos: unknown): Record<string, unknown> | undefined {
+  return typeof datos === 'object' && datos !== null && !Array.isArray(datos) ? (datos as Record<string, unknown>) : undefined
 }
 
 /** Se dispara ante cualquier 401 para que el contexto de auth limpie la sesión. `conSesionBearer` es
@@ -122,6 +132,7 @@ async function exigirRespuestaOk(respuesta: Response, tokenDeLaSolicitud: string
       respuesta.status,
       problema.codigo ?? 'error',
       problema.title ?? problema.detail ?? `Error ${respuesta.status}.`,
+      datosDelProblema(problema.datos),
     )
   }
 }

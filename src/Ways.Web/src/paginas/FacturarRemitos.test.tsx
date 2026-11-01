@@ -248,7 +248,7 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
     await screen.findByText('0007-00000012')
 
     await userEvent.click(screen.getByLabelText('Elegir remito 0007-00000012'))
-    expect(await screen.findByText('Total a facturar (1 remito(s))')).toBeInTheDocument()
+    expect(await screen.findByText('Total a facturar (1 remito)')).toBeInTheDocument()
 
     await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), '')
     await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), 'Local Centro')
@@ -256,7 +256,7 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
     // El checkbox de la fila vuelve a aparecer sin marcar — el conteo del resumen cae a 0, no
     // arrastra la selección del par cliente/PV anterior.
     await screen.findByText('0007-00000012')
-    expect(screen.getByText('Total a facturar (0 remito(s))')).toBeInTheDocument()
+    expect(screen.getByText('Total a facturar (0 remitos)')).toBeInTheDocument()
     expect(screen.getByLabelText('Elegir remito 0007-00000012')).not.toBeChecked()
   })
 })

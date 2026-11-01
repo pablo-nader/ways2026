@@ -18,8 +18,10 @@ import {
 } from '../componentes/grilla'
 import { CAMPOS_PROPIOS, cantidadDeArticulos } from './articulos/familia'
 import { mensajeDeFalloDeEscritura } from './familias/mensajes'
+import { AYUDA_DE_DESGLOSAR_COSTO, cuerpoDeEdicionDeFamilia } from './familias/edicion'
 import { ModalDeFamilia, type FormularioDeFamilia } from './familias/ModalDeFamilia'
 import { ModalDeNuevaFamilia } from './familias/ModalDeNuevaFamilia'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_DISOLUCION = 'Se disolvió, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -75,11 +77,11 @@ export function Familias() {
   const [cargando, setCargando] = useState(true)
   // Un slot por fuente (react-async-state regla 14): el fallo de la lectura y el rechazo de una escritura no se pisan.
   const [errorDeCarga, setErrorDeCarga] = useState('')
-  const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
+  /** El rechazo de la disolución vive dentro de la confirmación que sigue abierta. */
+  const [errorDeDisolucion, setErrorDeDisolucion] = useState('')
   const [parametros, setParametros] = useSearchParams()
   const [formulario, setFormulario] = useState<FormularioDeFamilia | null>(null)
-  /** El rechazo del guardado vive en el modal; `error` queda para lo que le pasó a la pantalla (una familia que ya no existe, la disolución). */
+  /** El rechazo del guardado vive en el modal; el de la disolución vive en su confirmación y una familia que ya no existe se avisa con un toast. */
   const [errorDeFormulario, setErrorDeFormulario] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [creando, setCreando] = useState(() => parametros.get('nuevo') === '1')
@@ -140,11 +142,11 @@ export function Familias() {
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
    * reporta como fallida (`react-async-state` regla 6). */
   async function refrescarTrasEscribir(mensajeOk: string, avisoDeFallo: string) {
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(++generacion.current, true)
     } catch {
-      setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -158,7 +160,7 @@ export function Familias() {
     setErrorDeFormulario('')
     try {
       try {
-        await clienteDeFamilias.actualizar(datos.id, { nombre, activo: datos.activo })
+        await clienteDeFamilias.actualizar(datos.id, cuerpoDeEdicionDeFamilia(datos))
       } catch (e) {
         const mensaje = mensajeDeFalloDeEscritura(e, 'guardar la familia')
         if (!(e instanceof ErrorApi && e.estado === 404)) {
@@ -169,7 +171,7 @@ export function Familias() {
 
         // La familia ya no existe: el modal ofrecería guardar sobre algo que dejó de estar, así que se cierra con el
         // rechazo a la vista y se vuelve a leer el listado. Sigue montado durante la relectura y se cierra al liberarse.
-        setError(mensaje)
+        toast.error(mensaje)
         await cargar(++generacion.current)
         setFormulario(null)
 
@@ -189,14 +191,13 @@ export function Familias() {
   function pedirDisolucion(familia: FamiliaListado, disparador: HTMLElement | null) {
     setDisparadorDeLaPuerta(disparador)
     setDisolucion(familia)
-    setError('')
-    setAviso('')
+    setErrorDeDisolucion('')
   }
 
   function cancelarDisolucion() {
     setDisparadorDeLaPuerta(null)
     setDisolucion(null)
-    setError('')
+    setErrorDeDisolucion('')
   }
 
   async function confirmarDisolucion() {
@@ -205,16 +206,19 @@ export function Familias() {
     const familia = disolucion
     ocupadoRef.current = true
     setOcupadoDisolucion(familia.id)
-    setError('')
+    setErrorDeDisolucion('')
     try {
       try {
         await clienteDeFamilias.disolver(familia.id)
       } catch (e) {
-        setError(copiaDeFalloDeBaja(e, 'la familia', 'disolver'))
+        const mensaje = copiaDeFalloDeBaja(e, 'la familia', 'disolver')
         // La familia ya no existe: no hay nada que confirmar, así que la puerta se cierra y se vuelve a leer el listado.
         if (e instanceof ErrorApi && e.estado === 404) {
+          toast.error(mensaje)
           setDisolucion(null)
           await cargar(++generacion.current)
+        } else {
+          setErrorDeDisolucion(mensaje)
         }
 
         return
@@ -232,16 +236,13 @@ export function Familias() {
   }
 
   function abrirEdicion(familia: FamiliaListado) {
-    setFormulario({ id: familia.id, nombre: familia.nombre, activo: familia.activo })
-    setAviso('')
-    setError('')
+    const permite = familia.permiteDesglosarCosto === true
+    setFormulario({ id: familia.id, nombre: familia.nombre, activo: familia.activo, permiteDesglosarCosto: permite, permiteDesglosarCostoInicial: permite })
     setErrorDeFormulario('')
   }
 
   function abrirAlta() {
     setCreando(true)
-    setAviso('')
-    setError('')
   }
 
   /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera. Un modal abierto no entra acá: su
@@ -268,8 +269,6 @@ export function Familias() {
         </p>
 
         {errorDeCarga && <div className="alert alert-danger">{errorDeCarga}</div>}
-        {error && !disolucion && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {disolucion && (
           <ConfirmacionDeBaja
@@ -280,7 +279,7 @@ export function Familias() {
             etiquetaEnCurso="Disolviendo…"
             ocupado={ocupadoDisolucion !== null}
             disparador={disparadorDeLaPuerta}
-            error={error}
+            error={errorDeDisolucion}
             onConfirmar={confirmarDisolucion}
             onCancelar={cancelarDisolucion}
           />
@@ -340,7 +339,14 @@ export function Familias() {
                 )}
                 {!cargando && visibles.map((familia) => (
                   <tr key={familia.id}>
-                    <td>{familia.nombre}</td>
+                    <td>
+                      {familia.nombre}
+                      {familia.permiteDesglosarCosto === true && (
+                        <span className="badge text-bg-info ms-2" title={AYUDA_DE_DESGLOSAR_COSTO}>
+                          Desglosa costo
+                        </span>
+                      )}
+                    </td>
                     <td className="text-end">{familia.cantidadArticulos}</td>
                     <td>
                       <span className={`badge ${familia.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>

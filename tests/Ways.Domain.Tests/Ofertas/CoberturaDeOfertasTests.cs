@@ -134,12 +134,12 @@ public class CoberturaDeOfertasTests
     }
 
     [Fact]
-    public void LaFamiliaCuentaLosGruposSobreElDocumentoYElRestoCaeEnLasUltimasLineas()
+    public void LaFamiliaCuentaLosGruposSobreElDocumentoYLosRepartePorUnidades()
     {
         var aplicada = new OfertaAplicada(1, "familia", 250m, MultiploDe: 2m, PorFamilia: true);
         OfertaAplicada[] aplicadas = [aplicada];
 
-        // 2 + 2 + 1 = 5 unidades de la familia: dos grupos (4 unidades), la última línea queda sin descuento.
+        // 2 + 2 + 1 = 5 unidades de la familia: dos grupos (4 unidades, 1000 de descuento), 200 por unidad de línea.
         var descuentos = CoberturaDeOfertas.DescuentosDeLinea(
         [
             new LineaConOfertas(2m, 4000m, aplicadas),
@@ -147,16 +147,17 @@ public class CoberturaDeOfertasTests
             new LineaConOfertas(1m, 4000m, aplicadas),
         ]);
 
-        Assert.Equal([500m, 500m, 0m], descuentos);
+        Assert.Equal([400m, 400m, 200m], descuentos);
     }
 
+    /// <summary>Cláusula: el resto del reparto. 1 + 1 + 1 = 3: un grupo, 500 de descuento; cada línea lleva su parte
+    /// truncada al peso (166) y la última el resto, así el total del documento es el de un grupo (11500).</summary>
     [Fact]
-    public void LaFamiliaArmaGruposConUnidadesDeLineasDistintas()
+    public void LaFamiliaRepartePesosEnterosYElRestoVaALaUltimaLinea()
     {
         var aplicada = new OfertaAplicada(1, "familia", 250m, MultiploDe: 2m, PorFamilia: true);
         OfertaAplicada[] aplicadas = [aplicada];
 
-        // 1 + 1 + 1 = 3: un grupo con las dos primeras líneas, la tercera paga el precio original.
         var descuentos = CoberturaDeOfertas.DescuentosDeLinea(
         [
             new LineaConOfertas(1m, 4000m, aplicadas),
@@ -164,7 +165,73 @@ public class CoberturaDeOfertasTests
             new LineaConOfertas(1m, 4000m, aplicadas),
         ]);
 
-        Assert.Equal([250m, 250m, 0m], descuentos);
+        Assert.Equal([166m, 166m, 168m], descuentos);
+        Assert.Equal(
+            11500m,
+            CalculadorDeTotales.Calcular(
+                [.. descuentos.Select(d => new LineaParaCalcular(1m, 4000m, 250m, DescuentoDeOfertaDeLinea: d))]).Total);
+    }
+
+    /// <summary>Cláusula: el reparto proporcional coincide con la clave con la que la oferta de familia ganó la base
+    /// (<see cref="ResolvedorDeOfertas.ClaveDeLinea"/>). Tres artículos de la familia, una unidad de cada uno: la "solo
+    /// múltiplos" de familia vale 250 × 2 / 3 = 166,67 por unidad y le gana a la común de 150 del tercero. Repartida en
+    /// el orden de las líneas, el tercero se quedaba sin descuento (menos que la común que perdió); proporcional, ninguna
+    /// línea queda debajo de la común que le ganó.</summary>
+    [Fact]
+    public void NingunaLineaDeFamiliaQuedaDebajoDeLaComunALaQueLeGano()
+    {
+        var deFamilia = Oferta(BeneficioDeOferta.DePrecioUnitario(3750m), alcance: AlcanceDeOferta.DeFamilia(7));
+        var comunDelTercero = Oferta(
+            BeneficioDeOferta.DePrecioUnitario(3850m), cantidadMinima: null, soloMultiplos: false, id: 2,
+            alcance: AlcanceDeOferta.DeArticulo(3));
+        OfertaCandidata[] candidatas = [deFamilia, comunDelTercero];
+
+        var lineas = new[] { 1, 2, 3 }
+            .Select(id => ResolvedorDeOfertas.Resolver(Linea(1m, idArticulo: id, idFamilia: 7, cantidadDeFamilia: 3m), candidatas))
+            .ToList();
+        Assert.All(lineas, l => Assert.Equal(1, Assert.Single(l.Aplicadas).IdOferta));
+
+        var descuentos = CoberturaDeOfertas.DescuentosDeLinea(
+            [.. lineas.Select(l => new LineaConOfertas(1m, l.PrecioOriginal, l.Aplicadas))]);
+
+        Assert.All(descuentos, d => Assert.True(d > 150m, $"una línea quedó con {d}, debajo de la común de 150"));
+        Assert.Equal(500m, descuentos.Sum());
+    }
+
+    /// <summary>Cláusula: el tope del resto. 50 centavos por unidad en grupos de 2, 1 + 1 + 1: un peso de descuento,
+    /// ninguna parte llega al peso y el resto no puede cubrir dos unidades de la última línea, que tiene una: medio peso
+    /// a la última y medio a la anterior.</summary>
+    [Fact]
+    public void ElRestoNoCubreMasUnidadesDeLasQueTieneLaLinea()
+    {
+        OfertaAplicada[] aplicadas = [new OfertaAplicada(1, "familia", 0.5m, MultiploDe: 2m, PorFamilia: true)];
+
+        var descuentos = CoberturaDeOfertas.DescuentosDeLinea(
+        [
+            new LineaConOfertas(1m, 4000m, aplicadas),
+            new LineaConOfertas(1m, 4000m, aplicadas),
+            new LineaConOfertas(1m, 4000m, aplicadas),
+        ]);
+
+        Assert.Equal([0m, 0.5m, 0.5m], descuentos);
+    }
+
+    /// <summary>Cláusula: el tope por unidad con una cobertura fraccionaria. 3000 de familia en grupos de 2 más una
+    /// acumulable de 2000 a 4000, 1 + 1 + 1: cada línea cubre 2/3 de unidad a 4000 (tope) y 1/3 a 2000.</summary>
+    [Fact]
+    public void ConLaParteDeFamiliaFraccionariaElTopeSigueSiendoPorUnidad()
+    {
+        OfertaAplicada[] aplicadas =
+            [new OfertaAplicada(1, "familia", 3000m, MultiploDe: 2m, PorFamilia: true), new OfertaAplicada(2, "acumulable", 2000m)];
+
+        var descuentos = CoberturaDeOfertas.DescuentosDeLinea(
+        [
+            new LineaConOfertas(1m, 4000m, aplicadas),
+            new LineaConOfertas(1m, 4000m, aplicadas),
+            new LineaConOfertas(1m, 4000m, aplicadas),
+        ]);
+
+        Assert.Equal([3333.333333m, 3333.333333m, 3333.333333m], descuentos);
     }
 
     [Fact]

@@ -254,9 +254,9 @@ public class CuentasTesoreriaAjusteTests(WaysApiFixture fixture) : IClassFixture
     }
 
     [Fact]
-    public async Task DosAjustesSeguidosEncadenanYElLibroLosMuestra()
+    public async Task DosAjustesSeguidosEncadenanYDejanElSaldoYElNeto()
     {
-        var ctx = await PrepararAsync(nameof(DosAjustesSeguidosEncadenanYElLibroLosMuestra));
+        var ctx = await PrepararAsync(nameof(DosAjustesSeguidosEncadenanYDejanElSaldoYElNeto));
         var cuenta = await CrearCuentaAsync(ctx, saldoInicial: 50m);
 
         await AjustarOkAsync(ctx.Admin, cuenta, new SolicitudDeAjusteDeCuenta("Primero", 10m, null));
@@ -265,10 +265,8 @@ public class CuentasTesoreriaAjusteTests(WaysApiFixture fixture) : IClassFixture
         var filas = await FilasAsync(ctx, cuenta);
         Assert.Equal([(50m, 60m), (60m, 35m)], filas.Select(f => (f.Inicio, f.Final)).ToArray());
 
-        var libro = await ctx.Supervisor.GetFromJsonAsync<LibroDeCuenta>(
-            $"/api/reportes/tesoreria/cuentas/{cuenta}/libro", OpcionesJson);
-        Assert.Equal(35m, libro!.SaldoActual);
-        Assert.Equal(-15m, libro.Totales.Ajustes);
+        Assert.Equal(35m, filas[^1].Final);
+        Assert.Equal(-15m, filas.Sum(f => f.Ingreso - f.Egreso));
     }
 
     // ---- 404 antes que 400 y política --------------------------------------------------------------

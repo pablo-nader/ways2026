@@ -1209,7 +1209,7 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         'Descuento (%)',
         'Controla lote / vencimiento',
         'Acumula en una sola línea al vender',
-        'Disponible para todas las empresas del tenant',
+        'Disponible para todas las empresas',
       ]) {
         expect(within(dialogo).getByLabelText(etiqueta)).toBeEnabled()
       }

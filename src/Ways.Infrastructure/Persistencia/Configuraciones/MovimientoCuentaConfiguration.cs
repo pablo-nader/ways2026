@@ -55,9 +55,9 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
         builder.HasIndex(m => m.IdTenant).HasDatabaseName("ix_movimientos_cuenta_tenant");
 
         // Índice de soporte de la FK compuesta a la cuenta (columnas de la FK primero, como
-        // ix_movimientos_tesoreria_empresa_id) y de la lectura de la cola de la cadena y del libro.
-        builder.HasIndex(m => new { m.IdCuentaTesoreria, m.IdTenant, m.Id })
-            .HasDatabaseName("ix_movimientos_cuenta_cuenta_id");
+        // ix_movimientos_tesoreria_empresa_id) y de la lectura de la cola de la cadena y del libro, que se ordenan por (fecha, id).
+        builder.HasIndex(m => new { m.IdCuentaTesoreria, m.IdTenant, m.Fecha, m.Id })
+            .HasDatabaseName("ix_movimientos_cuenta_cuenta_fecha_id");
 
         // Índices de soporte de FK (evitan el índice implícito PascalCase de EF).
         builder.HasIndex(m => new { m.IdTurnoCaja, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_turno");

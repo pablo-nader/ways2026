@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Familias } from './Familias'
+import { Toaster } from '../toasts/Toaster'
 import { CAMPOS_PROPIOS } from './articulos/familia'
 import { ErrorApi } from '../api/cliente'
 import type { ArticuloListado, FamiliaListado } from '../api/tipos'
@@ -71,6 +72,7 @@ function montar(items: FamiliaListado[] = [sabores, talles], ruta = '/familias')
         <Route path="/familias" element={<Familias />} />
         <Route path="/familias/:id" element={<p>Pantalla de detalle de la familia</p>} />
       </Routes>
+      <Toaster />
       <SondaDeBusqueda />
     </MemoryRouter>,
   )
@@ -127,6 +129,7 @@ describe('Familias — listado', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
 
@@ -138,6 +141,7 @@ describe('Familias — listado', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
 
@@ -155,6 +159,7 @@ describe('Familias — listado', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
 
@@ -174,6 +179,7 @@ describe('Familias — listado', () => {
       <StrictMode>
         <MemoryRouter>
           <Familias />
+          <Toaster />
         </MemoryRouter>
       </StrictMode>,
     )
@@ -197,6 +203,7 @@ describe('Familias — listado', () => {
       <StrictMode>
         <MemoryRouter>
           <Familias />
+          <Toaster />
         </MemoryRouter>
       </StrictMode>,
     )
@@ -218,6 +225,7 @@ describe('Familias — listado', () => {
       <StrictMode>
         <MemoryRouter>
           <Familias />
+          <Toaster />
         </MemoryRouter>
       </StrictMode>,
     )
@@ -289,6 +297,7 @@ describe('Familias — renombrar y activar o desactivar', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -299,7 +308,8 @@ describe('Familias — renombrar y activar o desactivar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/familias/7', { nombre: 'Sabores nuevos', activo: true }))
-    expect(await screen.findByText('Se actualizó la familia "Sabores nuevos".')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Se actualizó la familia "Sabores nuevos".')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('Sabores nuevos')).toBeInTheDocument())
     expect(lecturas).toBe(2)
@@ -367,6 +377,7 @@ describe('Familias — renombrar y activar o desactivar', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -374,7 +385,7 @@ describe('Familias — renombrar y activar o desactivar', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('No existe la familia 7.')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('No existe la familia 7.')
     await waitFor(() => expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument())
     expect(screen.queryByText('Sabores')).not.toBeInTheDocument()
     expect(lecturas).toBe(2)
@@ -393,6 +404,7 @@ describe('Familias — renombrar y activar o desactivar', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -468,6 +480,7 @@ describe('Familias — renombrar y activar o desactivar', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -511,6 +524,7 @@ describe('Familias — renombrar y activar o desactivar', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -518,9 +532,10 @@ describe('Familias — renombrar y activar o desactivar', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
+    expect(await screen.findByText('Se actualizó la familia "Sabores".')).toBeInTheDocument()
     expect(
-      await screen.findByText('Se actualizó la familia "Sabores". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+      (await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')).closest('[role="status"]'),
+    ).not.toBeNull()
     expect(screen.queryByText(/No se pudo guardar/)).not.toBeInTheDocument()
     expect(screen.queryByText('Se cayó el refresco.')).not.toBeInTheDocument()
   })
@@ -644,19 +659,6 @@ describe('Familias — el alta es un modal', () => {
     expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
   })
 
-  /** Cláusula bajo prueba: `abrirAlta` borra el aviso de la escritura anterior (react-async-state regla 16). */
-  it('abrir el alta borra el aviso de la escritura anterior', async () => {
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
-    await screen.findByText('Se actualizó la familia "Sabores".')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
-
-    expect(screen.queryByText(/Se actualizó la familia/)).not.toBeInTheDocument()
-  })
-
   it('`?nuevo=1` abre el modal de alta al llegar y se consume: la URL queda limpia y el foco cae en el botón al cerrarlo', async () => {
     montar([sabores, talles], '/familias?nuevo=1')
 
@@ -677,6 +679,7 @@ describe('Familias — el alta es un modal', () => {
         <Routes>
           <Route path="/familias" element={<Familias />} />
         </Routes>
+        <Toaster />
         <SondaDeBusqueda />
       </MemoryRouter>,
     )
@@ -713,6 +716,7 @@ describe('Familias — el alta es un modal', () => {
           <Route path="/familias" element={<Familias />} />
           <Route path="/familias/:id" element={<p>Pantalla de detalle de la familia</p>} />
         </Routes>
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -734,9 +738,9 @@ describe('Familias — el alta es un modal', () => {
   })
 })
 
-/** Cláusulas bajo prueba: cada acción que empieza borra lo que dijo la anterior (el aviso de éxito o el rechazo), para que
- * mientras la nueva está en vuelo —o abierta— no quede en pantalla un mensaje que ya no habla de lo que se está haciendo. */
-describe('Familias — los mensajes de la acción anterior no sobreviven a la siguiente', () => {
+/** Cláusulas bajo prueba: cada intento que empieza borra el rechazo del anterior, para que mientras el nuevo está en vuelo no
+ * quede en pantalla un mensaje que ya no habla de lo que se está haciendo. */
+describe('Familias — el rechazo anterior no sobrevive al siguiente intento', () => {
   const rechazoDeNombre = new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe una familia llamada "Talles" en este tenant.')
 
   it('guardar de nuevo borra el rechazo del intento anterior apenas empieza', async () => {
@@ -772,31 +776,6 @@ describe('Familias — los mensajes de la acción anterior no sobreviven a la si
       segundo.resolver()
     })
   })
-
-  it('abrir la puerta borra el aviso de la escritura anterior', async () => {
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
-    await screen.findByText('Se actualizó la familia "Sabores".')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Disolver Talles' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Disolver Talles' }))
-
-    expect(screen.queryByText(/Se actualizó la familia/)).not.toBeInTheDocument()
-  })
-
-  it('abrir el formulario borra el aviso de la disolución anterior', async () => {
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
-    await screen.findByText(/Se disolvió la familia "Sabores"/)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Editar Talles' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Talles' }))
-
-    expect(screen.queryByText(/Se disolvió la familia/)).not.toBeInTheDocument()
-  })
-
 })
 
 describe('Familias — disolver', () => {
@@ -859,6 +838,7 @@ describe('Familias — disolver', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -898,6 +878,7 @@ describe('Familias — disolver', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -936,6 +917,7 @@ describe('Familias — disolver', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -943,11 +925,10 @@ describe('Familias — disolver', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
 
+    expect(await screen.findByText('Se disolvió la familia "Sabores": sus artículos quedaron sin familia.')).toBeInTheDocument()
     expect(
-      await screen.findByText(
-        'Se disolvió la familia "Sabores": sus artículos quedaron sin familia. Se disolvió, pero no se pudo actualizar la vista. Recargá la pantalla.',
-      ),
-    ).toBeInTheDocument()
+      (await screen.findByText('Se disolvió, pero no se pudo actualizar la vista. Recargá la pantalla.')).closest('[role="status"]'),
+    ).not.toBeNull()
     expect(screen.queryByText(/No se pudo disolver/)).not.toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
@@ -963,6 +944,7 @@ describe('Familias — disolver', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -993,6 +975,7 @@ describe('Familias — disolver', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Sabores')
@@ -1117,6 +1100,7 @@ describe('Familias — filtros por columna y orden', () => {
     render(
       <MemoryRouter>
         <Familias />
+        <Toaster />
       </MemoryRouter>,
     )
     await screen.findByText('Zapatos')
@@ -1167,5 +1151,73 @@ describe('Familias — filtros por columna y orden', () => {
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
     expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
     expect(screen.getByLabelText('Filtrar por estado')).toBeDisabled()
+  })
+})
+
+
+describe('Familias — permite desglosar costo', () => {
+  const desglosa: FamiliaListado = { id: 9, nombre: 'Bebidas', activo: true, cantidadArticulos: 4, permiteDesglosarCosto: true }
+
+  it('marca con una insignia las familias que desglosan el costo, y solo ésas', async () => {
+    await montarYEsperar([sabores, desglosa])
+
+    expect(within(fila('Bebidas')).getByText('Desglosa costo')).toBeInTheDocument()
+    expect(within(fila('Sabores')).queryByText('Desglosa costo')).not.toBeInTheDocument()
+  })
+
+  it('el formulario de edición muestra la casilla con la marca de la familia y su ayuda', async () => {
+    await montarYEsperar([sabores, desglosa])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+
+    const casilla = screen.getByRole('checkbox', { name: 'Permite desglosar costo' })
+    expect(casilla).toBeChecked()
+    expect(casilla).toHaveAccessibleDescription('Cada artículo puede tener su propio costo de lista e impuesto interno; el costo nominal es el mismo para todos.')
+  })
+
+  it('guardar sin tocar la casilla no manda la marca', async () => {
+    apiPutMock.mockResolvedValueOnce(desglosa)
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/familias/9', { nombre: 'Bebidas', activo: true }))
+  })
+
+  it('encenderla manda true', async () => {
+    apiPutMock.mockResolvedValueOnce(sabores)
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/familias/7', { nombre: 'Sabores', activo: true, permiteDesglosarCosto: true }))
+  })
+
+  it('apagarla manda false', async () => {
+    apiPutMock.mockResolvedValueOnce(desglosa)
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/familias/9', { nombre: 'Bebidas', activo: true, permiteDesglosarCosto: false }))
+  })
+
+  it('un 409 composicion_distinta explica qué hay que igualar y deja el formulario abierto', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'composicion_distinta', 'Los artículos de la familia tienen composiciones del costo distintas.'))
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText(/Para apagarlo, todos los artículos tienen que tener la misma composición del costo/)).toBeInTheDocument()
+    expect(screen.getByText(/composiciones del costo distintas/)).toBeInTheDocument()
+    expect(screen.getByText('Editando familia 9')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
 })

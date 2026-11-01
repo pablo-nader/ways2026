@@ -1191,6 +1191,114 @@ public class ServicioDeArticulos(
         });
     }
 
+    /// <summary>Lista los códigos de proveedor vivos del artículo, por id. El filtro global de baja
+    /// lógica deja afuera los dados de baja; 404 si el artículo no existe o es de otro tenant.</summary>
+    public async Task<IReadOnlyList<CodigoProveedorListado>> ListarCodigosProveedorAsync(
+        int idArticulo, CancellationToken ct = default)
+    {
+        await BuscarAsync(idArticulo, ct);
+
+        return await db.CodigosProveedor
+            .Where(c => c.IdArticulo == idArticulo)
+            .OrderBy(c => c.Id)
+            .Select(c => new CodigoProveedorListado(c.Id, c.IdArticulo, c.IdProveedor, c.Codigo))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>Cambia el código que el proveedor imprime para el artículo. El 404 (artículo o código
+    /// inexistente, dado de baja, de otro tenant o de otro artículo) precede a la validación del cuerpo y
+    /// al chequeo de duplicado. El pre-chequeo excluye la propia fila, así que repetir el valor o cambiar
+    /// solo mayúsculas/minúsculas es válido; es solo UX, el contrato real es
+    /// <c>ux_codigos_proveedor_proveedor_codigo</c> (23505 → 409 en <c>ManejadorDeErrores</c>).</summary>
+    public async Task<CodigoProveedorListado> ActualizarCodigoProveedorAsync(
+        int idArticulo, int idCodigoProveedor, ActualizacionCodigoProveedor datos, CancellationToken ct = default)
+    {
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        return await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            var codigoProveedor = await BloquearYBuscarCodigoProveedorAsync(idArticulo, idCodigoProveedor, ct);
+
+            var codigo = ReglaDeCodigoProveedor.NormalizarRequerido(datos.Codigo, "codigo");
+
+            if (await db.CodigosProveedor.AnyAsync(
+                    c => c.IdProveedor == codigoProveedor.IdProveedor && c.Codigo == codigo
+                        && c.Id != idCodigoProveedor, ct))
+            {
+                throw ErrorDominio.Conflicto(
+                    "codigo_proveedor_duplicado",
+                    $"El código {codigo} ya está asignado a otro artículo para el proveedor {codigoProveedor.IdProveedor}.");
+            }
+
+            codigoProveedor.Codigo = codigo;
+            codigoProveedor.UpdatedAt = reloj.Ahora;
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+
+            return Proyectar(codigoProveedor);
+        });
+    }
+
+    /// <summary>Baja lógica del código de proveedor: libera el par (proveedor, código) del índice único parcial.</summary>
+    public async Task EliminarCodigoProveedorAsync(
+        int idArticulo, int idCodigoProveedor, CancellationToken ct = default)
+    {
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            var codigoProveedor = await BloquearYBuscarCodigoProveedorAsync(idArticulo, idCodigoProveedor, ct);
+
+            var ahora = reloj.Ahora;
+            codigoProveedor.DeletedAt = ahora;
+            codigoProveedor.UpdatedAt = ahora;
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
+    }
+
+    private async Task<CodigoProveedor> BloquearYBuscarCodigoProveedorAsync(
+        int idArticulo, int idCodigoProveedor, CancellationToken ct)
+    {
+        if (!await guarda.BloquearSiEstaVivaAsync<Articulo>(idArticulo, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe el artículo {idArticulo}.");
+        }
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        // El vivo y la pertenencia al artículo van en el propio WHERE del lock: bajo READ COMMITTED
+        // Postgres los reevalúa sobre la versión que dejó el escritor que nos bloqueó, así que una
+        // baja concurrente no devuelve fila y sale el 404.
+        await using (var comando = conexion.CreateCommand())
+        {
+            comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+            comando.CommandText =
+                "SELECT 1 FROM codigos_proveedor " +
+                "WHERE id_codigo_proveedor = $1 AND id_articulo = $2 AND deleted_at IS NULL FOR UPDATE";
+            ParametrosDeComando.Agregar(comando, idCodigoProveedor);
+            ParametrosDeComando.Agregar(comando, idArticulo);
+
+            if (await comando.ExecuteScalarAsync(ct) is null)
+            {
+                throw ErrorDominio.NoEncontrado(
+                    $"No existe el código de proveedor {idCodigoProveedor} del artículo {idArticulo}.");
+            }
+        }
+
+        // Única lectura trackeada de la fila: nace después del lock.
+        return await db.CodigosProveedor
+            .FirstOrDefaultAsync(c => c.Id == idCodigoProveedor && c.IdArticulo == idArticulo, ct)
+            ?? throw ErrorDominio.NoEncontrado(
+                $"No existe el código de proveedor {idCodigoProveedor} del artículo {idArticulo}.");
+    }
+
     /// <summary>Spec: Margin-Based Price Suggestion — resuelve <c>margenGrupo</c>/
     /// <c>margenProveedor</c> desde las referencias del artículo y delega el cálculo puro en
     /// <see cref="SugeridorDePrecio"/>. Nunca persiste un <c>precios</c> row (design decision

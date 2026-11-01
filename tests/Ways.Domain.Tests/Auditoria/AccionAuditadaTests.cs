@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneTreintaEntradas()
+    public void TieneTreintaYUnaEntradas()
     {
-        Assert.Equal(30, AccionAuditada.Todas.Count);
+        Assert.Equal(31, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -61,9 +61,9 @@ public partial class AccionAuditadaTests
     /// <summary>judgment-day, slice 1 ronda 2, finding 3 (juez B): el tipo NO impide
     /// <c>new AccionAuditada(...)</c> inline (el <c>record</c> posicional genera un constructor
     /// público) — este test es el único freno real contra un typo en el catálogo, congelando los
-    /// 30 pares exactos que el resto del código asume.</summary>
+    /// 31 pares exactos que el resto del código asume.</summary>
     [Fact]
-    public void ElCatalogoTieneExactamenteLosTreintaParesEsperados()
+    public void ElCatalogoTieneExactamenteLosTreintaYUnParesEsperados()
     {
         (string Accion, string Entidad)[] esperado =
         [
@@ -93,6 +93,7 @@ public partial class AccionAuditadaTests
             ("pago.desaplicacion", "pago"),
             ("compra.redondeo", "comprobante_compra"),
             ("pago.redondeo", "pago"),
+            ("pago.reasignacion", "pago"),
             ("pv.alta", "punto_venta"),
             ("compra.edicion", "comprobante_compra"),
             ("cobro.aplicacion", "comprobante_venta"),

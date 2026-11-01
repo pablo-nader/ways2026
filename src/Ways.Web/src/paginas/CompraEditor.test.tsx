@@ -582,7 +582,7 @@ describe('CompraEditor — compra confirmada', () => {
     expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
 
     resolverAnular({ compra: compraFixture({ estado: 'Anulada' }), gastosLigados: 2 })
-    expect(await screen.findByText(/Quedan 2 pago\(s\) ligado\(s\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/Quedan 2 pagos ligados/)).toBeInTheDocument()
 
     const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/anular')
     expect(llamadas).toHaveLength(1)
@@ -1499,18 +1499,18 @@ describe('CompraEditor — líneas incompletas', () => {
     // pero con cantidad e importe para que, si el mirror la sumara, el total cambiaría.
     await cargarFila(usuario, 1, { cantidad: '5', importe: '20' })
 
-    expect(await screen.findByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
+    expect(await screen.findByText('1 línea incompleta — complétela o quítela para poder guardar.')).toBeInTheDocument()
     expect(screen.getByText('$ 1.149,50')).toBeInTheDocument()
     // Tipear en la fila vacía abrió otra vacía debajo.
     expect(filasDeItems()).toHaveLength(3)
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
     expect(
-      await screen.findByText('Hay 1 línea(s) incompleta(s): complételas o quítelas antes de guardar.'),
+      await screen.findByText('Hay 1 línea incompleta: complétela o quítela antes de guardar.'),
     ).toBeInTheDocument()
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
     await waitFor(() =>
-      expect(screen.getAllByText('Hay 1 línea(s) incompleta(s): complételas o quítelas antes de guardar.')).toHaveLength(1),
+      expect(screen.getAllByText('Hay 1 línea incompleta: complétela o quítela antes de guardar.')).toHaveLength(1),
     )
     expect(apiPutMock).not.toHaveBeenCalled()
     expect(apiPostMock).not.toHaveBeenCalled()
@@ -1532,10 +1532,10 @@ describe('CompraEditor — líneas incompletas', () => {
     await screen.findByDisplayValue('00012345')
     await cargarFila(usuario, 1, { cantidad: '5' })
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
-    expect(await screen.findByText(/Hay 1 línea\(s\) incompleta\(s\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/Hay 1 línea incompleta/)).toBeInTheDocument()
 
     await usuario.click(within(filaDeItems(1)).getByRole('button', { name: /^Quitar línea \d+$/ }))
-    expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/líneas? incompletas?/)).not.toBeInTheDocument()
     expect(filasDeItems()).toHaveLength(2)
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
@@ -1568,17 +1568,17 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
 
     expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toBeInTheDocument()
     expect(screen.getByLabelText(/^Código de lote, línea \d+$/)).toBeInTheDocument()
-    expect(await screen.findByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
+    expect(await screen.findByText('1 línea incompleta — complétela o quítela para poder guardar.')).toBeInTheDocument()
 
     await cargarFila(usuario, 0, { cantidad: '5', importe: '20' })
 
     // Sigue incompleta: el artículo controla lote y la fecha de vencimiento es obligatoria
     // (espejo del `lote_requerido` server-side) — código de lote NO es obligatorio, se deriva.
-    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea incompleta — complétela o quítela para poder guardar.')).toBeInTheDocument()
 
     await usuario.type(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/), '01/12/2026')
 
-    await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText(/líneas? incompletas?/)).not.toBeInTheDocument())
   })
 
   it('el lote queda en el orden de tabulación justo después de las celdas de su fila', async () => {
@@ -2103,13 +2103,13 @@ describe('CompraEditor — líneas por concepto', () => {
     await prepararCompraNueva(usuario)
 
     await cargarFila(usuario, 0, { detalle: 'Flete', importe: '500' })
-    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea incompleta — complétela o quítela para poder guardar.')).toBeInTheDocument()
 
     await cargarFila(usuario, 0, { cantidad: '1' })
-    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea incompleta — complétela o quítela para poder guardar.')).toBeInTheDocument()
 
     await cargarFila(usuario, 0, { iva: '3' })
-    await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText(/líneas? incompletas?/)).not.toBeInTheDocument())
   })
 
   it('mientras el alta de un artículo está abierta no se puede guardar la compra, y al cerrarla vuelve a poderse', async () => {
@@ -2652,7 +2652,7 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
 
     expect(cantidad).toHaveClass('is-invalid')
     expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera.')).toBeInTheDocument()
-    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea incompleta — complétela o quítela para poder guardar.')).toBeInTheDocument()
   })
 
   it('elegir un artículo por unidad en una fila nueva fija el paso en 1, sin consultar el artículo otra vez', async () => {

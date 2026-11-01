@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
+using Ways.Application.Caja;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
@@ -170,6 +171,11 @@ public class ServicioDeMediosPago(
         {
             await using var transaccion = await Db.Database.BeginTransactionAsync(ct);
 
+            if (id is not null)
+            {
+                await TomarLocksDeConciliacionAsync(ct);
+            }
+
             var guardado = id is { } existente
                 ? await base.ActualizarAsync(existente, datos, ct)
                 : await base.CrearAsync(datos, ct);
@@ -190,6 +196,8 @@ public class ServicioDeMediosPago(
         if (!esNuevo)
         {
             await ExigirComportamientoNoEnUsoAsync(entidad, entrada!.Property(m => m.Comportamiento).OriginalValue, ct);
+            await ExigirRutaDeTesoreriaSinPeriodosConciliadosAsync(
+                entidad, entrada.Property(m => m.Comportamiento).OriginalValue, entrada.Property(m => m.IdCuentaTesoreria).OriginalValue, ct);
         }
 
         if (entidad.IdCuentaTesoreria is not { } idCuenta)
@@ -206,6 +214,63 @@ public class ServicioDeMediosPago(
         }
 
         await ExigirCuentaAsignableAsync(idCuenta, entidad.IdEmpresa, asignacionNueva: idCuenta != cuentaGuardada, ct);
+    }
+
+    /// <summary>El medio es del catálogo del tenant y lo usan los pagos de todas sus empresas, así que una edición toma el lock
+    /// compartido de conciliación de TODAS las empresas, en id ascendente y antes que cualquier otro lock: no puede saber de antemano
+    /// cuáles tienen marca, y una marca nueva no puede aparecer entre la lectura y el commit. Ver <see cref="GuardaDeConciliacion"/>.</summary>
+    private async Task TomarLocksDeConciliacionAsync(CancellationToken ct)
+    {
+        if (contexto.IdTenant is not { } idTenant)
+        {
+            return;
+        }
+
+        foreach (var idEmpresa in await Db.Empresas.Select(e => e.Id).OrderBy(i => i).ToListAsync(ct))
+        {
+            await GuardaDeConciliacion.TomarCompartidoAsync(Db, idTenant, idEmpresa, ct);
+        }
+    }
+
+    /// <summary>Cambiar la cuenta de tesorería o el comportamiento de un medio cambia a dónde el libro reparte cada línea de pago
+    /// que lo usa. Si alguna línea de un pago, o algún movimiento de cuenta del medio, está fechado en o antes de la marca de
+    /// conciliación de SU empresa, el cambio reescribiría un período congelado: <c>409 periodo_conciliado</c>. Un medio compartido
+    /// (sin empresa) se mira contra la marca de cada empresa que lo usó. Los porcentajes de comisión y retención no entran: el libro
+    /// lee los importes ya escritos por el cierre.</summary>
+    private async Task ExigirRutaDeTesoreriaSinPeriodosConciliadosAsync(
+        MedioPago entidad, ComportamientoMedioPago comportamientoAnterior, int? cuentaAnterior, CancellationToken ct)
+    {
+        if (entidad.Comportamiento == comportamientoAnterior && entidad.IdCuentaTesoreria == cuentaAnterior)
+        {
+            return;
+        }
+
+        var empresas = await Db.Empresas.Select(e => e.Id).ToListAsync(ct);
+        foreach (var idEmpresa in empresas)
+        {
+            var marca = await GuardaDeConciliacion.LeerMarcaAsync(Db, idEmpresa, ct);
+            if (marca is not { } hasta)
+            {
+                continue;
+            }
+
+            var enPagos = await (
+                from i in Db.ItemsPago
+                join p in Db.Pagos on i.IdPago equals p.Id
+                where i.IdMedioPago == entidad.Id && p.IdEmpresa == idEmpresa && p.Fecha <= hasta
+                select i.Id).AnyAsync(ct);
+
+            var enCuentas = enPagos || await (
+                from mc in Db.MovimientosCuenta
+                join c in Db.CuentasTesoreria.IgnoreQueryFilters(["BajaLogica"]) on mc.IdCuentaTesoreria equals c.Id
+                where mc.IdMedioPago == entidad.Id && c.IdEmpresa == idEmpresa && mc.Fecha <= hasta
+                select mc.Id).AnyAsync(ct);
+
+            if (enPagos || enCuentas)
+            {
+                throw ReglasDeConciliacion.PeriodoConciliado(hasta);
+            }
+        }
     }
 
     /// <summary>Solo un cambio que entra o sale de cuenta corriente necesita mirar los cobros. El <c>FOR UPDATE</c> del medio

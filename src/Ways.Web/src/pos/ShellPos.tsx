@@ -33,6 +33,7 @@ import { telefonoDeContacto } from './envio'
 import { ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
 import { BotonDeTema } from '../tema/BotonDeTema'
+import { Toaster } from '../toasts/Toaster'
 
 type Props = {
   dispositivo: DispositivoActual
@@ -465,6 +466,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                     <Route path="*" element={<Navigate to="/vender" replace />} />
                   </Routes>
                 </main>
+                <Toaster />
               </div>
             </ProveedorDeAccionesDePos>
           </ProveedorDeBorradoresDeTicket>

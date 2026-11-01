@@ -165,6 +165,96 @@ public static class EscriturasDePersonal
         await comando.ExecuteNonQueryAsync(ct);
     }
 
+    /// <summary>Empleado dueño del asiento, leído SIN lock: solo sirve para decidir qué filas de personal bloquear y en qué
+    /// orden. <c>null</c> si el asiento no existe o es de otro tenant. Después de los locks se confirma con
+    /// <see cref="BloquearMovimientoAsync"/>.</summary>
+    public static async Task<int?> LeerPersonalDelMovimientoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idMovimiento, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_personal FROM movimientos_personal WHERE id_movimiento = $1 AND id_tenant = $2";
+
+        ParametrosDeComando.Agregar(comando, idMovimiento);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null or DBNull ? null : Convert.ToInt32(resultado);
+    }
+
+    /// <summary>Empleado e importe del asiento, leídos bajo su <c>FOR UPDATE</c>. <c>null</c> si no existe.</summary>
+    public sealed record MovimientoBloqueado(int IdPersonal, decimal Importe);
+
+    public static async Task<MovimientoBloqueado?> BloquearMovimientoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idMovimiento, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_personal, importe FROM movimientos_personal " +
+            "WHERE id_movimiento = $1 AND id_tenant = $2 FOR UPDATE";
+
+        ParametrosDeComando.Agregar(comando, idMovimiento);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        return await lector.ReadAsync(ct) ? new MovimientoBloqueado(lector.GetInt32(0), lector.GetDecimal(1)) : null;
+    }
+
+    /// <summary>
+    /// Mueve un asiento de un libro al de otro empleado y corrige los saldos resultantes DESPLAZÁNDOLOS, nunca
+    /// recalculándolos desde cero: las filas posteriores del origen suman <c>-importe</c> (el asiento deja de
+    /// pesar), el asiento toma el saldo de la fila anterior del destino más su importe, y las filas posteriores del
+    /// destino suman <c>importe</c>. Es la única excepción a "el saldo resultante nunca cambia". No toca
+    /// <c>personal.saldo</c> (lo corrige el llamador con <see cref="ActualizarSaldoAsync"/>). El llamador tiene
+    /// bloqueadas las dos filas de personal y el asiento.
+    /// </summary>
+    public static async Task ReasignarMovimientoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idMovimiento, int idPersonalOrigen,
+        int idPersonalDestino, decimal importe, CancellationToken ct)
+    {
+        await EjecutarAsync(
+            conexion, transaccion,
+            "UPDATE movimientos_personal SET saldo_resultante = saldo_resultante - $1 " +
+            "WHERE id_personal = $2 AND id_tenant = $3 AND id_movimiento > $4",
+            ct, importe, idPersonalOrigen, idTenant, idMovimiento);
+
+        await EjecutarAsync(
+            conexion, transaccion,
+            "UPDATE movimientos_personal SET id_personal = $1 WHERE id_movimiento = $2 AND id_tenant = $3",
+            ct, idPersonalDestino, idMovimiento, idTenant);
+
+        await EjecutarAsync(
+            conexion, transaccion,
+            "UPDATE movimientos_personal SET saldo_resultante = $1 + COALESCE((" +
+            "SELECT anterior.saldo_resultante FROM movimientos_personal anterior " +
+            "WHERE anterior.id_personal = $2 AND anterior.id_tenant = $3 AND anterior.id_movimiento < $4 " +
+            "ORDER BY anterior.id_movimiento DESC LIMIT 1), 0) " +
+            "WHERE id_movimiento = $4 AND id_tenant = $3",
+            ct, importe, idPersonalDestino, idTenant, idMovimiento);
+
+        await EjecutarAsync(
+            conexion, transaccion,
+            "UPDATE movimientos_personal SET saldo_resultante = saldo_resultante + $1 " +
+            "WHERE id_personal = $2 AND id_tenant = $3 AND id_movimiento > $4",
+            ct, importe, idPersonalDestino, idTenant, idMovimiento);
+    }
+
+    private static async Task EjecutarAsync(
+        DbConnection conexion, DbTransaction? transaccion, string sql, CancellationToken ct, params object[] parametros)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText = sql;
+        foreach (var parametro in parametros)
+        {
+            ParametrosDeComando.Agregar(comando, parametro);
+        }
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
     /// <summary>Defensa en profundidad, infraestructura pura (nunca un <c>ErrorDominio</c> 4xx): una
     /// violación es un defecto del llamador. Espeja la forma por tipo de los CHECK de la tabla.</summary>
     private static void ValidarFormaPorTipo(TipoMovimientoPersonal tipo, decimal? horas, decimal? valorHora)

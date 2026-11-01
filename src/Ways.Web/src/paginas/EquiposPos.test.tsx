@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EquiposPos, NOTA_DE_REVOCACION } from './EquiposPos'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import type { DispositivoListado } from '../api/dispositivos'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -53,7 +54,7 @@ function montar(items: DispositivoListado[] = [caja1, caja2]) {
     return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
   })
 
-  return render(<EquiposPos />)
+  return render(<><EquiposPos /><Toaster /></>)
 }
 
 function botonRevocarDe(nombre: string) {
@@ -98,7 +99,7 @@ describe('EquiposPos — listado', () => {
 
   it('un fallo de carga rinde el mensaje del servidor', async () => {
     apiGetMock.mockRejectedValue(new ErrorApi(500, 'error_interno', 'Se cayó el listado.'))
-    render(<EquiposPos />)
+    render(<><EquiposPos /><Toaster /></>)
 
     await waitFor(() => expect(screen.getByText('Se cayó el listado.')).toBeInTheDocument())
   })
@@ -116,7 +117,7 @@ describe('EquiposPos — revocación', () => {
     const puerta = screen.getByRole('alertdialog', { name: 'Confirmar revocación' })
     expect(puerta).toHaveTextContent('¿Revocar el equipo "Caja 1"?')
     expect(puerta).toHaveTextContent(NOTA_DE_REVOCACION)
-    expect(NOTA_DE_REVOCACION).toMatch(/su punto de venta, el tenant y el usuario que lo vinculó no se van a poder dar de baja/)
+    expect(NOTA_DE_REVOCACION).toMatch(/su punto de venta, la cuenta y el usuario que lo vinculó no se van a poder dar de baja/)
     expect(NOTA_DE_REVOCACION).toMatch(/ventas sin conexión que todavía no sincronizó, se pierden/)
   })
 
@@ -128,13 +129,14 @@ describe('EquiposPos — revocación', () => {
 
       return Promise.resolve(cargas === 1 ? [caja1, caja2] : [caja2])
     })
-    render(<EquiposPos />)
+    render(<><EquiposPos /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('Caja 1')).toBeInTheDocument())
 
     await usuario.click(botonRevocarDe('Caja 1'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar revocación' }))
 
-    await waitFor(() => expect(screen.getByText('Se revocó el equipo "Caja 1".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Se revocó el equipo "Caja 1".'))
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(apiDeleteMock).toHaveBeenCalledWith('/dispositivos/11')
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -189,7 +191,7 @@ describe('EquiposPos — revocación', () => {
           resolverDelete = resolver
         }),
     )
-    render(<EquiposPos />)
+    render(<><EquiposPos /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('Caja 1')).toBeInTheDocument())
 
     await usuario.click(botonRevocarDe('Caja 1'))
@@ -244,19 +246,14 @@ describe('EquiposPos — revocación', () => {
 
       return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
-    render(<EquiposPos />)
+    render(<><EquiposPos /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('Caja 1')).toBeInTheDocument())
 
     await usuario.click(botonRevocarDe('Caja 1'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar revocación' }))
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(
-          'Se revocó el equipo "Caja 1". Se revocó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-        ),
-      ).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText('Se revocó el equipo "Caja 1".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Se revocó, pero no se pudo actualizar la vista. Recargá la pantalla.')).toBeInTheDocument())
     expect(screen.queryByText(/No se pudo revocar/)).not.toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
@@ -429,7 +426,7 @@ describe('EquiposPos — orden y filtros por columna', () => {
             resolverRefresco = resolver
           }),
     )
-    render(<EquiposPos />)
+    render(<><EquiposPos /><Toaster /></>)
     await waitFor(() => expect(screen.getByText('Zeta')).toBeInTheDocument())
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'a')
     const campo = screen.getByRole('searchbox', { name: 'Filtrar por nombre' })

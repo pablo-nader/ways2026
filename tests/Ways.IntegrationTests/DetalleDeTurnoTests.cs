@@ -11,6 +11,7 @@ using Ways.Application.Exportacion;
 using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Application.Ventas;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Pagos;
@@ -107,7 +108,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// directo, sin pasar por el checkout completo.</summary>
     private async Task SembrarVentaAsync(
         Contexto ctx, int idTurno, decimal importe, EstadoComprobante estado = EstadoComprobante.Emitido,
-        decimal descuentoManual = 0m, decimal recargoManual = 0m)
+        decimal descuentoManual = 0m, decimal recargoManual = 0m, int? idMedioPago = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -141,7 +142,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,
-            IdMedioPago = ctx.IdMedioEfectivo,
+            IdMedioPago = idMedioPago ?? ctx.IdMedioEfectivo,
             Importe = importe,
             Vuelto = 0m,
             CreatedAt = ahora,
@@ -184,13 +185,12 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
-    /// <summary>Mismo filtro que la derivación del resumen (spec: Anulados Are Excluded From The
-    /// Derivation) — un comprobante anulado no aparece en <see cref="DetalleDeTurno.Tickets"/>.
-    /// </summary>
+    /// <summary>El detalle lista los tickets igual que la pantalla "Ventas del turno" del POS: un anulado
+    /// figura con su estado, pero no suma al esperado del arqueo (la derivación del resumen lo excluye).</summary>
     [Fact]
-    public async Task LosTicketsAnuladosQuedanExcluidosDelDetalle()
+    public async Task ElDetalleListaElTicketAnuladoConSuEstadoYElArqueoLoExcluye()
     {
-        var ctx = await PrepararAsync(nameof(LosTicketsAnuladosQuedanExcluidosDelDetalle));
+        var ctx = await PrepararAsync(nameof(ElDetalleListaElTicketAnuladoConSuEstadoYElArqueoLoExcluye));
         var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 0m);
 
         await SembrarVentaAsync(ctx, turno.Id, 100m);
@@ -200,8 +200,104 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
 
         Assert.NotNull(detalle);
-        var ticket = Assert.Single(detalle!.Tickets);
-        Assert.Equal(100m, ticket.Total);
+        Assert.Equal(2, detalle!.Tickets.Count);
+        Assert.Equal(EstadoComprobante.Emitido, detalle.Tickets.Single(t => t.Total == 100m).Estado);
+        Assert.Equal(EstadoComprobante.Anulado, detalle.Tickets.Single(t => t.Total == 999m).Estado);
+        Assert.Equal(100m, detalle.Resumen.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo).ImporteEsperado);
+    }
+
+    /// <summary>Los tickets del detalle son la MISMA fila que devuelve la pantalla "Ventas del turno" del POS
+    /// (<c>/api/ventas/por-turno/{id}</c>): cliente, medios con nombre e importe neto y estado fiscal incluidos.</summary>
+    [Fact]
+    public async Task LosTicketsDelDetalleSonLosMismosQueLaListaDeVentasDelTurno()
+    {
+        var ctx = await PrepararAsync(nameof(LosTicketsDelDetalleSonLosMismosQueLaListaDeVentasDelTurno));
+        var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 0m);
+
+        await SembrarVentaAsync(ctx, turno.Id, 100m, descuentoManual: 15m);
+        await SembrarVentaAsync(ctx, turno.Id, 200m, recargoManual: 25m);
+        await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 300m);
+
+        var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
+        var delPos = await ctx.Admin.GetFromJsonAsync<List<VentaDeTurnoListado>>(
+            $"/api/ventas/por-turno/{turno.Id}", OpcionesJson);
+
+        Assert.NotNull(detalle);
+        Assert.NotNull(delPos);
+        Assert.Equal(2, detalle!.Tickets.Count);
+        Assert.Equal(
+            JsonSerializer.Serialize(delPos, OpcionesJson), JsonSerializer.Serialize(detalle.Tickets, OpcionesJson));
+
+        var ticket = detalle.Tickets.Single(t => t.Total == 100m);
+        Assert.False(string.IsNullOrWhiteSpace(ticket.NombreCliente));
+        Assert.Equal(15m, ticket.DescuentoManualTotal);
+        var medio = Assert.Single(ticket.MediosDePago);
+        Assert.Equal((ctx.IdMedioEfectivo, 100m), (medio.IdMedioPago, medio.Importe));
+    }
+
+    /// <summary>El medio de cada ticket es historia del turno: conserva su nombre aunque el medio se dé de baja
+    /// después (antes la lista mostraba "?"). Las líneas del arqueo no entran: salen de la derivación con los medios
+    /// vigentes, así que la línea de un medio dado de baja directamente en la base deja de figurar.</summary>
+    [Fact]
+    public async Task UnMedioDadoDeBajaConservaSuNombreEnLosTicketsDelDetalle()
+    {
+        var ctx = await PrepararAsync(nameof(UnMedioDadoDeBajaConservaSuNombreEnLosTicketsDelDetalle));
+
+        int idDigital;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            idDigital = await db.MediosPago
+                .Where(m => m.Comportamiento == ComportamientoMedioPago.Electronico)
+                .Select(m => m.Id).FirstAsync();
+        }
+
+        var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 100m);
+        await SembrarVentaAsync(ctx, turno.Id, 70m, idMedioPago: idDigital);
+        var cierre = await ctx.Admin.PostAsJsonAsync(
+            $"/api/caja/turnos/{turno.Id}/cierre",
+            new SolicitudDeCierre(
+                [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m), new ConteoDeclarado(idDigital, 70m)], "Cierre con digital"));
+        Assert.Equal(HttpStatusCode.OK, cierre.StatusCode);
+
+        var antes = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
+        var nombre = antes!.Resumen.Medios.Single(m => m.IdMedioPago == idDigital).Nombre;
+        Assert.False(string.IsNullOrWhiteSpace(nombre));
+        Assert.NotEqual("?", nombre);
+        Assert.Equal(nombre, Assert.Single(Assert.Single(antes.Tickets).MediosDePago).Nombre);
+
+        // Baja directa de la fila ya referenciada: es el dato heredado que la lectura debe sobrevivir.
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var filas = await db.MediosPago
+                .Where(m => m.Id == idDigital)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.DeletedAt, DateTimeOffset.UtcNow));
+            Assert.Equal(1, filas);
+        }
+
+        var despues = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
+
+        Assert.Equal(nombre, Assert.Single(Assert.Single(despues!.Tickets).MediosDePago).Nombre);
+    }
+
+    /// <summary>Ver un ticket de un turno YA CERRADO (Caja Z): <c>GET /api/ventas/{id}</c> no depende del estado del
+    /// turno y lo pueden abrir el Supervisor/Admin y el Vendedor que cerró el turno.</summary>
+    [Fact]
+    public async Task ElTicketDeUnTurnoCerradoSePuedeVerComoAdminYComoVendedor()
+    {
+        var ctx = await PrepararAsync(nameof(ElTicketDeUnTurnoCerradoSePuedeVerComoAdminYComoVendedor));
+        var turno = await AbrirTurnoAsync(ctx, ctx.Vendedor, 0m);
+        await SembrarVentaAsync(ctx, turno.Id, 100m);
+        await CerrarTurnoAsync(ctx.Vendedor, turno.Id, ctx.IdMedioEfectivo, 100m);
+
+        var detalle = await ctx.Vendedor.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
+        var idTicket = Assert.Single(detalle!.Tickets).Id;
+
+        foreach (var cliente in new[] { ctx.Admin, ctx.Vendedor })
+        {
+            var respuesta = await cliente.GetAsync($"/api/ventas/{idTicket}");
+            var cuerpo = await respuesta.Content.ReadAsStringAsync();
+            Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        }
     }
 
     /// <summary>task 5b.7 (hand-computed fixture equality): <see cref="DetalleDeTurno.Resumen"/>
@@ -343,7 +439,9 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         var esperadoEfectivo = detalle!.Resumen.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo).ImporteEsperado;
         Assert.Contains(
-            filas, f => f.Seccion == "Medios de pago" && f.Detalle == $"Medio {ctx.IdMedioEfectivo}" && f.Importe == esperadoEfectivo);
+            filas, f => f.Seccion == "Medios de pago"
+                && f.Detalle == detalle.Resumen.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo).Nombre
+                && f.Importe == esperadoEfectivo);
 
         // Igualdad POR TICKET (no solo cantidad/suma agregada): cada ticket sembrado tiene que
         // aparecer con su propio número visible e importe — los dos tickets sembrados arriba

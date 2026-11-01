@@ -11,6 +11,7 @@ describe('mensajeDeProblema', () => {
     ['familia_nombre_duplicado', 'Elegí otro nombre.'],
     ['familia_inactiva', 'Activala desde el listado de familias'],
     ['familia_sin_articulos', 'Una familia sin artículos vivos no tiene referencia'],
+    ['composicion_distinta', 'Para apagarlo, todos los artículos tienen que tener la misma composición del costo'],
   ])('%s: el mensaje del servidor va primero y la ayuda detrás', (codigo, ayuda) => {
     const texto = mensajeDeProblema(codigo, 'Dice el servidor.')
 
