@@ -37,7 +37,8 @@ QR charge) and E4 (Point charge) need to create orders. Builds on E1 (`odd/tasks
   a typed API client base (bearer, idempotency key, error envelope mapping, 401 → connection needs reconnection,
   never logs tokens). Unit + integration tests with the fake MP handler. Route: delegated.
   Done 2026-10-31 (see Progress).
-- [ ] T2 — Sucursal address (after #557 lands): structured address columns on `sucursales` + its ABM form, docs/10.
+- [x] T2 — Sucursal address: structured address columns on `sucursales` + its ABM form, docs/10. Route: delegated
+  (writer touches domain, service, migration, API contract, web modal and tests: 2+ non-trivial files).
 - [ ] T3 — Store sync: link table sucursal ↔ MP store (`id_store` MP, external_id), "registrar en Mercado Pago"
   per sucursal, update when the address changes.
 - [ ] T4 — POS sync: link table punto de venta ↔ MP POS (`id_pos` MP, `external_id` derived from the PV id), created
@@ -122,9 +123,49 @@ nullable, no RLS or backfill impact) and a doc 10 section 07 update, contrary to
 - Known residual: an unexpected (non-`ErrorDominio`) exception rolls the transaction back, so no attempt time is recorded and the next
   call retries; only expected failures are backed off.
 
+## T2 design (2026-11-01)
+
+The sucursales stack (#549 #550 #557 #573 #580) is in main, so T2 branches from main (`pnader/mercadopago-e2-t2`).
+
+- New nullable columns on `sucursales`, all optional (existing rows and sucursales without Mercado Pago need none):
+  `calle varchar(120)`, `altura varchar(20)` (street number: a string, "S/N" or "1234 bis" are real), `ciudad varchar(80)`,
+  `provincia varchar(40)`, `codigo_postal varchar(10)`, `latitud numeric(9,6)`, `longitud numeric(9,6)`,
+  `referencia varchar(200)`.
+- `provincia` is one of the 24 Argentine jurisdictions (closed list in Domain, `ProvinciasArgentinas`), stored with its
+  canonical name; the web offers it as a select. Mercado Pago's `state_name` comes from it in T3.
+- CHECKs: `latitud BETWEEN -90 AND 90`, `longitud BETWEEN -180 AND 180`, and both-or-neither
+  (`(latitud IS NULL) = (longitud IS NULL)`). The service validates the same before writing (400 with a typed code), so
+  the CHECKs are a backstop only.
+- Text fields are trimmed, empty → NULL, over-length → 400. No completeness rule in T2: T3 decides what Mercado Pago needs
+  and reports what is missing.
+- Create and update of a sucursal accept the address; the listing projects it. Audit payload carries the address.
+- No backfill, no RLS change (same table).
+
+## T2 progress (2026-11-01)
+
+Commit `5516a04d` on `pnader/mercadopago-e2-t2` (route: delegated writer).
+
+- Domain: `DireccionDeSucursal` (record + `Normalizar`), `ProvinciasArgentinas`, address properties and `AplicarDireccion` on
+  `Sucursal`; `PayloadDeAuditoria.AltaDeSucursal/EdicionDeSucursal` carry the address (`RenombreDeSucursal` became `EdicionDeSucursal`).
+- Application/API: `SucursalAlta`, `SucursalEdicion` and `SucursalListado` carry the eight fields; the PUT replaces the address
+  whole; the existence 404 still precedes address validation. `ManejadorDeErrores` maps the three CHECKs to 400.
+- Infrastructure: migration `20261101104443_DireccionDeSucursal` (8 columns, 3 CHECKs), `SucursalConfiguration`.
+- Web: `direccionDeSucursal.ts` (+ test), "Dirección" section in `ModalDeSucursal`, `Sucursales.tsx`, `api/tipos.ts`.
+- Docs: `docs/10-modelo-de-datos/01-padrones-auxiliares.md` (table, CHECKs, behaviour); the index row needed no change.
+- Tests: `DireccionDeSucursalTests` (domain), `SucursalesDireccionTests` (round trip, typed 400s, 404-first, SQLSTATE 23514),
+  `SucursalesDireccionMigracionTests` (UpDownUp), web helper and modal tests.
+- Verification: build 0 errors; Domain 2266 passed; Application 1637 passed (structural guards included); integration filter
+  (Sucursal|UpDownUp|Cobertura|AislamientoDeTenant) 112 passed; web `tsc -b` clean, `oxlint` no new findings, vitest
+  (Sucursales.test.tsx + paginas/organizacion) 73 passed.
+- Mutation evidence: `if (latitud is null != longitud is null)` replaced by `if (false)` -> 2 domain tests failed (reverted);
+  migration CHECKs `ck_sucursales_latitud` and `ck_sucursales_coordenadas_completas` replaced by `true` -> 4 of 6 raw-SQL
+  CHECK cases failed, the 2 longitud cases still passed as expected (reverted).
+- Deviation: tests for the RED step were written with the Domain code in the same pass, so RED was shown by mutation, not by a
+  missing type. `SucursalListado` fields are optional (`Partial`) in the web type to avoid touching unrelated fixtures.
+
 ## Next step
 
-T2 waits for #557 and T3+ depend on T2, so nothing else starts before #557 lands.
+T3 (store sync).
 
 ## Judgment-day T1 verdict
 
