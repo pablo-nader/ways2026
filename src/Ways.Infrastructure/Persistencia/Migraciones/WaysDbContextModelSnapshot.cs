@@ -3657,6 +3657,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_aprobacion");
 
+                    b.Property<DateTimeOffset?>("FechaProcesadaMercadoPago")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_procesada_mercadopago");
+
                     b.Property<DateTimeOffset?>("FechaUltimaConsulta")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_ultima_consulta");

@@ -7,9 +7,29 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
     /// <inheritdoc />
     public partial class CobroMercadoPagoLigadoALaVenta : Migration
     {
+        public const string SqlDeBajaDeAprobadosSinPago =
+            """
+            SET LOCAL app.acceso = 'plataforma';
+            -- rls-migration-backfills: cobros_mercadopago corre con FORCE ROW LEVEL SECURITY; sin el GUC de plataforma el rol
+            -- de la aplicación no ve ninguna fila y el UPDATE no escribe nada.
+            UPDATE cobros_mercadopago
+            SET estado = 'pendiente'
+            WHERE estado = 'aprobado' AND id_pago_mercadopago IS NULL;
+            """;
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.AddColumn<DateTimeOffset>(
+                name: "fecha_procesada_mercadopago",
+                table: "cobros_mercadopago",
+                type: "timestamp with time zone",
+                nullable: true);
+
+            // Un cobro aprobado por la etapa anterior sin id de pago vuelve a pendiente: la próxima consulta lo reaprueba si el pago
+            // ya es legible, y el CHECK que sigue no falla en una base que ya corrió esa etapa.
+            migrationBuilder.Sql(SqlDeBajaDeAprobadosSinPago);
+
             migrationBuilder.AddCheckConstraint(
                 name: "ck_cobros_mercadopago_aprobado_con_pago",
                 table: "cobros_mercadopago",
@@ -86,6 +106,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             migrationBuilder.DropIndex(
                 name: "ix_cobros_cobro_mercadopago",
                 table: "cobros");
+
+            migrationBuilder.DropColumn(
+                name: "fecha_procesada_mercadopago",
+                table: "cobros_mercadopago");
 
             migrationBuilder.DropColumn(
                 name: "id_comprobante_venta",

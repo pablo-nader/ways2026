@@ -61,6 +61,7 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
         builder.Property(c => c.ExpiraEn).HasColumnName("expira_en").IsRequired();
         builder.Property(c => c.FechaUltimaConsulta).HasColumnName("fecha_ultima_consulta");
         builder.Property(c => c.FechaAprobacion).HasColumnName("fecha_aprobacion");
+        builder.Property(c => c.FechaProcesadaMercadoPago).HasColumnName("fecha_procesada_mercadopago");
 
         builder.Property(c => c.IdComprobanteVenta).HasColumnName("id_comprobante_venta");
 

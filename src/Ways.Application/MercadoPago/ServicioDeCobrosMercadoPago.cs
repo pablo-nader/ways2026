@@ -40,8 +40,8 @@ namespace Ways.Application.MercadoPago;
 /// crear una orden nueva y cobrable, y crear, consultar y cancelar responden 409 <c>cobro_mercadopago_en_curso</c>; desde dos
 /// vigencias más 5 minutos (cualquier orden que pudo crear un reenvío ya venció) la fila pasa a <c>expirado</c> sin llamar a Mercado
 /// Pago, y libera el número. Una orden en estado <c>created</c> sin <c>qr_data</c> es una respuesta inválida (502); una en estado
-/// terminal pasa por el mapeo de estados; una <c>processed</c> recuperada sin pago legible (importe o id) queda <c>pendiente</c> sin QR
-/// (<c>VerificandoPago</c>).
+/// terminal pasa por el mapeo de estados; una <c>processed</c> sin pago legible (importe o id) queda <c>pendiente</c> sin QR
+/// (<c>VerificandoPago</c> y <c>PagoInformadoSinDatos</c>).
 ///
 /// <b>Locks</b> (<c>single-read-under-lock</c>), siempre en el orden punto de venta → cobro: crear toma el lock del punto de venta y,
 /// si hay un cobro vivo del número, el del cobro; consultar y cancelar toman el del cobro y, si el cobro está <c>creando</c> (hay
@@ -55,9 +55,13 @@ namespace Ways.Application.MercadoPago;
 /// llegar después de una escritura ya hecha (el estado nuevo de un cobro refrescado): en ambos casos se confirma lo ya guardado
 /// antes de relanzar. Cada <c>SaveChanges</c> deja un estado consistente por sí solo, así que confirmar nunca deja algo a medias.
 ///
-/// <b>Un pago sin importe legible no aprueba.</b> Una orden <c>processed</c> solo aprueba el cobro si trae un pago con importe
-/// pagado válido (<c>paid_amount</c> o, si falta, <c>amount</c>; mayor a 0 y con hasta 2 decimales); si no, el cobro sigue pendiente,
-/// se avisa en el log (sin datos sensibles) y la próxima consulta lo reintenta.
+/// <b>Un pago sin importe o sin id legibles no aprueba.</b> Una orden <c>processed</c> solo aprueba el cobro si trae un pago con
+/// importe pagado válido (<c>paid_amount</c> o, si falta, <c>amount</c>; mayor a 0 y con hasta 2 decimales) e id no vacío de hasta
+/// 64 caracteres (sin espacios en los bordes); si no, el cobro sigue pendiente, se avisa en el log (sin datos sensibles) y la próxima
+/// consulta lo reintenta. Como el cliente ya pagó, la primera vez se guarda <c>fecha_procesada_mercadopago</c>: desde entonces no se
+/// devuelve el QR, el cobro se informa como <c>VerificandoPago</c> y <c>PagoInformadoSinDatos</c>, y cancelarlo es 409
+/// <c>cobro_mercadopago_pagado_sin_datos</c> sin llamar a Mercado Pago. Consultar sigue refrescando (con el límite de siempre) y un
+/// pago legible posterior lo aprueba.
 ///
 /// Los campos de la orden (<c>id</c>, <c>status</c>, <c>type_response.qr_data</c>, <c>transactions.payments[]</c>) están verificados
 /// contra la referencia de la API (2026-11-01) pero no se ejercitaron en vivo; los DTO ignoran lo que no usan.
@@ -317,6 +321,14 @@ public class ServicioDeCobrosMercadoPago(
                 return Mapear(cobro);
             }
 
+            if (cobro.FechaProcesadaMercadoPago is not null)
+            {
+                throw ErrorDominio.Conflicto(
+                    CodigosDeErrorDeCobrosMercadoPago.PagadoSinDatos,
+                    "Mercado Pago informa que el cliente ya pagó este cobro, pero todavía falta confirmar el pago: no se puede cancelar. " +
+                    "Esperá la confirmación o usá la aprobación manual.");
+            }
+
             try
             {
                 var cancelada = await api.EnviarAsync<OrdenDeMercadoPago>(
@@ -428,9 +440,10 @@ public class ServicioDeCobrosMercadoPago(
                 var pagos = orden.Transactions?.Payments;
                 var pago = pagos?.FirstOrDefault(p => p.Status == "processed") ?? pagos?.FirstOrDefault();
                 var pagado = pago is null ? null : ImportePagadoValido(pago.PaidAmount ?? pago.Amount);
-                var idPago = pago?.Id is { Length: > 0 and <= LargoMaximoDeId } id ? id : null;
+                var idPago = pago?.Id?.Trim() is { Length: > 0 and <= LargoMaximoDeId } id ? id : null;
                 if (pagado is null || idPago is null)
                 {
+                    cobro.FechaProcesadaMercadoPago ??= ahora;
                     log.LogWarning(
                         "La orden {IdOrden} de Mercado Pago figura procesada pero sin un pago con importe e id legibles: el cobro {IdCobro} sigue sin aprobarse.",
                         cobro.IdOrdenMercadoPago, cobro.Id);
@@ -470,10 +483,13 @@ public class ServicioDeCobrosMercadoPago(
     private static CobroDeMercadoPago Mapear(CobroMercadoPago cobro)
     {
         var pendiente = cobro.Estado == EstadosDeCobroMercadoPago.Pendiente;
+        var pagoInformadoSinDatos = pendiente && cobro.FechaProcesadaMercadoPago is not null;
         return new CobroDeMercadoPago(
-            cobro.Id, cobro.Estado, pendiente ? cobro.QrData : null, cobro.ExpiraEn, cobro.Importe, cobro.ImportePagado,
+            cobro.Id, cobro.Estado, pendiente && !pagoInformadoSinDatos ? cobro.QrData : null, cobro.ExpiraEn, cobro.Importe,
+            cobro.ImportePagado,
             cobro.Estado == EstadosDeCobroMercadoPago.Aprobado && cobro.ImportePagado is { } pagado && pagado != cobro.Importe,
-            pendiente && cobro.QrData is null);
+            pendiente && (cobro.QrData is null || pagoInformadoSinDatos),
+            pagoInformadoSinDatos);
     }
 
     private static void ValidarSolicitud(SolicitudDeCobroMercadoPago solicitud)
