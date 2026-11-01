@@ -48,6 +48,9 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 - [x] E3-T2 — Backend sale: `PagoDeVenta.IdCobroMercadoPago`; the sale validates and links the approved charge (unique).
 - [x] E3-T3 — Web: the medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close +
   print.
+- [x] E3-T3b — Apartar en el servidor: estado `sin_venta`, apartado del dispositivo con sincronización diferida, listado para el
+  back office, cierre de turno y cobros con Mercado Pago bloqueados mientras haya un apartado sin sincronizar, `reponerBloque` bajo
+  el candado de la reserva.
 - [ ] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
 - [ ] E4 — Point: same charge with `type:"point"` on the PV's terminal.
 - [ ] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
@@ -61,7 +64,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E3-T4: webhook `POST /api/integraciones/mercadopago/webhook` (signature check, refresh the charge). Pending before it ships to the cajas: the POS bundle of E3-T3 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call).
+E3-T4: webhook `POST /api/integraciones/mercadopago/webhook` (signature check, refresh the charge). E3-T3b is built and awaits its own judgment-day before the PR. Pending before it ships to the cajas: the POS bundle of E3-T3 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call).
 
 ## E3-T1 design (2026-11-01)
 
@@ -313,3 +316,15 @@ Branch `pnader/mercadopago-e3-t3b`, stacked on E3-T3.
 - Shift close: closing the turno is blocked while a local apartar is pending sync (same rule as the outbox).
 - `reponerBloque`: take the reservation lock for the final read-decide-write, re-check the reservation after the network calls,
   and never replace the block while a reservation exists.
+
+## E3-T3b progress (2026-11-01)
+
+Done on `pnader/mercadopago-e3-t3b`, commit `feat(mercadopago): un cobro apartado queda sin venta en el servidor, libera el número y se sincroniza aunque no haya red` (hash in git log). Own judgment-day pending. Nothing was exercised against the real Mercado Pago API; the POS bundle still needs the Ways.Desktop bump + `pos-v*` tag (owner's call).
+
+- Model summary (docs/10 part 07): `cobros_mercadopago.estado` gains `sin_venta` (CHECK `ck_cobros_mercadopago_estado` rebuilt), new nullable `fecha_apartado`, new CHECK `ck_cobros_mercadopago_sin_venta` (`estado <> 'sin_venta' OR (fecha_apartado IS NOT NULL AND id_comprobante_venta IS NULL AND id_pago_mercadopago IS NOT NULL)`; 23514 -> 409 `cobro_mercadopago_ya_usado`, raw-SQL test). Migration `CobroMercadoPagoSinVenta` (new, the E3-T1/T2 ones untouched). `sin_venta` is not in the partial unique `ux_cobros_mercadopago_vivo_numero` filter nor in `EsVivo` nor in the medio guard (`creando`/`pendiente` only): it frees the number (a new charge gets `intento + 1`) and never blocks a medio edit.
+- Server: `POST /api/pos/mercadopago/cobros/{id}/apartar` (device, same scoping and locks as cancelar, plus `FOR UPDATE` of the charge row BEFORE the single read, the lock the sale takes when it links): used by a sale -> 409 `cobro_mercadopago_ya_usado`; `pendiente` -> refresh, still payable -> cancel at Mercado Pago (ends `cancelado`), paid meanwhile (also via the cancel-409 refresh) -> `sin_venta`; paid without readable data -> 409 `cobro_mercadopago_pagado_sin_datos`; `aprobado` -> `sin_venta`; already `sin_venta`/cancelado/expirado/devuelto -> returned as is. `CancelarAsync`'s body became `CancelarPendienteAsync`, shared. `GET /api/mercadopago/cobros-sin-venta?idEmpresa=` under `LecturaDeReportes` (Supervisor + Admin, same gate as the treasury ledger), 404 for an empresa outside the tenant (RLS), only `sin_venta`, newest first. Only `aprobado` pays a sale (unchanged `ReglaDeCobroEnVenta`), now covered for `sin_venta` in domain and integration tests; surface guards updated (allowlist + RequiereDispositivo).
+- POS: `CobroSinVenta.sincronizadoEn` (absent = pending sync, also for entries stored by E3-T3). `apartarCobroSinVenta` in the hook calls the server FIRST (outside the locks; skipped when offline), then writes the entry (synced when the server answered a final state, or a definitive 404/`cobro_mercadopago_ya_usado`; otherwise pending) and drops the reservation (no number consumed). `sincronizarApartados` retries every pending entry (one run at a time; on every sync cycle with signal, in `drenarAhora`, and before any Mercado Pago charge); `EstadoDeColaLocal.apartadosSinSincronizar` and `apartadosSinSincronizar` state. `cobrarConMercadoPago` refuses to start while any apartado stays pending (clear message). `irACerrarCaja` blocks the shift close after the drain/retry with "hay N cobros de Mercado Pago apartados sin sincronizar". The list shows "pendiente de sincronizar". `vistaDelCobro` treats `sin_venta` as a closed charge (`sin_aprobar`).
+- `reponerBloque`: the final read of the reservation + the decision + the block write run inside `encolarOperacion(conCandadoDeReserva(...))`; a reservation that appeared during the network calls leaves the block untouched (the freshly reserved server block is dropped unused).
+- Verification: `dotnet build` 0 errors, `has-pending-model-changes` clean, Domain 2452, Application 1654, integration filter 352 (17 m 24 s), web `tsc -b`, oxlint (no new findings), vitest `src/pos src/paginas/Pos.test.tsx` green, `npm run build` OK.
+- Mutation evidence (one per run, each killed): no `FOR UPDATE` (lock test), pending not cancelled (3 tests), `aprobado` not moved to `sin_venta` (6 tests), list without empresa / without estado filter (list test), `sin_venta` paying a sale (integration and domain), `sin_venta` live (number-release test); POS: server call forced off (4 tests), offline guard removed, `reponerBloque` recheck removed, cycle without `sincronizarApartados`, 404 not definitive, MP not blocked while pending, shift close ignoring pending (Pos test). Survives by design: skipping the in-service `IdComprobanteVenta` check alone (the CHECK `ck_cobros_mercadopago_sin_venta` produces the same 409 code as a second layer).
+- Deviations / open: `CierreDeCaja.tsx` (the web route that re-reads the outbox) was NOT touched (outside the allowed surfaces): the gate lives in `irACerrarCaja`, the choke point every desktop close passes through, and a pending apartado can only be created by the POS screen; a 404 from the server on a retry (charge of another PV) is treated as definitive so a device never stays locked; the web screen for the list (E6) is not built; `Down` of the migration fails if `sin_venta` rows exist (like any enum narrowing).
