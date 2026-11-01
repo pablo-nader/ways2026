@@ -200,6 +200,43 @@ public static class CajaEndpoints
             "Export XLSX del Z-report: mismo resumen + tickets + pagos que /detalle, gate " +
             "OperacionDePos heredado por co-locación — el cajero puede descargar su propio cierre.");
 
+        // Retiros del back office: el listado con el gate de los reportes de tesorería (Supervisor y Admin); la corrección, solo
+        // Admin, con el turno abierto o cerrado.
+        var retiros = app.MapGroup("/api/caja/retiros")
+            .WithTags("Caja")
+            .RequireAuthorization(Politicas.LecturaDeReportes);
+
+        retiros.MapGet("/", (
+            ServicioDeRetiros servicio, DateTimeOffset? desde, DateTimeOffset? hasta, int? idPuntoVenta, int? idTurnoCaja,
+            int? idEmpleado, decimal? importeDesde, decimal? importeHasta, string? motivo, bool? turnoCerrado, bool? conciliado,
+            bool? esRetiroDeCierre, int? pagina, int? tamanio, string? orden, string? direccion, CancellationToken ct) =>
+            servicio.ListarAsync(
+                new FiltrosDeRetiros(
+                    desde, hasta, idPuntoVenta, idTurnoCaja, idEmpleado, importeDesde, importeHasta, motivo, turnoCerrado,
+                    conciliado, esRetiroDeCierre),
+                pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
+        .WithSummary(
+            "Lista los retiros de caja vivos de todos los turnos, con un filtro por columna. orden (fecha, puntoVenta, turno, " +
+            "empleado, importe, motivo, estadoTurno, conciliado, esRetiroDeCierre) y direccion (ascendente, descendente) ordenan " +
+            "todo el conjunto filtrado antes de paginar; 400 si no son válidos.");
+
+        retiros.MapPut("/{id:int}", (
+            ServicioDeRetiros servicio, int id, SolicitudDeEdicionDeRetiro solicitud, CancellationToken ct) =>
+            servicio.EditarAsync(id, solicitud, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Corrige el importe y el motivo de un retiro manual. Con el turno cerrado recalcula el arqueo (con la marca del " +
+            "recálculo) y compensa la tesorería con un ajuste.");
+
+        retiros.MapDelete("/{id:int}", async (ServicioDeRetiros servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.EliminarAsync(id, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Da de baja un retiro manual. Con el turno cerrado recalcula el arqueo y compensa la tesorería con un ajuste.");
+
         return app;
     }
 }

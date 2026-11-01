@@ -41,6 +41,8 @@ public class MovimientoCajaConfiguration : IEntityTypeConfiguration<MovimientoCa
         builder.Property(m => m.Motivo).HasColumnName("motivo").HasColumnType("text").IsRequired();
         builder.Property(m => m.IdEmpleado).HasColumnName("id_empleado").IsRequired();
         builder.Property(m => m.CreadoEl).HasColumnName("creado_el").IsRequired();
+        builder.Property(m => m.EsRetiroDeCierre).HasColumnName("es_retiro_de_cierre").HasDefaultValue(false).IsRequired();
+        builder.Property(m => m.DeletedAt).HasColumnName("deleted_at");
 
         builder.HasIndex(m => m.IdTenant).HasDatabaseName("ix_movimientos_caja_tenant");
         builder.HasIndex(m => new { m.IdTurnoCaja, m.IdTenant }).HasDatabaseName("ix_movimientos_caja_turno");

@@ -3543,6 +3543,9 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'tenant.baja', etiqueta: 'Baja de tenant' },
   { valor: 'empresa.baja', etiqueta: 'Baja de empresa' },
   { valor: 'pv.baja', etiqueta: 'Baja de punto de venta' },
+  { valor: 'venta.medios', etiqueta: 'Cambio de medios de pago de venta' },
+  { valor: 'retiro.edicion', etiqueta: 'Edición de retiro' },
+  { valor: 'retiro.baja', etiqueta: 'Baja de retiro' },
 ]
 
 // --- Órdenes de compra (stage-16-ordenes-de-compra, Slice 6) --------------------------------
@@ -4052,6 +4055,27 @@ export type SolicitudDePagoDePersonal = {
   descuentoDeCuentaCorriente?: number
   lineas?: LineaDeSolicitudDePagoDePersonal[]
   detalle?: string
+}
+
+/** Espejo de `SolicitudDePagoDePersonal` en `POST /api/pos/personal/{id}/pagos`: el cajero no manda fecha (el servidor usa
+ * hoy en la zona del punto de venta y una fecha distinta responde 400), ni empresa, ni descuento. */
+export type SolicitudDePagoDePersonalDelPos = Omit<
+  SolicitudDePagoDePersonal,
+  'fecha' | 'idEmpresa' | 'descuentoDeCuentaCorriente'
+>
+
+/** Espejo de `ReciboDePagoDePersonalDelPos`: el POS nunca recibe el saldo del empleado. */
+export type ReciboDePagoDePersonalDelPos = {
+  idMovimiento: number
+  fecha: string
+  importe: number
+}
+
+/** Espejo de `Ways.Application.Plantel.OpcionDePersonal` (`GET /api/pos/personal/opciones`, `OperacionDePos`): solo id y
+ * nombre, nunca saldo, valor hora ni documento. */
+export type OpcionDePersonal = {
+  id: number
+  nombre: string
 }
 
 /** Espejo de `Ways.Application.Plantel.DatosDePersonal`: cuerpo del alta y de la edición. */

@@ -89,4 +89,58 @@ public class ReglaDeCambioDeMediosTests
 
         Assert.Equal(new Dictionary<int, decimal> { [1] = -1000m, [3] = 800m }, variacion);
     }
+
+    private static ReglaDeCambioDeMedios.SituacionDeLaVenta Situacion(
+        bool anulada = false, string codigoTipo = "TX", short signo = 1, ResultadoFiscal? deLaVenta = null,
+        ResultadoFiscal? deLaFactura = null, bool conciliada = false, bool conCuentaCorriente = false) =>
+        new(anulada, codigoTipo, signo, deLaVenta, deLaFactura, conciliada, conCuentaCorriente);
+
+    [Fact]
+    public void UnaVentaSinNingunBloqueoTieneLosMediosEditables() =>
+        Assert.Null(ReglaDeCambioDeMedios.MotivoDeBloqueo(Situacion()));
+
+    [Theory]
+    [InlineData(true, "TX", 1, null, null, false, false, "venta_anulada")]
+    [InlineData(false, "NCX", -1, null, null, false, false, "comprobante_sin_cambio_de_medios")]
+    [InlineData(false, "RC", 1, null, null, false, false, "comprobante_sin_cambio_de_medios")]
+    [InlineData(false, "TX", 1, ResultadoFiscal.Aprobado, null, false, false, "venta_con_cae")]
+    [InlineData(false, "TX", 1, null, ResultadoFiscal.AprobadoConObservaciones, false, false, "venta_con_cae")]
+    [InlineData(false, "TX", 1, null, ResultadoFiscal.Pendiente, false, false, "venta_con_factura_en_tramite")]
+    [InlineData(false, "TX", 1, null, ResultadoFiscal.Rechazado, false, false, null)]
+    [InlineData(false, "TX", 1, null, null, true, false, "periodo_conciliado")]
+    [InlineData(false, "TX", 1, null, null, false, true, "cambio_de_medios_con_cuenta_corriente")]
+    public void CadaMotivoDeBloqueoTieneSuCodigo(
+        bool anulada, string codigoTipo, short signo, ResultadoFiscal? deLaVenta, ResultadoFiscal? deLaFactura, bool conciliada,
+        bool conCuentaCorriente, string? esperado) =>
+        Assert.Equal(
+            esperado,
+            ReglaDeCambioDeMedios.MotivoDeBloqueo(
+                Situacion(anulada, codigoTipo, signo, deLaVenta, deLaFactura, conciliada, conCuentaCorriente)));
+
+    /// <summary>Con varios motivos a la vez gana el primero en el orden en que el servicio evalúa las guardas.</summary>
+    [Fact]
+    public void ConVariosMotivosGanaElPrimeroEnElOrdenDeLasGuardas()
+    {
+        var todo = Situacion(true, "NCX", -1, ResultadoFiscal.Aprobado, ResultadoFiscal.Pendiente, true, true);
+
+        Assert.Equal("venta_anulada", ReglaDeCambioDeMedios.MotivoDeBloqueo(todo));
+        Assert.Equal("comprobante_sin_cambio_de_medios", ReglaDeCambioDeMedios.MotivoDeBloqueo(todo with { Anulada = false }));
+        Assert.Equal(
+            "venta_con_cae",
+            ReglaDeCambioDeMedios.MotivoDeBloqueo(todo with { Anulada = false, CodigoTipo = "TX", Signo = 1 }));
+        Assert.Equal(
+            "periodo_conciliado",
+            ReglaDeCambioDeMedios.MotivoDeBloqueo(
+                todo with { Anulada = false, CodigoTipo = "TX", Signo = 1, ResultadoDeLaVenta = null, ResultadoDeLaFactura = null }));
+    }
+
+    [Theory]
+    [InlineData("2026-10-04", "2026-10-02", "2026-10-02")]
+    [InlineData("2026-10-01", "2026-10-02", "2026-10-01")]
+    [InlineData("2026-10-01", null, "2026-10-01")]
+    public void ElLibroAsientaLaMenorEntreElCierreDelTurnoYLaFechaDeLaVenta(string venta, string? cierre, string esperada) =>
+        Assert.Equal(
+            DateTimeOffset.Parse(esperada),
+            ReglaDeCambioDeMedios.FechaQueCuentaParaElLibro(
+                DateTimeOffset.Parse(venta), cierre is null ? null : DateTimeOffset.Parse(cierre)));
 }

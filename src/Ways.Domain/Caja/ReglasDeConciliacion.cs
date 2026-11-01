@@ -59,9 +59,11 @@ public static class ReglasDeConciliacion
     public static bool EstaCongelado(DateTimeOffset fecha, DateTimeOffset? marcaVigente) =>
         marcaVigente is { } marca && fecha <= marca;
 
+    public const string CodigoPeriodoConciliado = "periodo_conciliado";
+
     public static ErrorDominio PeriodoConciliado(DateTimeOffset marcaVigente) =>
         new(
-            "periodo_conciliado",
+            CodigoPeriodoConciliado,
             $"El período está conciliado hasta {Formatear(marcaVigente)}: no se puede modificar. Corregilo con un movimiento nuevo.",
             409);
 

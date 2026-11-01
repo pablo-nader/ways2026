@@ -2,12 +2,14 @@
  * Pago de sueldos desde "Pagos" (administración): con la categoría Sueldos se puede elegir un empleado y el
  * guardado pasa a ser un pago de personal (baja su saldo del libro de horas) en vez de un pago común.
  */
+import type { LineaDePagoEditable } from './lineasDePago'
 import type { FormularioDePagoDeAdministracion } from './registroDePagos'
 import type {
   CategoriaPago,
   LineaDeSolicitudDePagoDePersonal,
   PersonalListado,
   SolicitudDePagoDePersonal,
+  SolicitudDePagoDePersonalDelPos,
 } from './tipos'
 
 /** Solo Sueldos ofrece elegir un empleado; el resto de las categorías sigue ofreciendo el proveedor. */
@@ -63,4 +65,41 @@ export function aSolicitudDePagoDePersonalDesdeAdministracion(
     lineas,
     ...(detalle !== '' && { detalle }),
   }
+}
+
+/**
+ * El pago de personal del POS: el cajero paga solo del cajón del turno (`CajaTurno`) y no descuenta la cuenta corriente
+ * del empleado; el servidor responde 403 con cualquier otro origen o con descuento, así que esos campos ni viajan. El
+ * concepto, el área y el número de factura tampoco existen en un pago de personal. Las observaciones quedan como detalle.
+ * La fecha tampoco viaja: el servidor registra el pago con el día de hoy en la zona del punto de venta.
+ */
+export function aSolicitudDePagoDePersonalDesdeElPos(f: {
+  idPuntoVenta: number
+  lineas: readonly LineaDePagoEditable[]
+  observaciones: string
+}): SolicitudDePagoDePersonalDelPos {
+  const lineas: LineaDeSolicitudDePagoDePersonal[] = f.lineas.map((l) => {
+    const referencia = l.referencia.trim()
+    return {
+      idMedioPago: l.idMedioPago === '' ? 0 : l.idMedioPago,
+      importe: l.importe ?? 0,
+      ...(referencia !== '' && { referencia }),
+    }
+  })
+  const detalle = f.observaciones.trim()
+
+  return {
+    idPuntoVenta: f.idPuntoVenta,
+    origenFondos: 'CajaTurno',
+    lineas,
+    ...(detalle !== '' && { detalle }),
+  }
+}
+
+export const MOTIVO_PAGO_A_PERSONAL_SIN_CONEXION = 'Sin conexión: pagar a un empleado necesita conexión con el servidor.'
+
+/** El pago de personal solo existe con conexión: no hay cola offline de pagos de personal. */
+export function pagoAPersonalDisponible(estado: { enLinea: boolean }): { habilitado: boolean; motivo: string } {
+  if (!estado.enLinea) return { habilitado: false, motivo: MOTIVO_PAGO_A_PERSONAL_SIN_CONEXION }
+  return { habilitado: true, motivo: '' }
 }

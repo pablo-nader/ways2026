@@ -18,6 +18,10 @@ public record PersonalListado(
     string? NombreCliente,
     decimal[]? HorarioHabitual);
 
+/// <summary>Proyección mínima del personal para el selector del POS (<c>GET /api/pos/personal/opciones</c>,
+/// <c>OperacionDePos</c>): nunca saldo, valor hora, documento ni vínculos.</summary>
+public record OpcionDePersonal(int Id, string Nombre);
+
 /// <summary>Cuerpo del alta y de la edición. <see cref="ValorHora"/> admite hasta dos decimales y es
 /// el valor por defecto de la próxima carga de horas. <see cref="IdUsuario"/> debe ser un usuario
 /// vivo del tenant e <see cref="IdCliente"/> un cliente vivo que no sea el consumidor final; cada
