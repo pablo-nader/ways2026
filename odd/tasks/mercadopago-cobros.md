@@ -283,3 +283,33 @@ Fix commit `fix(pos): un cobro aprobado sin venta se aparta y libera la caja, la
 - Verification: `npx tsc -b --noEmit` clean, oxlint no new findings, vitest `src/pos src/paginas/Pos.test.tsx src/componentes/EditorDeLineasDePago.test.tsx` 36 files / 1685 tests green, `npm run build` OK.
 - Mutation evidence (one per run, each killed): R1a `cobro_en_curso` made definitive again (outbox unit + Pos online-sale test), R1b apartar no longer drops the reservation (hook test + 2 Pos tests), R2 mount heal disabled (Pos test), R2 retomar heal removed (Pos test), R3 owner token ignored in the compare (2 hook tests).
 - Accepted: the lock is held by the tab that runs the operation, not across a whole charge; a tab that reads a reservation and acts later is protected by the token only against a reservation that changed in between, not against a user acting on a still-valid view; the approved-charge list has no screen to resolve it until E6.
+
+## Judgment-day E3-T3 verdict
+
+- 2026-11-01: **APPROVED** after two fix rounds, no CRITICAL left. Round 1 (both; one CRITICAL from judge A): a reserved but
+  unsold number left a hole that blocked the shift close, plus ignored local-write failures, resume across PVs, a
+  fire-and-forget consume; fixed in 8043d690 (the reservation peeks the block's next number and consumes it only on the sale).
+  Re-judgment (both): device lockout with no exit, stale reservation after an online sale, cross-tab race; fixed in bb5ba112
+  ("apartar cobro y liberar la caja", self-heal by `usadoEnVenta`, Web Locks + owner token).
+- Final re-judgment, WARNINGs confirmed by both, taken as the next slice E3-T3b (own judgment-day), not as an exhausted-budget fix:
+  after apartar the server charge stays `aprobado` for that number, so the next Mercado Pago charge for it gets 409
+  `cobro_mercadopago_ya_aprobado`; `reponerBloque` writes the block outside the reservation lock; offline, a live reservation
+  blocks local sales with no exit; the "cobros sin venta" list is local only and does not stop the shift close.
+
+## E3-T3b design (2026-11-01)
+
+Branch `pnader/mercadopago-e3-t3b`, stacked on E3-T3.
+
+- Server: new charge state `sin_venta` (not live: leaves the partial unique index; CHECKs and docs/10 updated). Device endpoint
+  `POST /api/pos/mercadopago/cobros/{id}/apartar` (same PV/device scoping and locks): `aprobado` without sale -> `sin_venta`
+  (with `fecha_apartado`); `pendiente`/`creando` -> resolve first (refresh; still payable -> cancel at Mercado Pago; paid ->
+  `sin_venta`); used by a sale -> 409 `cobro_mercadopago_ya_usado`; already `sin_venta` -> idempotent 200. A `sin_venta` charge
+  never pays a sale (E3-T2 rule: only `aprobado`) and is listed for reconciliation (E6). `GET /api/mercadopago/cobros-sin-venta`
+  (Admin/Supervisor, per empresa) lists them for the back office (E6 builds the screen; this slice only the endpoint + test).
+- POS: "Apartar cobro y liberar la caja" calls the server apartar first; online success -> drop the reservation (number never
+  consumed, no hole) and the local entry is marked synced. Offline -> the cashier can still apartar ("sin verificar"): the entry
+  is stored as pending sync, the reservation is dropped, and the apartar call is retried on reconnect (cancel/sin_venta on the
+  server) — Mercado Pago charges stay unavailable until every pending apartar is synced.
+- Shift close: closing the turno is blocked while a local apartar is pending sync (same rule as the outbox).
+- `reponerBloque`: take the reservation lock for the final read-decide-write, re-check the reservation after the network calls,
+  and never replace the block while a reservation exists.
