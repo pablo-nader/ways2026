@@ -731,6 +731,47 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Contains("\"operacion\": \"adopcion\"", (await AuditoriaAsync(r.IdPuntoVenta)).Valor);
     }
 
+    // Clausula: una búsqueda de cajas que contesta 404 cuenta como sin coincidencias y la caja se crea.
+    [Fact]
+    public async Task UnaBusquedaDeCajasQueContesta404CreaLaCaja()
+    {
+        var r = await PrepararRegistrableAsync("mp-caja-busqueda-404");
+        Guionar(
+            r.Ctx, idPos: 880_740,
+            antes: p => p.Metodo == HttpMethod.Get && p.Uri.AbsolutePath == "/v2/pos"
+                ? Json(HttpStatusCode.NotFound, """{"error": "pos_not_found", "message": "pos not found"}""")
+                : null);
+        var previas = LlamadasDeCajas(r.Ctx).Count;
+
+        var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
+
+        Assert.Equal(880_740, estado.IdPosMercadoPago);
+        Assert.Equal(["GET", "POST"], LlamadasDeCajas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
+    }
+
+    // Clausula: un 404 store_not_found del PATCH no es una caja borrada: no se busca ni se crea otra, sale como 502.
+    [Fact]
+    public async Task UnPatchQueContestaStoreNotFoundNoSeTomaComoCajaBorrada()
+    {
+        var r = await PrepararRegistrableAsync("mp-caja-patch-sin-local");
+        Guionar(r.Ctx, idPos: 880_750);
+        await LeerAsync<EstadoDeCajaMercadoPago>(await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null));
+
+        Guionar(
+            r.Ctx, idPos: 990_751,
+            antes: p => p.Metodo == HttpMethod.Patch
+                ? Json(HttpStatusCode.NotFound, """{"error": "store_not_found", "message": "store not found"}""")
+                : null);
+        var previas = LlamadasDeCajas(r.Ctx).Count;
+
+        await AssertCodigoAsync(
+            await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null), HttpStatusCode.BadGateway,
+            CodigosDeErrorDeMercadoPago.SolicitudRechazada);
+
+        Assert.Equal(["PATCH"], LlamadasDeCajas(r.Ctx).Skip(previas).Select(l => l.Metodo.Method));
+        Assert.Equal(880_750, Assert.Single(await FilasAsync(r.IdPuntoVenta)).IdPos);
+    }
+
     // Clausula: un 404 del PATCH sin caja con ese external_id la vuelve a crear.
     [Fact]
     public async Task SiLaCajaSeBorroEnMercadoPagoYNoHayOtraElRegistroLaCreaDeNuevoYActualizaElVinculo()

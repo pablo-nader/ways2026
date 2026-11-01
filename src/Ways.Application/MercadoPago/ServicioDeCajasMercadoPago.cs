@@ -128,6 +128,9 @@ public class ServicioDeCajasMercadoPago(
 
     private async Task<EstadoDeCajaMercadoPago> RegistrarBajoLockAsync(int idPuntoVenta, int idSucursalBloqueada, CancellationToken ct)
     {
+        // La fecha se toma antes de leer el punto de venta: una edición que confirme después de la lectura queda posterior a ella y
+        // el vínculo figura desactualizado.
+        var sincronizadoEn = reloj.Ahora;
         var puntoVenta = await LeerPuntoVentaAsync(idPuntoVenta, ct);
         if (puntoVenta.IdSucursal != idSucursalBloqueada)
         {
@@ -168,9 +171,6 @@ public class ServicioDeCajasMercadoPago(
         var vinculo = await db.CajasMercadoPago
             .FirstOrDefaultAsync(c => c.IdPuntoVenta == idPuntoVenta && c.IdUsuarioMercadoPago == idUsuario, ct);
 
-        // La fecha de la lectura del punto de venta, no la del fin de la llamada: una edición hecha mientras Mercado Pago responde
-        // queda posterior a ella y el vínculo figura desactualizado.
-        var sincronizadoEn = reloj.Ahora;
         var externalId = CajaParaMercadoPago.ExternalIdDe(idPuntoVenta);
         var cuerpo = new SolicitudDeCajaMercadoPago(
             nombre, externalId, local.IdStoreMercadoPago.ToString(CultureInfo.InvariantCulture), ConfiguracionDeCajaMercadoPago.ModoPdv);
@@ -184,7 +184,7 @@ public class ServicioDeCajasMercadoPago(
                 enviado = await ActualizarAsync(
                     puntoVenta.IdEmpresa, vinculo.IdPosMercadoPago, cuerpo, idPuntoVenta, estadoDelPuntoVenta, "actualizacion", ct);
             }
-            catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404)
+            catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404 && error.CodigoMercadoPago != "store_not_found")
             {
                 // La caja se borró en Mercado Pago: se la busca por external_id y, si tampoco está, se la crea de nuevo.
                 enviado = await AdoptarOCrearAsync(puntoVenta.IdEmpresa, externalId, cuerpo, idPuntoVenta, estadoDelPuntoVenta, ct);
@@ -308,8 +308,17 @@ public class ServicioDeCajasMercadoPago(
     /// <c>external_id</c>.</summary>
     private async Task<long?> BuscarPorExternalIdAsync(int idEmpresa, string externalId, CancellationToken ct)
     {
-        var busqueda = await api.EnviarAsync<BusquedaDeCajasMercadoPago>(
-            idEmpresa, HttpMethod.Get, $"{RutaDeCajas}?external_id={Uri.EscapeDataString(externalId)}", ct: ct);
+        BusquedaDeCajasMercadoPago busqueda;
+        try
+        {
+            busqueda = await api.EnviarAsync<BusquedaDeCajasMercadoPago>(
+                idEmpresa, HttpMethod.Get, $"{RutaDeCajas}?external_id={Uri.EscapeDataString(externalId)}", ct: ct);
+        }
+        catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404)
+        {
+            // Como la búsqueda de locales, una búsqueda sin coincidencias puede contestar 404 en vez de una lista vacía.
+            return null;
+        }
 
         var coincidencia = busqueda.Data?.FirstOrDefault(
             r => r.Id > 0 && string.Equals(r.ExternalId, externalId, StringComparison.OrdinalIgnoreCase));
