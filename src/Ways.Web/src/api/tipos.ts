@@ -1522,7 +1522,7 @@ export type MovimientoRegistrado = {
   creadoEl: string
 }
 
-export type LineaDeResumen = { idMedioPago: number; importeEsperado: number }
+export type LineaDeResumen = { idMedioPago: number; importeEsperado: number; nombre: string }
 
 /** Un ticket límite del turno (legacy doc 01 D6: "primer y último ticket") — `codigo` es el tipo
  * de comprobante (`TX`, `RC`, …): cada tipo numera su propia serie independiente, así que el
@@ -1707,24 +1707,19 @@ export type FilaDeHistoricoDeCajas = {
   egresos: EgresosDeTurno
   fechaRecalculo: string | null
   idEmpleadoRecalculo: number | null
+  /** Lo facturado del turno (ventas y notas de crédito, sin recibos), prorrateado por cubo. */
+  digitales: number
+  efectivo: number
+  cuentaCorriente: number
+  totalFacturado: number
 }
 
 /** Página de `GET /api/reportes/cajas` — espejo de `PaginaDeHistoricoDeCajas`. */
 export type PaginaDeHistoricoDeCajas = { items: FilaDeHistoricoDeCajas[]; total: number; pagina: number; tamanio: number }
 
-/** Un ticket del turno dentro de `DetalleDeTurno.tickets` — espejo reducido de
- * `Ways.Application.Ventas.ComprobanteListado` (los mismos campos que `GET /api/ventas` lista,
- * anulados excluidos por `LectorDeLineasDelTurno`). */
-export type TicketDeTurno = {
-  id: number
-  numero: number
-  numeroVisible: string
-  estado: EstadoComprobante
-  fecha: string
-  idPuntoVenta: number
-  idCliente: number
-  total: number
-}
+/** Un ticket del turno dentro de `DetalleDeTurno.tickets` — la misma fila que la pantalla "Ventas del
+ * turno" del POS (`VentaDeTurnoListado`), anuladas incluidas con su estado. */
+export type TicketDeTurno = VentaDeTurnoListado
 
 /** Monto neto cobrado por UN medio de pago dentro de una `VentaDeTurnoListado` — espejo de
  * `MedioDeVentaNeto`. `importe` ya es neto de vuelto (`Σ importe − Σ vuelto` agrupado por medio),
@@ -1733,8 +1728,8 @@ export type MedioDeVentaNeto = { idMedioPago: number; nombre: string; importe: n
 
 /** Fila de `GET /api/ventas/por-turno/{idTurno}` — espejo de
  * `Ways.Application.Ventas.VentaDeTurnoListado` (pantalla "Ventas del turno" del POS de
- * escritorio). A diferencia de `TicketDeTurno`, SÍ incluye anuladas y trae `nombreCliente`/
- * `mediosDePago` — ver el doc-comment del record del lado del servidor. */
+ * escritorio, y tickets del detalle de un turno cerrado). Incluye anuladas con su estado y trae
+ * `nombreCliente`/`mediosDePago` — ver el doc-comment del record del lado del servidor. */
 export type VentaDeTurnoListado = {
   id: number
   numero: number

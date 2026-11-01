@@ -217,3 +217,9 @@ export function badgeDeNotaDeCredito(estado: string | null | undefined): BadgeDe
 export function puedeReimprimirNotaDeCredito(fila: Pick<VentaDeTurnoListado, 'estado' | 'estadoNotaDeCredito'>): boolean {
   return fila.estado === 'Anulado' && fila.estadoNotaDeCredito === 'aprobado'
 }
+
+/** Mismo criterio que `ConfirmacionDeBaja.esAlcanzable`: un disparador sirve para devolverle el
+ * foco solo si sigue en el documento y sigue siendo operable. */
+export function esAlcanzable(elemento: HTMLElement | null): elemento is HTMLElement {
+  return elemento !== null && elemento.isConnected && !elemento.matches(':disabled')
+}

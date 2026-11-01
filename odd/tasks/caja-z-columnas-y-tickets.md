@@ -52,7 +52,7 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
   - `/caja/turnos/{id}/detalle`: medios carry `Nombre`; tickets carry the
     `VentaDeTurnoListado` properties (cliente, medios, desc./recargo manual, estado fiscal).
   - Checks: integration tests (histórico, detalle), unit tests, structural guards.
-- [ ] **T2 — Web** (delegated: 2+ non-trivial files) — branch `pnader/caja-z-columnas-s2`
+- [x] **T2 — Web** (delegated: 2+ non-trivial files) — branch `pnader/caja-z-columnas-s2`
   - Histórico columns; Caja Z medios by name; ticket table with Ver detalle + Reimprimir
     (web: `VistaDeTicket` + print; POS desktop: thermal queue). No Anular.
   - Checks: Vitest for HistoricoDeCajas, CajaZ, extracted components.
@@ -74,6 +74,14 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
   respeta la baja lógica (la línea desaparece igual); XLSX de detalle lista anulados sin estado; el ancla del turno
   original de una NCX no tiene test que la mate.
 
+- T2 DONE (route: delegated; trigger: 2+ non-trivial files). Histórico: columnas Digitales / Efectivo / Cta. cte. / Total
+  (sin orden en el servidor: el backend no las ordena). Caja Z: medios por `nombre`; tickets con las columnas y marcas de
+  `VentasDelTurno` + Ver detalle y Reimprimir (nunca Anular). Extraídos `componentes/DetalleDeVenta.tsx` (modal de detalle y
+  marcas de estado, ahora compartidos con `VentasDelTurno`) y `lineasDeTicketDeVenta` (mismo armado que `ticketDeVenta`).
+  Reimpresión: escritorio por la cola FIFO de `ShellPos.alReimprimirVenta` (prop nueva de `CajaZ`); web con `VistaDeTicket` +
+  `window.print()`. En el modal "Cierres de caja" del POS solo se agrega Ver detalle (sin Reimprimir: no tiene seam de impresión).
+  Verificación: `npx tsc -b` 0 errores; `npx vitest run` 9223 OK + 1 intermitente (GrillaDeItemsDeCompra, ajeno, pasa solo).
+
 ## Next step
 
-PR de S1; T2 web en curso.
+Judgment-day de la rebanada S2, luego PR.

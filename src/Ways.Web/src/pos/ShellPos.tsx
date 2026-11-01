@@ -462,7 +462,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                     <Route path="/pagos-del-turno" element={<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
                     <Route path="/gastos-del-turno" element={<Navigate to="/pagos-del-turno" replace />} />
                     <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
-                    <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
+                    <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} alReimprimirVenta={alReimprimirVenta} />} />
                     <Route path="*" element={<Navigate to="/vender" replace />} />
                   </Routes>
                 </main>

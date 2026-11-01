@@ -150,7 +150,18 @@ export function ticketDeVenta(
   medios: MedioPagoListado[],
   opciones: OpcionesDeTicketDeVenta = {},
 ): Uint8Array {
-  return armarComprobanteDeVenta(comprobante, null, contexto, medios, opciones)
+  return armarComprobanteDeVenta(comprobante, null, contexto, medios, opciones).bytes()
+}
+
+/** Las líneas del MISMO ticket de `ticketDeVenta`, para mostrarlo e imprimirlo desde el navegador
+ * (back office, sin térmica): comparten el armado, así que el contenido no puede divergir. */
+export function lineasDeTicketDeVenta(
+  comprobante: ComprobanteEmitido,
+  contexto: ContextoDeImpresion,
+  medios: MedioPagoListado[],
+  opciones: OpcionesDeTicketDeVenta = {},
+): LineaDeTicket[] {
+  return armarComprobanteDeVenta(comprobante, null, contexto, medios, opciones).lineas()
 }
 
 /** `yyyy-MM-dd` (un `DateOnly` del servidor) → `dd/mm/yyyy`, sin pasar por `Date` para no correr el día por zona horaria. */
@@ -176,7 +187,7 @@ export function facturaDeVenta(
   medios: MedioPagoListado[],
   opciones: OpcionesDeTicketDeVenta = {},
 ): Uint8Array {
-  return armarComprobanteDeVenta(comprobante, factura, contexto, medios, opciones)
+  return armarComprobanteDeVenta(comprobante, factura, contexto, medios, opciones).bytes()
 }
 
 /** Código ARCA de la nota de crédito según la letra (A 003, B 008, C 013); el contrato no trae el número. */
@@ -196,7 +207,7 @@ export function notaDeCreditoDeVenta(
   medios: MedioPagoListado[],
   opciones: OpcionesDeTicketDeVenta = {},
 ): Uint8Array {
-  return armarComprobanteDeVenta(comprobante, notaDeCredito, contexto, medios, opciones, { facturaAsociada })
+  return armarComprobanteDeVenta(comprobante, notaDeCredito, contexto, medios, opciones, { facturaAsociada }).bytes()
 }
 
 type ModoNotaDeCredito = { facturaAsociada: DatosDeFacturaFiscal | null }
@@ -212,7 +223,7 @@ function armarComprobanteDeVenta(
   medios: MedioPagoListado[],
   opciones: OpcionesDeTicketDeVenta,
   notaDeCredito?: ModoNotaDeCredito,
-): Uint8Array {
+): ConstructorDeTicket {
   const esNotaDeCredito = notaDeCredito !== undefined
   const medioPorId = new Map(medios.map((m) => [m.id, m]))
   const ticket = new ConstructorDeTicket()
@@ -325,7 +336,7 @@ function armarComprobanteDeVenta(
 
   ticket.avanzar(2).cortar()
 
-  return ticket.bytes()
+  return ticket
 }
 
 /** `Cuenta corriente` si algún pago mueve el saldo del cliente (comportamiento del medio), si no `Contado`. */
