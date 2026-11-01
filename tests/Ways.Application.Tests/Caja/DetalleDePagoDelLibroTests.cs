@@ -14,18 +14,18 @@ public class DetalleDePagoDelLibroTests
     }
 
     [Fact]
-    public void UnPagoAProveedorAgregaSuRazonSocial()
+    public void UnPagoAProveedorMuestraSuRazonSocialEnLugarDelConcepto()
     {
         Assert.Equal(
-            "Proveedores — Factura 123 · Distribuidora SA",
+            "Proveedores — Distribuidora SA",
             DetalleDePagoDelLibro.Armar(CategoriaPago.Proveedor, "Factura 123", 4, "Distribuidora SA", null, null));
     }
 
     [Fact]
-    public void UnPagoDeSueldoAgregaElNombreDeLaPersona()
+    public void UnPagoDeSueldoMuestraElNombreDeLaPersonaEnLugarDelConcepto()
     {
         Assert.Equal(
-            "Sueldos — Quincena · Ana Gómez",
+            "Sueldos — Ana Gómez",
             DetalleDePagoDelLibro.Armar(CategoriaPago.Sueldos, "Quincena", null, null, 9, "Ana Gómez"));
     }
 
@@ -33,10 +33,10 @@ public class DetalleDePagoDelLibroTests
     public void UnProveedorOUnaPersonaDadosDeBajaSeMuestranComoNoDisponiblesSinPerderLaFila()
     {
         Assert.Equal(
-            "Proveedores — Factura 1 · (proveedor no disponible)",
+            "Proveedores — (proveedor no disponible)",
             DetalleDePagoDelLibro.Armar(CategoriaPago.Proveedor, "Factura 1", 4, null, null, null));
         Assert.Equal(
-            "Sueldos — Quincena · (persona no disponible)",
+            "Sueldos — (persona no disponible)",
             DetalleDePagoDelLibro.Armar(CategoriaPago.Sueldos, "Quincena", null, null, 9, null));
     }
 }
