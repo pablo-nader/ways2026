@@ -419,6 +419,17 @@ Commit `1f9f626d` on `pnader/mercadopago-e2-t5` (route: delegated writer).
   at most one page (no `limit`/`offset` sent; filtering by `pos_id` yields at most one terminal); `PATCH /terminals/v1/setup` response is not
   read; web is T6.
 
+## Judgment-day T5 round 1
+
+- Fixed in `3f3d4134` (confirmed by both judges): T5-1 the setup PATCH uses a fresh idempotency key per attempt (`ways-terminal-{pv}-{Guid:N}`)
+  and the echoed terminal must be in PDV mode, else 502 `mercadopago_respuesta_invalida` and nothing is stored (an echo without the
+  terminal is tolerated: the real response shape is unverified). T5-2 re-registering a caja whose `id_pos` changed clears the terminal
+  (audited as `desasignacion`); the listing now returns `idTerminalAsignada` and `asignadaVigente`. T5-3 DELETE clears every caja row
+  of the PV (any seller), needs no active connection and never calls Mercado Pago (DELETE without connection or caja is now a 200 no-op).
+- Mutation evidence: constant key -> 2 fail; echo check disabled -> 1 fail; clearing on pos change disabled -> 1 fail;
+  `asignadaVigente` ignoring the listing -> 1 fail; DELETE reading the connection -> 2 fail. All restored.
+- Verification: build 0 errors; pending model changes: none; Domain 2378; Application 1640; integration `MercadoPagoCajas` 78 passed.
+
 ## Next step
 
 T6 — Web: Mercado Pago status per sucursal and per punto de venta in their screens (including the terminal picker and the binding
