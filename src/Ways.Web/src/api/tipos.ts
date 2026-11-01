@@ -3427,7 +3427,7 @@ export type PaginaDeAuditoria = { items: FilaDeAuditoria[]; total: number; pagin
 /** Subconjunto de los pares `(accion, entidad)` de `AccionAuditada` (`Ways.Domain.Auditoria`) que
  * ofrece el `<select>` de acción de `Auditoria.tsx`: las 15 de la primera pasada más las cinco de
  * pagos y compras de la etapa 6 (`compra.edicion`, `compra.redondeo`, `pago.aplicacion`,
- * `pago.desaplicacion`, `pago.redondeo`) y las dos de cobros (`cobro.aplicacion`, `cobro.desaplicacion`). El catálogo del back tiene más entradas que esta lista;
+ * `pago.desaplicacion`, `pago.redondeo`), la reasignación de un pago de sueldo (`pago.reasignacion`) y las dos de cobros (`cobro.aplicacion`, `cobro.desaplicacion`). El catálogo del back tiene más entradas que esta lista;
  * las que faltan se siguen leyendo con el código crudo. El conteo lo congela `Auditoria.test.tsx`:
  * sin una entrada, la pantalla renderizaba el código crudo y el filtro no la podía seleccionar.
  * Etiquetas en español; el VALOR que viaja al backend es siempre el `accion` crudo
@@ -3444,6 +3444,7 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'pago.aplicacion', etiqueta: 'Aplicación de pago a compras' },
   { valor: 'pago.desaplicacion', etiqueta: 'Desaplicación de pago de una compra' },
   { valor: 'pago.redondeo', etiqueta: 'Ajuste de redondeo de pago' },
+  { valor: 'pago.reasignacion', etiqueta: 'Reasignación de pago de sueldo' },
   { valor: 'cobro.aplicacion', etiqueta: 'Aplicación de cobro a ventas' },
   { valor: 'cobro.desaplicacion', etiqueta: 'Desaplicación de cobro de una venta' },
   { valor: 'stock.ajuste', etiqueta: 'Ajuste de stock' },

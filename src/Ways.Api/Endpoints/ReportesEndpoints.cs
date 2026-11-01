@@ -646,6 +646,15 @@ public static class ReportesEndpoints
             "Libro de una cuenta ordenado por id (nunca por fecha), con el saldo de apertura del rango y los " +
             "totales del rango por tipo de movimiento.");
 
+        // Libro único de tesorería (efectivo y una columna por cuenta), calculado desde turnos, pagos y ajustes. Mismo gate que el
+        // resto de los reportes de tesorería; el rango es obligatorio y de hasta 366 días.
+        grupo.MapGet("/libro-tesoreria", (
+            ServicioDeLibroDeTesoreria servicio, int idEmpresa, DateTimeOffset desde, DateTimeOffset hasta, CancellationToken ct) =>
+            servicio.ObtenerAsync(idEmpresa, desde, hasta, ct))
+        .WithSummary(
+            "Libro de tesorería de una empresa: una fila por cierre de caja, pago y ajuste manual, con el efectivo y el importe en cada " +
+            "cuenta, más el saldo anterior al rango y el saldo actual. desde y hasta son obligatorios (inclusive, hasta 366 días).");
+
         // Sibling declarado inmediatamente después de su ruta fuente (design: Data Flow) — hereda
         // LecturaDeReportes por co-locación. `desde`/`hasta` son OBLIGATORIOS acá (mismo criterio
         // que /api/ventas/export): un export es por definición un rango acotado, y el nombre de

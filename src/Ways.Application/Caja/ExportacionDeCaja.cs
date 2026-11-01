@@ -31,6 +31,7 @@ public static class ExportacionDeCaja
         TipoMovimientoTesoreria.Deposito => "Depósito",
         TipoMovimientoTesoreria.Pago => "Gasto",
         TipoMovimientoTesoreria.Ajuste => "Ajuste",
+        TipoMovimientoTesoreria.AjusteManual => "Ajuste manual",
         _ => tipo.ToString()
     };
 

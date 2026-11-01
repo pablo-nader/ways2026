@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+const apiPostMock = vi.fn()
+vi.mock('./cliente', () => ({ api: { post: (...args: unknown[]) => apiPostMock(...args) } }))
+
 import {
   aSolicitudDePagoDeAdministracion,
   categoriaAlElegirProveedorAdministracion,
+  clienteDePagosDeAdministracion,
   construirQueryDePagosDeAdministracion,
   filtrosDePagosDeAdministracionVacios,
   formularioDePagoDeAdministracionCompleto,
@@ -163,5 +168,16 @@ describe('filtrosDePagosDeAdministracionVacios / construirQueryDePagosDeAdminist
     const parametros = new URLSearchParams(query.slice(1))
     expect(parametros.get('desde')).toMatch(/^2026-09-01T00:00:00[+-]\d{2}:\d{2}$/)
     expect(parametros.get('hasta')).toMatch(/^2026-09-28T23:59:59\.999[+-]\d{2}:\d{2}$/)
+  })
+})
+
+describe('clienteDePagosDeAdministracion.reasignarPersonal', () => {
+  it('hace POST a la ruta del pago con el id del empleado en el cuerpo', async () => {
+    const respuesta = { idPago: 40, idPersonalAnterior: 9, idPersonal: 5, concepto: 'Pago de personal: Beto' }
+    apiPostMock.mockResolvedValue(respuesta)
+
+    await expect(clienteDePagosDeAdministracion.reasignarPersonal(40, 5)).resolves.toEqual(respuesta)
+
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion/40/reasignar-personal', { idPersonal: 5 })
   })
 })

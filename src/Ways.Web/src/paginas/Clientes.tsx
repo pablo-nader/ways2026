@@ -22,6 +22,7 @@ import { PaginadorDePadron } from '../componentes/padron/PaginadorDePadron'
 import { usePadronEnServidor } from '../componentes/padron/usePadronEnServidor'
 import { aAlta, aFormulario, formularioVacio, type Formulario } from './clientes/clienteFormulario'
 import { ModalDeCliente } from './clientes/ModalDeCliente'
+import { toast } from '../toasts/toasts'
 
 const CELDAS_DE_FILTRO: readonly CeldaDeFiltroDePadron<FiltrosDeClientes>[] = [
   { tipo: 'entero', clave: 'numero', etiqueta: 'N°' },
@@ -57,7 +58,6 @@ export function Clientes() {
   /** Hasta la primera respuesta la pantalla es un "Cargando…"; después la tabla y sus filtros no se desmontan. */
   const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [errorFormulario, setErrorFormulario] = useState('')
   const [guardando, setGuardando] = useState(false)
@@ -136,17 +136,16 @@ export function Clientes() {
     setGuardando(true)
     setError('')
     setErrorFormulario('')
-    setAviso('')
 
     try {
       const datos = aAlta(formulario)
 
       if (formulario.id === null) {
         await clienteDeClientes.crear(datos)
-        setAviso(`Cliente "${formulario.nombre}" creado.`)
+        toast.exito(`Cliente "${formulario.nombre}" creado.`)
       } else {
         await clienteDeClientes.actualizar(formulario.id, datos)
-        setAviso(`Cliente "${formulario.nombre}" actualizado.`)
+        toast.exito(`Cliente "${formulario.nombre}" actualizado.`)
       }
 
       // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `guardando`:
@@ -163,7 +162,6 @@ export function Clientes() {
 
   function abrirFormulario(valor: Formulario) {
     setFormulario(valor)
-    setAviso('')
     setError('')
     setErrorFormulario('')
   }
@@ -185,7 +183,6 @@ export function Clientes() {
 
     guardandoRef.current = true
     setError('')
-    setAviso('')
     setErrorDeBaja('')
     setEliminando(true)
     try {
@@ -196,7 +193,7 @@ export function Clientes() {
         return
       }
 
-      setAviso(`Cliente "${c.nombre}" dado de baja.`)
+      toast.exito(`Cliente "${c.nombre}" dado de baja.`)
       setBaja(null)
       // `cargar` reporta su propio fallo en `error`: la baja ya se confirmó y no se informa como rechazada.
       await cargar(++generacion.current, padron.consultaRef.current)
@@ -246,7 +243,6 @@ export function Clientes() {
     <div className="container-fluid py-4">
       <Box titulo="Clientes" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {formulario && (
           <ModalDeCliente

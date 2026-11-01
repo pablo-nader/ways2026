@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Articulos } from './Articulos'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import { AuthContext } from '../auth/AuthContext'
 import {
@@ -330,6 +331,7 @@ function renderArticulos(rutaInicial = '/articulos', rolId?: number) {
       <Routes>
         <Route path="/articulos/*" element={<Articulos />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>
   )
   if (rolId === undefined) return render(pantalla)
@@ -1599,7 +1601,7 @@ describe('Articulos — restauración de foco al cerrar el modal', () => {
 
 describe('Articulos — Baja de un artículo desde la grilla', () => {
   /**
-   * Cláusula bajo prueba: el `setAviso` de `confirmarBaja()` en `Articulos.tsx` y el bump de
+   * Cláusula bajo prueba: el `toast.exito` de `confirmarBaja()` en `Articulos.tsx` y el bump de
    * `pedidoDeRefresco` que le pide a `GrillaDeArticulos` refetchear. Mutation-proof-tests: borrar
    * cualquiera de los dos deja este test sin ver el aviso o sin ver la fila actualizada tras el
    * refresco (la fixture de la grilla cambia DESPUÉS de la Baja, así que solo el refresco real la
@@ -1619,7 +1621,8 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Dar de baja' }))
 
-    expect(await screen.findByText('Artículo "Articulo Uno" dado de baja.')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Artículo "Articulo Uno" dado de baja.')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     await waitFor(() => expect(screen.queryByText('Articulo Uno')).not.toBeInTheDocument())
     expect(screen.getByText('Articulo Dos')).toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
