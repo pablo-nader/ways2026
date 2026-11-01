@@ -487,4 +487,29 @@ public class ParametrosPorSucursalTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal("\"America/Lima\"", await ResolverAsync(ctx, "zona_horaria", $"idPuntoVenta={ctx.IdCaja3}"));
         Assert.Equal("11", await ResolverAsync(ctx, "dias_rotacion", $"idPuntoVenta={ctx.IdCaja3}"));
     }
+
+    /// <summary>Mover la última caja de una sucursal que solo tiene parámetros no se bloquea: la sucursal cae y sus
+    /// valores pasan a la nueva con la regla de la fusión (el destino conserva los suyos y toma los que le faltan).</summary>
+    [Fact]
+    public async Task MoverLaUltimaCajaDeUnaSucursalConSoloParametrosLosLlevaALaNuevaDondeNoTieneLosSuyos()
+    {
+        var ctx = await PrepararAsync(nameof(MoverLaUltimaCajaDeUnaSucursalConSoloParametrosLosLlevaALaNuevaDondeNoTieneLosSuyos));
+
+        await EstablecerOkAsync(ctx, new ParametroAlta("zona_horaria", "\"America/Lima\"", null, ctx.IdSucursalA));
+        await EstablecerOkAsync(ctx, new ParametroAlta("zona_horaria", "\"America/Bogota\"", null, ctx.IdSucursalB));
+        await EstablecerOkAsync(ctx, new ParametroAlta("dias_rotacion", "11", null, ctx.IdSucursalB));
+
+        var mover = await ctx.Admin.PostAsJsonAsync(
+            $"/api/puntos-venta/{ctx.IdCaja3}/sucursal", new PuntoVentaSucursalEdicion(ctx.IdSucursalA));
+        Assert.True(mover.StatusCode == HttpStatusCode.OK, await mover.Content.ReadAsStringAsync());
+
+        var filas = await LeerAsync<List<ParametroListado>>(
+            await ctx.Admin.GetAsync($"/api/parametros?idEmpresa={ctx.IdEmpresa}"), HttpStatusCode.OK);
+        Assert.Equal(
+            [("dias_rotacion", ctx.IdSucursalA, "11"), ("zona_horaria", ctx.IdSucursalA, "\"America/Lima\"")],
+            filas.OrderBy(f => f.Clave).Select(f => (f.Clave, f.IdSucursal ?? 0, f.Valor)).ToList());
+
+        Assert.Equal("\"America/Lima\"", await ResolverAsync(ctx, "zona_horaria", $"idPuntoVenta={ctx.IdCaja3}"));
+        Assert.Equal("11", await ResolverAsync(ctx, "dias_rotacion", $"idPuntoVenta={ctx.IdCaja3}"));
+    }
 }

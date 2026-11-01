@@ -210,12 +210,14 @@ public partial class ServicioDeOrganizacion
 
             if (origen is not null)
             {
+                // Los parámetros de la sucursal no son uso: acompañan a su última caja (ver más abajo).
                 await ExigirSinUsoDeSucursalAsync(
                     origen,
                     descripcion => "No se puede mover la caja: su sucursal quedaría sin cajas y todavía tiene " +
                                    $"{descripcion}. Para unir dos sucursales con stock hace falta una fusión.",
                     "sucursal_en_uso",
-                    ct);
+                    ct,
+                    excluirParametros: true);
             }
 
             var momento = reloj.Ahora;
@@ -230,6 +232,9 @@ public partial class ServicioDeOrganizacion
 
             if (origen is not null)
             {
+                // Misma regla que la fusión: la última caja lleva los valores de su sucursal a la nueva solo donde esta
+                // no tiene los suyos, así no cambia de comportamiento más de lo necesario.
+                await FusionarParametrosAsync(origen.Id, destino.Id, momento, ct);
                 Marcar(origen, momento);
                 RegistrarBajaDeSucursal(origen, momento, porCascada: true);
             }
@@ -241,7 +246,8 @@ public partial class ServicioDeOrganizacion
     }
 
     private Task ExigirSinUsoDeSucursalAsync(
-        Sucursal sucursal, Func<string, string>? mensajeDeBloqueo, string codigo, CancellationToken ct) =>
+        Sucursal sucursal, Func<string, string>? mensajeDeBloqueo, string codigo, CancellationToken ct,
+        bool excluirParametros = false) =>
         ExigirSinUsoAsync(
             typeof(Sucursal),
             sucursal.CreatedAt,
@@ -255,7 +261,8 @@ public partial class ServicioDeOrganizacion
             "la sucursal",
             ct,
             // Las cajas ya las respondió quien llama (vivas) o son las propias; acá solo el uso propio de la sucursal.
-            soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta",
+            soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta"
+                               && !(excluirParametros && rama.Tabla == "parametros"),
             mensajeDeBloqueo);
 
     private void RegistrarBajaDeSucursal(Sucursal sucursal, DateTimeOffset momento, bool porCascada)
