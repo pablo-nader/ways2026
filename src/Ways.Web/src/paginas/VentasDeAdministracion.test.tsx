@@ -655,6 +655,19 @@ describe('VentasDeAdministracion — cambiar el medio de pago', () => {
     expect(ultimosParametros().get('pagina')).toBe('2')
   })
 
+  it('tras guardar, sin filtros activos, el foco vuelve al botón de la fila cuando termina el refresco', async () => {
+    mockearGrilla(paginaFixture([ventaFixture()]))
+    await renderizar()
+    const boton = screen.getByRole('button', { name: /Cambiar medio de pago/ })
+    await waitFor(() => expect(boton).toBeEnabled())
+    await userEvent.click(boton)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Simular guardado' }))
+
+    await screen.findByText('Se cambió el medio de pago de la venta 0007-00000001.')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cambiar medio de pago/ })).toHaveFocus())
+  })
+
   it('si el refresco posterior falla, el aviso de éxito se mantiene y el listado ofrece Reintentar', async () => {
     let llamada = 0
     mockearRutas({

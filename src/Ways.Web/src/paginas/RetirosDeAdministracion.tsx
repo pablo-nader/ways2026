@@ -68,6 +68,7 @@ export function RetirosDeAdministracion() {
   const [errorBaja, setErrorBaja] = useState('')
   const disparadorRef = useRef<HTMLElement | null>(null)
   const limpiarRef = useRef<HTMLButtonElement>(null)
+  const tablaRef = useRef<HTMLTableElement>(null)
   const focoPendienteRef = useRef(false)
 
   useEffect(() => {
@@ -90,10 +91,12 @@ export function RetirosDeAdministracion() {
   const filasInertes = bloqueado || cargando
 
   useEffect(() => {
-    if (bloqueado || !focoPendienteRef.current) return
+    if (bloqueado || cargando || !focoPendienteRef.current) return
     focoPendienteRef.current = false
     const disparador = disparadorRef.current
-    const destino = disparador?.isConnected && !disparador.matches(':disabled') ? disparador : limpiarRef.current
+    const limpiar = limpiarRef.current
+    const destino =
+      disparador?.isConnected && !disparador.matches(':disabled') ? disparador : limpiar && !limpiar.disabled ? limpiar : tablaRef.current
     destino?.focus()
   }, [bloqueado, cargando])
 
@@ -116,6 +119,7 @@ export function RetirosDeAdministracion() {
   }
 
   function pedirBaja(fila: FilaDeRetiro, disparador: HTMLElement) {
+    disparadorRef.current = disparador
     setDisparadorDeLaBaja(disparador)
     setErrorBaja('')
     setBaja(fila)
@@ -139,6 +143,7 @@ export function RetirosDeAdministracion() {
         if (filaQuedoObsoleta(e)) await grilla.recargar()
         return
       }
+      focoPendienteRef.current = true
       setBaja(null)
       setDisparadorDeLaBaja(null)
       toast.exito('Retiro eliminado.')
@@ -193,7 +198,7 @@ export function RetirosDeAdministracion() {
       ) : (
         <>
           <div className="table-responsive">
-            <table className="table table-striped table-hover table-bordered align-middle">
+            <table ref={tablaRef} tabIndex={-1} className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
                   {encabezado('fecha', 'Fecha')}

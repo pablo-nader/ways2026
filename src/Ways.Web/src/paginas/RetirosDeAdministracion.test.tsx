@@ -552,6 +552,19 @@ describe('RetirosDeAdministracion — editar', () => {
     expect(ultimosParametros().get('pagina')).toBe('2')
   })
 
+  it('tras guardar, sin filtros activos, el foco vuelve al botón de la fila cuando termina el refresco', async () => {
+    mockearGrilla(paginaFixture([retiroFixture()]))
+    await renderizar()
+    const dialogo = await abrirEdicion()
+    fireEvent.change(dialogo.getByLabelText('Importe'), { target: { value: '250' } })
+    apiPutMock.mockResolvedValue(retiroFixture({ importe: 250 }))
+
+    await userEvent.click(dialogo.getByRole('button', { name: 'Guardar cambio' }))
+
+    await screen.findByText('Retiro actualizado.')
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Editar/ })).toHaveFocus())
+  })
+
   it('dos clics en el mismo tick envían una sola escritura y el modal queda inerte mientras vuela', async () => {
     mockearGrilla(paginaFixture([retiroFixture()]))
     const escritura = diferido<FilaDeRetiro>()
@@ -743,6 +756,25 @@ describe('RetirosDeAdministracion — eliminar', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(consultasDeLaGrilla()).toHaveLength(antes + 1))
     expect(ultimosParametros().get('conciliado')).toBe('false')
+  })
+
+  it('tras eliminar, sin filtros activos y con la fila ya inexistente, el foco cae en la tabla y no se pierde', async () => {
+    let eliminado = false
+    mockearRutas({
+      grilla: () => Promise.resolve(eliminado ? paginaFixture([]) : paginaFixture([retiroFixture()])),
+    })
+    apiDeleteMock.mockImplementation(() => {
+      eliminado = true
+
+      return Promise.resolve(undefined)
+    })
+    await renderizar()
+    const confirmacion = await pedirBaja()
+
+    await userEvent.click(confirmacion.getByRole('button', { name: 'Confirmar eliminación' }))
+
+    await screen.findByText('Retiro eliminado.')
+    await waitFor(() => expect(screen.getByRole('table')).toHaveFocus())
   })
 
   it('dos clics en el mismo tick sobre Confirmar envían un solo DELETE y la pantalla queda inerte hasta el refresco', async () => {
