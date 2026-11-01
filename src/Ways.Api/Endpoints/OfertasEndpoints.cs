@@ -11,9 +11,9 @@ public static class OfertasEndpoints
             .WithTags("Ofertas")
             .RequireAuthorization(Politicas.OperacionDePos);
 
-        grupo.MapGet("/", (ServicioDeOfertas servicio, bool? incluirEliminados, CancellationToken ct) =>
-            servicio.ListarAsync(incluirEliminados ?? false, ct))
-        .WithSummary("Lista las ofertas del tenant.");
+        grupo.MapGet("/", (ServicioDeOfertas servicio, bool? incluirEliminados, int? idArticulo, CancellationToken ct) =>
+            servicio.ListarAsync(incluirEliminados ?? false, idArticulo, ct))
+        .WithSummary("Lista las ofertas del tenant; con idArticulo, las de ese artículo y las de su familia.");
 
         grupo.MapGet("/{id:int}", (ServicioDeOfertas servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
@@ -59,6 +59,12 @@ public static class OfertasEndpoints
         .WithSummary(
             "POST, no muta nada: lo mismo que /resolver más los combos que la venta online aplicaría al documento " +
             "(por línea: unidades consumidas, ahorro e id del combo; en el documento: combos aplicados).");
+
+        // Marca de ofertas del POS: lectura pura, por eso POST (lote de ids) y la policy del grupo. Ignora la cantidad:
+        // las ofertas por volumen salen con su cantidad mínima.
+        grupo.MapPost("/vigentes", (ServicioDeOfertas servicio, SolicitudDeVigentes solicitud, CancellationToken ct) =>
+            servicio.ListarVigentesAsync(solicitud, ct))
+        .WithSummary("POST, no muta nada: las ofertas vivas de cada artículo pedido, sin mirar la cantidad.");
 
         return app;
     }

@@ -5,6 +5,8 @@ import { clienteDeOfertas } from '../api/ofertas'
 import type { ArticuloParaCarrito } from '../api/carrito'
 import type { ArticuloListado, LineaDeResolucion, ResultadoDeResolucion } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
+import { obtenerOfertasVigentes, type OfertaVigente } from '../api/ofertasVigentes'
+import { MarcaDeOfertas } from './MarcaDeOfertas'
 import { Modal } from './Modal'
 
 /** Spec: "minimum 2 characters" — por debajo de este largo ni se debounce ni se dispara Enter. */
@@ -13,6 +15,8 @@ const DEMORA_DEBOUNCE_MS = 300
 /** Cantidad por defecto de una línea agregada desde el buscador — mismo default que un código de
  * barra escaneado sin multiplicador ("N*codigo"), spec: "same quantity default". */
 const CANTIDAD_POR_DEFECTO = 1
+/** Tope de artículos por consulta de ofertas vigentes (límite del servidor). */
+const MAXIMO_DE_ARTICULOS_CON_OFERTAS = 200
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
@@ -67,6 +71,7 @@ export function ModalDeBusquedaDeArticulos({
   const [buscando, setBuscando] = useState(false)
   const [resultados, setResultados] = useState<ArticuloListado[] | null>(null)
   const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>({})
+  const [vigentes, setVigentes] = useState<Record<number, OfertaVigente[]>>({})
   const [error, setError] = useState('')
 
   // react-async-state regla 2/3: una búsqueda nueva (debounce o Enter) invalida cualquier
@@ -96,6 +101,20 @@ export function ModalDeBusquedaDeArticulos({
     inputBusquedaRef.current?.focus()
   }, [])
 
+  // Degradación silenciosa: sin marcas de oferta la búsqueda sigue sirviendo, así que un fallo no muestra error.
+  async function cargarVigentes(generacion: number, idsArticulos: number[], empresa: number | null, idListaPrecio: number) {
+    if (empresa === null) return
+    try {
+      const respuesta = await obtenerOfertasVigentes({ idsArticulos, idEmpresa: empresa, idListaPrecio })
+      if (generacionRef.current !== generacion) return
+      const indice: Record<number, OfertaVigente[]> = {}
+      if (Array.isArray(respuesta)) for (const v of respuesta) if (v.ofertas.length > 0) indice[v.idArticulo] = v.ofertas
+      setVigentes(indice)
+    } catch {
+      if (generacionRef.current === generacion) setVigentes({})
+    }
+  }
+
   async function buscar(terminoBuscado: string) {
     const propio = terminoBuscado.trim()
     if (propio.length < LARGO_MINIMO_DE_BUSQUEDA) {
@@ -103,6 +122,7 @@ export function ModalDeBusquedaDeArticulos({
       setBuscando(false)
       setResultados(null)
       setPrecios({})
+      setVigentes({})
       setError('')
       return
     }
@@ -110,6 +130,7 @@ export function ModalDeBusquedaDeArticulos({
     const generacion = (generacionRef.current += 1)
     setBuscando(true)
     setError('')
+    setVigentes({})
 
     try {
       const pagina = await clienteDeArticulos.listar(propio, false, undefined, { soloVendibles: true })
@@ -120,6 +141,8 @@ export function ModalDeBusquedaDeArticulos({
         setPrecios({})
         return
       }
+
+      void cargarVigentes(generacion, pagina.items.slice(0, MAXIMO_DE_ARTICULOS_CON_OFERTAS).map((a) => a.id), idEmpresa, idListaPrecio)
 
       const lineas: LineaDeResolucion[] = pagina.items.map((a) => ({
         idArticulo: a.id,
@@ -137,6 +160,7 @@ export function ModalDeBusquedaDeArticulos({
       setError(e instanceof ErrorApi ? e.message : 'No se pudo buscar artículos.')
       setResultados(null)
       setPrecios({})
+      setVigentes({})
     } finally {
       if (generacionRef.current === generacion) setBuscando(false)
     }
@@ -219,11 +243,15 @@ export function ModalDeBusquedaDeArticulos({
             {!buscando &&
               resultados?.map((a) => {
                 const resultado = precios[a.id]
+                const ofertas = vigentes[a.id]
                 const precioTexto = resultado?.precioFinal != null ? formatearMoneda(resultado.precioFinal) : '—'
                 return (
                   <tr key={a.id}>
                     <td>{a.codigoInterno}</td>
-                    <td>{a.nombre}</td>
+                    <td>
+                      {a.nombre}
+                      {ofertas !== undefined && <MarcaDeOfertas ofertas={ofertas} />}
+                    </td>
                     {mostrarCosto && <td className="text-end">{formatearMoneda(a.costoNominal)}</td>}
                     <td className="text-end">{precioTexto}</td>
                     <td className="text-end">

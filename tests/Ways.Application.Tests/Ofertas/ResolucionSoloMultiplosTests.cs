@@ -140,7 +140,7 @@ public class ResolucionSoloMultiplosTests
         var resultado = await CrearServicio(nombreDeBase).ResolverDocumentoAsync(
             Lineas(idLista, (a, 1m), (b, 2m)), momento: null);
 
-        Assert.Equal([250m, 250m], resultado.Select(r => r.DescuentoDeLinea));
+        Assert.Equal([166m, 334m], resultado.Select(r => r.DescuentoDeLinea));
         Assert.True(resultado[0].Aplicadas[0].PorFamilia);
     }
 

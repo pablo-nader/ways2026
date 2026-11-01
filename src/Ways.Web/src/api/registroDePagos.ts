@@ -113,6 +113,17 @@ export const clienteDePagosDeAdministracion = {
     api.put<PagoDeAdministracionListado>(`/pagos/administracion/${id}`, solicitud),
   /** `DELETE /api/pagos/administracion/{id}` — 204 sin cuerpo. */
   eliminar: (id: number) => api.delete<void>(`/pagos/administracion/${id}`),
+  /** `POST /api/pagos/administracion/{id}/reasignar-personal` (solo Admin): mueve un pago de sueldo a la cuenta de
+   * otro empleado; el concepto pasa a nombrar al nuevo. */
+  reasignarPersonal: (id: number, idPersonal: number) =>
+    api.post<RespuestaDeReasignacionDePago>(`/pagos/administracion/${id}/reasignar-personal`, { idPersonal }),
+}
+
+export type RespuestaDeReasignacionDePago = {
+  idPago: number
+  idPersonalAnterior: number
+  idPersonal: number
+  concepto: string
 }
 
 export type FormularioDePagoDeAdministracion = {

@@ -138,6 +138,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<MovimientoTesoreria> MovimientosTesoreria => Set<MovimientoTesoreria>();
     public DbSet<CuentaTesoreria> CuentasTesoreria => Set<CuentaTesoreria>();
     public DbSet<MovimientoCuenta> MovimientosCuenta => Set<MovimientoCuenta>();
+    public DbSet<ConciliacionTesoreria> ConciliacionesTesoreria => Set<ConciliacionTesoreria>();
     public DbSet<Pago> Pagos => Set<Pago>();
     public DbSet<ItemPago> ItemsPago => Set<ItemPago>();
     public DbSet<AplicacionPago> AplicacionesPago => Set<AplicacionPago>();
@@ -334,6 +335,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuenta(modelBuilder);
+        AplicarFiltroDeTenantEnConciliacionTesoreria(modelBuilder);
         AplicarFiltroDeTenantEnAuditoria(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionFiscal(modelBuilder);
         AplicarFiltroDeTenantEnAcumuladoDeFacturacion(modelBuilder);
@@ -1041,6 +1043,21 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoCuenta), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCuenta.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="ConciliacionTesoreria"/> es un registro append-only sin baja lógica, como <see cref="MovimientoTesoreria"/>:
+    /// necesita la variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnConciliacionTesoreria(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(ConciliacionTesoreria))!;
+
+        var parametro = Expression.Parameter(typeof(ConciliacionTesoreria), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(ConciliacionTesoreria.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);
