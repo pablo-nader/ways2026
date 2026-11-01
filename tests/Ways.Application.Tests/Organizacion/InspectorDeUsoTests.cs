@@ -62,7 +62,7 @@ public class InspectorDeUsoTests
     }
 
     /// <summary>
-    /// Cláusula: una rama <c>SinMarca</c> lleva SOLO los conjuntos de la FK. <c>stock</c> no
+    /// Cláusula: una rama <c>SinMarca</c> lleva SOLO los conjuntos de la FK. <c>reservas_numeracion</c> no
     /// tiene <c>created_at</c>, así que existir ya significa uso — un conjunto temporal ahí no
     /// compilaría contra la tabla.
     /// </summary>
@@ -74,7 +74,7 @@ public class InspectorDeUsoTests
         var sql = Renderizar(db, typeof(PuntoVenta));
 
         Assert.Contains(
-            "SELECT 'stock' AS tabla WHERE EXISTS (SELECT 1 FROM \"public\".\"stock\" d " +
+            "SELECT 'reservas_numeracion' AS tabla WHERE EXISTS (SELECT 1 FROM \"public\".\"reservas_numeracion\" d " +
             "WHERE d.\"id_punto_venta\" = $1 AND d.\"id_tenant\" = $2)",
             sql);
     }
@@ -313,8 +313,8 @@ public class InspectorDeUsoTests
             sql);
 
         Assert.Contains(
-            "SELECT 'stock via puntos_venta' AS tabla WHERE EXISTS (SELECT 1 FROM " +
-            "\"public\".\"stock\" d " +
+            "SELECT 'reservas_numeracion via puntos_venta' AS tabla WHERE EXISTS (SELECT 1 FROM " +
+            "\"public\".\"reservas_numeracion\" d " +
             "JOIN \"public\".\"puntos_venta\" pv ON d.\"id_punto_venta\" = " +
             "pv.\"id_punto_venta\" AND d.\"id_tenant\" = pv.\"id_tenant\" " +
             "WHERE pv.\"id_empresa\" = $1 AND " +
@@ -346,10 +346,26 @@ public class InspectorDeUsoTests
         Assert.Equal(
             esperado,
             puenteadas
+                .Where(rama => rama.Puente!.Tabla == "puntos_venta")
                 .Select(rama => $"{rama.Tabla}|{string.Join(',', rama.Columnas)}")
                 .Order(StringComparer.Ordinal));
 
-        Assert.All(puenteadas, rama => Assert.Equal("puntos_venta", rama.Puente!.Tabla));
+        // Sucursales T2: el segundo puente de la empresa son las ramas directas de la sucursal, menos
+        // puntos_venta (la empresa ya la referencia directamente).
+        var esperadoPorSucursal = InventarioDeDependientes.Construir(db.Model, typeof(Sucursal))
+            .Where(rama => rama.Puente is null && rama.Tabla != "puntos_venta")
+            .Select(rama => $"{rama.Tabla}|{string.Join(',', rama.Columnas)}")
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        Assert.NotEmpty(esperadoPorSucursal);
+        Assert.Equal(
+            esperadoPorSucursal,
+            puenteadas
+                .Where(rama => rama.Puente!.Tabla == "sucursales")
+                .Select(rama => $"{rama.Tabla}|{string.Join(',', rama.Columnas)}")
+                .Order(StringComparer.Ordinal));
+
+        Assert.All(puenteadas, rama => Assert.Contains(rama.Puente!.Tabla, new[] { "puntos_venta", "sucursales" }));
         Assert.DoesNotContain(puenteadas, rama => rama.Tabla == "auditoria");
 
         foreach (var ancla in new[] { typeof(Tenant), typeof(PuntoVenta), typeof(Usuario) })
@@ -574,7 +590,7 @@ public class InspectorDeUsoTests
         var sinAncla = InspectorDeUso.RenderizarReferencias(ramas, propiedades);
 
         const string ramaSinMarca =
-            "SELECT 'stock' AS tabla WHERE EXISTS (SELECT 1 FROM \"public\".\"stock\" d " +
+            "SELECT 'reservas_numeracion' AS tabla WHERE EXISTS (SELECT 1 FROM \"public\".\"reservas_numeracion\" d " +
             "WHERE d.\"id_punto_venta\" = $1 AND d.\"id_tenant\" = $2)";
 
         Assert.Contains(ramaSinMarca, conAncla);

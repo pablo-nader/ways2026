@@ -320,8 +320,10 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Equal(2, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Compra));
 
-        var stock1 = await db.Stock.Where(s => s.IdArticulo == ctx.IdArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
-        var stock2 = await db.Stock.Where(s => s.IdArticulo == ctx.IdArticulo2 && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+
+        var stock1 = await db.Stock.Where(s => s.IdArticulo == ctx.IdArticulo && s.IdSucursal == idSucursal).Select(s => s.Cantidad).FirstAsync();
+        var stock2 = await db.Stock.Where(s => s.IdArticulo == ctx.IdArticulo2 && s.IdSucursal == idSucursal).Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(10m, stock1);
         Assert.Equal(5m, stock2);
 
@@ -693,8 +695,10 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == ctx.IdArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         var sumaDeMovimientos = await db.MovimientosStock
             .Where(m => m.IdArticulo == ctx.IdArticulo && m.IdPuntoVenta == ctx.IdPuntoVenta)

@@ -330,8 +330,9 @@ public class AjusteDeStockTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(HttpStatusCode.OK, respuestaAnulacion.StatusCode);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         var sumaDeMovimientos = await db.MovimientosStock
             .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == ctx.IdPuntoVenta)

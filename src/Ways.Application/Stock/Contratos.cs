@@ -31,10 +31,16 @@ public sealed record StockActual(int IdPuntoVenta, int IdArticulo, decimal Canti
 /// es obligatoria, mismo criterio que <see cref="SolicitudDeAjusteDeStock"/>. Cada
 /// <see cref="LineaDeTransferencia"/> lleva una cantidad siempre POSITIVA — el signo por punto de
 /// venta (origen negativo, destino positivo) lo decide el servidor, nunca el cliente.
+///
+/// El origen y el destino se indican de UNA de dos formas, nunca mezcladas: los dos puntos de venta (la forma que usa
+/// el POS empaquetado) o las dos sucursales (la de la web de back office). Con sucursales, el asiento lleva como caja de
+/// origen la viva de menor id de cada sucursal, que es la que queda en <c>movimientos_stock.id_punto_venta</c> para la
+/// trazabilidad. Cualquier otra combinación es <c>400 transferencia_origen_destino_invalido</c>.
 /// </summary>
 public sealed record SolicitudDeTransferencia(
-    int IdPuntoVentaOrigen, int IdPuntoVentaDestino, string Observaciones,
-    IReadOnlyList<LineaDeTransferencia> Lineas);
+    int? IdPuntoVentaOrigen, int? IdPuntoVentaDestino, string Observaciones,
+    IReadOnlyList<LineaDeTransferencia> Lineas,
+    int? IdSucursalOrigen = null, int? IdSucursalDestino = null);
 
 /// <summary>
 /// Etapa 12, slice 10 (design: Write site 3 — "the lot travels"): <see cref="IdLote"/> es
@@ -48,7 +54,8 @@ public sealed record LineaDeTransferencia(int IdArticulo, decimal Cantidad, int?
 /// <summary>Resultado de una transferencia: el stock resultante de cada artículo en AMBOS puntos
 /// de venta tras la transacción (design: Transactions — TRANSFERENCIA).</summary>
 public sealed record ResultadoTransferencia(
-    int IdPuntoVentaOrigen, int IdPuntoVentaDestino, IReadOnlyList<LineaTransferida> Lineas);
+    int IdPuntoVentaOrigen, int IdPuntoVentaDestino, IReadOnlyList<LineaTransferida> Lineas,
+    int IdSucursalOrigen = 0, int IdSucursalDestino = 0);
 
 /// <summary>Etapa 12, slice 10 (design: dto-contract-honesty — "every field named below has a
 /// destination"): <see cref="IdLote"/> viaja igual que <c>ItemEmitido.IdLote</c> — el caller

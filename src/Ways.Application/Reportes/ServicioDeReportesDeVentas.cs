@@ -172,8 +172,8 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
     }
 
     /// <summary>design decisión 5: la zona se resuelve UNA vez, al alcance que pidió el caller —
-    /// con <paramref name="idPuntoVenta"/>, PV → empresa → default; sin él, empresa → default,
-    /// ignorando cualquier override de punto de venta (mismo comportamiento que
+    /// con <paramref name="idPuntoVenta"/>, sucursal de esa caja → empresa → default; sin él, empresa → default,
+    /// ignorando cualquier fila de sucursal (mismo comportamiento que
     /// <c>ServicioDeParametros.ResolverAsync</c> con <c>idPuntoVenta = null</c>, que solo mira las
     /// filas de nivel empresa).</summary>
     private async Task<(string ZonaId, TimeZoneInfo Zona)> ResolverZonaAsync(
@@ -184,7 +184,7 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
         return (zonaId, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
     }
 
-    /// <summary>Misma precedencia PV → empresa → default que <see cref="ResolverZonaAsync"/>
+    /// <summary>Precedencia de caja PV → empresa → default, al mismo alcance que <see cref="ResolverZonaAsync"/>
     /// (design decisión 5, aplicada acá a la tasa en vez de la zona) — default <c>0</c> declarado
     /// en <c>ParametroConocido.ComisionPorcentaje</c> (spec: "Default rate yields zero
     /// commission").</summary>

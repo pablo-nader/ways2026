@@ -88,9 +88,10 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
         db.Lotes.Add(lote);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, puntoVenta.Id);
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = articulo.Id, IdPuntoVenta = puntoVenta.Id, IdLote = lote.Id, IdTenant = tenant.Id, Cantidad = 10m
+            IdArticulo = articulo.Id, IdSucursal = idSucursal, IdLote = lote.Id, IdTenant = tenant.Id, Cantidad = 10m
         });
         await db.SaveChangesAsync();
 
@@ -206,13 +207,14 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
     {
         var escenario = await SembrarEscenarioAsync(nameof(UnaSesionDeOtroTenantNoVeElStockLotePorSelect));
         var tenantB = await SembrarTenantBAsync(nameof(UnaSesionDeOtroTenantNoVeElStockLotePorSelect) + "-B");
+        await using var dbPlataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", tenantB.Id);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "SELECT count(*) FROM stock_lotes WHERE id_articulo = $1 AND id_punto_venta = $2 AND id_lote = $3";
+            "SELECT count(*) FROM stock_lotes WHERE id_articulo = $1 AND id_sucursal = $2 AND id_lote = $3";
         comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdArticulo });
-        comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(dbPlataforma, escenario.IdPuntoVenta) });
         comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdLote });
 
         var total = (long)(await comando.ExecuteScalarAsync())!;
@@ -224,14 +226,15 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
     {
         var escenario = await SembrarEscenarioAsync(nameof(UnaSesionDeOtroTenantNoPuedeActualizarElStockLote));
         var tenantB = await SembrarTenantBAsync(nameof(UnaSesionDeOtroTenantNoPuedeActualizarElStockLote) + "-B");
+        await using var dbPlataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", tenantB.Id);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "UPDATE stock_lotes SET cantidad = cantidad + 1 " +
-            "WHERE id_articulo = $1 AND id_punto_venta = $2 AND id_lote = $3";
+            "WHERE id_articulo = $1 AND id_sucursal = $2 AND id_lote = $3";
         comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdArticulo });
-        comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(dbPlataforma, escenario.IdPuntoVenta) });
         comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdLote });
 
         var filas = await comando.ExecuteNonQueryAsync();
@@ -266,10 +269,10 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
 
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
+            "INSERT INTO stock_lotes (id_articulo, id_sucursal, id_lote, id_tenant, cantidad) " +
             "VALUES ($1, $2, $3, $4, 0)";
         comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdArticulo });
-        comando.Parameters.Add(new NpgsqlParameter { Value = escenario.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(db, escenario.IdPuntoVenta) });
         comando.Parameters.Add(new NpgsqlParameter { Value = otroLote.Id });
         comando.Parameters.Add(new NpgsqlParameter { Value = tenantB.Id });
 
@@ -297,12 +300,14 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
 
         await using var sesionB = fixture.CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, escenarioB.IdTenant));
 
+        var idSucursal = await SucursalDePrueba.DeAsync(sesionB, escenarioA.IdPuntoVenta);
         var visibleAjeno = await sesionB.StockLotes.AnyAsync(s =>
-            s.IdArticulo == escenarioA.IdArticulo && s.IdPuntoVenta == escenarioA.IdPuntoVenta && s.IdLote == escenarioA.IdLote);
+            s.IdArticulo == escenarioA.IdArticulo && s.IdSucursal == idSucursal && s.IdLote == escenarioA.IdLote);
         Assert.False(visibleAjeno);
 
+        var idSucursal2 = await SucursalDePrueba.DeAsync(sesionB, escenarioB.IdPuntoVenta);
         var visiblePropio = await sesionB.StockLotes.AnyAsync(s =>
-            s.IdArticulo == escenarioB.IdArticulo && s.IdPuntoVenta == escenarioB.IdPuntoVenta && s.IdLote == escenarioB.IdLote);
+            s.IdArticulo == escenarioB.IdArticulo && s.IdSucursal == idSucursal2 && s.IdLote == escenarioB.IdLote);
         Assert.True(visiblePropio);
     }
 }

@@ -387,7 +387,7 @@ public class CatalogoOnlineAislamientoTests(WaysApiFixture fixture) : IClassFixt
         {
             IdTenant = tienda.IdTenant,
             IdArticulo = idArticulo,
-            IdPuntoVenta = idPuntoVenta,
+            IdSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta),
             Cantidad = 7m
         });
         await db.SaveChangesAsync();

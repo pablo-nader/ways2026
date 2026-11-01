@@ -10,10 +10,10 @@ using Ways.Domain.Ventas;
 namespace Ways.Application.Parametros;
 
 /// <summary>
-/// Resolución de <c>parametros</c> (ADR-13): punto de venta gana sobre empresa, empresa
-/// gana sobre el default declarado. <see cref="ResolucionDeParametros"/> (Domain, pura) hace
-/// la precedencia; acá solo se trae el puñado de filas candidatas (a lo sumo dos por clave)
-/// y se valida la clave contra el registro tipado.
+/// Resolución de <c>parametros</c> (ADR-13): en una clave de caja el punto de venta gana sobre la empresa; en una de
+/// sucursal (zona horaria, lotes, días de alerta) gana la sucursal. La empresa gana siempre sobre el default declarado.
+/// <see cref="ResolucionDeParametros"/> (Domain, pura) hace la precedencia; acá solo se trae el puñado de filas
+/// candidatas y se valida la clave contra el registro tipado.
 ///
 /// <see cref="ITenantActual"/>/ADR-10: no hay "empresa actual" en la sesión todavía (la
 /// selección de empresa/punto de venta es una etapa operativa posterior), así que
@@ -27,6 +27,8 @@ namespace Ways.Application.Parametros;
 /// </summary>
 public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, ServicioDeLotes servicioDeLotes)
 {
+    /// <summary>Con <paramref name="idPuntoVenta"/>, una clave de sucursal se resuelve por la sucursal de ese
+    /// punto de venta (las cajas de una misma sucursal ven el mismo valor).</summary>
     public async Task<ParametroResuelto> ResolverAsync(
         string clave, int idEmpresa, int? idPuntoVenta, CancellationToken ct = default)
     {
@@ -34,17 +36,42 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         // disparar la query.
         ParametroConocido.Buscar(clave);
 
+        int? idSucursal = null;
         if (idPuntoVenta is not null)
         {
-            await ValidarPuntoVentaDeLaEmpresaAsync(idEmpresa, idPuntoVenta.Value, ct);
+            idSucursal = await ValidarPuntoVentaDeLaEmpresaAsync(idEmpresa, idPuntoVenta.Value, ct);
         }
 
-        var candidatos = await db.Parametros
-            .Where(p => p.Clave == clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
-            .ToListAsync(ct);
+        var valor = await ConsultaDeParametros.ResolverAsync(db, clave, idEmpresa, idPuntoVenta, idSucursal, ct);
+        return new ParametroResuelto(clave, valor);
+    }
 
-        var valor = ResolucionDeParametros.Resolver(clave, candidatos, idPuntoVenta);
+    /// <summary>Lectura del endpoint: por punto de venta (que una clave de sucursal resuelve por su sucursal), por
+    /// sucursal o solo por empresa. Los dos ids juntos se rechazan.</summary>
+    public Task<ParametroResuelto> ResolverEnAlcanceAsync(
+        string clave, int idEmpresa, int? idPuntoVenta, int? idSucursal, CancellationToken ct = default)
+    {
+        if (idPuntoVenta is not null && idSucursal is not null)
+        {
+            throw new ErrorDominio(
+                "parametro_alcance_ambiguo", "Indicá idPuntoVenta o idSucursal, no los dos.", 400);
+        }
+
+        return idSucursal is { } id
+            ? ResolverDeSucursalAsync(clave, idEmpresa, id, ct)
+            : ResolverAsync(clave, idEmpresa, idPuntoVenta, ct);
+    }
+
+    /// <summary>Resuelve una clave de sucursal para la sucursal misma (sin pasar por una caja): sucursal → empresa →
+    /// default. Una clave de caja se rechaza (400 <c>parametro_de_caja</c>): no tiene valor por sucursal.</summary>
+    public async Task<ParametroResuelto> ResolverDeSucursalAsync(
+        string clave, int idEmpresa, int idSucursal, CancellationToken ct = default)
+    {
+        var conocido = ParametroConocido.Buscar(clave);
+        ExigirAlcance(conocido, idPuntoVenta: null, idSucursal);
+        await ValidarSucursalDeLaEmpresaAsync(idEmpresa, idSucursal, ct);
+
+        var valor = await ConsultaDeParametros.ResolverAsync(db, clave, idEmpresa, idPuntoVenta: null, idSucursal, ct);
         return new ParametroResuelto(clave, valor);
     }
 
@@ -60,31 +87,40 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         int idEmpresa, CancellationToken ct = default) =>
         await db.Parametros
             .Where(p => p.IdEmpresa == idEmpresa)
-            .OrderBy(p => p.Clave).ThenBy(p => p.IdPuntoVenta)
-            .Select(p => new ParametroListado(p.Id, p.Clave, p.Valor, p.IdPuntoVenta))
+            .OrderBy(p => p.Clave).ThenBy(p => p.IdPuntoVenta).ThenBy(p => p.IdSucursal)
+            .Select(p => new ParametroListado(p.Id, p.Clave, p.Valor, p.IdPuntoVenta, p.IdSucursal))
             .ToListAsync(ct);
 
-    /// <summary>Alta o edición (upsert por <c>clave</c> + <c>idPuntoVenta</c>, mismo par que
-    /// los índices únicos parciales de ADR-13).</summary>
+    /// <summary>Alta o edición (upsert por <c>clave</c> + nivel: empresa, <c>idPuntoVenta</c> o <c>idSucursal</c>,
+    /// el mismo trío que los índices únicos parciales de ADR-13). Una clave de sucursal solo admite
+    /// <c>idSucursal</c>; una de caja, solo <c>idPuntoVenta</c>.</summary>
     public async Task<ParametroListado> EstablecerAsync(
         int idEmpresa, ParametroAlta datos, CancellationToken ct = default)
     {
         var conocido = ParametroConocido.Buscar(datos.Clave);
         ValidarTipo(conocido, datos.Valor);
+        ExigirAlcance(conocido, datos.IdPuntoVenta, datos.IdSucursal);
 
         if (datos.IdPuntoVenta is not null)
         {
             await ValidarPuntoVentaDeLaEmpresaAsync(idEmpresa, datos.IdPuntoVenta.Value, ct);
         }
 
-        var existente = await db.Parametros.FirstOrDefaultAsync(
-            p => p.IdEmpresa == idEmpresa && p.Clave == datos.Clave && p.IdPuntoVenta == datos.IdPuntoVenta, ct);
+        if (datos.IdSucursal is not null)
+        {
+            await ValidarSucursalDeLaEmpresaAsync(idEmpresa, datos.IdSucursal.Value, ct);
+        }
 
-        // Task 4.3 (design: Reconciliation triggers): capturado ANTES de escribir — una fila
-        // ausente vale el default declarado ("false" para lotes_habilitado), mismo criterio de
-        // resolución que ResolucionDeParametros usa para cualquier otra clave.
+        var existente = await db.Parametros.FirstOrDefaultAsync(
+            p => p.IdEmpresa == idEmpresa && p.Clave == datos.Clave
+                && p.IdPuntoVenta == datos.IdPuntoVenta && p.IdSucursal == datos.IdSucursal, ct);
+
+        // Task 4.3 (design: Reconciliation triggers): capturado ANTES de escribir. Valor efectivo previo del nivel
+        // escrito: su propia fila o, sin ella, el que heredaba (la fila de la empresa para uno de sucursal; el default
+        // declarado en cualquier otro caso), mismo criterio que ResolucionDeParametros.
         var esLotesHabilitado = string.Equals(datos.Clave, ParametroConocido.LotesHabilitado.Clave, StringComparison.OrdinalIgnoreCase);
-        var valorAnteriorLotesHabilitado = esLotesHabilitado && existente is not null && DeserializarBool(existente.Valor);
+        var valorAnteriorLotesHabilitado = esLotesHabilitado
+            && await ValorEfectivoPreviaDeLotesAsync(idEmpresa, datos.IdSucursal, existente, ct);
 
         var ahora = reloj.Ahora;
 
@@ -94,6 +130,7 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
             {
                 IdEmpresa = idEmpresa,
                 IdPuntoVenta = datos.IdPuntoVenta,
+                IdSucursal = datos.IdSucursal,
                 Clave = datos.Clave,
                 Valor = datos.Valor,
                 CreatedAt = ahora,
@@ -110,9 +147,9 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         await db.SaveChangesAsync(ct);
 
         // Task 4.3 (design: Reconciliation triggers — "lotes_habilitado flipped false → true"):
-        // alcance = todo el tenant; ReconciliarAsync ya filtra en SQL a los artículos
-        // controla_lote=true cuyo PV pertenece a una empresa con lotes_habilitado efectivo
-        // true — un re-run que también toca otras empresas ya habilitadas es un no-op seguro
+        // alcance = la sucursal escrita o, si se escribió el default de la empresa, las sucursales de la empresa;
+        // ReconciliarAsync resuelve el valor efectivo de cada sucursal (una con fila propia en false no se toca) y
+        // filtra en SQL a los artículos controla_lote=true. Un re-run sobre pares ya reconciliados es un no-op seguro
         // (design decisión 13), nunca un costo de corrección.
         //
         // Contrato de fallo parcial (diseño aceptado, sin transacción ambiente entre el
@@ -126,10 +163,76 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         // /api/stock/lotes/reconciliacion sobre el mismo alcance.
         if (esLotesHabilitado && !valorAnteriorLotesHabilitado && DeserializarBool(datos.Valor))
         {
-            await servicioDeLotes.ReconciliarAsync(idArticulo: null, idPuntoVenta: null, ct);
+            await servicioDeLotes.ReconciliarAsync(
+                idArticulo: null, idPuntoVenta: null,
+                idSucursal: datos.IdSucursal, idEmpresa: datos.IdSucursal is null ? idEmpresa : null, ct);
         }
 
-        return new ParametroListado(existente.Id, existente.Clave, existente.Valor, existente.IdPuntoVenta);
+        return new ParametroListado(
+            existente.Id, existente.Clave, existente.Valor, existente.IdPuntoVenta, existente.IdSucursal);
+    }
+
+    /// <summary>Valor efectivo de <c>lotes_habilitado</c> en el nivel que se escribe, antes de escribirlo.</summary>
+    private async Task<bool> ValorEfectivoPreviaDeLotesAsync(
+        int idEmpresa, int? idSucursal, Parametro? existente, CancellationToken ct)
+    {
+        if (existente is not null)
+        {
+            return DeserializarBool(existente.Valor);
+        }
+
+        if (idSucursal is null)
+        {
+            return DeserializarBool(ParametroConocido.LotesHabilitado.ValorPorDefecto);
+        }
+
+        var deLaEmpresa = await db.Parametros.AsNoTracking()
+            .Where(p => p.IdEmpresa == idEmpresa && p.Clave == ParametroConocido.LotesHabilitado.Clave
+                && p.IdPuntoVenta == null && p.IdSucursal == null)
+            .Select(p => p.Valor)
+            .FirstOrDefaultAsync(ct);
+
+        return DeserializarBool(deLaEmpresa ?? ParametroConocido.LotesHabilitado.ValorPorDefecto);
+    }
+
+    /// <summary>Una clave pertenece a un solo nivel: la de sucursal no se escribe ni se lee por punto de venta y la de
+    /// caja no tiene valor por sucursal. Los dos ids a la vez nunca tienen sentido.</summary>
+    private static void ExigirAlcance(ParametroConocido conocido, int? idPuntoVenta, int? idSucursal)
+    {
+        if (idPuntoVenta is not null && idSucursal is not null)
+        {
+            throw new ErrorDominio(
+                "parametro_alcance_ambiguo", "Indicá idPuntoVenta o idSucursal, no los dos.", 400);
+        }
+
+        if (conocido.Alcance == AlcanceDeParametro.Sucursal && idPuntoVenta is not null)
+        {
+            throw new ErrorDominio(
+                "parametro_de_sucursal",
+                $"'{conocido.Clave}' es un parámetro de la sucursal: se configura con idSucursal, no con idPuntoVenta.",
+                400);
+        }
+
+        if (conocido.Alcance == AlcanceDeParametro.Caja && idSucursal is not null)
+        {
+            throw new ErrorDominio(
+                "parametro_de_caja",
+                $"'{conocido.Clave}' es un parámetro de la caja: se configura con idPuntoVenta, no con idSucursal.",
+                400);
+        }
+    }
+
+    private async Task ValidarSucursalDeLaEmpresaAsync(int idEmpresa, int idSucursal, CancellationToken ct)
+    {
+        var pertenece = await db.Sucursales.AnyAsync(su => su.Id == idSucursal && su.IdEmpresa == idEmpresa, ct);
+
+        if (!pertenece)
+        {
+            throw new ErrorDominio(
+                "sucursal_no_pertenece_a_la_empresa",
+                "La sucursal indicada no pertenece a la empresa declarada.",
+                400);
+        }
     }
 
     /// <summary>Tope de <c>numeric(14,2)</c>, la columna donde termina el importe de la línea Envío.</summary>
@@ -142,17 +245,22 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
     /// que nada en el esquema impide un punto de venta real pero de otra empresa del mismo
     /// tenant. Esta consulta, scopeada por tenant vía el filtro de EF, es el único lugar que
     /// lo valida.</summary>
-    private async Task ValidarPuntoVentaDeLaEmpresaAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    private async Task<int> ValidarPuntoVentaDeLaEmpresaAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        var pertenece = await db.PuntosVenta.AnyAsync(pv => pv.Id == idPuntoVenta && pv.IdEmpresa == idEmpresa, ct);
+        var idSucursal = await db.PuntosVenta
+            .Where(pv => pv.Id == idPuntoVenta && pv.IdEmpresa == idEmpresa)
+            .Select(pv => (int?)pv.IdSucursal)
+            .FirstOrDefaultAsync(ct);
 
-        if (!pertenece)
+        if (idSucursal is null)
         {
             throw new ErrorDominio(
                 "punto_venta_no_pertenece_a_la_empresa",
                 "El punto de venta indicado no pertenece a la empresa declarada.",
                 400);
         }
+
+        return idSucursal.Value;
     }
 
     /// <summary>Valida el JSON contra el tipo CLR declarado (ADR-13) y, para

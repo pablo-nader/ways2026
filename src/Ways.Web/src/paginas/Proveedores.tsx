@@ -27,6 +27,7 @@ import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
 import { aAlta, aFormulario, formularioVacio, type Formulario } from './proveedorFormulario'
 import { atributosDeCampoDecimal } from '../formato/numeros'
+import { toast } from '../toasts/toasts'
 
 const ID_FORMULARIO_PROVEEDOR = 'formulario-proveedor'
 
@@ -167,7 +168,7 @@ function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSal
  * pantalla mientras cualquiera de las dos está en vuelo.
  *
  * El alta y la edición viven en un `Modal` (mismo criterio que `PaginaCatalogo.tsx`): un guardado
- * exitoso lo cierra y el aviso queda en la pantalla; el rechazo de un guardado se muestra adentro
+ * exitoso lo cierra y el resultado se avisa con un toast; el rechazo de un guardado se muestra adentro
  * (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores de la
  * carga del listado y de la baja siguen en la pantalla.
  */
@@ -181,7 +182,6 @@ export function Proveedores() {
   const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
   const [errorFormulario, setErrorFormulario] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [proveedorSaldo, setProveedorSaldo] = useState<ProveedorListado | null>(null)
@@ -256,11 +256,11 @@ export function Proveedores() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, padron.consultaRef.current, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -276,7 +276,6 @@ export function Proveedores() {
     setGuardando(true)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       try {
         const alta = aAlta(datos)
@@ -312,7 +311,6 @@ export function Proveedores() {
 
   function abrirFormulario(valor: Formulario) {
     setFormulario(valor)
-    setAviso('')
     setError('')
     setErrorFormulario('')
   }
@@ -331,7 +329,6 @@ export function Proveedores() {
     setDisparadorDeLaPuerta(disparador)
     setBaja(p)
     setError('')
-    setAviso('')
   }
 
   function cancelarBaja() {
@@ -340,7 +337,6 @@ export function Proveedores() {
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -351,7 +347,6 @@ export function Proveedores() {
     ocupadoRef.current = true
     setOcupadoBaja(p.id)
     setError('')
-    setAviso('')
     try {
       try {
         await clienteDeProveedores.eliminar(p.id)
@@ -412,7 +407,6 @@ export function Proveedores() {
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Proveedores" variante="inverse" herramientas={herramientas}>
         {error && !baja && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja

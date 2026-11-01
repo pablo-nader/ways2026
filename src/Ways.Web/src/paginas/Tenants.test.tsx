@@ -4,6 +4,7 @@ import { Link, MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tenants } from './Tenants'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type { TenantListado } from '../api/tipos'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.9 y 2.13) y slice 5 (5.3, 5.7, 5.8).
@@ -73,6 +74,7 @@ function montar(items: TenantListado[] = [tenantUno, tenantDos], ruta = '/organi
   return render(
     <MemoryRouter initialEntries={[ruta]}>
       <Tenants />
+      <Toaster />
       <SondaDeBusqueda />
     </MemoryRouter>,
   )
@@ -255,6 +257,7 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
     render(
       <MemoryRouter>
         <Tenants />
+        <Toaster />
       </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
@@ -273,7 +276,7 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(screen.getByText('Se dio de baja el tenant "Comercio Sur".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Se dio de baja el tenant "Comercio Sur".').closest('[role="status"]')).not.toBeNull())
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.queryAllByRole('button', { name: 'Eliminar' })).toHaveLength(0)
 
@@ -326,6 +329,7 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
     render(
       <MemoryRouter>
         <Tenants />
+        <Toaster />
       </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
@@ -335,11 +339,13 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText(
-          'Se dio de baja el tenant "Comercio Sur". Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-        ),
-      ).toBeInTheDocument(),
+        screen
+          .getByText('Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+          .closest('[role="status"]'),
+      ).not.toBeNull(),
     )
+    expect(screen.getByText('Se dio de baja el tenant "Comercio Sur".').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 
   /**
@@ -524,7 +530,7 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
     })
     await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar suspensión' }))
 
-    await waitFor(() => expect(screen.getByText('Tenant "Comercio Sur" suspendido.')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Tenant "Comercio Sur" suspendido.').closest('[role="status"]')).not.toBeNull())
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock).toHaveBeenCalledWith('/plataforma/tenants/1/suspender')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -560,7 +566,7 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
     })
     await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar reactivación' }))
 
-    await waitFor(() => expect(screen.getByText('Tenant "Almacén Este" reactivado.')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Tenant "Almacén Este" reactivado.').closest('[role="status"]')).not.toBeNull())
     expect(apiPostMock).toHaveBeenCalledWith('/plataforma/tenants/2/reactivar')
   })
 })
@@ -631,7 +637,8 @@ describe('Tenants — el renombrado es un modal', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se actualizó el tenant "Comercio Norte".')).toBeInTheDocument()
+    expect((await screen.findByText('Se actualizó el tenant "Comercio Norte".')).closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/plataforma/tenants/1', { nombre: 'Comercio Norte' })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(lecturasDelListado()).toBe(2)
@@ -712,8 +719,12 @@ describe('Tenants — el renombrado es un modal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(
-      await screen.findByText('Se actualizó el tenant "Comercio Sur". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+      (await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')).closest(
+        '[role="status"]',
+      ),
+    ).not.toBeNull()
+    expect(screen.getByText('Se actualizó el tenant "Comercio Sur".').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(screen.queryByText(/No se pudo guardar/)).not.toBeInTheDocument()
   })
@@ -915,6 +926,7 @@ describe('Tenants — el alta es un modal', () => {
       <MemoryRouter initialEntries={['/organizacion/tenants']}>
         <Link to="/organizacion/tenants?nuevo=1">Menú: nuevo tenant</Link>
         <Tenants />
+        <Toaster />
         <SondaDeBusqueda />
       </MemoryRouter>,
     )
@@ -968,18 +980,6 @@ describe('Tenants — el alta es un modal', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('abrir el alta borra el aviso de la escritura anterior', async () => {
-    montar()
-    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
-    await userEvent.click(botonEditar('Comercio Sur'))
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
-    await screen.findByText('Se actualizó el tenant "Comercio Sur".')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
-
-    expect(screen.queryByText(/Se actualizó el tenant/)).not.toBeInTheDocument()
-  })
 })
 
 // Filtros por columna y orden por encabezado (grillas, slice S5b2).
@@ -1163,6 +1163,7 @@ describe('Tenants — filtros por columna y orden', () => {
     render(
       <MemoryRouter>
         <Tenants />
+        <Toaster />
       </MemoryRouter>,
     )
     await esperarFilas()
@@ -1172,7 +1173,7 @@ describe('Tenants — filtros por columna y orden', () => {
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText('Se dio de baja el tenant "Zeta".')
+    expect((await screen.findByText('Se dio de baja el tenant "Zeta".')).closest('[role="status"]')).not.toBeNull()
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
     expect(filtro.isConnected).toBe(true)
@@ -1204,6 +1205,7 @@ describe('Tenants — filtros por columna y orden', () => {
     render(
       <MemoryRouter>
         <Tenants />
+        <Toaster />
       </MemoryRouter>,
     )
     await esperarFilas()

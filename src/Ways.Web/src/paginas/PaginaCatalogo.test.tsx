@@ -6,6 +6,7 @@ import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
 import { descriptorAreas, descriptorMarcas, descriptorListasPrecio, descriptorMediosPago } from '../api/catalogos'
 import type { DescriptorDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type { CatalogoListado, ListaPrecioListado, MarcaListado, MedioPagoAdministrado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -55,7 +56,7 @@ beforeEach(() => {
 describe('PaginaCatalogo — alta y edición en un modal', () => {
   it('la primera pantalla es solo la grilla: ni formulario ni diálogo', async () => {
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await screen.findByText('Nike')
 
@@ -66,7 +67,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
 
   it('agregar abre el modal con el título de alta y el formulario vacío', async () => {
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
@@ -77,7 +78,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
 
   it('editar abre el modal con el título de edición y la fila cargada', async () => {
     apiGetMock.mockResolvedValue([marcaFixture({ activo: false })])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Editar' }))
 
@@ -89,7 +90,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
   it('cancelar cierra el modal sin escribir nada', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
@@ -100,7 +101,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
     expect(apiPutMock).not.toHaveBeenCalled()
   })
 
-  it('un guardado exitoso cierra el modal, deja el aviso en la pantalla y recarga el listado', async () => {
+  it('un guardado exitoso cierra el modal, avisa con un toast y recarga el listado', async () => {
     const usuario = userEvent.setup()
     let cargas = 0
     apiGetMock.mockImplementation(() => {
@@ -110,13 +111,14 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
       )
     })
     apiPostMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Se creó "Puma".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se creó "Puma".')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock.mock.calls[0][0]).toBe('/catalogos/marcas')
@@ -127,12 +129,12 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
     apiPostMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Puma{Enter}')
 
-    await screen.findByText('Se creó "Puma".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se creó "Puma".')
     expect(apiPostMock).toHaveBeenCalledTimes(1)
   })
 
@@ -140,7 +142,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
@@ -156,7 +158,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
@@ -169,7 +171,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
     expect(screen.queryByText('Ya existe una marca con ese nombre.')).not.toBeInTheDocument()
   })
 
-  it('un guardado ya hecho cuyo refresco falla cierra el modal y avisa en la pantalla', async () => {
+  it('un guardado ya hecho cuyo refresco falla cierra el modal y avisa con un toast', async () => {
     const usuario = userEvent.setup()
     let cargas = 0
     apiGetMock.mockImplementation(() => {
@@ -179,13 +181,17 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
         : Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
     apiPostMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Se creó "Puma". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    const aviso = await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(aviso.closest('[role="status"]')).not.toBeNull()
+    expect(screen.getByText('Se creó "Puma".').closest('[role="status"]')).not.toBeNull()
+    expect(screen.queryByText('Se cayó.')).not.toBeInTheDocument()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -193,7 +199,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
     apiPostMock.mockImplementation(() => new Promise<void>(() => {}))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
@@ -216,7 +222,7 @@ describe('PaginaCatalogo — alta y edición en un modal', () => {
 describe('PaginaCatalogo — visibilidad condicional de idListaBase/porcentaje', () => {
   it('con modo Fija (default en un alta nueva) los campos idListaBase/porcentaje no están en el DOM', async () => {
     apiGetMock.mockResolvedValue([listaFixture({ id: 1, nombre: 'Fija A' })])
-    render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
+    render(<><PaginaCatalogo definicion={descriptorListasPrecio} /><Toaster /></>)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
@@ -226,7 +232,7 @@ describe('PaginaCatalogo — visibilidad condicional de idListaBase/porcentaje',
 
   it('cambiar modo a Derivada hace aparecer idListaBase y porcentaje', async () => {
     apiGetMock.mockResolvedValue([listaFixture({ id: 1, nombre: 'Fija A' })])
-    render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
+    render(<><PaginaCatalogo definicion={descriptorListasPrecio} /><Toaster /></>)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await userEvent.selectOptions(screen.getByLabelText('Modo'), 'Derivada')
@@ -245,7 +251,7 @@ describe('PaginaCatalogo — visibilidad condicional de idListaBase/porcentaje',
       porcentaje: 20,
     })
     apiGetMock.mockResolvedValue([listaBaseInactiva, listaDerivadaOrfana])
-    render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
+    render(<><PaginaCatalogo definicion={descriptorListasPrecio} /><Toaster /></>)
 
     const fila = (await screen.findByText('Lista derivada huérfana')).closest('tr')
     if (!fila) throw new Error('No se encontró la fila de la lista derivada huérfana')
@@ -292,7 +298,7 @@ describe('PaginaCatalogo — fallback de opción faltante acotado a opcionesDesd
   it('un select de opciones estáticas cuyo valor no está entre las opciones NO recibe una opción de fallback', async () => {
     const itemNoRelacionado: FooListado = { id: 3, nombre: 'Item Tres', activo: true, idEmpresa: null }
     apiGetMock.mockResolvedValue([itemNoRelacionado])
-    render(<PaginaCatalogo definicion={descriptorEstaticoDePrueba} />)
+    render(<><PaginaCatalogo definicion={descriptorEstaticoDePrueba} /><Toaster /></>)
 
     const fila = (await screen.findByText('Item Tres')).closest('tr')
     if (!fila) throw new Error('No se encontró la fila del item de prueba')
@@ -340,7 +346,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
   it('el botón de baja no llama a la API hasta que se confirma', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await screen.findByText('Nike')
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
@@ -351,14 +357,14 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     )
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
-    await screen.findByText('Se dio de baja "Nike".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se dio de baja "Nike".')
     expect(apiDeleteMock).toHaveBeenCalledWith('/catalogos/marcas/1')
   })
 
   it('cancelar cierra la puerta y no llama nunca a la API', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await screen.findByText('Nike')
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
@@ -372,7 +378,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
   it('un segundo click sobre la confirmación en vuelo se descarta', async () => {
     apiGetMock.mockResolvedValue([marcaFixture()])
     apiDeleteMock.mockImplementation(() => new Promise<void>(() => {}))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await screen.findByText('Nike')
     await userEvent.setup().click(screen.getByRole('button', { name: 'Eliminar' }))
@@ -408,7 +414,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
         }),
     )
 
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Nike')
 
     await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Eliminar' }))
@@ -430,7 +436,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
       await Promise.resolve()
     })
 
-    await screen.findByText('Se dio de baja "Nike".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se dio de baja "Nike".')
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
 
     await act(async () => {
@@ -454,15 +460,17 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
 
       return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
     })
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Nike')
 
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText(
-      'Se dio de baja "Nike". Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
-    )
+    const aviso = await screen.findByText('Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(aviso.closest('[role="status"]')).not.toBeNull()
+    expect(screen.getByText('Se dio de baja "Nike".').closest('[role="status"]')).not.toBeNull()
+    expect(screen.queryByText('Se cayó.')).not.toBeInTheDocument()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 
   /**
@@ -475,7 +483,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     apiDeleteMock.mockRejectedValue(
       new ErrorApi(409, 'marca_en_uso', 'No se puede dar de baja la marca porque tiene artículos.'),
     )
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await screen.findByText('Nike')
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
@@ -495,7 +503,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     apiDeleteMock.mockRejectedValue(
       new ErrorApi(409, 'marca_en_uso', 'No se puede dar de baja la marca porque tiene artículos.'),
     )
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await screen.findByText('Nike')
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
@@ -523,7 +531,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture(), marcaFixture({ id: 2, nombre: 'Adidas' })])
     apiPutMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Nike')
 
     // Editar Nike y, sin cerrarlo, abrir la puerta de baja de Adidas: `bloqueado` sigue en false
@@ -536,12 +544,12 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     await act(async () => {
       fireEvent.submit(form)
     })
-    await screen.findByText('Se actualizó "Nike".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se actualizó "Nike".')
     expect(apiPutMock).toHaveBeenCalledTimes(1)
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText('Se dio de baja "Adidas".')
+    expect((await screen.findByText('Se dio de baja "Adidas".')).closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
     expect(apiDeleteMock).toHaveBeenCalledWith('/catalogos/marcas/2')
@@ -550,7 +558,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
   it('la baja de la fila que se está editando se lleva también su formulario', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await screen.findByText('Nike')
     await usuario.click(screen.getByRole('button', { name: 'Editar' }))
@@ -559,7 +567,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText('Se dio de baja "Nike".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se dio de baja "Nike".')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
@@ -569,7 +577,7 @@ describe('PaginaCatalogo — error y foco del modal', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
@@ -581,7 +589,7 @@ describe('PaginaCatalogo — error y foco del modal', () => {
 
   it('al abrir, el foco queda en el primer campo y no en la ×', async () => {
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
@@ -601,13 +609,13 @@ describe('PaginaCatalogo — error y foco del modal', () => {
           })
     })
     apiPostMock.mockResolvedValue(undefined)
-    const { container } = render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    const { container } = render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await screen.findByText('Se creó "Puma".')
+    expect(await screen.findByRole('status')).toHaveTextContent('Se creó "Puma".')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(document.activeElement).not.toBe(document.body)
@@ -621,7 +629,7 @@ describe('PaginaCatalogo — error y foco del modal', () => {
   it('cancelar devuelve el foco al botón que abrió el modal', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     const abrir = await screen.findByRole('button', { name: 'Agregar' })
     await usuario.click(abrir)
@@ -677,7 +685,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     responder([medio()], () =>
       Promise.resolve([cuentaDeApi(3, 'Mercado Pago'), cuentaDeApi(4, 'Banco'), cuentaDeApi(5, 'Vieja', false)]),
     )
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
     const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería') as HTMLSelectElement
@@ -694,7 +702,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     const usuario = userEvent.setup()
     responder([medio()], () => Promise.resolve([cuentaDeApi(3, 'Mercado Pago'), cuentaDeApi(4, 'Banco')]))
     apiPutMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
     const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería')
@@ -725,7 +733,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
       [{ id: 1 }, { id: 2 }],
     )
     apiPutMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
     const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería')
@@ -743,7 +751,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
       () => Promise.resolve([cuentaDeApi(3, 'Mercado Pago')]),
       [{ id: 1 }, { id: 2 }],
     )
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
 
@@ -758,7 +766,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
       if (ruta === '/empresas') return Promise.reject(new ErrorApi(500, 'x', 'caída'))
       return Promise.resolve([cuentaDeApi(3, 'Mercado Pago')])
     })
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
 
@@ -768,7 +776,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
 
   it('un tenant de una sola empresa sin cuentas creadas manda a crear una', async () => {
     responder([medio({ idCuentaTesoreria: null, nombreCuentaTesoreria: null })], () => Promise.resolve([]))
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
 
@@ -780,7 +788,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     const usuario = userEvent.setup()
     responder([medio()], () => Promise.resolve([]))
     apiPostMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Nuevo')
@@ -794,7 +802,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     const usuario = userEvent.setup()
     responder([medio()], () => Promise.reject(new ErrorApi(500, 'x', 'caída')))
     apiPutMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
     expect(await within(dialogo).findByText(/No se pudieron cargar las cuentas de tesorería/)).toBeInTheDocument()
@@ -811,7 +819,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     const usuario = userEvent.setup()
     responder([medio()], () => Promise.resolve([cuentaDeApi(3, 'Mercado Pago')]))
     apiPutMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     const dialogo = await abrirEdicion()
     await usuario.selectOptions(within(dialogo).getByLabelText('Comportamiento'), 'Efectivo')
@@ -846,7 +854,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
           : Promise.resolve([cuentaDeApi(8, 'Segunda lectura')])
       },
     )
-    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+    render(<><PaginaCatalogo definicion={descriptorMediosPago} /><Toaster /></>)
 
     await abrirEdicion(0)
     await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
@@ -881,7 +889,7 @@ describe('PaginaCatalogo — lectura en vuelo al guardar', () => {
     let lecturas = 0
     apiGetMock.mockImplementation(() => (++lecturas === 1 ? inicial.promesa : Promise.resolve([marcaFixture()])))
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
@@ -903,7 +911,7 @@ describe('PaginaCatalogo — lectura en vuelo al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture()])
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
@@ -920,7 +928,7 @@ describe('PaginaCatalogo — empresa de la fila al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture({ idEmpresa: 5 })])
     apiPutMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Editar' }))
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
@@ -934,7 +942,7 @@ describe('PaginaCatalogo — empresa de la fila al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture({ idEmpresa: null })])
     apiPutMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Editar' }))
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
@@ -947,7 +955,7 @@ describe('PaginaCatalogo — empresa de la fila al guardar', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture({ idEmpresa: 5 })])
     apiPostMock.mockResolvedValue(undefined)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
 
     await usuario.click(await screen.findByRole('button', { name: 'Editar' }))
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
@@ -976,7 +984,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
 
   it('la fila de filtros tiene una celda por columna del encabezado y limpiar queda bajo Acciones', async () => {
     apiGetMock.mockResolvedValue([listaFixture()])
-    render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
+    render(<><PaginaCatalogo definicion={descriptorListasPrecio} /><Toaster /></>)
     await screen.findByRole('searchbox', { name: 'Filtrar por nombre' })
 
     const [encabezados, filtros] = screen.getAllByRole('row')
@@ -991,7 +999,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
 
   it('cada columna de datos se puede ordenar y la de acciones no', async () => {
     apiGetMock.mockResolvedValue(marcas)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Zara')
 
     for (const nombre of ['ID', 'Nombre', 'Estado']) {
@@ -1003,7 +1011,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
   it('un clic ordena ascendente, otro descendente y el tercero vuelve al orden de la API', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(marcas)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Zara')
     const boton = screen.getByRole('button', { name: 'Nombre' })
     const encabezado = screen.getByRole('columnheader', { name: 'Nombre' })
@@ -1024,7 +1032,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
   it('el filtro de texto ignora acentos y mayúsculas', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(marcas)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Zara')
 
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'ALAMO')
@@ -1035,7 +1043,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
   it('el filtro de estado y el de texto se combinan, y limpiar los quita', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(marcas)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Zara')
 
     await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por estado' }), 'Inactivo')
@@ -1052,7 +1060,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
   it('ordenar y filtrar actúan sobre las filas ya cargadas: no vuelven a pedir el listado', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(marcas)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Zara')
 
     await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
@@ -1064,7 +1072,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
   it('el orden y los filtros sobreviven a recargar el listado al incluir inactivos', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(marcas)
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Zara')
     await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'a')
@@ -1083,7 +1091,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
       { id: 1, nombre: 'A', activo: true, idEmpresa: null, orden: 10 },
       { id: 2, nombre: 'B', activo: true, idEmpresa: null, orden: 9 },
     ])
-    render(<PaginaCatalogo definicion={descriptorAreas} />)
+    render(<><PaginaCatalogo definicion={descriptorAreas} /><Toaster /></>)
     await screen.findByText('A')
 
     await usuario.click(screen.getByRole('button', { name: 'Orden' }))
@@ -1097,7 +1105,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
       listaFixture({ id: 1, nombre: 'Base', esDefault: true }),
       listaFixture({ id: 2, nombre: 'Mayor', modo: 'Derivada', idListaBase: 1, porcentaje: 10 }),
     ])
-    render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
+    render(<><PaginaCatalogo definicion={descriptorListasPrecio} /><Toaster /></>)
     await screen.findByText('Base')
 
     await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por lista default' }), 'Sí')
@@ -1115,7 +1123,7 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue(marcas)
     apiDeleteMock.mockImplementation(() => new Promise<void>(() => {}))
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<><PaginaCatalogo definicion={descriptorMarcas} /><Toaster /></>)
     await screen.findByText('Zara')
 
     await usuario.click(within(screen.getByRole('row', { name: /Zara/ })).getByRole('button', { name: 'Eliminar' }))

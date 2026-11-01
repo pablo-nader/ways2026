@@ -117,9 +117,10 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         Contexto ctx, int idArticulo, decimal cantidad, decimal? minimo = null, decimal? reposicion = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            IdTenant = ctx.IdTenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = cantidad,
             Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();
@@ -238,10 +239,13 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
 
+        await using var dbSucursal = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(dbSucursal, ctx.IdPuntoVenta);
+
         var diaDelPuntoDeVenta = new DateOnly(2026, 8, 5);
-        var nombreEsperado = NombreDeArchivo.Construir("existencias", $"pv{ctx.IdPuntoVenta}", diaDelPuntoDeVenta, diaDelPuntoDeVenta);
+        var nombreEsperado = NombreDeArchivo.Construir("existencias", $"sucursal{idSucursal}", diaDelPuntoDeVenta, diaDelPuntoDeVenta);
         var diaUtcIncorrecto = new DateOnly(2026, 8, 6);
-        var nombreConDiaUtc = NombreDeArchivo.Construir("existencias", $"pv{ctx.IdPuntoVenta}", diaUtcIncorrecto, diaUtcIncorrecto);
+        var nombreConDiaUtc = NombreDeArchivo.Construir("existencias", $"sucursal{idSucursal}", diaUtcIncorrecto, diaUtcIncorrecto);
 
         var disposicion = respuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
         Assert.DoesNotContain(nombreConDiaUtc, disposicion);

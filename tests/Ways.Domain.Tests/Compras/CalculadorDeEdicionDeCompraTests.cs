@@ -4,8 +4,9 @@ namespace Ways.Domain.Tests.Compras;
 
 public class CalculadorDeEdicionDeCompraTests
 {
+    /// <summary>Cada punto de venta en su propia sucursal (la del mismo número), salvo donde la prueba las separa.</summary>
     private static CantidadDeStockDeCompra Cant(int articulo, int pv, int? lote, decimal cantidad) =>
-        new(articulo, pv, lote, cantidad);
+        new(articulo, pv, pv, lote, cantidad);
 
     // ---- stock: diferencia por clave ------------------------------------------------------------------------
 
@@ -16,7 +17,7 @@ public class CalculadorDeEdicionDeCompraTests
             [Cant(5, 1, null, 10m)], [Cant(5, 1, null, 14m)]);
 
         var unica = Assert.Single(resultado);
-        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, null, 4m), unica);
+        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, 1, null, 4m), unica);
     }
 
     [Fact]
@@ -25,7 +26,7 @@ public class CalculadorDeEdicionDeCompraTests
         var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock(
             [Cant(5, 1, null, 10m)], [Cant(5, 1, null, 6m)]);
 
-        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, null, -4m), Assert.Single(resultado));
+        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, 1, null, -4m), Assert.Single(resultado));
     }
 
     /// <summary>Clausula bajo prueba: el neteo por clave. Un libro con +10 y −4 de la misma clave (una edición anterior)
@@ -36,7 +37,7 @@ public class CalculadorDeEdicionDeCompraTests
         var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock(
             [Cant(5, 1, null, 10m), Cant(5, 1, null, -4m)], [Cant(5, 1, null, 9m)]);
 
-        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, null, 3m), Assert.Single(resultado));
+        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, 1, null, 3m), Assert.Single(resultado));
     }
 
     [Fact]
@@ -56,7 +57,7 @@ public class CalculadorDeEdicionDeCompraTests
         var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock(
             [Cant(5, 1, null, 10m), Cant(6, 1, null, 3m)], [Cant(5, 1, null, 10m), Cant(6, 1, null, 8m)]);
 
-        Assert.Equal(new DiferenciaDeStockDeCompra(6, 1, null, 5m), Assert.Single(resultado));
+        Assert.Equal(new DiferenciaDeStockDeCompra(6, 1, 1, null, 5m), Assert.Single(resultado));
     }
 
     [Fact]
@@ -66,7 +67,7 @@ public class CalculadorDeEdicionDeCompraTests
             [Cant(5, 1, null, 10m)], [Cant(5, 2, null, 10m)]);
 
         Assert.Equal(
-            [new DiferenciaDeStockDeCompra(5, 1, null, -10m), new DiferenciaDeStockDeCompra(5, 2, null, 10m)], resultado);
+            [new DiferenciaDeStockDeCompra(5, 1, 1, null, -10m), new DiferenciaDeStockDeCompra(5, 2, 2, null, 10m)], resultado);
     }
 
     [Fact]
@@ -76,7 +77,7 @@ public class CalculadorDeEdicionDeCompraTests
             [Cant(5, 1, 100, 10m)], [Cant(5, 1, 200, 10m)]);
 
         Assert.Equal(
-            [new DiferenciaDeStockDeCompra(5, 1, 100, -10m), new DiferenciaDeStockDeCompra(5, 1, 200, 10m)], resultado);
+            [new DiferenciaDeStockDeCompra(5, 1, 1, 100, -10m), new DiferenciaDeStockDeCompra(5, 1, 1, 200, 10m)], resultado);
     }
 
     [Fact]
@@ -84,7 +85,7 @@ public class CalculadorDeEdicionDeCompraTests
     {
         var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock([Cant(5, 1, null, 10m)], []);
 
-        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, null, -10m), Assert.Single(resultado));
+        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, 1, null, -10m), Assert.Single(resultado));
     }
 
     [Fact]
@@ -92,7 +93,7 @@ public class CalculadorDeEdicionDeCompraTests
     {
         var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock([], [Cant(7, 1, null, 2m)]);
 
-        Assert.Equal(new DiferenciaDeStockDeCompra(7, 1, null, 2m), Assert.Single(resultado));
+        Assert.Equal(new DiferenciaDeStockDeCompra(7, 1, 1, null, 2m), Assert.Single(resultado));
     }
 
     /// <summary>Con la compra nueva vacía es la reversa exacta del libro: la que usa la anulación. +10 y −4 de la misma clave
@@ -103,21 +104,37 @@ public class CalculadorDeEdicionDeCompraTests
         var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock(
             [Cant(5, 1, null, 10m), Cant(5, 1, null, -4m), Cant(6, 1, 30, 2m), Cant(6, 1, 30, -2m)], []);
 
-        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, null, -6m), Assert.Single(resultado));
+        Assert.Equal(new DiferenciaDeStockDeCompra(5, 1, 1, null, -6m), Assert.Single(resultado));
     }
 
     [Fact]
-    public void ElResultadoVaAscendentePorArticuloPuntoDeVentaYLoteConLoteNuloPrimero()
+    public void ElResultadoVaAscendentePorSucursalArticuloLoteConLoteNuloPrimeroYPuntoDeVenta()
     {
         var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock(
             [],
             [
-                Cant(9, 1, 1, 1m), Cant(5, 2, null, 1m), Cant(5, 1, 7, 1m), Cant(5, 1, null, 1m), Cant(5, 1, 3, 1m)
+                Cant(9, 1, 1, 1m), Cant(5, 2, null, 1m), Cant(5, 1, 7, 1m), Cant(5, 1, null, 1m), Cant(5, 1, 3, 1m),
+                new CantidadDeStockDeCompra(5, 1, 4, null, 1m)
             ]);
 
         Assert.Equal(
-            [(5, 1, (int?)null), (5, 1, 3), (5, 1, 7), (5, 2, null), (9, 1, 1)],
-            resultado.Select(d => (d.IdArticulo, d.IdPuntoVenta, d.IdLote)).ToList());
+            [(1, 5, (int?)null, 1), (1, 5, null, 4), (1, 5, 3, 1), (1, 5, 7, 1), (1, 9, 1, 1), (2, 5, null, 2)],
+            resultado.Select(d => (d.IdSucursal, d.IdArticulo, d.IdLote, d.IdPuntoVenta)).ToList());
+    }
+
+    /// <summary>La sucursal es parte de la clave: un asiento del libro guardado en otra sucursal que la que hoy tiene el
+    /// punto de venta no se netea con la línea nueva del mismo punto de venta. Se revierte donde se asentó y la línea
+    /// nueva entra en la sucursal actual.</summary>
+    [Fact]
+    public void ElMismoPuntoDeVentaEnOtraSucursalNoSeNetea()
+    {
+        var resultado = CalculadorDeEdicionDeCompra.DiferenciasDeStock(
+            [new CantidadDeStockDeCompra(5, 1, 3, null, 10m)],
+            [new CantidadDeStockDeCompra(5, 2, 3, null, 10m)]);
+
+        Assert.Equal(
+            [new DiferenciaDeStockDeCompra(5, 1, 3, null, -10m), new DiferenciaDeStockDeCompra(5, 2, 3, null, 10m)],
+            resultado);
     }
 
     // ---- cuenta corriente --------------------------------------------------------------------------------------

@@ -444,7 +444,7 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         {
             IdTenant = tenant.IdTenant,
             IdArticulo = idArticulo,
-            IdPuntoVenta = idPuntoVenta,
+            IdSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta),
             Cantidad = cantidad,
             Minimo = minimo
         });
@@ -519,13 +519,18 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         return compra.Id;
     }
 
-    /// <summary>Baja lógica de un punto de venta que todavía tiene stock: el dato heredado que la ficha tiene que tolerar.</summary>
-    public async Task DarDeBajaPuntoVentaAsync(TenantDeVentas tenant, int idPuntoVenta)
+    /// <summary>Baja lógica de un punto de venta, y de su sucursal que queda sin cajas, que todavía tiene stock: el dato
+    /// heredado que la ficha tiene que tolerar. Devuelve la sucursal dada de baja.</summary>
+    public async Task<int> DarDeBajaPuntoVentaAsync(TenantDeVentas tenant, int idPuntoVenta)
     {
         await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
         var ahora = DateTimeOffset.UtcNow;
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         var filas = await db.PuntosVenta.Where(p => p.Id == idPuntoVenta).ExecuteUpdateAsync(p => p.SetProperty(x => x.DeletedAt, ahora));
         Assert.Equal(1, filas);
+        filas = await db.Sucursales.Where(s => s.Id == idSucursal).ExecuteUpdateAsync(s => s.SetProperty(x => x.DeletedAt, ahora));
+        Assert.Equal(1, filas);
+        return idSucursal;
     }
 
     /// <summary>Host del conector con un reloj fijo y los mails dados habilitados.</summary>
