@@ -210,6 +210,26 @@ Commit `198123a3` on `pnader/mercadopago-e2-t3` (route: delegated writer).
 - Open: a registered sucursal now counts as in use (`sucursal_en_uso` on baja; same for empresa/tenant); a PUT to a store deleted in
   Mercado Pago surfaces as 502 instead of re-creating; MP DTO shapes, accepted characters and the state name for CABA are unverified live.
 
+## Judgment-day T3 round 1
+
+- 2026-11-01: three findings confirmed by both blind judges on 198123a3; fixed in cdc6701f.
+- T3-1: the create key was fixed per sucursal (`ways-local-{id}-alta`) while the body can change; Mercado Pago answers 409 for the
+  same key with another body within 24 h. Now `ways-local-{id}-alta-{body hash}`. The update key adds the sucursal's `updated_at`
+  ticks (`ways-local-{id}-{hash}-{ticks}`), so A -> B -> A yields three distinct keys and a retry of the same state reuses its key.
+- T3-2: with a link row a PUT to a store deleted in Mercado Pago (404) left the sucursal stuck. A 404 from the PUT now falls back
+  to search by `external_id` (adopt + PUT) or create, and the link row's store id is updated in the same transaction. Other 4xx
+  still surface as 502.
+- T3-3: the sanitizer replaces any non-admitted character with a space (S/N -> S N, 1234 1/2 -> 1234 1 2, O'Higgins -> O Higgins,
+  9º -> 9) and an altura of S/N / SN / S N counts as missing for Mercado Pago.
+- Tests: 8 new domain cases (sanitizer, S/N rule); 5 new integration tests (alta key changes with the body, A-B-A-B update keys all
+  distinct, PUT 404 -> adopt, PUT 404 -> create, PUT 400 still 502 without search/create). `AuditoriaAsync` now orders by
+  `id_auditoria DESC` (it ordered by text, which picked the wrong row).
+- Verification: build 0 errors; Domain 2304; Application 1637; integration filter MercadoPagoLocales 27 passed.
+- Mutation evidence (mutate, run, revert): create key back to fixed `-alta` + update key without ticks + `when (false)` on the 404
+  catch, together -> 4 integration tests failed (alta key, update keys, adopt, create); sanitizer non-admitted branch removed + S/N
+  rule removed, together -> 8 domain tests failed. All reverted, green again.
+- Verdict pending: scoped re-judgment of the fix delta.
+
 ## Next step
 
 T4 — POS sync (link table punto de venta <-> Mercado Pago POS).
