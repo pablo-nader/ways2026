@@ -4079,3 +4079,24 @@ export type FilaDeVentaDeAdministracion = {
 }
 
 export type PaginaDeVentasDeAdministracion = PaginaDe<FilaDeVentaDeAdministracion>
+
+/** Fila de `GET /api/caja/retiros`. */
+export type FilaDeRetiro = {
+  id: number
+  fecha: string
+  idTurnoCaja: number
+  idPuntoVenta: number | null
+  puntoVenta: string | null
+  idEmpleado: number | null
+  empleado: string | null
+  importe: number
+  motivo: string
+  turnoCerrado: boolean
+  conciliado: boolean
+  esRetiroDeCierre: boolean
+}
+
+export type PaginaDeRetiros = PaginaDe<FilaDeRetiro>
+
+/** Cuerpo de `PUT /api/caja/retiros/{id}`. */
+export type SolicitudDeEdicionDeRetiro = { importe: number; motivo: string }

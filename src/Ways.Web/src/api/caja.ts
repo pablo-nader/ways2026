@@ -9,13 +9,16 @@ import { api } from './cliente'
 import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   DetalleDeTurno,
+  FilaDeRetiro,
   MovimientoRegistrado,
+  PaginaDeRetiros,
   PaginaDeTurnos,
   ResumenDeCierrePorRetiro,
   ResumenDeTurno,
   SolicitudDeApertura,
   SolicitudDeCierre,
   SolicitudDeCierrePorRetiro,
+  SolicitudDeEdicionDeRetiro,
   SolicitudDeMovimiento,
   TipoMovimientoCaja,
   TurnoConArqueos,
@@ -61,7 +64,91 @@ export function construirQueryDeCierres(
   return `?${parametros.toString()}`
 }
 
+/** Claves de `orden` de `GET /api/caja/retiros`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_RETIROS = [
+  'fecha',
+  'puntoVenta',
+  'turno',
+  'empleado',
+  'importe',
+  'motivo',
+  'estadoTurno',
+  'conciliado',
+  'esRetiroDeCierre',
+] as const
+
+export type ColumnaOrdenableDeRetiros = (typeof COLUMNAS_ORDENABLES_DE_RETIROS)[number]
+
+export type OrdenDeRetiros = OrdenDeServidor<ColumnaOrdenableDeRetiros>
+
+export function esColumnaOrdenableDeRetiros(columna: string): columna is ColumnaOrdenableDeRetiros {
+  return (COLUMNAS_ORDENABLES_DE_RETIROS as readonly string[]).includes(columna)
+}
+
+/** Lo que muestran los controles de filtro; cada clave es un parámetro de `GET /api/caja/retiros`. `desde`/`hasta` son
+ * `YYYY-MM-DD` o `''`; `idTurnoCaja` se tipea como texto y solo viaja si es un entero. */
+export type FiltrosDeRetiros = {
+  desde: string
+  hasta: string
+  idPuntoVenta: number | null
+  idTurnoCaja: string
+  idEmpleado: number | null
+  importeDesde: number | null
+  importeHasta: number | null
+  motivo: string
+  turnoCerrado: boolean | null
+  conciliado: boolean | null
+  esRetiroDeCierre: boolean | null
+  pagina: number
+  tamanio: number
+}
+
+export function filtrosDeRetirosVacios(): FiltrosDeRetiros {
+  return {
+    desde: '',
+    hasta: '',
+    idPuntoVenta: null,
+    idTurnoCaja: '',
+    idEmpleado: null,
+    importeDesde: null,
+    importeHasta: null,
+    motivo: '',
+    turnoCerrado: null,
+    conciliado: null,
+    esRetiroDeCierre: null,
+    pagina: 1,
+    tamanio: 25,
+  }
+}
+
+/** Query de la grilla de retiros: un parámetro por filtro activo, `orden` + `direccion` solo con orden. */
+export function construirQueryDeRetiros(filtros: FiltrosDeRetiros, orden: OrdenDeRetiros = null): string {
+  const parametros = new URLSearchParams()
+  if (filtros.desde) parametros.set('desde', filtros.desde)
+  if (filtros.hasta) parametros.set('hasta', filtros.hasta)
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  if (/^\d+$/.test(filtros.idTurnoCaja.trim())) parametros.set('idTurnoCaja', filtros.idTurnoCaja.trim())
+  if (filtros.idEmpleado !== null) parametros.set('idEmpleado', String(filtros.idEmpleado))
+  if (filtros.importeDesde !== null) parametros.set('importeDesde', String(filtros.importeDesde))
+  if (filtros.importeHasta !== null) parametros.set('importeHasta', String(filtros.importeHasta))
+  if (filtros.motivo.trim()) parametros.set('motivo', filtros.motivo.trim())
+  if (filtros.turnoCerrado !== null) parametros.set('turnoCerrado', String(filtros.turnoCerrado))
+  if (filtros.conciliado !== null) parametros.set('conciliado', String(filtros.conciliado))
+  if (filtros.esRetiroDeCierre !== null) parametros.set('esRetiroDeCierre', String(filtros.esRetiroDeCierre))
+  agregarOrdenAlQuery(parametros, orden)
+  parametros.set('pagina', String(filtros.pagina))
+  parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
+}
+
 export const clienteDeCaja = {
+  /** `GET /api/caja/retiros` (Supervisor y Admin): filtra, ordena y pagina en el servidor. */
+  listarRetiros: (filtros: FiltrosDeRetiros, orden: OrdenDeRetiros = null) =>
+    api.get<PaginaDeRetiros>(`/caja/retiros${construirQueryDeRetiros(filtros, orden)}`),
+  /** `PUT /api/caja/retiros/{id}` (Admin): corrige importe y motivo; en un turno cerrado el servidor recalcula el arqueo. */
+  editarRetiro: (id: number, solicitud: SolicitudDeEdicionDeRetiro) => api.put<FilaDeRetiro>(`/caja/retiros/${id}`, solicitud),
+  /** `DELETE /api/caja/retiros/{id}` (Admin): baja lógica del retiro. */
+  eliminarRetiro: (id: number) => api.delete(`/caja/retiros/${id}`),
   /** `POST /api/caja/turnos` (design: API Surface): 201 + turno, o `409 turno_ya_abierto` si el
    * punto de venta ya tiene uno abierto. */
   abrir: (solicitud: SolicitudDeApertura) => api.post<TurnoResumen>('/caja/turnos', solicitud),

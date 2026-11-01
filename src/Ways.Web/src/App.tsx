@@ -46,6 +46,7 @@ import { PuntosVenta } from './paginas/PuntosVenta'
 import { Sucursales } from './paginas/Sucursales'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
 import { Pagos } from './paginas/Pagos'
+import { RetirosDeAdministracion } from './paginas/RetirosDeAdministracion'
 import { VentasDeAdministracion } from './paginas/VentasDeAdministracion'
 import { LibroIva } from './paginas/LibroIva'
 import { Remito } from './paginas/Remito'
@@ -186,7 +187,7 @@ export function App() {
                 </RutaProtegida>
               }
             />
-            {/* Ventas de la administración: lectura Supervisor + Admin (Politicas.LecturaDeReportes), la
+            {/* Ventas y retiros de la administración: lectura Supervisor + Admin (Politicas.LecturaDeReportes), la
                 corrección es solo Admin y la pantalla oculta esas acciones al Supervisor. Cuelgan de /caja para no
                 sumar un primer segmento a la lista de rutas del servidor. */}
             <Route
@@ -194,6 +195,14 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <VentasDeAdministracion />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/caja/retiros"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <RetirosDeAdministracion />
                 </RutaProtegida>
               }
             />
