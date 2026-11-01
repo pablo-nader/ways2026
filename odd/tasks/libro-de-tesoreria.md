@@ -54,7 +54,7 @@ much in each digital account the business has, nor where each movement came from
 
 - [x] T1 — Cash manual adjustment (backend): endpoint + writer, distinguishable from the system
   adjustments written by pago edits. Route: delegated.
-- [ ] T2 — Ledger read model (backend): `GET /api/reportes/libro-tesoreria` with rows, per-account
+- [x] T2 — Ledger read model (backend): `GET /api/reportes/libro-tesoreria` with rows, per-account
   breakdown, arqueo difference with tolerance, previous balance and current balances. Route: delegated.
 - [ ] T3 — Web screen replacing `/caja/tesoreria` + `/pagos?id=N` deep link + cash adjustment modal.
   Route: delegated.
@@ -73,6 +73,20 @@ pago row together. The freeze removes this once conciliated.
 - 2026-11-01: T1 done: `POST /api/tesoreria/efectivo/ajustes` (Admin, importe con signo; sin saldo objetivo porque la cadena
   no es el saldo del libro nuevo), enum `ajuste_manual` (migración ADD VALUE), 10 integration + domain tests verdes.
 
+- 2026-11-01: T1 commit 5a939ae7. T2 done: `GET /api/reportes/libro-tesoreria?idEmpresa&desde&hasta` (LecturaDeReportes, rango <= 366 días),
+  `ServicioDeLibroDeTesoreria` desde las fuentes; domain 18 + application 4 + integration 8 tests nuevos, mutaciones de tolerancia y de empresa
+  registradas en `LibroDeTesoreriaTests`.
+
+### Decisiones del libro (T2)
+
+- Caja #N = id del turno (columna Turno del histórico de cajas). Medio efectivo = comportamiento efectivo del catálogo o el ancla
+  `turnos_caja.id_medio_pago_efectivo` fijada al cerrar.
+- Cada línea de pago se reparte por su medio (efectivo, cuenta viva de la empresa, o `sinCuenta`), sin importar `origen_fondos`: un pago de
+  tesorería con medio digital resta de la cuenta, no del efectivo.
+- Los ajustes del sistema (`Ajuste` de tesorería) se ignoran: la fila del pago ya muestra su valor vigente. Transferencia/depósito/retiro de
+  cuenta no tienen escritor y quedan fuera.
+- Un pago del cajón de un turno todavía abierto aparece negativo en su fila de pago sin la fila de caja que lo compensa, hasta el cierre.
+
 ## Next step
 
-T2.
+T3.
