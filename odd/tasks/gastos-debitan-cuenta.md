@@ -20,13 +20,19 @@ digital baja el esperado del arqueo pero nunca debitó la cuenta (límite docume
   cuenta actual del medio (solo cuentas vivas de la empresa del pago); ya debitado = suma de filas `pago` con
   ese `id_pago` por cuenta (egreso − ingreso). Escribe una fila por cuenta con la diferencia
   (egreso si sube, ingreso si baja), fechada `FechaMonotona(momento)`. Alta, edición y baja la llaman.
-- Sin índice único: un pago puede tener varias filas (ediciones). La serialización es el lock del pago +
-  advisory de empresa + cuentas `FOR NO KEY UPDATE`; las filas existentes se leen después del lock de cuentas.
+- Sin índice único: un pago puede tener varias filas (ediciones). La guarda de las filas `pago` es el advisory de la
+  empresa: todo escritor de filas `pago` (reconciliador y reconstrucción) lo toma primero, y las filas existentes se leen
+  después del advisory y del lock de los medios, antes del lock de las cuentas (deciden qué cuentas bloquear). El lock del
+  pago serializa además las ediciones y bajas del mismo pago.
 - Orden de locks: conciliación → turno → compra → pago → proveedor → advisory de empresa → medios `FOR SHARE`
   → cuentas `FOR NO KEY UPDATE`.
 - Concepto `Pago {id}` (no lleva el nombre del personal: reasignar no lo toca).
 - La reconstrucción agrega los pagos vivos sin filas `pago`, con fecha `pago.Fecha` (inserción retroactiva con
   recálculo de la cadena, igual que los cierres), salteando los pagos a la fecha de conciliación o antes.
+- Caso conocido: un pago anterior a la feature editado después de T1 y antes de T2 no tiene filas `pago`, así que la
+  edición debita su total completo, fechado en la edición; el backfill de T2 lo saltea porque ya tiene filas. El total es
+  correcto, pero ese débito lleva la fecha de la edición y no `pago.Fecha`. La regla del backfill queda "solo pagos sin
+  filas `pago`".
 - El libro de tesorería no cambia (el tipo nuevo queda fuera de `EsDeCierre` y `Ajuste`). Divergencia
   conocida: si a un medio se le cambia la cuenta, el libro re-rutea la historia y la cadena no.
 - Fuera de alcance: devoluciones (NC) de ventas digitales.
@@ -55,8 +61,20 @@ digital baja el esperado del arqueo pero nunca debitó la cuenta (límite docume
   - RED observado: calculador (no compilaba) y `PagosDebitanCuentaTests` con el reconciliador anulado (9/11 rojas). Mutaciones:
     sin filtro de empresa → rojo `UnaCuentaDeOtraEmpresaNoSeDebita`; ignorar lo ya debitado → 5 rojas (edición, baja, cambio de
     medio, POS, concurrencia).
-- [ ] T2 — Backend: la reconstrucción hace el backfill de débitos; contrato de la vista previa con los débitos; tests.
+- [x] T2 — Backend: la reconstrucción hace el backfill de débitos; contrato de la vista previa con los débitos; tests.
   Ruta: delegada.
+  - Contrato: `PlanDeReconstruccion` suma `Pagos`, `Debitos` y `DebitosCongelados` (`DebitoDeReconstruccion`: pago, fecha,
+    categoría, concepto, medio, cuenta, importe); `Filas` y el efecto por cuenta incluyen los débitos.
+  - Servicio: `PlanearDebitosAsync` (pagos vivos de la empresa en el rango por `pago.Fecha`, sin filas `pago`, ítems vivos con medio
+    con cuenta viva de la empresa, `CalculadorDeDebitosDePago` con nada debitado); filas con `DebitosDePagoEnCuenta.ArmarFila`
+    (extraída del reconciliador, mismo concepto) fechadas en `pago.Fecha`, en la misma pasada `AgregarYReconstruirAsync` que los
+    cierres. La aplicación toma `FOR KEY SHARE` de los pagos del rango sin filas antes del advisory (choca con el `FOR UPDATE` de
+    edición y baja) y solo planea esos; las filas existentes se leen después del advisory. Pagos a la marca o antes van a
+    `DebitosCongelados`.
+  - Evidencia (2026-11-01): `dotnet build Ways.slnx` 0 errores; `dotnet test tests/Ways.Domain.Tests` 2246/2246;
+    `dotnet test tests/Ways.Application.Tests` 1638/1638; integración `CuentasTesoreriaReconstruccion|PagosDebitanCuenta|
+    LibroDeTesoreria|Conciliacion` 79/79 (3 pruebas nuevas). Mutaciones: quitar el filtro "sin filas `pago`" del planeo →
+    rojo `UnPagoYaDebitadoUnoSinCuenta…`; `congelado = false` en los débitos → rojo `UnPagoConFechaIgualALaMarca…`.
 - [ ] T3 — Web: el modal de reconstrucción muestra los débitos y su efecto por cuenta; tests.
   Ruta: delegada.
 
@@ -76,9 +94,10 @@ digital baja el esperado del arqueo pero nunca debitó la cuenta (límite docume
 
 - 2026-11-01: diagnóstico confirmado en main; diseño cerrado.
 - 2026-11-01: T1 terminada (ver evidencia en la tarea).
+- 2026-11-01: T2 terminada (ver evidencia en la tarea). T3 escrita sin commit: falta ampliar la superficie a la página.
 
 ## Siguiente paso
 
-T2. Notas para T2: la reconstrucción debe tomar el advisory de la empresa antes de leer las filas `pago` existentes (el
-reconciliador cuenta con eso); el tipo `TipoDeComponenteDeReconstruccion` de `src/Ways.Web/src/api/cuentasTesoreria.ts` no
-incluye `Pago`.
+T3. La página `src/Ways.Web/src/paginas/CuentasTesoreria.tsx` arma su propio aviso ("Historial reconstruido: N filas de M
+turnos.") y su prueba usa un plan sin `pagos`/`debitos`/`debitosCongelados`: hay que pasar el aviso a
+`origenesDeReconstruccion` y completar el plan de la prueba.

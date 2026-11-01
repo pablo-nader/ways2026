@@ -12,6 +12,7 @@ using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Pagos;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
@@ -490,6 +491,171 @@ public class CuentasTesoreriaReconstruccionTests(WaysApiFixture fixture) : IClas
         var libro = await LibroAsync(ctx, cuenta);
         var fila = Assert.Single(libro);
         Assert.Equal((TipoMovimientoCuenta.Cobro, 0m, 100m, 100m), (fila.Tipo, fila.Inicio, fila.Ingreso, fila.Final));
+    }
+
+    // ---- débitos de pagos ------------------------------------------------------------------------------
+
+    /// <summary>Alta administrativa de un pago de una sola línea, con la fecha llevada por SQL a <paramref name="fecha"/>: el alta
+    /// siempre fecha el pago en el día del negocio.</summary>
+    private async Task<int> PagoAsync(Contexto ctx, int idMedio, decimal importe, DateTimeOffset fecha)
+    {
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", new
+        {
+            fecha = FechaDelNegocio.Hoy().ToString("yyyy-MM-dd"), idEmpresa = ctx.IdEmpresa, categoria = "Servicios",
+            concepto = "Luz", lineas = new[] { new { idMedioPago = idMedio, importe, referencia = (string?)null } }
+        });
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var idPago = JsonSerializer.Deserialize<JsonElement>(cuerpo).GetProperty("id").GetInt32();
+
+        var utc = fecha.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss+00");
+        await EjecutarCrudoAsync(ctx, $"UPDATE pagos SET fecha = '{utc}' WHERE id_pago = {idPago}");
+        return idPago;
+    }
+
+    /// <summary>Sobre el historial de <see cref="SembrarHistorialAsync"/>, un pago de 300 con otro medio sin cuenta, fechado entre
+    /// los dos turnos viejos; después el medio pasa a la misma cuenta. Saldo esperado: 1430 + 2700 − 300 = 3830.</summary>
+    [Fact]
+    public async Task UnPagoViejoSinDebitoSeDebitaConSuFechaEnLaMismaPasadaQueLosCierresYLaCadenaQuedaConsistente()
+    {
+        var (ctx, cuenta, _, turno1, turno2, turnoNuevo) = await SembrarHistorialAsync(
+            nameof(UnPagoViejoSinDebitoSeDebitaConSuFechaEnLaMismaPasadaQueLosCierresYLaCadenaQuedaConsistente));
+        var transferencia = await CrearMedioAsync(ctx, "Transferencia B", idCuenta: null);
+        var fechaDelPago = Dia10.AddHours(2);
+        var idPago = await PagoAsync(ctx, transferencia, 300m, fechaDelPago);
+        await AsignarCuentaAsync(ctx, transferencia, cuenta);
+        Assert.DoesNotContain(await LibroAsync(ctx, cuenta), f => f.IdPago == idPago);
+
+        var vista = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaVistaPrevia, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        var plan = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
+
+        foreach (var p in new[] { vista, plan })
+        {
+            Assert.Equal((2, 1, 5), (p.Turnos, p.Pagos, p.Filas));
+            var debito = Assert.Single(p.Debitos);
+            Assert.Equal(
+                new DebitoDeReconstruccion(
+                    idPago, fechaDelPago, CategoriaPago.Servicios, "Luz", transferencia, "Transferencia B", cuenta, "Mercado Pago", 300m),
+                debito);
+            var total = Assert.Single(p.Cuentas);
+            Assert.Equal((cuenta, 5, 2400m, 1430m, 3830m), (total.IdCuentaTesoreria, total.Filas, total.Neto, total.SaldoAntes, total.SaldoDespues));
+            Assert.Empty(p.DebitosCongelados);
+        }
+
+        Assert.Equal(vista.Debitos, plan.Debitos);
+        Assert.Equal(vista.Cuentas, plan.Cuentas);
+
+        var libro = await LibroAsync(ctx, cuenta);
+        Assert.Equal(8, libro.Count);
+        AfirmarFila(libro[0], TipoMovimientoCuenta.Cobro, 1000m, 1000m, 0m, 2000m);
+        AfirmarFila(libro[1], TipoMovimientoCuenta.Comision, 2000m, 0m, 100m, 1900m);
+        AfirmarFila(libro[2], TipoMovimientoCuenta.Pago, 1900m, 0m, 300m, 1600m);
+        AfirmarFila(libro[3], TipoMovimientoCuenta.Cobro, 1600m, 2000m, 0m, 3600m);
+        AfirmarFila(libro[4], TipoMovimientoCuenta.Comision, 3600m, 0m, 200m, 3400m);
+        AfirmarFila(libro[5], TipoMovimientoCuenta.Cobro, 3400m, 500m, 0m, 3900m);
+        AfirmarFila(libro[6], TipoMovimientoCuenta.Comision, 3900m, 0m, 50m, 3850m);
+        AfirmarFila(libro[7], TipoMovimientoCuenta.Ajuste, 3850m, 0m, 20m, 3830m);
+        Assert.Equal([turno1, turno1, null, turno2, turno2, turnoNuevo, turnoNuevo, null], libro.Select(f => f.IdTurnoCaja).ToArray());
+        Assert.Equal(
+            ((int?)idPago, (int?)transferencia, fechaDelPago, $"Pago {idPago}", ctx.IdEmpleado, (decimal?)null),
+            (libro[2].IdPago, libro[2].IdMedioPago, libro[2].Fecha, libro[2].Concepto, libro[2].IdEmpleado, libro[2].BaseBruta));
+        Assert.Equal(libro.OrderBy(f => f.Fecha).ThenBy(f => f.Id).Select(f => f.Id), libro.Select(f => f.Id));
+        Assert.Equal(3830m, await SaldoDeLaCuentaAsync(ctx, cuenta));
+
+        var segunda = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        var otraVista = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaVistaPrevia, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        foreach (var p in new[] { segunda, otraVista })
+        {
+            Assert.Equal((0, 0, 0), (p.Turnos, p.Pagos, p.Filas));
+            Assert.Empty(p.Debitos);
+            Assert.Empty(p.Cuentas);
+        }
+
+        Assert.Equal(
+            libro.Select(f => (f.Id, f.Inicio, f.Final)),
+            (await LibroAsync(ctx, cuenta)).Select(f => (f.Id, f.Inicio, f.Final)));
+    }
+
+    /// <summary>Evidencia de mutación (mutation-proof-tests), registrada al escribir la prueba: quitar
+    /// <c>!db.MovimientosCuenta.Any(m =&gt; m.IdPago == p.Id)</c> del planeo de débitos hace fallar esta prueba (la vista previa
+    /// vuelve a debitar el pago ya debitado por el reconciliador).</summary>
+    [Fact]
+    public async Task UnPagoYaDebitadoUnoSinCuentaUnoDadoDeBajaYUnoConLaCuentaDeOtraEmpresaNoSeDebitan()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoYaDebitadoUnoSinCuentaUnoDadoDeBajaYUnoConLaCuentaDeOtraEmpresaNoSeDebitan));
+        var cuenta = await CrearCuentaAsync(ctx, "Banco", saldoInicial: 1000m);
+        var transferencia = await CrearMedioAsync(ctx, "Transferencia B", idCuenta: null);
+        var sinCuenta = await CrearMedioAsync(ctx, "Billetera sin cuenta", idCuenta: null);
+
+        int idAjena, medioAjeno;
+        await using (var db = Db(ctx))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var otra = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Empresas.Add(otra);
+            await db.SaveChangesAsync();
+            var ajena = new CuentaTesoreria
+            {
+                IdTenant = ctx.IdTenant, IdEmpresa = otra.Id, Nombre = "Ajena", SaldoInicial = 50m, Activo = true,
+                CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.CuentasTesoreria.Add(ajena);
+            await db.SaveChangesAsync();
+            idAjena = ajena.Id;
+        }
+
+        medioAjeno = await CrearMedioAsync(ctx, "Billetera ajena", idAjena);
+
+        var viejo = await PagoAsync(ctx, transferencia, 30m, Dia10.AddHours(1));
+        var borrado = await PagoAsync(ctx, transferencia, 100m, Dia10);
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{borrado}")).StatusCode);
+        var deMedioSinCuenta = await PagoAsync(ctx, sinCuenta, 50m, Dia10);
+        var conCuentaAjena = await PagoAsync(ctx, medioAjeno, 70m, Dia10);
+        await AsignarCuentaAsync(ctx, transferencia, cuenta);
+        var yaDebitado = await PagoAsync(ctx, transferencia, 200m, Dia10.AddHours(2));
+        Assert.Single(await LibroAsync(ctx, cuenta), f => f.IdPago == yaDebitado);
+
+        var vista = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaVistaPrevia, Pedido(ctx, "2026-03-10", "2026-03-10")));
+        var plan = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-10")));
+
+        foreach (var p in new[] { vista, plan })
+        {
+            Assert.Equal([viejo], p.Debitos.Select(d => d.IdPago).ToArray());
+            Assert.Equal((0, 1, 1), (p.Turnos, p.Pagos, p.Filas));
+        }
+
+        var libro = await LibroAsync(ctx, cuenta);
+        Assert.Equal(1, libro.Count(f => f.IdPago == yaDebitado));
+        Assert.Equal(1, libro.Count(f => f.IdPago == viejo));
+        Assert.DoesNotContain(libro, f => f.IdPago == borrado || f.IdPago == deMedioSinCuenta || f.IdPago == conCuentaAjena);
+        Assert.Equal(1000m - 200m - 30m, await SaldoDeLaCuentaAsync(ctx, cuenta));
+        Assert.Empty(await LibroAsync(ctx, idAjena));
+    }
+
+    /// <summary>Evidencia de mutación: tratar todo pago como no congelado en el planeo de débitos hace fallar esta prueba.</summary>
+    [Fact]
+    public async Task UnPagoConFechaIgualALaMarcaNoSeDebitaYSeInformaComoCongeladoYElPosteriorSi()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoConFechaIgualALaMarcaNoSeDebitaYSeInformaComoCongeladoYElPosteriorSi));
+        var cuenta = await CrearCuentaAsync(ctx, "Banco", saldoInicial: 1000m);
+        var transferencia = await CrearMedioAsync(ctx, "Transferencia B", idCuenta: null);
+        var congelado = await PagoAsync(ctx, transferencia, 100m, Dia10);
+        var posterior = await PagoAsync(ctx, transferencia, 200m, Dia11);
+        await AsignarCuentaAsync(ctx, transferencia, cuenta);
+        await ConciliarHastaAsync(ctx, Dia10);
+
+        var vista = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaVistaPrevia, Pedido(ctx, "2026-03-10", "2026-03-11")));
+        var plan = await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
+
+        foreach (var p in new[] { vista, plan })
+        {
+            Assert.Equal((1, 1, Dia10), (p.Pagos, p.Filas, p.ConciliadoHasta));
+            Assert.Equal([posterior], p.Debitos.Select(d => d.IdPago).ToArray());
+            Assert.Equal([(congelado, 100m)], p.DebitosCongelados.Select(d => (d.IdPago, d.Importe)).ToArray());
+        }
+
+        var fila = Assert.Single(await LibroAsync(ctx, cuenta));
+        Assert.Equal(((int?)posterior, Dia11, 1000m, 200m, 800m), (fila.IdPago, fila.Fecha, fila.Inicio, fila.Egreso, fila.Final));
     }
 
     // ---- libro ----------------------------------------------------------------------------------------

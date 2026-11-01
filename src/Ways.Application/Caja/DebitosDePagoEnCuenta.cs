@@ -80,28 +80,34 @@ public static class DebitosDePagoEnCuenta
 
             foreach (var debito in deLaCuenta)
             {
-                var final = saldo + debito.Ingreso - debito.Egreso;
-                db.MovimientosCuenta.Add(new MovimientoCuenta
-                {
-                    IdTenant = idTenant,
-                    IdCuentaTesoreria = debito.IdCuenta,
-                    Fecha = fecha,
-                    Tipo = TipoMovimientoCuenta.Pago,
-                    IdMedioPago = debito.IdMedioPago,
-                    IdPago = idPago,
-                    Concepto = $"Pago {idPago}",
-                    Inicio = saldo,
-                    Ingreso = debito.Ingreso,
-                    Egreso = debito.Egreso,
-                    Final = final,
-                    IdEmpleado = idEmpleado
-                });
-                saldo = final;
+                var fila = ArmarFila(idTenant, debito, idPago, fecha, saldo, idEmpleado);
+                db.MovimientosCuenta.Add(fila);
+                saldo = fila.Final;
             }
         }
 
         await db.SaveChangesAsync(ct);
     }
+
+    /// <summary>Fila <c>pago</c> del libro para un débito: la arman tanto el reconciliador como la reconstrucción del historial, así
+    /// que las dos escriben el mismo concepto. <c>Final</c> sale de <paramref name="inicio"/> más la diferencia del débito.</summary>
+    internal static MovimientoCuenta ArmarFila(
+        int idTenant, DebitoDePago debito, int idPago, DateTimeOffset fecha, decimal inicio, int idEmpleado) =>
+        new()
+        {
+            IdTenant = idTenant,
+            IdCuentaTesoreria = debito.IdCuenta,
+            Fecha = fecha,
+            Tipo = TipoMovimientoCuenta.Pago,
+            IdMedioPago = debito.IdMedioPago,
+            IdPago = idPago,
+            Concepto = $"Pago {idPago}",
+            Inicio = inicio,
+            Ingreso = debito.Ingreso,
+            Egreso = debito.Egreso,
+            Final = inicio + debito.Ingreso - debito.Egreso,
+            IdEmpleado = idEmpleado
+        };
 
     /// <summary>Cuenta actual de cada medio con cuenta, leída bajo <c>FOR SHARE</c> por id ascendente: guardar el medio espera
     /// hasta el commit, así que la cuenta no cambia entre esta lectura y la escritura.</summary>
