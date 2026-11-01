@@ -62,8 +62,8 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   Route: delegated.
 - [x] T5 — Merge two sucursales (move PVs, sum stock and lots with audited movements), plus the T4 judges'
   follow-ups (transfer re-check under lock, PV baja single read, transfer copy). Route: delegated. Commits 16c3bc89, 37c8da13, b687094d.
-- [ ] T6 — `parametros`: sucursal-level keys (`lotes_habilitado`, `zona_horaria`, `dias_*`) vs
-  register-level keys (`tolerancia_pago`, `importe_envio`). Route: delegated.
+- [x] T6 — `parametros`: sucursal-level keys (`lotes_habilitado`, `zona_horaria`, `dias_*`) vs
+  register-level keys (`tolerancia_pago`, `importe_envio`). Route: delegated. Commits a19eb387, 25ef462a.
 
 ## Acceptance criteria
 
@@ -194,7 +194,57 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   determinista con lock del owner); mutantes muertos: sin resolución en cada reversa, cadena de un solo tramo, sin
   `FOR UPDATE` de sucursales (deadlock → 503). Integración filtrada 2363 ✔.
 
+- 2026-10-31: T6 done (a19eb387 backend, 25ef462a web). Un primer escritor quedó cortado a mitad de camino (WIP
+  c5fc46f7, reemplazado). Modelo: `parametros.id_sucursal integer NULL` + FK compuesta `fk_parametros_sucursal`
+  `(id_sucursal, id_empresa, id_tenant)` → sucursales (Restrict), CHECK `ck_parametros_un_solo_alcance` (a lo sumo uno de
+  `id_punto_venta`/`id_sucursal`), índice `ix_parametros_sucursal (id_sucursal, id_empresa, id_tenant)` (respalda la FK;
+  se quitó el índice duplicado con nombre de convención del WIP), único parcial `ux_parametros_sucursal` (vivas) y
+  `ux_parametros_empresa` que ahora pide `id_sucursal IS NULL`; 23505 → 409 `parametro_duplicado`. Migración
+  `ParametrosPorSucursal` con backfill `SqlDelBackfill` (const, `SET LOCAL app.acceso`) y reversa. `ParametroConocido`
+  tiene `Alcance`; `ResolucionDeParametros` resuelve sucursal → empresa → default para las cinco claves de sucursal (las
+  filas por caja no cuentan) y deja igual las de caja; `ConsultaDeParametros` para los lectores directos; el checkout trae
+  las filas de la sucursal en la misma consulta (sin viaje extra). Escritura: 400 `parametro_de_sucursal`,
+  `parametro_de_caja`, `parametro_alcance_ambiguo`, `sucursal_no_pertenece_a_la_empresa`; flip de lotes reconcilia la
+  sucursal escrita o las de la empresa por valor efectivo. Reportes de stock, lotes y `AlcanceDeListadoHttp` resuelven por
+  sucursal (sin caja de referencia). La fusión conserva las filas del destino y toma las del origen donde falta la clave.
+  Golden de dependientes con `parametros` → sucursales. Web: selector de sucursal o de punto de venta según la clave.
+  Correcciones sobre el WIP: índice FK duplicado, doc-comment de `AlcanceDeListadoHttp` partido, comentarios de
+  precedencia "PV → empresa" en reportes que ya no eran ciertos, test de cajas que comparten lotes. Checks: build 0
+  errores; Domain 2118 ✔; Application 1476 ✔; integración filtrada 3343 ✔ (56 min); web build ✔, vitest 8906 ✔.
+  Mutantes muertos: orden de niveles sucursal/empresa, filas por caja contando para una clave de sucursal, fila de
+  sucursal tomada como de empresa, backfill con la caja de mayor id (3 tests), regla de fusión invertida, cada guarda de
+  escritura (de sucursal, de caja, los dos ids, sucursal de otra empresa) y reconciliación de lotes sin la sucursal; el
+  `SET LOCAL` lo prueba el test sobre `ways_app` corriendo la constante con y sin esa línea.
+
+## T6 design (2026-10-31)
+
+Map: `parametros` is empresa-scoped with an optional `id_punto_venta` override; 12 keys live in
+`ParametroConocido`; the only writer is `ServicioDeParametros.EstablecerAsync`; sucursal reports and
+`ServicioDeLotes.ReconciliarAsync` pick the lowest-id caja as reference; the packaged POS reads only
+`tolerancia_pago`/`importe_envio` (instantánea + online GET), so no POS release is needed.
+
+- Domain: `ParametroConocido` gains an `Alcance` (Caja | Sucursal). Sucursal: `zona_horaria`,
+  `lotes_habilitado`, `dias_alerta_vencimiento`, `dias_rotacion`, `dias_cobertura_objetivo`. Every
+  other key stays Caja (PV → empresa → default, unchanged).
+- Model: `parametros.id_sucursal integer NULL`, composite FK `(id_sucursal, id_empresa, id_tenant)` →
+  sucursales (Restrict), CHECK at most one of `id_punto_venta`/`id_sucursal`, partial unique
+  `ux_parametros_sucursal` (live rows), `ux_parametros_empresa` also requires `id_sucursal IS NULL`.
+  23505 backstop for the new index.
+- Resolution of a sucursal key: sucursal row → empresa row → default; PV rows never count. Callers
+  that pass a PV resolve through that PV's sucursal.
+- Backfill (migration, under `ways_app` GUC, idempotent): for each live sucursal and sucursal key,
+  copy the value of the lowest-id live caja that has a row for that key; then soft-delete every PV
+  row of a sucursal key. With the 1:1 T1 backfill this keeps every effective value.
+- Writes: `ParametroAlta` gains `IdSucursal`; sucursal key with `IdPuntoVenta` → 400
+  `parametro_de_sucursal`; caja key with `IdSucursal` → 400 `parametro_de_caja`; both ids → 400.
+  The `lotes_habilitado` false→true reconcile runs on the affected sucursal(s) by effective value.
+- Reports: `ResolverAlcanceAsync` and lotes reconcile resolve by sucursal; lowest-id caja removed.
+- Merge (T5): destination keeps its sucursal rows and takes the origin's where it has none; origin's
+  rows soft-deleted. PV move: nothing to do (the caja now reads its new sucursal's values).
+- Web: `Parametros.tsx` shows a sucursal selector for sucursal keys and the PV selector for caja keys.
+- Docs: `docs/10-modelo-de-datos/09-parametros-operativos.md` updated.
+
 ## Next step
 
-T6: `parametros` por sucursal (`lotes_habilitado`, `zona_horaria`, `dias_*`) frente a los de caja
-(`tolerancia_pago`, `importe_envio`).
+Feature completa (T1–T6). Pendiente: judgment-day y PRs apilados de las tareas que todavía no se mergearon, en orden,
+reapuntando cada hijo a main cuando su base entre.

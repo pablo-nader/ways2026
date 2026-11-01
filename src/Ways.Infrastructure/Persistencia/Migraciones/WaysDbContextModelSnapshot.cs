@@ -1791,6 +1791,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_punto_venta");
 
+                    b.Property<int?>("IdSucursal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_sucursal");
+
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
@@ -1815,17 +1819,28 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdPuntoVenta", "IdTenant")
                         .HasDatabaseName("ix_parametros_punto_venta");
 
+                    b.HasIndex("IdSucursal", "IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_parametros_sucursal");
+
                     b.HasIndex("IdTenant", "IdEmpresa", "Clave")
                         .IsUnique()
                         .HasDatabaseName("ux_parametros_empresa")
-                        .HasFilter("id_punto_venta IS NULL AND deleted_at IS NULL");
+                        .HasFilter("id_punto_venta IS NULL AND id_sucursal IS NULL AND deleted_at IS NULL");
 
                     b.HasIndex("IdTenant", "IdEmpresa", "IdPuntoVenta", "Clave")
                         .IsUnique()
                         .HasDatabaseName("ux_parametros_punto_venta")
                         .HasFilter("id_punto_venta IS NOT NULL AND deleted_at IS NULL");
 
-                    b.ToTable("parametros", (string)null);
+                    b.HasIndex("IdTenant", "IdEmpresa", "IdSucursal", "Clave")
+                        .IsUnique()
+                        .HasDatabaseName("ux_parametros_sucursal")
+                        .HasFilter("id_sucursal IS NOT NULL AND deleted_at IS NULL");
+
+                    b.ToTable("parametros", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_parametros_un_solo_alcance", "id_punto_venta IS NULL OR id_sucursal IS NULL");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Catalogos.TipoComprobante", b =>
@@ -6815,6 +6830,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_parametros_punto_venta");
+
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
+                        .WithMany()
+                        .HasForeignKey("IdSucursal", "IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdEmpresa", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_parametros_sucursal");
                 });
 
             modelBuilder.Entity("Ways.Domain.Clientes.Cliente", b =>

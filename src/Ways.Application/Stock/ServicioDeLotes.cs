@@ -169,7 +169,14 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
     /// reconciliado, así que los dos disparadores automáticos (<c>ServicioDeArticulos</c>,
     /// <c>ServicioDeParametros</c>) pueden pasar un alcance más ancho que el estrictamente
     /// necesario sin ningún costo de corrección, solo de trabajo redundante (ambos no-ops).</summary>
-    public async Task<ResultadoDeReconciliacion> ReconciliarAsync(int? idArticulo, int? idPuntoVenta, CancellationToken ct)
+    public Task<ResultadoDeReconciliacion> ReconciliarAsync(int? idArticulo, int? idPuntoVenta, CancellationToken ct) =>
+        ReconciliarAsync(idArticulo, idPuntoVenta, idSucursal: null, idEmpresa: null, ct);
+
+    /// <summary>Variante del cambio de <c>lotes_habilitado</c>: acota a una sucursal o a las sucursales de una empresa
+    /// (a lo sumo una de las dos; con <paramref name="idPuntoVenta"/> manda su sucursal). El valor del parámetro se
+    /// resuelve siempre por sucursal, así que acotar solo evita trabajo: nunca cambia qué se reconcilia.</summary>
+    public async Task<ResultadoDeReconciliacion> ReconciliarAsync(
+        int? idArticulo, int? idPuntoVenta, int? idSucursal, int? idEmpresa, CancellationToken ct)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -180,7 +187,7 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             await ResolverArticuloAsync(idArticuloPedido, ct);
         }
 
-        int? idSucursalPedida = null;
+        var idSucursalPedida = idSucursal;
         if (idPuntoVenta is { } idPuntoVentaPedido)
         {
             idSucursalPedida = (await ResolverPuntoVentaAsync(idPuntoVentaPedido, ct)).IdSucursal;
@@ -191,6 +198,8 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             from stock in db.Stock
             where (idArticulo == null || stock.IdArticulo == idArticulo)
                && (idSucursalPedida == null || stock.IdSucursal == idSucursalPedida)
+            join sucursal in db.Sucursales on stock.IdSucursal equals sucursal.Id
+            where idEmpresa == null || sucursal.IdEmpresa == idEmpresa
             join articulo in db.Articulos on stock.IdArticulo equals articulo.Id
             where articulo.ControlaLote
             orderby stock.IdSucursal, stock.IdArticulo
@@ -202,9 +211,9 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             return new ResultadoDeReconciliacion(ParesReconciliados: 0, ParesSinResiduo: 0);
         }
 
-        // lotes_habilitado todavía se resuelve por punto de venta: el de la sucursal es el pedido o, sin uno, el de menor
-        // id de sus cajas vivas. Ese punto de venta también queda como caja de origen de los movimientos. Una sucursal sin
-        // cajas vivas no se reconcilia.
+        // lotes_habilitado se resuelve por sucursal (sucursal → empresa → default). La caja del par es solo la firmante de
+        // los movimientos: la pedida o, sin una, la de menor id de las vivas de la sucursal. Una sucursal sin cajas vivas
+        // no se reconcilia.
         var idsSucursal = pares.Select(p => p.IdSucursal).Distinct().ToList();
         var cajaPorSucursal = (await db.PuntosVenta
                 .Where(pv => idsSucursal.Contains(pv.IdSucursal))
@@ -234,10 +243,10 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             }
 
             var candidatosDeEmpresa = candidatosLotesHabilitado
-                .Where(p => p.IdEmpresa == caja.IdEmpresa && (p.IdPuntoVenta == null || p.IdPuntoVenta == caja.Id))
+                .Where(p => p.IdEmpresa == caja.IdEmpresa)
                 .ToList();
             var lotesHabilitadoJson = ResolucionDeParametros.Resolver(
-                ParametroConocido.LotesHabilitado.Clave, candidatosDeEmpresa, caja.Id);
+                ParametroConocido.LotesHabilitado.Clave, candidatosDeEmpresa, idPuntoVenta: null, par.IdSucursal);
 
             if (!JsonSerializer.Deserialize<bool>(lotesHabilitadoJson))
             {
@@ -383,7 +392,7 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // de arriba (o directamente, sin comprobante asociado).
         idLoteSugerido ??= ReglaDeLotes.ElegirFefo(saldos, hoy)?.IdLote;
 
-        var diasAlerta = await ResolverDiasAlertaAsync(puntoVenta.IdEmpresa, idPuntoVenta, ct);
+        var diasAlerta = await ResolverDiasAlertaAsync(puntoVenta.IdEmpresa, puntoVenta.IdSucursal, ct);
 
         return ordenados
             .Select(s => new LoteListado(
@@ -469,14 +478,15 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             ?? throw new InvalidOperationException(
                 "ServicioDeLotes.ReconciliarAsync requiere un actor de tenant; GestionDeCatalogo no admite plataforma.");
 
-    private async Task<int> ResolverDiasAlertaAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    private async Task<int> ResolverDiasAlertaAsync(int idEmpresa, int idSucursal, CancellationToken ct)
     {
         var candidatos = await db.Parametros
             .Where(p => p.Clave == ParametroConocido.DiasAlertaVencimiento.Clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
+                && p.IdPuntoVenta == null && (p.IdSucursal == null || p.IdSucursal == idSucursal))
             .ToListAsync(ct);
 
-        var valorJson = ResolucionDeParametros.Resolver(ParametroConocido.DiasAlertaVencimiento.Clave, candidatos, idPuntoVenta);
+        var valorJson = ResolucionDeParametros.Resolver(
+            ParametroConocido.DiasAlertaVencimiento.Clave, candidatos, idPuntoVenta: null, idSucursal);
         return JsonSerializer.Deserialize<int>(valorJson);
     }
 }

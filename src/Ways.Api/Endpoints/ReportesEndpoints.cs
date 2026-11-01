@@ -460,8 +460,8 @@ public static class ReportesEndpoints
             var existencias = await servicio.ObtenerExistenciasAsync(alcance, ct);
 
             var empresa = alcance.IdEmpresa.ToString();
-            var zonaId = await AlcanceDeListadoHttp.ResolverZonaParaEmpresaAsync(
-                parametros, alcance.IdEmpresa, alcance.IdPuntoVentaDeReferencia, ct);
+            var zonaId = await AlcanceDeListadoHttp.ResolverZonaDeSucursalAsync(
+                parametros, alcance.IdEmpresa, alcance.IdSucursal, ct);
             var hoy = DateOnly.FromDateTime(
                 TimeZoneInfo.ConvertTime(reloj.Ahora, TimeZoneInfo.FindSystemTimeZoneById(zonaId)).Date);
 

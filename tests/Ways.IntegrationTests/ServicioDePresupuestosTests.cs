@@ -392,9 +392,10 @@ public class ServicioDePresupuestosTests(WaysApiFixture fixture) : IClassFixture
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
+            var idSucursal = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdSucursal).SingleAsync();
             db.Parametros.Add(new Parametro
             {
-                IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, IdPuntoVenta = ctx.IdPuntoVenta,
+                IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, IdSucursal = idSucursal,
                 Clave = ParametroConocido.ZonaHoraria.Clave, Valor = JsonSerializer.Serialize("Asia/Kolkata"),
                 CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
             });
