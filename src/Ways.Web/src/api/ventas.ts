@@ -9,11 +9,15 @@ import { totalesDeAjusteManual } from './ajusteManual'
 import { calcularTotalesDeLineaConCombo, comboVigenteDeLinea } from './combos'
 import type { ArticuloParaCarrito, LineaCarrito } from './carrito'
 import { redondearAPeso } from '../formato/importes'
+import { fechaIsoConOffset } from './fechas'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   ArticuloEscaneado,
   BloqueDeNumeracionReservado,
   ComprobanteEmitido,
   EstadoDeVencimiento,
+  EstadoFiscalDeGrilla,
+  PaginaDeVentasDeAdministracion,
   LineaDeResolucion,
   LineaDeVenta,
   LoteListado,
@@ -28,7 +32,108 @@ import type {
 /** Desde dónde se corrige: la caja (solo con el turno abierto) o la administración (cualquier turno). */
 export type ModoDeCambioDeMedios = 'pos' | 'administracion'
 
+/** Claves de `orden` de `GET /api/ventas/administracion`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_VENTAS_DE_ADMINISTRACION = [
+  'fecha',
+  'numero',
+  'tipo',
+  'puntoVenta',
+  'turno',
+  'cliente',
+  'empleado',
+  'medios',
+  'total',
+  'estado',
+  'estadoFiscal',
+  'estadoTurno',
+  'conciliado',
+] as const
+
+export type ColumnaOrdenableDeVentasDeAdministracion = (typeof COLUMNAS_ORDENABLES_DE_VENTAS_DE_ADMINISTRACION)[number]
+
+export type OrdenDeVentasDeAdministracion = OrdenDeServidor<ColumnaOrdenableDeVentasDeAdministracion>
+
+export function esColumnaOrdenableDeVentasDeAdministracion(columna: string): columna is ColumnaOrdenableDeVentasDeAdministracion {
+  return (COLUMNAS_ORDENABLES_DE_VENTAS_DE_ADMINISTRACION as readonly string[]).includes(columna)
+}
+
+/** Lo que muestran los controles de filtro; cada clave es un parámetro de `GET /api/ventas/administracion`. `desde`/`hasta` son
+ * `YYYY-MM-DD` o `''`; `numero` e `idTurnoCaja` se tipean como texto y solo viajan si son un entero. */
+export type FiltrosDeVentasDeAdministracion = {
+  desde: string
+  hasta: string
+  numero: string
+  idTipoComprobante: number | null
+  idPuntoVenta: number | null
+  idTurnoCaja: string
+  idEmpleado: number | null
+  cliente: string
+  idMedioPago: number | null
+  totalDesde: number | null
+  totalHasta: number | null
+  estado: '' | 'Emitido' | 'Anulado'
+  estadoFiscal: '' | EstadoFiscalDeGrilla
+  turnoCerrado: boolean | null
+  conciliado: boolean | null
+  pagina: number
+  tamanio: number
+}
+
+export function filtrosDeVentasDeAdministracionVacios(): FiltrosDeVentasDeAdministracion {
+  return {
+    desde: '',
+    hasta: '',
+    numero: '',
+    idTipoComprobante: null,
+    idPuntoVenta: null,
+    idTurnoCaja: '',
+    idEmpleado: null,
+    cliente: '',
+    idMedioPago: null,
+    totalDesde: null,
+    totalHasta: null,
+    estado: '',
+    estadoFiscal: '',
+    turnoCerrado: null,
+    conciliado: null,
+    pagina: 1,
+    tamanio: 25,
+  }
+}
+
+const ENTERO_POSITIVO = /^\d+$/
+
+/** Query de la grilla de ventas: un parámetro por filtro activo, `orden` + `direccion` solo con orden. */
+export function construirQueryDeVentasDeAdministracion(
+  filtros: FiltrosDeVentasDeAdministracion,
+  orden: OrdenDeVentasDeAdministracion = null,
+): string {
+  const parametros = new URLSearchParams()
+  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
+  if (ENTERO_POSITIVO.test(filtros.numero.trim())) parametros.set('numero', filtros.numero.trim())
+  if (filtros.idTipoComprobante !== null) parametros.set('idTipoComprobante', String(filtros.idTipoComprobante))
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  if (ENTERO_POSITIVO.test(filtros.idTurnoCaja.trim())) parametros.set('idTurnoCaja', filtros.idTurnoCaja.trim())
+  if (filtros.idEmpleado !== null) parametros.set('idEmpleado', String(filtros.idEmpleado))
+  if (filtros.cliente.trim()) parametros.set('cliente', filtros.cliente.trim())
+  if (filtros.idMedioPago !== null) parametros.set('idMedioPago', String(filtros.idMedioPago))
+  if (filtros.totalDesde !== null) parametros.set('totalDesde', String(filtros.totalDesde))
+  if (filtros.totalHasta !== null) parametros.set('totalHasta', String(filtros.totalHasta))
+  if (filtros.estado) parametros.set('estado', filtros.estado)
+  if (filtros.estadoFiscal) parametros.set('estadoFiscal', filtros.estadoFiscal)
+  if (filtros.turnoCerrado !== null) parametros.set('turnoCerrado', String(filtros.turnoCerrado))
+  if (filtros.conciliado !== null) parametros.set('conciliado', String(filtros.conciliado))
+  agregarOrdenAlQuery(parametros, orden)
+  parametros.set('pagina', String(filtros.pagina))
+  parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
+}
+
 export const clienteDeVentas = {
+  /** `GET /api/ventas/administracion` (Supervisor y Admin): filtra, ordena y pagina en el servidor. */
+  listarDeAdministracion: (filtros: FiltrosDeVentasDeAdministracion, orden: OrdenDeVentasDeAdministracion = null) =>
+    api.get<PaginaDeVentasDeAdministracion>(`/ventas/administracion${construirQueryDeVentasDeAdministracion(filtros, orden)}`),
   /** `POST /api/ventas` (design: API Surface): checkout — 201 + body = comprobante emitido, sin
    * ningún campo de dinero re-derivable en el cliente (el servidor vuelve a resolver todo).
    * `senal` (opcional) corta la request — la usa el envío en segundo plano del outbox. */

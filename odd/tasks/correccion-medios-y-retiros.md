@@ -58,8 +58,8 @@ Each slice passes judgment-day before its PR.
   recalc, tesorería Ajuste, audit), with tests and migration.
 - [x] T3 — Backend: back-office ventas list with per-column filters and sort, with tests.
 - [x] T4 — Web: reusable sortable header + POS `VentasDelTurno` sort and "cambiar medio" modal.
-- [ ] T5 — Web: back-office ventas grid (filters + sort) with medio edit.
-- [ ] T6 — Web: back-office retiros grid (filters + sort) with edit/delete.
+- [x] T5 — Web: back-office ventas grid (filters + sort) with medio edit.
+- [x] T6 — Web: back-office retiros grid (filters + sort) with edit/delete.
 
 ## Acceptance criteria
 
@@ -76,6 +76,8 @@ Each slice passes judgment-day before its PR.
 | T2 | delegated (writer: 2+ non-trivial files) | e7e0ab43 (fix, audit labels), 712ed19e (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2298/2298; Application.Tests 1641/1641; integration new (RetirosDeAdministracion + ListadoDeRetiros) 43/43; regression (Caja, Turno, Libro, Conciliacion, Pago, Auditoria, Superficie, Aislamiento, SinReintento, CambioDeMedios, FiscalSchema, Tesoreria, Historico, Reportes) 1617/1617; web tsc clean, vitest tipos + Auditoria 28/28; mutants killed: 11 filter clauses, sort switch, 3 deleted_at/guard clauses, conciliación guard, backfill SET LOCAL |
 | T3 | delegated (writer: 2+ non-trivial files) | 369100ed (refactor), 87a96a32 (feat) | pending (judgment-day at slice) | build 0 errors; Domain.Tests 2358/2358; Application.Tests 1641/1641; integration new (ListadoDeVentasDeAdministracion) 64/64; regression (LectoresDeComprobantesVenta, SuperficieDeAutorizacion, Aislamiento, VentasListadoExport, CambioDeMedios, RetirosDeAdministracion, ListadoDeRetiros, SinReintento) 210/210; mutants killed: all Filtrar clauses, sort switch, SinEspejosFiscales, c.DeletedAt, co.DeletedAt (filter and summary), min(cierre, fecha) rule |
 | T4 | delegated (writer: 2+ non-trivial files) | b93fc48b (modal + rules + client), dd02e315 (VentasDelTurno action + sort tests) | pending (judgment-day at slice) | tsc -b clean; oxlint no findings in touched files; vitest full 310 files / 9469 tests green (first full run had one unrelated flake in GrillaDeItemsDeCompra, green alone and on the rerun); new tests: cambioDeMedios 34, ModalDeCambioDeMedios 31, useEnLinea 2, VentasDelTurno +21 (6 columns x asc/desc, 9 action cases); mutants killed: double-click ref guard, stale-read generation, CC filter, no-changes gate, error focus, offline disable, sort fallback to original order |
+| T5 | delegated (writer: 2+ non-trivial files) | c17ccb11 | pending (judgment-day at slice) | tsc clean; oxlint no new findings; vitest full 316 files / 9692 tests, one unrelated flake in GrillaDeItemsDeCompra (green alone); new tests: VentasDeAdministracion 60 (13 sort columns x 3 clicks, 15 filters, role gating, 6 blocked-reason titles, modal contract, stale response, clamp), query builder 34, utilities 14, menu +2; mutants killed: stale gate, page reset (filter, text filter, sort), Limpiar keeps tamanio, debounce, numero integer guard, idMedioPago param, turnoCerrado, Admin-only gate, medioEditable gate, refresh after save, inert grid with modal |
+| T6 | delegated (writer: 2+ non-trivial files) | 9c59ed81 | pending (judgment-day at slice) | same full run; new tests: RetirosDeAdministracion 69 (9 sort columns, 11 filters, edit/delete flows, 5 code mappings x edit and delete, double click, stale), query builder 24, utilities 20; mutants killed: modal ref guard, conciliado gate, 404 refresh, motivo trim, stale error cleared on typing, refresh after delete, inert screen with modal; one mutant (screen-level ref in confirmarBaja) survived and the dead guard was deleted because ConfirmacionDeBaja already absorbs the double click |
 
 ## T1 notes
 
@@ -164,6 +166,34 @@ Each slice passes judgment-day before its PR.
   `medio_no_admite_vuelto` rule is unreachable from this UI).
 - POS web changes reach the cajas only with a Ways.Desktop bump + `pos-v*` tag (the release was NOT done here).
 
+## T5 / T6 notes
+
+- Routes: `/caja/ventas` ("Listado de ventas") and `/caja/retiros` ("Retiros"), Supervisor + Admin, in the Reportes menu group next to Tesorería.
+  They hang under `/caja` because `RutasDeLaSpa` already lists `caja` (no backend change). Edit/delete actions render for Admin only
+  (`puedeGestionarCatalogos`); the Supervisor reads.
+- Shared pieces (new): `componentes/grilla/useGrillaDeServidor` (filters with 300 ms draft for text/number-range keys, server-side orden,
+  page, generation gate, stable `recargar()` that resolves when the refresh landed and never rejects, out-of-range page clamp),
+  `componentes/grilla/PaginadorDeServidor`, `paginas/useOpcionesDeEmpleado`, pure query builders in `api/ventas.ts` and `api/caja.ts`.
+- Empleado filter: Supervisor cannot list users (`/api/usuarios` is Admin and Root), so Supervisor gets the employees already seen in the
+  loaded pages (deduplicated); Admin gets the full user list. Known limit: a Supervisor cannot filter by an employee not yet on screen.
+- Ventas: the cobros modal is the T4 `ModalDeCambioDeMedios` with `modo="administracion"`; the action uses the server's `medioEditable` and maps
+  `motivoMedioNoEditable` through `MENSAJES_DE_CAMBIO_DE_MEDIOS` (unknown text shown as is). The tipo filter lists only `clase === 'Venta'`.
+  Row click opening `ModalDetalleDeVenta` was not done (optional).
+- Retiros: own edit modal (`ModalDeEdicionDeRetiro`, client rules = `importeValidoParaTipo` + `motivoValido`, mentions the arqueo recalculation
+  on a closed turno, disabled while unchanged) and `ConfirmacionDeBaja` for delete. 404 and 409 on edit or delete re-request the list because
+  the row on screen went stale. The retiro-de-cierre reason wins over the conciliado one.
+- Not done: no export, no row detail; POS release is not involved (back office only).
+
+## Judgment-day T5/T6 (round 1 fixes)
+
+- JD-T56-1 (fixed, 8195314a): `desde`/`hasta` of the ventas and retiros administration queries now travel as local-offset day bounds
+  (`00:00:00` / `23:59:59.999`) through the shared `api/fechas.ts#fechaIsoConOffset` (extracted from `reportes.ts`, behavior unchanged).
+  Tests assert the bounds with the same helper plus a timezone-independent regex. Mutation: reverting the builders to the bare date failed
+  10 tests.
+- JD-T56-2 (fixed, 1c00c92b): the focus-restore effect waits for `!bloqueado && !cargando` before consuming the pending flag, and the
+  fallback is Limpiar when enabled, otherwise the table (`tabIndex=-1`). Retiros delete now also restores focus. Tests: focus after save
+  (ventas, retiros) and after delete with no filters. Mutation: dropping the `cargando` guard failed the two save tests.
+
 ## Next step
 
-T5 (web: back-office ventas grid with medio edit, reusing `ModalDeCambioDeMedios` with `modo="administracion"`).
+Judgment-day over the T1-T6 slices, then the stacked PRs (stacked-to-main).
