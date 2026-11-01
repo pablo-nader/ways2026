@@ -19,5 +19,9 @@ public enum TipoMovimientoTesoreria
     [JsonStringEnumMemberName("Gasto")]
     Pago,
 
-    Ajuste
+    /// <summary>Compensación del sistema: la escribe la edición o la baja de un pago de origen tesorería.</summary>
+    Ajuste,
+
+    /// <summary>Ajuste manual del fondo de efectivo cargado por un Admin; lo distingue de <see cref="Ajuste"/>.</summary>
+    AjusteManual
 }

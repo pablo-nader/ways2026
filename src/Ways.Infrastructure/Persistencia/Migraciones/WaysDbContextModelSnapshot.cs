@@ -61,7 +61,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago", "redondeo" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cuenta", new[] { "ajuste", "cobro", "comision", "deposito", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro", "transferencia" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "deposito", "pago", "retiro_caja" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "ajuste_manual", "deposito", "pago", "retiro_caja" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "importe", "peso", "unidad" });
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "citext");
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "unaccent");
