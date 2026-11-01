@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDeConciliacion } from './ModalDeConciliacion'
 import { ErrorApi } from '../api/cliente'
-import { valorLocalDeAhora } from '../api/tesoreria'
 
 const apiPostMock = vi.fn()
 
@@ -82,9 +81,15 @@ beforeEach(() => {
 
 describe('ModalDeConciliacion', () => {
   it('abre con la fecha y hora de ahora redondeada al minuto y la advertencia de que no se deshace', () => {
-    montar()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(2026, 10, 1, 10, 5, 42))
+      montar()
+    } finally {
+      vi.useRealTimers()
+    }
 
-    expect(screen.getByLabelText('Conciliar hasta')).toHaveValue(valorLocalDeAhora(new Date()))
+    expect(screen.getByLabelText('Conciliar hasta')).toHaveValue('2026-11-01T10:05')
     expect(screen.getByText(/queda congelado y no se puede modificar/)).toBeInTheDocument()
     expect(screen.getByText(/Las correcciones solo se hacen con ajustes/)).toBeInTheDocument()
     expect(screen.getByText(/La conciliación no se puede deshacer\./)).toBeInTheDocument()

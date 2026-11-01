@@ -96,6 +96,19 @@ describe('aInstanteConOffset', () => {
     expect(Date.parse(iso as string)).toBe(new Date(2026, 10, 1, 10, 5).getTime())
   })
 
+  it.each([
+    [180, '2026-11-01T10:05:00-03:00'],
+    [-330, '2026-11-01T10:05:00+05:30'],
+    [0, '2026-11-01T10:05:00+00:00'],
+  ])('con %i minutos al oeste de UTC escribe %s', (minutosAlOeste, esperado) => {
+    const espia = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(minutosAlOeste)
+    try {
+      expect(aInstanteConOffset('2026-11-01T10:05')).toBe(esperado)
+    } finally {
+      espia.mockRestore()
+    }
+  })
+
   it.each(['', '2026-11-01', '2026-11-01T10:05:00', '2026-02-30T10:05', '2026-11-01T25:00', 'texto'])(
     '%j no es un valor local válido',
     (valor) => {
