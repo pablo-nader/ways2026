@@ -163,9 +163,6 @@ function mockearRutas(opciones: {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/empresas') return Promise.resolve(opciones.empresas ?? [empresaUnica])
     if (ruta.startsWith('/reportes/libro-tesoreria?')) return (opciones.libro ?? (() => Promise.resolve(libroFixture())))(ruta)
-    if (ruta.startsWith('/reportes/tesoreria/cuentas?')) {
-      return Promise.resolve({ idEmpresa: 1, mediosSinCuenta: [], cuentas: [] })
-    }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -574,7 +571,7 @@ describe('Tesoreria — libro: ajustes (Admin)', () => {
 
     expect(await screen.findByText('Ajuste de Mercado Pago registrado.')).toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/1/ajustes', { concepto: 'Retiro', importe: -60 })
-    expect(apiGetMock.mock.calls.some((c) => (c[0] as string).startsWith('/reportes/tesoreria/cuentas'))).toBe(false)
+    expect(apiGetMock.mock.calls.every((c) => c[0] === '/empresas' || (c[0] as string).startsWith('/reportes/libro-tesoreria?'))).toBe(true)
     expect(await screen.findByText('$ 1.940,00')).toBeInTheDocument()
     expect(llamadasAlLibro()).toHaveLength(2)
   })

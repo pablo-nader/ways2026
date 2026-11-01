@@ -49,7 +49,7 @@ public static class CuentasTesoreriaEndpoints
             ServicioDeAjusteDeCuentaDeTesoreria servicio, int id, SolicitudDeAjusteDeCuenta solicitud, CancellationToken ct) =>
         {
             var resultado = await servicio.AjustarAsync(id, solicitud, ct);
-            return Results.Created($"/api/reportes/tesoreria/cuentas/{id}/libro", resultado);
+            return Results.Created($"/api/cuentas-tesoreria/{id}", resultado);
         })
         .WithSummary(
             "Ajuste manual del saldo de una cuenta: concepto obligatorio y exactamente uno de importe con signo o saldo " +

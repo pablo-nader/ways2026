@@ -1962,50 +1962,6 @@ export type PaginaDePagosDeAdministracion = {
   tamanio: number
 }
 
-// --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de
-// `Ways.Application.Caja.Contratos`. `inicio`/`final` ya vienen calculados y persistidos al
-// cierre (design decisión 6 de stage-6-turnos-caja); este contrato solo los transporta.
-
-/** Espejo del enum `TipoMovimientoTesoreria` (Ways.Domain.Caja) — viaja como texto. */
-export type TipoMovimientoTesoreria = 'RetiroCaja' | 'Deposito' | 'Gasto' | 'Ajuste'
-
-/** Fila de `GET /api/reportes/tesoreria` — espejo de `MovimientoTesoreriaListado`, SIN
- * `idTenant` (nunca expuesto en una respuesta, doc 09). `idPuntoVenta` es `number | null` porque
- * el DTO de C# ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal
- * tipado desde antes de este PR — un pago de origen Tesoreria puede originar una fila con
- * `idPuntoVenta` presente hoy, pero el esquema siempre lo permitió nulo).
- *
- * stage-tesoreria-por-empresa (PR5): agrega `idEmpresa` (la cadena es por empresa),
- * `nombrePuntoVenta` (dangling-fk-read-models: `null` sin punto de venta o con uno dado de baja
- * lógica, mismo criterio que `nombreProveedor`/`nombreArea` de `PagoDeAdministracionListado`) y,
- * para una fila `tipo: 'Gasto'`, `gastoCategoria`/`gastoConcepto` resueltos del pago de origen. */
-export type MovimientoTesoreriaListado = {
-  id: number
-  idEmpresa: number
-  idPuntoVenta: number | null
-  nombrePuntoVenta: string | null
-  fecha: string
-  tipo: TipoMovimientoTesoreria
-  idTurnoCaja: number | null
-  idGasto: number | null
-  gastoCategoria: CategoriaPago | null
-  gastoConcepto: string | null
-  concepto: string
-  inicio: number
-  ingreso: number
-  egreso: number
-  final: number
-  idEmpleado: number
-}
-
-/** Página de `GET /api/reportes/tesoreria` — espejo de `PaginaDeMovimientosTesoreria`. */
-export type PaginaDeMovimientosTesoreria = {
-  items: MovimientoTesoreriaListado[]
-  total: number
-  pagina: number
-  tamanio: number
-}
-
 // --- Cuentas de tesorería (lectura) — espejo de `Ways.Application.Caja.ContratosDeCuentasTesoreria`.
 
 /** Espejo del enum `TipoMovimientoCuenta` (Ways.Domain.Caja) — viaja como texto PascalCase. */
@@ -2020,26 +1976,7 @@ export type TipoMovimientoCuenta =
   | 'Deposito'
   | 'Retiro'
 
-/** Cuenta de `GET /api/reportes/tesoreria/cuentas`. `fechaUltimoMovimiento` es `null` sin movimientos. */
-export type CuentaConSaldo = {
-  id: number
-  nombre: string
-  activo: boolean
-  saldoInicial: number
-  saldoActual: number
-  fechaUltimoMovimiento: string | null
-}
-
-/** Medio electrónico y activo cuyo cobro no entra a ninguna cuenta de la empresa. */
-export type MedioElectronicoSinCuenta = { id: number; nombre: string }
-
-export type CuentasDeLaEmpresa = {
-  idEmpresa: number
-  cuentas: CuentaConSaldo[]
-  mediosSinCuenta: MedioElectronicoSinCuenta[]
-}
-
-/** Fila del libro de una cuenta. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
+/** Movimiento de una cuenta tal como lo devuelve el ajuste manual. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
  * usuario dados de baja: el id distingue los dos casos. */
 export type MovimientoDeCuentaListado = {
   id: number
@@ -2056,32 +1993,6 @@ export type MovimientoDeCuentaListado = {
   nombreEmpleado: string | null
   baseBruta: number | null
   porcentajeAplicado: number | null
-}
-
-/** Totales de TODO el rango (no de la página). Los descuentos son positivos cuando restan. */
-export type TotalesDeCuentaEnElRango = {
-  cobrado: number
-  comision: number
-  retencionIibb: number
-  retencionIva: number
-  retencionGanancias: number
-  ajustes: number
-  otros: number
-  neto: number
-}
-
-export type LibroDeCuenta = {
-  idCuenta: number
-  nombre: string
-  activo: boolean
-  saldoActual: number
-  saldoDeApertura: number
-  saldoAlCierre: number
-  totales: TotalesDeCuentaEnElRango
-  items: MovimientoDeCuentaListado[]
-  total: number
-  pagina: number
-  tamanio: number
 }
 
 // --- Libro de tesorería (`GET /api/reportes/libro-tesoreria`) — espejo de `ContratosDeLibroDeTesoreria`. -----

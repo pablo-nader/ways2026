@@ -120,11 +120,10 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > administración (`ServicioDePagos.RegistrarDeAdministracionAsync`, mismo camino de
 > `EscriturasDeTesoreria` que un pago de origen `tesoreria` del POS): cierre de turno
 > (`tipo = 'retiro_caja'`, `egreso` SIEMPRE 0), pago de origen `tesoreria` desde el POS y pago de
-> administración (ambos `tipo = 'pago'`, `egreso = importe`). La lectura
-> (`ServicioDeTesoreria.ListarAsync`/`GET /api/reportes/tesoreria`) toma `id_empresa` como filtro
-> OBLIGATORIO (ADR-8) y admite `id_punto_venta` como filtro OPCIONAL adicional sobre esa misma
-> cadena — un filtro por punto de venta muestra un SUBCONJUNTO de filas (las originadas ahí), que
-> no se encadenan entre sí porque la cadena entera vive a nivel empresa, nunca por punto de venta.
+> administración (ambos `tipo = 'pago'`, `egreso = importe`). La cadena vive a nivel empresa, nunca
+> por punto de venta. Ya no tiene un reporte propio: el libro de tesorería
+> (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`) se calcula desde las fuentes y de
+> esta tabla solo lee los `ajuste_manual`.
 
 ### Cuentas de tesorería
 
@@ -220,13 +219,10 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > escribe dos filas (el del mismo saldo objetivo no, porque la segunda diferencia da cero) y la protección es la guarda de
 > re-entrada de la pantalla; un 5xx no se reintenta solo. Es el camino para corregir lo que el libro todavía no refleja.
 >
-> **Lectura (`GET /api/reportes/tesoreria/cuentas?idEmpresa=` y `.../cuentas/{id}/libro`, Supervisor y Admin).**
-> `ServicioDeLibroDeCuentas`. Las cuentas vivas de la empresa con su saldo (`final` del último movimiento por id, o
-> `saldo_inicial`) y la fecha de ese movimiento, más el aviso de los medios electrónicos activos sin cuenta utilizable (sin cuenta,
-> con una dada de baja o con una de otra empresa: la misma regla con la que el cierre descarta una cuenta). El libro de una cuenta
-> se ordena por id y nunca por fecha, usa el rango inclusivo del libro de efectivo y trae el saldo de apertura (el `final` del
-> último movimiento por id con fecha anterior al rango, o el saldo inicial) y los totales por tipo de TODO el rango. Un medio o un
-> usuario dado de baja deja su nombre en `null` y conserva el id. No hay exportación.
+> **Lectura.** La cadena de cada cuenta ya no tiene un reporte propio. El libro de tesorería
+> (`ServicioDeLibroDeTesoreria`/`GET /api/reportes/libro-tesoreria`, Supervisor y Admin) lee de esta tabla los cobros, las
+> comisiones y las retenciones de cada cierre, agrupados por turno, y los `ajuste` manuales. Su saldo se calcula desde las fuentes,
+> no desde `final`.
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un

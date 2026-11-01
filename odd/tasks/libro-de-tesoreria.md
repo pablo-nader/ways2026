@@ -58,7 +58,7 @@ much in each digital account the business has, nor where each movement came from
   breakdown, arqueo difference with tolerance, previous balance and current balances. Route: delegated.
 - [x] T3 — Web screen replacing `/caja/tesoreria` + `/pagos?id=N` deep link + cash adjustment modal.
   Route: delegated.
-- [ ] T4 — Delete the old reports (endpoints, services, DTOs, web, tests), keeping shared pieces
+- [x] T4 — Delete the old reports (endpoints, services, DTOs, web, tests), keeping shared pieces
   (`ExportacionDeCaja` histórico part, `ModalDeAjusteDeCuenta`, account ABM). Route: delegated.
 - [x] T5a — Conciliation mark + freeze guard (backend). Route: delegated. Evidence in Progress (2026-11-01, T5a).
 - [ ] T5b — Web: "Conciliado hasta" banner in the ledger, Admin "Conciliar" action with a date-time picker, frozen rows marked
@@ -93,6 +93,7 @@ pago row together. The freeze removes this once conciliated.
 - Roles (decisión del dueño, 2026-10-31): Supervisor y Admin leen el libro, sueldos incluidos; el link al pago y los ajustes son solo Admin.
 - T1+T2 en PR #583 (judgment-day APPROVED, sin hallazgos críticos). T3 commits 26c8a2cf + dc40d9d6 (judgment-day: JD-T3-1 confirmado por ambos jueces, corregido y re-juzgado APPROVED).
 - JD-T3-1 corregido: el ajuste de cuenta desde el libro usa `soloImporte` (solo importe con signo, sin releer la cadena ni enviar `saldoObjetivo`); la pantalla de cuentas conserva ambos modos.
+- 2026-11-01: T4 done: borrados `GET /api/reportes/tesoreria`, `/tesoreria/export`, `/tesoreria/cuentas` y `/tesoreria/cuentas/{id}/libro`, `ServicioDeTesoreria`, `ServicioDeLibroDeCuentas`, sus DTOs (`MovimientoTesoreriaListado`, `PaginaDeMovimientosTesoreria`, `CuentaConSaldo`, `CuentasDeLaEmpresa`, `MedioElectronicoSinCuenta`, `TotalesDeCuentaEnElRango`, `LibroDeCuenta`), la parte de tesorería de `ExportacionDeCaja` (queda histórico y detalle de turno), `TesoreriaTests`, `TesoreriaExportTests`, `CuentasTesoreriaLecturaTests` y los clientes/tipos/tests web equivalentes. `MovimientoDeCuentaListado` queda (respuesta del ajuste). `ModalDeAjusteDeCuenta` siempre es de importe con signo (sin `soloImporte` ni relectura). Los tests de reconstrucción, cierre y ajuste leen `MovimientosCuenta` directo en vez del libro viejo, con las mismas aserciones de cadena y apertura de rango. Verificación: build 0 errores; Domain 2208 y Application 1624 verdes; integración filtrada (autorización, CuentasTesoreria*, Tesoreria*, LibroDeTesoreria*, Caja*, Export*) 401 verdes; Vitest completo, build y oxlint sin hallazgos nuevos.
 
 ### Conciliación y congelamiento (T5a)
 
@@ -122,4 +123,4 @@ pago row together. The freeze removes this once conciliated.
 
 ## Next step
 
-T4 (T5b queda para después de T4).
+T5b (web de la conciliación). T4 entregada en #588.
