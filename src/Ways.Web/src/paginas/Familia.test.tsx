@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, type Location } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Familia } from './Familia'
+import { Toaster } from '../toasts/Toaster'
+import { reiniciarToasts } from '../toasts/toasts'
 import { ErrorApi } from '../api/cliente'
 import type {
   ArticuloListado,
@@ -210,6 +212,7 @@ function montar(ruta: string | { pathname: string; state: unknown } = '/familias
         <Route path="/familias/:id" element={<Familia />} />
         <Route path="/familias" element={<p>Pantalla del listado de familias</p>} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
 }
@@ -339,6 +342,7 @@ describe('Familia — el detalle', () => {
           <Routes>
             <Route path="/familias/:id" element={<Familia />} />
           </Routes>
+          <Toaster />
         </MemoryRouter>
       </StrictMode>,
     )
@@ -359,6 +363,7 @@ describe('Familia — el detalle', () => {
           <Routes>
             <Route path="/familias/:id" element={<Familia />} />
           </Routes>
+          <Toaster />
         </MemoryRouter>
       </StrictMode>,
     )
@@ -411,7 +416,8 @@ describe('Familia — el detalle', () => {
     mockearApi()
     montar({ pathname: '/familias/7', state: { aviso: 'Se creó la familia "Sabores" con 3 artículos.' } })
 
-    expect(await screen.findByText('Se creó la familia "Sabores" con 3 artículos.')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Se creó la familia "Sabores" con 3 artículos.')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
   })
 
   /** Cláusula bajo prueba: el efecto de `DetalleDeFamilia` que deja la entrada del historial con `state: null`. El estado
@@ -431,6 +437,7 @@ describe('Familia — el detalle', () => {
     // Recargar, o volver a la entrada: la pantalla se monta de nuevo con lo que el historial guarda.
     const entrada = { pathname: ubicacionVigente.pathname, state: ubicacionVigente.state }
     unmount()
+    act(() => reiniciarToasts())
     montar(entrada)
     await screen.findByText('Vainilla')
 
@@ -577,10 +584,9 @@ describe('Familia — sacar un artículo', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
 
     expect(
-      await screen.findByText(
-        'Se sacó el artículo "Vainilla" de la familia: conserva todos sus valores y sus precios. No se pudo actualizar la vista. Recargá la pantalla.',
-      ),
+      await screen.findByText('Se sacó el artículo "Vainilla" de la familia: conserva todos sus valores y sus precios.'),
     ).toBeInTheDocument()
+    expect((await screen.findByText('No se pudo actualizar la vista. Recargá la pantalla.')).closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByText(/No se pudo sacar/)).not.toBeInTheDocument()
   })
 
@@ -591,7 +597,7 @@ describe('Familia — sacar un artículo', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
 
-    expect(await screen.findByText('La pertenencia cambió.')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('La pertenencia cambió.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(lecturasDelDetalle()).toBe(2))
     expect(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' })).toBeEnabled()
@@ -660,8 +666,8 @@ describe('Familia — sacar un artículo', () => {
     expect(screen.queryByText(copia)).not.toBeInTheDocument()
   })
 
-  /** Cláusulas bajo prueba: cada acción que empieza borra lo que dijo la anterior (el aviso de éxito, el rechazo o el error
-   * de la última lectura), para que no quede en pantalla un mensaje que ya no habla de lo que se está haciendo. */
+  /** Cláusulas bajo prueba: cada acción que empieza borra lo que dijo la anterior (el rechazo o el error de la
+   * última lectura), para que no quede en pantalla un mensaje que ya no habla de lo que se está haciendo. */
   it('confirmar de nuevo borra el rechazo del intento anterior apenas empieza', async () => {
     const segundo = diferida<void>()
     apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'otro_rechazo', 'Se rechazó la salida.')).mockReturnValueOnce(segundo.promesa)
@@ -677,42 +683,6 @@ describe('Familia — sacar un artículo', () => {
     await act(async () => {
       segundo.resolver()
     })
-  })
-
-  it('abrir la puerta borra el rechazo de la salida anterior', async () => {
-    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
-    await screen.findByText('La pertenencia cambió.')
-    await waitFor(() => expect(lecturasDelDetalle()).toBe(2))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' }))
-
-    expect(screen.queryByText('La pertenencia cambió.')).not.toBeInTheDocument()
-  })
-
-  it('abrir la puerta borra el aviso de la escritura anterior', async () => {
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
-    await screen.findByText(/Se sacó el artículo "Vainilla"/)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' }))
-
-    expect(screen.queryByText(/Se sacó el artículo "Vainilla"/)).not.toBeInTheDocument()
-  })
-
-  it('el aviso con el que se llegó también se va al abrir la puerta', async () => {
-    mockearApi()
-    montar({ pathname: '/familias/7', state: { aviso: 'Se creó la familia "Sabores" con 3 artículos.' } })
-    await screen.findByText('Vainilla')
-
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' }))
-
-    expect(screen.queryByText('Se creó la familia "Sabores" con 3 artículos.')).not.toBeInTheDocument()
   })
 
   /** Cláusulas bajo prueba: `!== 'inexistente'` del `catch` de `confirmarSalida`: con la relectura fallida por otra causa,
@@ -1054,7 +1024,8 @@ describe('Familia — agregar artículos', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Confirmar y agregar' }))
 
-    expect(await screen.findByText('Se agregó 1 artículo a la familia "Sabores". No se pudo actualizar la vista. Recargá la pantalla.')).toBeInTheDocument()
+    expect(await screen.findByText('Se agregó 1 artículo a la familia "Sabores".')).toBeInTheDocument()
+    expect((await screen.findByText('No se pudo actualizar la vista. Recargá la pantalla.')).closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByText(/No se pudo agregar/)).not.toBeInTheDocument()
   })
 
@@ -1179,27 +1150,6 @@ describe('Familia — agregar artículos', () => {
     })
   })
 
-  /** Escenario completo, sin una cláusula propia: el rechazo de la salida anterior (que dejó la puerta cerrada) ya lo borró
-   * `alEmpezarUnaAccion` cuando se eligió el artículo, mucho antes de que `alAgregar` corra; esa línea la mata la prueba
-   * "el rechazo de una salida anterior también se va al empezar una acción del panel". */
-  it('agregar con éxito borra el rechazo de una salida anterior', async () => {
-    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
-    apiPostMock.mockImplementation((ruta: string) =>
-      Promise.resolve(ruta === '/familias/previsualizacion' ? previsualizacionDe({ articulos: [cambiosDe(40)] }) : resultadoDe([cambiosDe(40)])),
-    )
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
-    await screen.findByText('La pertenencia cambió.')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Elegir artículos' })).toBeEnabled())
-    await elegirArticulos(40)
-    await userEvent.click(screen.getByRole('button', { name: 'Previsualizar' }))
-
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirmar y agregar' }))
-
-    await screen.findByText(/Se agregó 1 artículo a la familia "Sabores"/)
-    expect(screen.queryByText('La pertenencia cambió.')).not.toBeInTheDocument()
-  })
 })
 
 describe('Familia — "Volver al listado" no se alcanza con una puerta abierta ni con una escritura en vuelo', () => {
@@ -1262,65 +1212,6 @@ describe('Familia — "Volver al listado" no se alcanza con una puerta abierta n
     await waitFor(() => expect(screen.getByRole('link', { name: 'Volver al listado' })).not.toHaveAttribute('aria-disabled', 'true'))
     await userEvent.click(screen.getByRole('link', { name: 'Volver al listado' }))
     expect(await screen.findByText('Pantalla del listado de familias')).toBeInTheDocument()
-  })
-})
-
-describe('Familia — agregar artículos: cada acción del panel saca de pantalla lo que dijo la anterior', () => {
-  const avisoDeLaSalida = /Se sacó el artículo "Frutilla"/
-
-  /** Un artículo elegido y previsualizado, y después una salida que sale bien pero cuya relectura falla: la familia
-   * que se ve es la de antes (lo previsualizado sigue en pie) y el aviso de la salida queda en pantalla. */
-  async function conElAvisoDeUnaSalidaAnterior() {
-    apiPostMock.mockImplementation((ruta: string) =>
-      Promise.resolve(ruta === '/familias/previsualizacion' ? previsualizacionDe({ articulos: [cambiosDe(40)] }) : resultadoDe([cambiosDe(40)])),
-    )
-    await montarYEsperar({
-      detalleImpl: (llamada) => (llamada === 1 ? Promise.resolve(detalleSabores()) : Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó la relectura.'))),
-    })
-    await elegirArticulos(40)
-    await userEvent.click(screen.getByRole('button', { name: 'Previsualizar' }))
-    await screen.findByRole('button', { name: 'Confirmar y agregar' })
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
-    await screen.findByText(/No se pudo actualizar la vista/)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirmar y agregar' })).toBeEnabled())
-    expect(screen.getByText(avisoDeLaSalida)).toBeInTheDocument()
-  }
-
-  /** Cláusulas bajo prueba: cada `alEmpezar()` del panel (`elegir`, `quitar`, `pedirPrevisualizacion` y `confirmar`) y el
-   * `setAviso('')` de `alEmpezarUnaAccion` de la pantalla. Una prueba por hermana: sacar la llamada de una sola de las
-   * cuatro deja el aviso en pantalla en esa y solo en esa. Evidencia de mutación (mutation-proof-tests): sacar cada
-   * `alEmpezar()` hace fallar su caso; revertidos, vuelven a verde. */
-  it.each([
-    ['elegir otros artículos desde el buscador', () => elegirArticulos(41)],
-    ['quitar un artículo elegido', () => userEvent.click(screen.getByRole('button', { name: 'Quitar A0040 Articulo 40' }))],
-    ['volver a previsualizar', () => userEvent.click(screen.getByRole('button', { name: 'Previsualizar' }))],
-    ['confirmar y agregar', () => userEvent.click(screen.getByRole('button', { name: 'Confirmar y agregar' }))],
-  ])('%s borra el aviso de la escritura anterior', async (_accion, hacer) => {
-    await conElAvisoDeUnaSalidaAnterior()
-    apiPostMock.mockReturnValue(new Promise(() => {}))
-
-    await hacer()
-
-    expect(screen.queryByText(avisoDeLaSalida)).not.toBeInTheDocument()
-  })
-
-  /** Cláusula bajo prueba: `setErrorDeEscritura('')` de `alEmpezarUnaAccion`: el rechazo de una salida anterior (que dejó la
-   * puerta cerrada y la familia releída) tampoco sobrevive a la acción siguiente. Evidencia de mutación
-   * (mutation-proof-tests): sacar esa línea hace fallar este test; revertido, vuelve a verde. */
-  it('el rechazo de una salida anterior también se va al empezar una acción del panel', async () => {
-    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
-    apiPostMock.mockReturnValue(new Promise(() => {}))
-    await montarYEsperar()
-    await elegirArticulos(40)
-    await userEvent.click(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
-    await screen.findByText('La pertenencia cambió.')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Previsualizar' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Previsualizar' }))
-
-    expect(screen.queryByText('La pertenencia cambió.')).not.toBeInTheDocument()
   })
 })
 

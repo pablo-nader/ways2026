@@ -15,6 +15,7 @@ import { useCatalogosDeFamilias, type CatalogosDeFamilias } from './familias/use
 import { usePrevisualizacion } from './familias/usePrevisualizacion'
 import { formatearValorCompartido } from './familias/valoresCompartidos'
 import { VistaDePrevisualizacion } from './familias/VistaDePrevisualizacion'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO = 'No se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_DE_REFERENCIA_DESACTUALIZADA =
@@ -38,10 +39,10 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
 
   const [detalle, setDetalle] = useState<FamiliaDetalle | null>(null)
   const [cargando, setCargando] = useState(idFamilia !== null)
-  // Un slot por fuente (react-async-state regla 14): la carga, las escrituras y el aviso de éxito no se pisan.
+  // Un slot por fuente (react-async-state regla 14): la carga y el rechazo de la salida no se pisan.
   const [error, setError] = useState(idFamilia === null ? 'No se especificó una familia válida.' : '')
-  const [errorDeEscritura, setErrorDeEscritura] = useState('')
-  const [aviso, setAviso] = useState(avisoDeEntrada)
+  /** El rechazo de la salida de un artículo vive dentro de la confirmación que sigue abierta. */
+  const [errorDeSalida, setErrorDeSalida] = useState('')
   const [salida, setSalida] = useState<MiembroDeFamilia | null>(null)
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
   const [saliendo, setSaliendo] = useState<number | null>(null)
@@ -86,9 +87,12 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
   }, [cargar])
 
   // El aviso con el que se llegó se consume: el estado de la navegación queda en el historial y reaparecería al
-  // recargar la pantalla o al volver a ella. El aviso ya está en el estado de la pantalla.
+  // recargar la pantalla o al volver a ella. Se muestra como toast y se limpia el estado.
   useEffect(() => {
-    if (avisoDeEntrada !== '') navegar(ubicacion.pathname, { replace: true, state: null })
+    if (avisoDeEntrada === '') return
+
+    toast.exito(avisoDeEntrada)
+    navegar(ubicacion.pathname, { replace: true, state: null })
   }, [avisoDeEntrada, navegar, ubicacion.pathname])
 
   /** La familia se vuelve a leer desde el panel de agregado: su identidad es estable para que un efecto no la repita. */
@@ -99,24 +103,23 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
   function pedirSalida(miembro: MiembroDeFamilia, disparador: HTMLElement | null) {
     setDisparadorDeLaPuerta(disparador)
     setSalida(miembro)
-    setErrorDeEscritura('')
-    setAviso('')
+    setErrorDeSalida('')
   }
 
   function cancelarSalida() {
     setDisparadorDeLaPuerta(null)
     setSalida(null)
-    setErrorDeEscritura('')
+    setErrorDeSalida('')
   }
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
    * reporta como fallida (`react-async-state` regla 6). */
   async function refrescarTrasEscribir(mensajeOk: string) {
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(++generacion.current, true)
     } catch {
-      setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
+      toast.advertencia(AVISO_REFRESCO_FALLIDO)
     }
   }
 
@@ -126,7 +129,7 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
     const miembro = salida
     ocupadoRef.current = true
     setSaliendo(miembro.id)
-    setErrorDeEscritura('')
+    setErrorDeSalida('')
     try {
       try {
         await clienteDeFamilias.sacarArticulo(idFamilia, miembro.id)
@@ -138,9 +141,9 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
         // salvo cuando la lectura dice que la familia ya no existe: ese mensaje ya lo cubre y no se repite.
         if (e instanceof ErrorApi && (e.codigo === 'familia_cambio' || e.estado === 404)) {
           setSalida(null)
-          if ((await cargar(++generacion.current)) !== 'inexistente') setErrorDeEscritura(rechazo)
+          if ((await cargar(++generacion.current)) !== 'inexistente') toast.error(rechazo)
         } else {
-          setErrorDeEscritura(rechazo)
+          setErrorDeSalida(rechazo)
         }
 
         return
@@ -157,12 +160,6 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
   /** Lo que el panel de agregado confirmó: se avisa y se vuelve a leer la familia (con sus miembros nuevos). */
   async function alAgregar(resultado: ResultadoDeAgrupacion) {
     await refrescarTrasEscribir(avisoDeAgregado(resultado))
-  }
-
-  /** Cada acción del panel de agregado que empieza saca de pantalla el aviso o el rechazo de la anterior. */
-  function alEmpezarUnaAccion() {
-    setAviso('')
-    setErrorDeEscritura('')
   }
 
   /** La puerta abierta o cualquier escritura en vuelo (la salida o el agregado) bloquean la pantalla entera. */
@@ -187,8 +184,6 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
     <div className="container-fluid py-4">
       <Box titulo={detalle ? `Familia "${detalle.nombre}"` : 'Familia'} variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
-        {errorDeEscritura && !salida && <div className="alert alert-danger">{errorDeEscritura}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {catalogos.aviso && <div className="alert alert-warning">{catalogos.aviso}</div>}
 
         {salida && (
@@ -200,7 +195,7 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
             etiquetaEnCurso="Sacando…"
             ocupado={saliendo !== null}
             disparador={disparadorDeLaPuerta}
-            error={errorDeEscritura}
+            error={errorDeSalida}
             onConfirmar={confirmarSalida}
             onCancelar={cancelarSalida}
           />
@@ -225,7 +220,6 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
                 catalogos={catalogos}
                 bloqueadoPorLaPantalla={salida !== null || saliendo !== null}
                 alOcuparse={setAgregando}
-                alEmpezar={alEmpezarUnaAccion}
                 alAgregar={alAgregar}
                 alRelerFamilia={relerFamilia}
               />
@@ -361,7 +355,6 @@ function AgregarArticulos({
   catalogos,
   bloqueadoPorLaPantalla,
   alOcuparse,
-  alEmpezar,
   alAgregar,
   alRelerFamilia,
 }: {
@@ -371,8 +364,6 @@ function AgregarArticulos({
   bloqueadoPorLaPantalla: boolean
   /** Avisa a la pantalla que este panel tiene una escritura en vuelo, para que deje inerte el resto. */
   alOcuparse: (enCurso: boolean) => void
-  /** Una acción del panel empieza: la pantalla saca de pantalla el aviso o el rechazo de la anterior. */
-  alEmpezar: () => void
   alAgregar: (resultado: ResultadoDeAgrupacion) => void | Promise<void>
   /** Vuelve a leer la familia. Tiene que ser estable: un efecto de este panel depende de ella. */
   alRelerFamilia: () => Promise<void>
@@ -430,7 +421,6 @@ function AgregarArticulos({
   const nombresDeArticulos = new Map<number, ArticuloElegido>(elegidos.map((a) => [a.id, a]))
 
   function elegir(nuevos: ArticuloElegido[]) {
-    alEmpezar()
     setElegidos(nuevos)
     invalidar()
     setErrorDeConfirmacion('')
@@ -438,14 +428,12 @@ function AgregarArticulos({
   }
 
   function quitar(idArticulo: number) {
-    alEmpezar()
     setElegidos((previos) => previos.filter((a) => a.id !== idArticulo))
     invalidar()
     setErrorDeConfirmacion('')
   }
 
   function pedirPrevisualizacion() {
-    alEmpezar()
     setErrorDeConfirmacion('')
     void previsualizar({ idArticuloReferencia: referencia.id, idsArticulos: elegidos.map((a) => a.id) })
   }
@@ -455,7 +443,6 @@ function AgregarArticulos({
     // sincrónico, porque dos clics en el mismo tick pasan la guarda de estado.
     if (confirmandoRef.current) return
 
-    alEmpezar()
     confirmandoRef.current = true
     setConfirmando(true)
     alOcuparse(true)

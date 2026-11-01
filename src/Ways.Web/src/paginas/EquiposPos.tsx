@@ -15,6 +15,7 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { fechaHoraATexto } from '../formato/fechas'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO = 'Se revocó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
@@ -57,7 +58,6 @@ export function EquiposPos() {
   const [items, setItems] = useState<DispositivoListado[]>([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [revocacion, setRevocacion] = useState<DispositivoListado | null>(null)
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
@@ -93,7 +93,6 @@ export function EquiposPos() {
     setDisparadorDeLaPuerta(disparador)
     setRevocacion(dispositivo)
     setError('')
-    setAviso('')
   }
 
   function cancelarRevocacion() {
@@ -102,7 +101,6 @@ export function EquiposPos() {
     setDisparadorDeLaPuerta(null)
     setRevocacion(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarRevocacion() {
@@ -113,7 +111,6 @@ export function EquiposPos() {
     ocupadoRef.current = true
     setOcupado(fila.id)
     setError('')
-    setAviso('')
     try {
       try {
         await clienteDeDispositivos.revocar(fila.id)
@@ -125,13 +122,13 @@ export function EquiposPos() {
 
       setRevocacion(null)
       const mensajeOk = `Se revocó el equipo "${fila.nombre}".`
-      setAviso(mensajeOk)
+      toast.exito(mensajeOk)
       // El refresco va fuera del try/catch del DELETE: una revocación confirmada nunca se reporta
       // como fallida.
       try {
         await cargar(token, true)
       } catch {
-        if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
+        if (generacion.current === token) toast.advertencia(AVISO_REFRESCO_FALLIDO)
       }
     } finally {
       ocupadoRef.current = false
@@ -151,7 +148,6 @@ export function EquiposPos() {
     <div className="container-fluid py-4">
       <Box titulo="Equipos POS" variante="inverse">
         {error && !revocacion && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {revocacion && (
           <ConfirmacionDeBaja

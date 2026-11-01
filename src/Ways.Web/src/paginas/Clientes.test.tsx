@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Clientes } from './Clientes'
+import { Toaster } from '../toasts/Toaster'
 import type { ClienteListado, PaginaDe } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -60,7 +61,7 @@ function paginaFixture(items: ClienteListado[]): PaginaDe<ClienteListado> {
 }
 
 function renderClientes() {
-  return render(<Clientes />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<><Clientes /><Toaster /></>, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
 function rutasDeClientes() {

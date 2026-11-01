@@ -12,6 +12,7 @@ import { normalizarTexto } from '../componentes/grilla/filtros'
 import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { Modal } from '../componentes/Modal'
 import { atributosDeCampoEntero, parsearNumeroDecimal } from '../formato/numeros'
+import { toast } from '../toasts/toasts'
 import { aplanar, armarArbol, filtrarArbol, idsDeSubarbol, ordenarArbol, type Nodo } from './categorias/arbolDeCategorias'
 
 const PROFUNDIDAD_MAXIMA = 3
@@ -62,7 +63,7 @@ const FORMULARIO_VACIO: Formulario = {
  * advertencia del `confirm()` nativo se retira.
  *
  * El alta y la edición viven en un `Modal` (mismo criterio que `PaginaCatalogo.tsx`): un guardado
- * exitoso lo cierra y el aviso queda en la pantalla; el rechazo de un guardado se muestra adentro
+ * exitoso lo cierra y el resultado se avisa con un toast; el rechazo de un guardado se muestra adentro
  * (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores de la
  * carga del listado y de la baja siguen en la pantalla.
  */
@@ -72,7 +73,6 @@ export function Categorias() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [errorFormulario, setErrorFormulario] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [filtroNombre, setFiltroNombre] = useState('')
@@ -118,11 +118,11 @@ export function Categorias() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, incluirInactivos, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -138,7 +138,6 @@ export function Categorias() {
     setGuardando(true)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       try {
         const datosAlta: CategoriaAlta = {
@@ -187,7 +186,6 @@ export function Categorias() {
     setDisparadorDeLaPuerta(disparador)
     setBaja(item)
     setError('')
-    setAviso('')
   }
 
   function cancelarBaja() {
@@ -196,7 +194,6 @@ export function Categorias() {
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -207,7 +204,6 @@ export function Categorias() {
     ocupadoRef.current = true
     setOcupadoBaja(item.id)
     setError('')
-    setAviso('')
     try {
       try {
         await api.delete(`/catalogos/categorias/${item.id}`)
@@ -244,7 +240,6 @@ export function Categorias() {
     if (ocupadoRef.current) return
 
     setFormulario({ ...FORMULARIO_VACIO, idCategoriaPadre })
-    setAviso('')
     setError('')
     setErrorFormulario('')
   }
@@ -260,7 +255,6 @@ export function Categorias() {
       activo: item.activo,
       idEmpresa: item.idEmpresa,
     })
-    setAviso('')
     setError('')
     setErrorFormulario('')
   }
@@ -306,7 +300,6 @@ export function Categorias() {
         </p>
 
         {error && !baja && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja

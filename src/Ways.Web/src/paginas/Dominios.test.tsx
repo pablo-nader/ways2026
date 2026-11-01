@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Dominios } from './Dominios'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import type { DominioListado, TenantListado } from '../api/tipos'
 
@@ -73,7 +74,7 @@ function montar(listas: Listas = { 1: [principalVerificado, secundarioSinVerific
     return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
   })
 
-  return { listas, ...render(<Dominios />) }
+  return { listas, ...render(<><Dominios /><Toaster /></>) }
 }
 
 function diferida<T>() {
@@ -165,7 +166,7 @@ describe('Dominios — lista', () => {
 
   it('si fallan los tenants lo dice', async () => {
     apiGetMock.mockRejectedValue(new ErrorApi(500, 'error_interno', 'Falló la carga.'))
-    render(<Dominios />)
+    render(<><Dominios /><Toaster /></>)
 
     expect(await screen.findByText('Falló la carga.')).toBeInTheDocument()
   })
@@ -204,7 +205,7 @@ describe('Dominios — lista', () => {
 
       return new Promise<DominioListado[]>((resolver) => pendientes.set(id, resolver))
     })
-    render(<Dominios />)
+    render(<><Dominios /><Toaster /></>)
 
     await elegirTenant(usuario, 1)
     await waitFor(() => expect(pendientes.has(1)).toBe(true))
@@ -229,6 +230,7 @@ describe('Dominios — lista', () => {
     render(
       <StrictMode>
         <Dominios />
+        <Toaster />
       </StrictMode>,
     )
 
@@ -259,7 +261,8 @@ describe('Dominios — alta', () => {
 
     expect(await screen.findByRole('row', { name: /nuevo\.sur\.com/ })).toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledWith(RUTA_UNO, { host: 'nuevo.sur.com', esPrincipal: true })
-    expect(screen.getByText(/Se agregó el dominio "nuevo\.sur\.com"/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Se agregó el dominio "nuevo.sur.com". Cuando su DNS apunte al servidor, marcalo como verificado.')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     const reabierto = await abrirAlta(usuario)
@@ -403,7 +406,9 @@ describe('Dominios — alta', () => {
     await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
     await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText(/Se agregó el dominio "nuevo\.sur\.com".*no se pudo actualizar la vista/)).toBeInTheDocument()
+    expect(await screen.findByText(/Se agregó el dominio "nuevo.sur.com"/)).toBeInTheDocument()
+    const advertencia = await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(advertencia.closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByText(/No se pudo agregar/)).not.toBeInTheDocument()
   })
 
@@ -463,7 +468,7 @@ describe('Dominios — verificación', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
 
-    expect(await screen.findByText(/No se pudo marcar "www\.sur\.com" como verificado\./)).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo marcar "www.sur.com" como verificado./)
     expect(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' })).toBeEnabled()
   })
 
@@ -643,53 +648,6 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     expect(within(reabierto).getByLabelText('Host')).not.toHaveAccessibleDescription()
   })
 
-  it('agregar borra el aviso de éxito de una acción anterior', async () => {
-    const usuario = userEvent.setup()
-    montar()
-    await elegirTenant(usuario, 1)
-    await screen.findByText('www.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
-    expect(await screen.findByText('Se marcó como verificado "www.sur.com".')).toBeInTheDocument()
-
-    apiPostMock.mockReturnValue(new Promise(() => {}))
-    const dialogo = await abrirAlta(usuario)
-    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
-    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
-
-    expect(screen.queryByText('Se marcó como verificado "www.sur.com".')).not.toBeInTheDocument()
-  })
-
-  it('elegir otro tenant borra el aviso aunque su lista siga pendiente', async () => {
-    const usuario = userEvent.setup()
-    montar()
-    await elegirTenant(usuario, 1)
-    await screen.findByText('www.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
-    expect(await screen.findByText('Se marcó como verificado "www.sur.com".')).toBeInTheDocument()
-    const original = apiGetMock.getMockImplementation()!
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta === '/plataforma/tenants/2/dominios' ? new Promise(() => {}) : original(ruta),
-    )
-
-    await elegirTenant(usuario, 2)
-
-    expect(screen.queryByText('Se marcó como verificado "www.sur.com".')).not.toBeInTheDocument()
-  })
-
-  it('abrir la puerta de baja borra el aviso de éxito de una acción anterior', async () => {
-    const usuario = userEvent.setup()
-    montar()
-    await elegirTenant(usuario, 1)
-    await screen.findByText('www.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
-    expect(await screen.findByText('Se marcó como verificado "www.sur.com".')).toBeInTheDocument()
-
-    await usuario.click(screen.getByRole('button', { name: 'Eliminar www.sur.com' }))
-
-    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
-    expect(screen.queryByText('Se marcó como verificado "www.sur.com".')).not.toBeInTheDocument()
-  })
-
   it('reintentar la baja borra el rechazo anterior', async () => {
     const usuario = userEvent.setup()
     montar()
@@ -851,7 +809,7 @@ describe('Dominios — orden y filtros por columna', () => {
 
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
-    render(<Dominios />)
+    render(<><Dominios /><Toaster /></>)
     await elegirTenant(usuario, 1)
     await screen.findByText('zeta.com')
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'a')
