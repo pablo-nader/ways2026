@@ -25,10 +25,20 @@ public sealed record AsientoDeStock(
 public readonly record struct AsientoAplicado(
     AsientoDeStock Asiento, int IdMovimiento, decimal CantidadAgregada, decimal? CantidadDelLote);
 
+/// <summary>La fusión de stock que pide la fusión de dos sucursales. <see cref="IdPuntoVenta"/> y
+/// <see cref="IdPuntoVentaDestino"/> son las cajas de trazabilidad de los dos lados del par de asientos.</summary>
+public sealed record SolicitudDeFusionDeStock(
+    int IdTenant, int IdSucursalOrigen, int IdSucursalDestino, int IdPuntoVenta, int IdPuntoVentaDestino, int IdEmpleado,
+    DateTimeOffset Momento, string Observaciones);
+
+/// <summary>Lo que movió una fusión: artículos con algún saldo, saldos de lote y asientos escritos (dos por saldo).</summary>
+public readonly record struct FusionDeStockAplicada(int Articulos, int Lotes, int Movimientos);
+
 /// <summary>
 /// El único escritor de <c>movimientos_stock</c> y de las cantidades de <c>stock</c> y <c>stock_lotes</c>. Los umbrales
 /// de reposición (<c>minimo</c>, <c>reposicion</c>) los escribe <c>ServicioDeStock.EscribirMinimosAsync</c> con su propio
-/// upsert, que puede crear la fila de <c>stock</c> en cero pero nunca toca una cantidad ni asienta un movimiento.
+/// upsert, que puede crear la fila de <c>stock</c> en cero pero nunca toca una cantidad ni asienta un movimiento; la
+/// única excepción es <see cref="FusionarSucursalesAsync"/>, que lleva los umbrales del origen al destino.
 /// Statements crudos sobre la conexión y la transacción del llamador: no abre transacción propia ni decide la estrategia de reintento, que siguen
 /// siendo de cada servicio.
 ///
@@ -39,19 +49,79 @@ public readonly record struct AsientoAplicado(
 public static class EscritorDeStock
 {
     /// <summary>La sucursal del punto de venta, leída dentro de la transacción del llamador. Quien escribe un documento
-    /// nuevo resuelve así la sucursal; una reversa usa la sucursal guardada en los movimientos originales.</summary>
+    /// nuevo resuelve así la sucursal; una reversa resuelve la guardada en sus movimientos originales con
+    /// <see cref="ResolverSucursalesDeReversaAsync"/>.
+    /// La lectura toma <c>FOR SHARE</c> sobre la fila del punto de venta hasta el commit: mover la caja a otra sucursal
+    /// (<c>FOR UPDATE</c> sobre la misma fila) espera a los asientos en vuelo y los que llegan después leen la sucursal
+    /// nueva, así que la sucursal que la baja o el movimiento miran vacía no recibe un asiento a mitad de camino. Varios
+    /// escritores de la misma caja no se bloquean entre sí.</summary>
     public static async Task<int> ResolverSucursalAsync(
         DbConnection conexion, DbTransaction? transaccion, int idPuntoVenta, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
-        comando.CommandText = "SELECT id_sucursal FROM puntos_venta WHERE id_punto_venta = $1";
+        comando.CommandText = "SELECT id_sucursal FROM puntos_venta WHERE id_punto_venta = $1 FOR SHARE";
         ParametrosDeComando.Agregar(comando, idPuntoVenta);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is null or DBNull
             ? throw new InvalidOperationException($"El punto de venta {idPuntoVenta} no existe o no es visible.")
             : Convert.ToInt32(resultado);
+    }
+
+    /// <summary>
+    /// Dónde asienta una reversa: cada sucursal guardada en los movimientos originales, seguida por
+    /// <c>id_sucursal_fusion</c> hasta una sin fusión. La fusión llevó el stock del origen, con cada lote bajo el mismo
+    /// <c>id_lote</c>, a la sucursal que lo absorbió, y la cadena puede tener varios tramos (A→B y después B→C).
+    /// Devuelve sucursal guardada → sucursal donde asentar.
+    ///
+    /// Orden de locks, antes de cualquier fila de stock: <c>FOR SHARE</c> sobre las cajas que firmarán los asientos, en
+    /// orden de id, y después <c>FOR SHARE</c> sobre cada sucursal que visita. La fusión toma el advisory del tenant,
+    /// <c>FOR UPDATE</c> sobre las cajas de las dos sucursales, <c>FOR UPDATE</c> sobre las dos sucursales y recién
+    /// después el stock: el mismo orden caja → sucursal → stock, sin ciclo. Una reversa en vuelo termina antes de que la
+    /// fusión tome su sucursal o espera sin haber tomado stock y después lee la fusión ya confirmada. Las cajas van
+    /// primero porque el movimiento las referencia y la FK toma <c>FOR KEY SHARE</c>, que choca con el
+    /// <c>FOR UPDATE</c> de la fusión: tomarlas después de una sucursal cerraría un ciclo con una fusión que ya tiene la
+    /// caja y espera esa sucursal.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<int, int>> ResolverSucursalesDeReversaAsync(
+        DbConnection conexion, DbTransaction? transaccion, IEnumerable<int> idsPuntoVenta, IEnumerable<int> idsSucursal,
+        CancellationToken ct)
+    {
+        foreach (var idPuntoVenta in idsPuntoVenta.Distinct().Order())
+        {
+            await using var comando = conexion.CreateCommand();
+            comando.Transaction = transaccion;
+            comando.CommandText = "SELECT 1 FROM puntos_venta WHERE id_punto_venta = $1 FOR SHARE";
+            ParametrosDeComando.Agregar(comando, idPuntoVenta);
+            await comando.ExecuteScalarAsync(ct);
+        }
+
+        var vigentes = new Dictionary<int, int>();
+        foreach (var guardada in idsSucursal.Distinct().Order())
+        {
+            var actual = guardada;
+            while (await LeerFusionDeSucursalAsync(conexion, transaccion, actual, ct) is { } absorbente)
+            {
+                actual = absorbente;
+            }
+
+            vigentes[guardada] = actual;
+        }
+
+        return vigentes;
+    }
+
+    private static async Task<int?> LeerFusionDeSucursalAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idSucursal, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText = "SELECT id_sucursal_fusion FROM sucursales WHERE id_sucursal = $1 FOR SHARE";
+        ParametrosDeComando.Agregar(comando, idSucursal);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null or DBNull ? null : Convert.ToInt32(resultado);
     }
 
     /// <summary>Los elementos en el orden de locks del sistema.</summary>
@@ -231,6 +301,124 @@ public static class EscritorDeStock
         ParametrosDeComando.Agregar(comando, idSucursal);
 
         return await EscalarDecimalAsync(comando, "La suma bajo lock de stock_lotes no devolvió ninguna fila.", ct);
+    }
+
+    /// <summary>
+    /// Pasa todo el stock de <paramref name="idSucursalOrigen"/> a <paramref name="idSucursalDestino"/> (fusión de
+    /// sucursales): por cada saldo no nulo del origen, agregado sin lote o lote, un par de asientos de transferencia, el
+    /// egreso en el origen y el ingreso en el destino, con <c>id_sucursal_destino</c>. Los saldos negativos viajan igual,
+    /// así que el destino queda con la suma y el origen en cero, y <c>stock = Σ movimientos</c> y
+    /// <c>Σ stock_lotes = stock</c> siguen valiendo en las dos. Ningún saldo se rechaza por insuficiente.
+    ///
+    /// Locks: las filas de las dos sucursales se toman en orden de sucursal (la de menor id primero), como pide el orden
+    /// del sistema. Dentro de cada una van todos los agregados y después todos los lotes, en orden de artículo y lote: no
+    /// es el orden intercalado de <see cref="AsentarAsync"/>, pero quien toma el lote de un artículo ya tiene su agregado,
+    /// que acá se toma antes que cualquier lote, así que nadie puede tener un lote que esto espere mientras espera algo que
+    /// esto tiene. El llamador ya tiene que haber bloqueado con <c>FOR UPDATE</c> las cajas de las dos sucursales y
+    /// después las dos sucursales: un asiento nuevo toma su caja con <c>FOR SHARE</c> y una reversa toma su caja y
+    /// después su sucursal (<see cref="ResolverSucursalesDeReversaAsync"/>), las dos antes de cualquier fila de stock.
+    ///
+    /// Umbrales: el destino conserva su par <c>minimo</c>/<c>reposicion</c>; donde no tiene ninguno de los dos, toma el
+    /// del origen, como par. El origen conserva los suyos (queda dado de baja).
+    /// </summary>
+    public static async Task<FusionDeStockAplicada> FusionarSucursalesAsync(
+        DbConnection conexion, DbTransaction? transaccion, SolicitudDeFusionDeStock fusion, CancellationToken ct)
+    {
+        var saldosDelOrigen = new List<SaldoBloqueado>();
+        foreach (var idSucursal in new[] { fusion.IdSucursalOrigen, fusion.IdSucursalDestino }.Order())
+        {
+            var saldos = await BloquearSaldosDeSucursalAsync(conexion, transaccion, idSucursal, ct);
+            if (idSucursal == fusion.IdSucursalOrigen)
+            {
+                saldosDelOrigen = saldos;
+            }
+        }
+
+        var asientos = new List<AsientoDeStock>();
+        foreach (var delArticulo in saldosDelOrigen.GroupBy(s => s.IdArticulo))
+        {
+            var agregado = delArticulo.Where(s => s.IdLote is null).Sum(s => s.Cantidad);
+            var lotes = delArticulo.Where(s => s.IdLote is not null).ToList();
+
+            // Lo que el agregado tiene fuera de los lotes viaja sin lote; cada lote viaja con el suyo.
+            var tramos = lotes
+                .Select(l => (l.IdLote, l.Cantidad))
+                .Append((IdLote: (int?)null, Cantidad: agregado - lotes.Sum(l => l.Cantidad)))
+                .Where(t => t.Cantidad != 0m);
+
+            foreach (var (idLote, cantidad) in tramos)
+            {
+                asientos.Add(AsientoDeFusion(fusion, fusion.IdSucursalOrigen, delArticulo.Key, -cantidad, idLote));
+                asientos.Add(AsientoDeFusion(fusion, fusion.IdSucursalDestino, delArticulo.Key, cantidad, idLote));
+            }
+        }
+
+        await AsentarAsync(conexion, transaccion, asientos, ct);
+        await CopiarUmbralesAsync(conexion, transaccion, fusion, ct);
+
+        return new FusionDeStockAplicada(
+            asientos.Select(a => a.IdArticulo).Distinct().Count(),
+            asientos.Count(a => a.IdLote is not null) / 2,
+            asientos.Count);
+    }
+
+    private static AsientoDeStock AsientoDeFusion(
+        SolicitudDeFusionDeStock fusion, int idSucursal, int idArticulo, decimal cantidad, int? idLote) =>
+        new(fusion.IdTenant, idSucursal, fusion.IdPuntoVenta, idArticulo, cantidad, MotivoStock.Transferencia,
+            fusion.IdEmpleado, fusion.Momento)
+        {
+            IdLote = idLote,
+            Observaciones = fusion.Observaciones,
+            IdPuntoVentaDestino = fusion.IdPuntoVentaDestino,
+            IdSucursalDestino = fusion.IdSucursalDestino
+        };
+
+    private readonly record struct SaldoBloqueado(int IdArticulo, int? IdLote, decimal Cantidad);
+
+    private static async Task<List<SaldoBloqueado>> BloquearSaldosDeSucursalAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idSucursal, CancellationToken ct)
+    {
+        var saldos = new List<SaldoBloqueado>();
+
+        foreach (var sql in new[]
+        {
+            "SELECT id_articulo, NULL::integer, cantidad FROM stock WHERE id_sucursal = $1 ORDER BY id_articulo FOR UPDATE",
+            "SELECT id_articulo, id_lote, cantidad FROM stock_lotes WHERE id_sucursal = $1 ORDER BY id_articulo, id_lote FOR UPDATE"
+        })
+        {
+            await using var comando = conexion.CreateCommand();
+            comando.Transaction = transaccion;
+            comando.CommandText = sql;
+            ParametrosDeComando.Agregar(comando, idSucursal);
+
+            await using var lector = await comando.ExecuteReaderAsync(ct);
+            while (await lector.ReadAsync(ct))
+            {
+                saldos.Add(new SaldoBloqueado(
+                    lector.GetInt32(0), lector.IsDBNull(1) ? null : lector.GetInt32(1), lector.GetDecimal(2)));
+            }
+        }
+
+        return saldos;
+    }
+
+    private static async Task CopiarUmbralesAsync(
+        DbConnection conexion, DbTransaction? transaccion, SolicitudDeFusionDeStock fusion, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO stock (id_articulo, id_sucursal, id_tenant, cantidad, minimo, reposicion) " +
+            "SELECT o.id_articulo, $2, o.id_tenant, 0, o.minimo, o.reposicion FROM stock o " +
+            "WHERE o.id_sucursal = $1 AND (o.minimo IS NOT NULL OR o.reposicion IS NOT NULL) " +
+            "ORDER BY o.id_articulo " +
+            "ON CONFLICT (id_articulo, id_sucursal) DO UPDATE " +
+            "SET minimo = EXCLUDED.minimo, reposicion = EXCLUDED.reposicion " +
+            "WHERE stock.minimo IS NULL AND stock.reposicion IS NULL";
+        ParametrosDeComando.Agregar(comando, fusion.IdSucursalOrigen);
+        ParametrosDeComando.Agregar(comando, fusion.IdSucursalDestino);
+
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task<decimal> EscalarDecimalAsync(DbCommand comando, string siNoHayFila, CancellationToken ct)

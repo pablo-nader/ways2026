@@ -159,6 +159,46 @@ public class PayloadDeAuditoriaTests
                 saldoAnterior: 1000m, saldoNuevo: 1200m, idMovimiento: 77, consumosActualizados: 3, diferencia: 200m));
 
     [Fact]
+    public void LosPayloadsDeSucursalSonConstruiblesYDicenLoQueCambio()
+    {
+        var alta = PayloadDeAuditoria.AltaDeSucursal(7, "Centro");
+        AsumirConstruible(AccionAuditada.SucursalAlta, alta);
+        Assert.Null(alta.Anterior);
+        Assert.Equal(7, alta.Nuevo["id_empresa"]);
+
+        var renombre = PayloadDeAuditoria.RenombreDeSucursal("Centro", "Centro Norte");
+        AsumirConstruible(AccionAuditada.SucursalEdicion, renombre);
+        Assert.Equal("Centro", renombre.Anterior!["nombre"]);
+        Assert.Equal("Centro Norte", renombre.Nuevo["nombre"]);
+
+        var movimiento = PayloadDeAuditoria.CambioDeSucursalDePuntoVenta(3, 4, sucursalDadaDeBaja: true);
+        AsumirConstruible(AccionAuditada.PuntoVentaSucursal, movimiento);
+        Assert.Equal(3, movimiento.Anterior!["id_sucursal"]);
+        Assert.Equal(4, movimiento.Nuevo["id_sucursal"]);
+        Assert.Equal(true, movimiento.Nuevo["sucursal_dada_de_baja"]);
+
+        var baja = PayloadDeAuditoria.BajaDeOrganizacion(DateTimeOffset.UtcNow, porCascada: true);
+        AsumirConstruible(AccionAuditada.SucursalBaja, baja);
+    }
+
+    [Fact]
+    public void FusionDeSucursalesEsConstruibleYDiceElDestinoLasCajasYLoQueMovio()
+    {
+        var momento = DateTimeOffset.UtcNow;
+        var fusion = PayloadDeAuditoria.FusionDeSucursales(momento, 9, [4, 7], articulos: 3, lotes: 2, movimientos: 10);
+
+        AsumirConstruible(AccionAuditada.SucursalFusion, fusion);
+        Assert.Null(fusion.Anterior!["deleted_at"]);
+        Assert.Equal(momento, fusion.Nuevo["deleted_at"]);
+        Assert.Equal(9, fusion.Nuevo["id_sucursal_destino"]);
+        Assert.Equal(2, fusion.Nuevo["puntos_venta"]);
+        Assert.Equal(new List<int> { 4, 7 }, fusion.Nuevo["ids_puntos_venta"]);
+        Assert.Equal(3, fusion.Nuevo["articulos"]);
+        Assert.Equal(2, fusion.Nuevo["lotes"]);
+        Assert.Equal(10, fusion.Nuevo["movimientos"]);
+    }
+
+    [Fact]
     public void AltaDePuntoVentaEsConstruibleYNoTieneEstadoPrevio()
     {
         var payload = PayloadDeAuditoria.AltaDePuntoVenta(7, "Sucursal Centro", Ways.Domain.Organizacion.ModoPuntoVenta.Web);

@@ -18,6 +18,11 @@ public class Parametro : EntidadTenant
     /// venta, gana por sobre el de la empresa (<see cref="ResolucionDeParametros"/>).</summary>
     public int? IdPuntoVenta { get; set; }
 
+    /// <summary>Solo para las claves de alcance <see cref="AlcanceDeParametro.Sucursal"/>: un valor
+    /// ⇒ propio de esa sucursal, gana por sobre el de la empresa. Excluyente con
+    /// <see cref="IdPuntoVenta"/> (CHECK <c>ck_parametros_un_solo_alcance</c>).</summary>
+    public int? IdSucursal { get; set; }
+
     public required string Clave { get; set; }
 
     /// <summary>JSON crudo (columna <c>jsonb</c>). El tipo CLR fuerte lo declara

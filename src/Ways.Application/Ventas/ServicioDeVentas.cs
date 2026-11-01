@@ -314,7 +314,7 @@ public class ServicioDeVentas(
         // siendo autoritativo para ValidadorDePagoACuenta (pago a cuenta corriente), resuelto ahí
         // por separado (ServicioDeCuentaCorriente).
         var (toleranciaPago, lotesHabilitado, importeEnvio) =
-            await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+            await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, puntoVenta.IdSucursal, ct);
 
         // El envío es una línea más de la venta: con importe_envio en cero no hay línea (la validación del cliente y la
         // dirección de entrega igual aplican). La alícuota se busca solo cuando hay línea que armar.
@@ -1330,16 +1330,19 @@ public class ServicioDeVentas(
         // EjecutarTransaccionAsync. `id_lote` viaja YA en el movimiento original — etapa 12, slice 8,
         // task 8.3: la reversa lo copia estructuralmente (design: "Exactness is structural, not
         // derived"), sin re-derivar desde items_comprobante_venta ni volver a resolver FEFO. La
-        // reversa vuelve a la sucursal y la caja guardadas en cada movimiento original, nunca a la
-        // sucursal que el punto de venta tenga hoy.
+        // reversa firma con la caja guardada en cada movimiento original y vuelve a su sucursal guardada, o
+        // a la que la absorbió si se fusionó, nunca a la sucursal que el punto de venta tenga hoy.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdComprobanteVenta == id && m.Motivo == MotivoStock.Venta)
             .ToListAsync(ct);
+        var sucursalDeReversa = await EscritorDeStock.ResolverSucursalesDeReversaAsync(
+            conexion, transaccionCruda, movimientosOriginales.Select(m => m.IdPuntoVenta),
+            movimientosOriginales.Select(m => m.IdSucursal), ct);
 
         await EscritorDeStock.AsentarAsync(
             conexion, transaccionCruda,
             movimientosOriginales.Select(original => new AsientoDeStock(
-                idTenant, original.IdSucursal, original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
+                idTenant, sucursalDeReversa[original.IdSucursal], original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
                 MotivoStock.Anulacion, idEmpleado, momento)
             {
                 IdLote = original.IdLote,
@@ -2008,15 +2011,17 @@ public class ServicioDeVentas(
     /// un <c>JsonException</c> al deserializar el valor de <c>tolerancia_pago</c> como
     /// <c>bool</c>). Evidencia de mutación registrada en ese archivo, junto al test.</summary>
     private async Task<(decimal ToleranciaPago, bool LotesHabilitado, decimal ImporteEnvio)> ResolverParametrosDeVentaAsync(
-        int idEmpresa, int idPuntoVenta, CancellationToken ct)
+        int idEmpresa, int idPuntoVenta, int idSucursal, CancellationToken ct)
     {
         ParametroConocido[] conocidos =
             [ParametroConocido.ToleranciaPago, ParametroConocido.LotesHabilitado, ParametroConocido.ImporteEnvio];
         var claves = conocidos.Select(c => c.Clave).ToList();
 
+        // Sin viaje extra: las filas de la sucursal del punto de venta viajan en la misma consulta que las de la caja.
         var candidatos = await db.Parametros
             .Where(p => claves.Contains(p.Clave) && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
+                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta)
+                && (p.IdSucursal == null || p.IdSucursal == idSucursal))
             .ToListAsync(ct);
 
         var resueltoPorClave = conocidos.ToDictionary(
@@ -2024,7 +2029,8 @@ public class ServicioDeVentas(
             c => ResolucionDeParametros.Resolver(
                 c.Clave,
                 candidatos.Where(p => p.Clave == c.Clave).ToList(),
-                idPuntoVenta));
+                idPuntoVenta,
+                idSucursal));
 
         return (
             JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.ToleranciaPago.Clave]),
@@ -2141,17 +2147,18 @@ public class ServicioDeVentas(
     {
         var puntoVenta = await db.PuntosVenta.AsNoTracking()
             .Where(pv => pv.Id == idPuntoVenta)
-            .Select(pv => new { pv.IdEmpresa })
+            .Select(pv => new { pv.IdEmpresa, pv.IdSucursal })
             .FirstOrDefaultAsync(ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
 
         var candidatos = await db.Parametros
             .Where(p => p.Clave == ParametroConocido.ZonaHoraria.Clave && p.IdEmpresa == puntoVenta.IdEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
+                && p.IdPuntoVenta == null && (p.IdSucursal == null || p.IdSucursal == puntoVenta.IdSucursal))
             .ToListAsync(ct);
 
         var zonaId = JsonSerializer.Deserialize<string>(
-            ResolucionDeParametros.Resolver(ParametroConocido.ZonaHoraria.Clave, candidatos, idPuntoVenta))!;
+            ResolucionDeParametros.Resolver(
+                ParametroConocido.ZonaHoraria.Clave, candidatos, idPuntoVenta, puntoVenta.IdSucursal))!;
 
         return (zonaId, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
     }

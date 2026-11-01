@@ -144,28 +144,28 @@ export const clienteDeReportes = {
     api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros, orden)}`),
   libroDeTesoreria: (filtros: FiltrosDeLibroDeTesoreria) =>
     api.get<LibroDeTesoreria>(`/reportes/libro-tesoreria${construirQueryDeLibroDeTesoreria(filtros)}`),
-  existencias: (idPuntoVenta: number) =>
-    api.get<Existencias>(`/reportes/stock/existencias?idPuntoVenta=${idPuntoVenta}`),
+  existencias: (idSucursal: number) =>
+    api.get<Existencias>(`/reportes/stock/existencias?idSucursal=${idSucursal}`),
   /** stage-12-lotes-vencimientos (Slice 15): `dias` es opcional — omitido, el servidor resuelve
-   * `dias_alerta_vencimiento` (PV → empresa → default), mismo criterio que el resto de los
+   * `dias_alerta_vencimiento` (sucursal → empresa → default), mismo criterio que el resto de los
    * parámetros del backend con default declarado (dto-contract-honesty: no se manda un valor
    * inventado del lado del cliente cuando el servidor ya sabe resolverlo). */
-  vencimientos: (idPuntoVenta: number, dias: number | null) =>
+  vencimientos: (idSucursal: number, dias: number | null) =>
     api.get<Vencimientos>(
-      `/reportes/stock/vencimientos?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`,
+      `/reportes/stock/vencimientos?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}`,
     ),
   vencimientosResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeVencimientos>(`/reportes/stock/vencimientos/resumen?idPuntoVenta=${idPuntoVenta}`),
   /** stage-13-stock-inteligente (Slice 6): mismo criterio opcional de `dias` que `vencimientos` —
-   * omitido, el servidor resuelve `dias_rotacion` (PV → empresa → default). */
-  reposicion: (idPuntoVenta: number, dias: number | null) =>
+   * omitido, el servidor resuelve `dias_rotacion` (sucursal → empresa → default). */
+  reposicion: (idSucursal: number, dias: number | null) =>
     api.get<Reposicion>(
-      `/reportes/stock/reposicion?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`,
+      `/reportes/stock/reposicion?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}`,
     ),
   /** stage-13-stock-inteligente (Slice 6): feed independiente de `minimoSugerido`, mismo criterio
    * opcional de `dias`. */
-  rotacion: (idPuntoVenta: number, dias: number | null) =>
-    api.get<Rotacion>(`/reportes/stock/rotacion?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`),
+  rotacion: (idSucursal: number, dias: number | null) =>
+    api.get<Rotacion>(`/reportes/stock/rotacion?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}`),
   /** stage-13-stock-inteligente (Slice 7): tile de Tablero, mismo criterio que `vencimientosResumen`. */
   reposicionResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeReposicion>(`/reportes/stock/reposicion/resumen?idPuntoVenta=${idPuntoVenta}`),
@@ -289,16 +289,16 @@ export const rutasDeExportacion = {
     `/reportes/cajas/export${construirQueryDeAlcanceDeCajas(filtros)}&formato=xlsx`,
   /** Sin `desde`/`hasta`: el stock no tiene rango, el nombre de archivo se fecha con el día del
    * servidor (mismo criterio que la ruta JSON hermana). */
-  existencias: (idPuntoVenta: number) => `/reportes/stock/existencias/export?idPuntoVenta=${idPuntoVenta}&formato=xlsx`,
+  existencias: (idSucursal: number) => `/reportes/stock/existencias/export?idSucursal=${idSucursal}&formato=xlsx`,
   /** stage-12-lotes-vencimientos (Slice 15): mismo query string que la ruta JSON hermana +
    * `formato=xlsx`, mismo criterio que `existencias`. */
-  vencimientos: (idPuntoVenta: number, dias: number | null) =>
-    `/reportes/stock/vencimientos/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
+  vencimientos: (idSucursal: number, dias: number | null) =>
+    `/reportes/stock/vencimientos/export?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
   /** stage-13-stock-inteligente (Slice 6): mismo query string que la ruta JSON hermana +
    * `formato=xlsx`, mismo criterio que `vencimientos`. Sin sibling propio para `/rotacion` — esa
    * ruta no tiene export (`ReportesEndpoints.cs`). */
-  reposicion: (idPuntoVenta: number, dias: number | null) =>
-    `/reportes/stock/reposicion/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
+  reposicion: (idSucursal: number, dias: number | null) =>
+    `/reportes/stock/reposicion/export?idSucursal=${idSucursal}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
   /** Reusa el mismo builder de alcance que `clienteDeReportes.articulos` (sin `pagina`/`tamanio`,
    * el export no pagina) — un builder separado desincronizó una vez la descarga del listado
    * (lección del proyecto), así que acá se reconstruye el query completo y se le recorta la

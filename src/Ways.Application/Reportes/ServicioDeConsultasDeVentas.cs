@@ -262,7 +262,12 @@ public class ServicioDeConsultasDeVentas(
                         .ToDictionaryAsync(pv => pv.Id, pv => pv.IdSucursal, ct);
                     foreach (var (caja, venta) in porCaja)
                     {
-                        Sumar(acumulados, sucursalDeCaja[caja], venta.Neto, venta.CantidadTx);
+                        // Una caja dada de baja entre las dos lecturas ya no se resuelve: sus ventas siguen en el
+                        // total, en una fila propia con la clave negativa de la caja.
+                        var claveDeSucursal = sucursalDeCaja.TryGetValue(caja, out var sucursalDeLaCaja)
+                            ? sucursalDeLaCaja
+                            : -caja;
+                        Sumar(acumulados, claveDeSucursal, venta.Neto, venta.CantidadTx);
                     }
 
                     break;
@@ -849,11 +854,13 @@ public class ServicioDeConsultasDeVentas(
                 var sucursales = await db.Sucursales.AsNoTracking()
                     .Where(su => ids.Contains(su.Id)).Select(su => new { su.Id, su.Nombre, su.IdEmpresa }).ToDictionaryAsync(su => su.Id, ct);
                 var variasEmpresasDeSucursal = alcance.Contextos.Count > 1;
-                nombre = clave => sucursales.TryGetValue(clave, out var sucursal)
-                    ? variasEmpresasDeSucursal
-                        ? $"{sucursal.Nombre} ({alcance.Contextos.FirstOrDefault(c => c.Empresa.Id == sucursal.IdEmpresa)?.Empresa.Nombre})"
-                        : sucursal.Nombre
-                    : $"(sucursal id {clave})";
+                nombre = clave => clave < 0
+                    ? $"(punto de venta id {-clave})"
+                    : sucursales.TryGetValue(clave, out var sucursal)
+                        ? variasEmpresasDeSucursal
+                            ? $"{sucursal.Nombre} ({alcance.Contextos.FirstOrDefault(c => c.Empresa.Id == sucursal.IdEmpresa)?.Empresa.Nombre})"
+                            : sucursal.Nombre
+                        : $"(sucursal id {clave})";
                 break;
             case AgrupacionDeVentas.Vendedor:
                 var vendedores = await db.Usuarios.AsNoTracking()

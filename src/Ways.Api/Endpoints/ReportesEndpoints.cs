@@ -460,12 +460,13 @@ public static class ReportesEndpoints
             var existencias = await servicio.ObtenerExistenciasAsync(alcance, ct);
 
             var empresa = alcance.IdEmpresa.ToString();
-            var zonaId = await AlcanceDeListadoHttp.ResolverZonaParaEmpresaAsync(
-                parametros, alcance.IdEmpresa, alcance.IdPuntoVentaDeReferencia, ct);
+            var zonaId = await AlcanceDeListadoHttp.ResolverZonaDeSucursalAsync(
+                parametros, alcance.IdEmpresa, alcance.IdSucursal, ct);
             var hoy = DateOnly.FromDateTime(
                 TimeZoneInfo.ConvertTime(reloj.Ahora, TimeZoneInfo.FindSystemTimeZoneById(zonaId)).Date);
 
-            var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, empresa, $"Sucursal {alcance.IdSucursal}", hoy, hoy, zonaId);
+            var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, empresa, alcance.NombreSucursal, hoy, hoy, zonaId,
+                etiquetaDeAlcance: "Sucursal");
             var tabla = ExportacionDeReportes.De(existencias, ctx);
 
             GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
@@ -520,7 +521,8 @@ public static class ReportesEndpoints
             var empresa = alcance.IdEmpresa.ToString();
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, empresa, $"Sucursal {alcance.IdSucursal}", vencimientos.Hoy, vencimientos.Hoy, vencimientos.ZonaHoraria);
+                usuario, reloj, empresa, alcance.NombreSucursal, vencimientos.Hoy, vencimientos.Hoy, vencimientos.ZonaHoraria,
+                etiquetaDeAlcance: "Sucursal");
             var tabla = ExportacionDeReportes.De(vencimientos, ctx);
 
             var bytes = exportador.Generar(tabla);
@@ -562,7 +564,8 @@ public static class ReportesEndpoints
             var empresa = alcance.IdEmpresa.ToString();
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, empresa, $"Sucursal {alcance.IdSucursal}", reposicion.Hoy, reposicion.Hoy, reposicion.ZonaHoraria);
+                usuario, reloj, empresa, alcance.NombreSucursal, reposicion.Hoy, reposicion.Hoy, reposicion.ZonaHoraria,
+                etiquetaDeAlcance: "Sucursal");
             var tabla = ExportacionDeReportes.De(reposicion, ctx);
 
             GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);

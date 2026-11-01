@@ -460,6 +460,74 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         Assert.Contains("Total: 1.350,00 en 2 grupos", Lineas(conBaja.Texto));
     }
 
+    /// <summary>Cláusula bajo prueba: <c>sucursalDeCaja.TryGetValue(caja, ...)</c> en <c>AgruparAsync</c>. Una caja dada de baja
+    /// ENTRE la lectura de las ventas por caja y la de sus sucursales (un interceptor la da de baja justo antes de la
+    /// consulta <c>ANY(ids)</c> sobre <c>puntos_venta</c>) ya no se resuelve: la herramienta no puede caer en 500 y el
+    /// importe de esa caja sigue en el total, rotulado como un punto de venta no visible.</summary>
+    [Fact]
+    public async Task UnaCajaDadaDeBajaEntreLasDosLecturasNoRompeLaAgrupacionPorSucursal()
+    {
+        var e = await SembrarEscenarioAsync(nameof(UnaCajaDadaDeBajaEntreLasDosLecturasNoRompeLaAgrupacionPorSucursal));
+        var t = e.Tenant;
+        var local2 = await _apoyo.SembrarPuntoVentaAsync(t, "Local 2");
+        var area = await _apoyo.SembrarAreaAsync(t, "Kiosco");
+        var cola = await _apoyo.SembrarArticuloAsync(t, "Cola", "COLA-1", area);
+        var galletita = await _apoyo.SembrarArticuloAsync(t, "Galletita", "GALL-1", area);
+        var hoy = new DateTimeOffset(2026, 10, 18, 10, 0, 0, TimeSpan.Zero);
+        await _apoyo.SembrarComprobanteConLineasAsync(t, hoy, e.Admin.IdUsuario, [new(cola, "Cola", area, 2m, 1000m)]);
+        await _apoyo.SembrarComprobanteConLineasAsync(
+            t, hoy, e.Admin.IdUsuario, [new(galletita, "Galletita", area, 1m, 250m)], idPuntoVenta: local2);
+
+        var interceptor = new InterceptorQueDaDeBajaLaCaja(fixture, local2);
+        await using var host = _apoyo.HostConRelojEInterceptor(RelojDelMediodia, interceptor, e.Admin.Mail);
+        using var cliente = ApoyoDeConectorMcp.Cliente(host);
+        var token = await AccessTokenAsync(cliente, e.Admin.Mail);
+
+        interceptor.Armar();
+        var resultado = await LlamarHerramientaAsync(
+            cliente, token, "ventas_agrupadas", new { agruparPor = "sucursal", periodo = "hoy" });
+
+        Assert.True(interceptor.DioDeBaja, "El interceptor nunca vio la consulta de sucursales por caja.");
+        Assert.False(resultado.EsError, resultado.Texto);
+        Assert.Contains($"(punto de venta id {local2}) | 250,00 | 1 | 20,0%", Lineas(resultado.Texto));
+        Assert.Contains("Total: 1.250,00 en 2 grupos", Lineas(resultado.Texto));
+    }
+
+    /// <summary>Da de baja una caja con el owner JUSTO ANTES de la consulta que lee las sucursales de las cajas por id
+    /// (<c>id_punto_venta = ANY(...)</c> sobre <c>puntos_venta</c>, ya armado el interceptor).</summary>
+    private sealed class InterceptorQueDaDeBajaLaCaja(WaysApiFixture fixture, int idCaja)
+        : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        private volatile bool _armado;
+
+        public bool DioDeBaja { get; private set; }
+
+        public void Armar() => _armado = true;
+
+        public override async ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (_armado
+                && !DioDeBaja
+                && command.CommandText.Contains("FROM puntos_venta", StringComparison.OrdinalIgnoreCase)
+                && command.CommandText.Contains("ANY", StringComparison.Ordinal)
+                && command.CommandText.Contains("id_sucursal", StringComparison.Ordinal))
+            {
+                DioDeBaja = true;
+                await using var owner = new Npgsql.NpgsqlConnection(fixture.OwnerConnectionString);
+                await owner.OpenAsync(cancellationToken);
+                await using var baja = owner.CreateCommand();
+                baja.CommandText = "UPDATE puntos_venta SET deleted_at = now() WHERE id_punto_venta = $1";
+                baja.Parameters.Add(new Npgsql.NpgsqlParameter { Value = idCaja });
+                await baja.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     /// <summary>Las herramientas de ventas se anuncian con los argumentos que sus descripciones prometen;
     /// <c>agruparPor</c> es el único obligatorio de <c>ventas_agrupadas</c>. Las anotaciones y el conjunto de
     /// herramientas los fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
