@@ -14,10 +14,12 @@ namespace Ways.Application.Reportes;
 /// report shape" — <c>/stock/existencias</c> es un AGREGADO acotado por construcción, sin
 /// <c>COUNT(*)</c> propio; spec reportes-de-gestion: Existencias Report Joins Stock To Artículos
 /// Under The Same Gate): <c>GET /api/reportes/stock/existencias</c> — LINQ puro sobre
-/// <c>stock</c> ⋈ <c>articulos</c> para UN punto de venta, cubierto por <c>ix_stock_punto_venta</c>.
+/// <c>stock</c> ⋈ <c>articulos</c> para UNA sucursal, cubierto por <c>ix_stock_sucursal</c>.
 /// Sin <c>idArticulo</c> (spec: Existencias Needs No idArticulo, Unlike GET /api/stock) y sin
-/// <c>idEmpresa</c> (la ruta solo pide
-/// <c>idPuntoVenta</c>, la empresa se resuelve del lado HTTP cuando hace falta para el export).
+/// <c>idEmpresa</c> (mismo criterio que la tesorería: la ruta pide la sucursal o,
+/// por compatibilidad, un punto de venta que se resuelve a la suya; la empresa se resuelve en
+/// <see cref="ResolverAlcanceAsync"/>). El stock es de la sucursal: dos cajas de una misma
+/// sucursal ven la misma fila, nunca dos.
 /// Los filtros globales de <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre
 /// <c>articulos</c>; <c>stock</c> usa su propio filtro de tenant manual
 /// (<c>WaysDbContext.AplicarFiltroDeTenantEnStock</c>) — ambos activos sobre este join. Trade-off
@@ -49,14 +51,60 @@ namespace Ways.Application.Reportes;
 /// </summary>
 public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros parametros, IRelojDelSistema reloj)
 {
-    public async Task<Existencias> ObtenerExistenciasAsync(int idPuntoVenta, CancellationToken ct = default)
+    /// <summary>Resuelve el alcance de un reporte de stock. <paramref name="idSucursal"/> es la entrada nueva;
+    /// <paramref name="idPuntoVenta"/> sigue aceptándose (la web y el POS empaquetado lo mandan) y se resuelve a la
+    /// sucursal de esa caja. Exactamente uno de los dos. Una sucursal dada de baja se trata como inexistente (404),
+    /// también cuando se llega a ella por una caja que todavía la referencia: el reporte nunca nombra una sucursal
+    /// que el resto del sistema ya no ve. La zona horaria y los días de alerta, rotación y cobertura son parámetros de la
+    /// sucursal: salen de su fila (o de la de la empresa), sea cual sea la caja con la que se llegó a ella.</summary>
+    public async Task<AlcanceDeStock> ResolverAlcanceAsync(int? idPuntoVenta, int? idSucursal, CancellationToken ct = default)
     {
-        // Cláusula bajo prueba (mutation-proof-tests): Where(s => s.IdPuntoVenta == idPuntoVenta)
-        // es lo único que discrimina un punto de venta del otro — mezclar dos PVs del mismo tenant
-        // en una sola respuesta rompería el significado del reporte tanto como en
-        // una cadena de tesorería (design decisión 11, misma familia de bug).
+        if (idPuntoVenta is not null && idSucursal is not null)
+        {
+            throw new ErrorDominio(
+                "alcance_de_stock_ambiguo", "Indicá idSucursal o idPuntoVenta, no los dos.", 400);
+        }
+
+        if (idPuntoVenta is { } idCaja)
+        {
+            var caja = await db.PuntosVenta
+                .Where(pv => pv.Id == idCaja)
+                .Select(pv => new { pv.IdSucursal, pv.IdEmpresa })
+                .FirstOrDefaultAsync(ct)
+                ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idCaja}.");
+
+            var nombre = await db.Sucursales
+                .Where(su => su.Id == caja.IdSucursal)
+                .Select(su => su.Nombre)
+                .FirstOrDefaultAsync(ct)
+                ?? throw ErrorDominio.NoEncontrado($"No existe la sucursal del punto de venta {idCaja}.");
+
+            return new AlcanceDeStock(caja.IdSucursal, nombre, caja.IdEmpresa);
+        }
+
+        if (idSucursal is not { } id)
+        {
+            throw new ErrorDominio(
+                "alcance_de_stock_requerido", "Falta idSucursal (o idPuntoVenta, que se resuelve a su sucursal).", 400);
+        }
+
+        var sucursal = await db.Sucursales
+            .Where(su => su.Id == id)
+            .Select(su => new { su.Nombre, su.IdEmpresa })
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la sucursal {id}.");
+
+        return new AlcanceDeStock(id, sucursal.Nombre, sucursal.IdEmpresa);
+    }
+
+    public async Task<Existencias> ObtenerExistenciasAsync(AlcanceDeStock alcance, CancellationToken ct = default)
+    {
+        // Cláusula bajo prueba (mutation-proof-tests): el filtro por sucursal es lo único que discrimina una
+        // sucursal de otra — mezclar dos del mismo tenant en una sola respuesta rompería el significado del
+        // reporte tanto como en una cadena de tesorería (design decisión 11, misma familia de bug). Las cajas de una
+        // misma sucursal ven el mismo stock.
         var crudas = await db.Stock
-            .Where(s => s.IdPuntoVenta == idPuntoVenta)
+            .Where(s => s.IdSucursal == alcance.IdSucursal)
             .Join(
                 db.Articulos, s => s.IdArticulo, a => a.Id,
                 (s, a) => new { a.Id, a.Nombre, s.Cantidad, s.Minimo, s.Reposicion })
@@ -72,33 +120,34 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
                 ReglaDeReposicion.Clasificar(x.Cantidad, x.Minimo)))
             .ToList();
 
-        return new Existencias(idPuntoVenta, filas);
+        return new Existencias(alcance.IdSucursal, alcance.NombreSucursal, filas);
     }
 
-    /// <summary>Lotes con saldo positivo del punto de venta, clasificados en la zona horaria del
-    /// PV — sin paginar (task 13.1). <paramref name="dias"/> ausente ⇒ se resuelve
-    /// <c>dias_alerta_vencimiento</c> (PV → empresa → default).</summary>
+    /// <summary>Lotes con saldo positivo de la sucursal, clasificados en la zona horaria de su caja de
+    /// referencia — sin paginar (task 13.1). <paramref name="dias"/> ausente ⇒ se resuelve
+    /// <c>dias_alerta_vencimiento</c> (sucursal → empresa → default).</summary>
     public async Task<Vencimientos> ObtenerVencimientosAsync(
-        int idPuntoVenta, int? dias, CancellationToken ct = default)
+        AlcanceDeStock alcance, int? dias, CancellationToken ct = default)
     {
-        var (idEmpresa, zonaId, hoy) = await ResolverContextoAsync(idPuntoVenta, ct);
-        var diasDeAlerta = dias ?? await ResolverDiasAlertaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, hoy) = await ResolverContextoAsync(alcance, ct);
+        var diasDeAlerta = dias ?? await ResolverDiasAlertaAsync(alcance, ct);
 
-        var filas = await ConstruirQueryDeVencimientos(idPuntoVenta).ToListAsync(ct);
+        var filas = await ConstruirQueryDeVencimientos(alcance.IdSucursal).ToListAsync(ct);
 
-        return new Vencimientos(idPuntoVenta, hoy, diasDeAlerta, zonaId, Clasificar(filas, hoy, diasDeAlerta));
+        return new Vencimientos(
+            alcance.IdSucursal, alcance.NombreSucursal, hoy, diasDeAlerta, zonaId, Clasificar(filas, hoy, diasDeAlerta));
     }
 
     /// <summary>Tile de Tablero (task 13.2) — reusa <see cref="ObtenerVencimientosAsync"/> con
     /// <c>dias</c> nulo (el horizonte default) y agrupa por <see cref="EstadoDeVencimiento"/>: el
     /// tile nunca puede divergir del reporte porque no hay una segunda query de agregación.</summary>
     public async Task<ResumenDeVencimientos> ObtenerResumenDeVencimientosAsync(
-        int idPuntoVenta, CancellationToken ct = default)
+        AlcanceDeStock alcance, CancellationToken ct = default)
     {
-        var vencimientos = await ObtenerVencimientosAsync(idPuntoVenta, dias: null, ct);
+        var vencimientos = await ObtenerVencimientosAsync(alcance, dias: null, ct);
 
         return new ResumenDeVencimientos(
-            idPuntoVenta,
+            alcance.IdSucursal, alcance.NombreSucursal,
             vencimientos.Filas.Count(f => f.Estado == EstadoDeVencimiento.Vencido),
             vencimientos.Filas.Count(f => f.Estado == EstadoDeVencimiento.PorVencer),
             vencimientos.Filas.Count(f => f.Estado == EstadoDeVencimiento.SinFecha));
@@ -111,12 +160,12 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// que el JSON, así que las figuras del export son estructuralmente las mismas que las del
     /// endpoint — nunca dos consultas que puedan divergir.</summary>
     public async Task<Vencimientos> ObtenerVencimientosParaExportacionAsync(
-        int idPuntoVenta, int? dias, int topeDeFilas, CancellationToken ct = default)
+        AlcanceDeStock alcance, int? dias, int topeDeFilas, CancellationToken ct = default)
     {
-        var (idEmpresa, zonaId, hoy) = await ResolverContextoAsync(idPuntoVenta, ct);
-        var diasDeAlerta = dias ?? await ResolverDiasAlertaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, hoy) = await ResolverContextoAsync(alcance, ct);
+        var diasDeAlerta = dias ?? await ResolverDiasAlertaAsync(alcance, ct);
 
-        var query = ConstruirQueryDeVencimientos(idPuntoVenta);
+        var query = ConstruirQueryDeVencimientos(alcance.IdSucursal);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
@@ -124,34 +173,35 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         var filas = await query.Take(topeDeFilas + 1).ToListAsync(ct);
         GuardaDeTope.Exigir(filas.Count, topeDeFilas);
 
-        return new Vencimientos(idPuntoVenta, hoy, diasDeAlerta, zonaId, Clasificar(filas, hoy, diasDeAlerta));
+        return new Vencimientos(
+            alcance.IdSucursal, alcance.NombreSucursal, hoy, diasDeAlerta, zonaId, Clasificar(filas, hoy, diasDeAlerta));
     }
 
     /// <summary>stage-13-stock-inteligente, Slice 4/5 (design decisión 12; task 4.2/5.2): la
     /// alerta y la sugerencia de compra son la MISMA lista — <see cref="ConstruirQueryDeReposicion"/>
     /// se evalúa una única vez. El corto-circuito de la fila 0 (decisión 12) evita que una fila
-    /// vacía dispare la query de rotación: un PV sin mínimos configurados cuesta exactamente UNA
+    /// vacía dispare la query de rotación: una sucursal sin mínimos configurados cuesta exactamente UNA
     /// query (la de acá arriba), nunca <see cref="LeerConsumoAsync"/>.</summary>
     public async Task<Reposicion> ObtenerReposicionAsync(
-        int idPuntoVenta, int? dias, CancellationToken ct = default)
+        AlcanceDeStock alcance, int? dias, CancellationToken ct = default)
     {
-        var (idEmpresa, zonaId, hoy) = await ResolverContextoAsync(idPuntoVenta, ct);
+        var (zonaId, hoy) = await ResolverContextoAsync(alcance, ct);
         var diasDeRotacion = ReglaDeReposicion.ExigirVentanaValida(
-            dias ?? await ResolverDiasRotacionAsync(idEmpresa, idPuntoVenta, ct), "dias_rotacion_invalido");
+            dias ?? await ResolverDiasRotacionAsync(alcance, ct), "dias_rotacion_invalido");
 
-        var crudas = await ConstruirQueryDeReposicion(idPuntoVenta).ToListAsync(ct);
+        var crudas = await ConstruirQueryDeReposicion(alcance.IdSucursal).ToListAsync(ct);
 
         if (crudas.Count == 0)
         {
-            return new Reposicion(idPuntoVenta, hoy, diasDeRotacion, zonaId, []);
+            return new Reposicion(alcance.IdSucursal, alcance.NombreSucursal, hoy, diasDeRotacion, zonaId, []);
         }
 
         // Slice 5: misma ventana y misma definición de consumo que ObtenerRotacionAsync (design
         // decisión 5) — LeerConsumoAsync acotado a los ids de ESTAS filas (decisión 12: nunca todo
-        // el catálogo del PV, el set "bajo mínimo" ya es chico por construcción).
+        // el catálogo de la sucursal, el set "bajo mínimo" ya es chico por construcción).
         var (desdeUtc, hastaUtc) = ReglaDeReposicion.VentanaDeRotacion(hoy, diasDeRotacion, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
         var consumo = await LeerConsumoAsync(
-            idPuntoVenta, crudas.Select(f => f.IdArticulo).ToList(), desdeUtc, hastaUtc, ct);
+            alcance.IdSucursal, crudas.Select(f => f.IdArticulo).ToList(), desdeUtc, hastaUtc, ct);
 
         // Sugerido es puro (ReglaDeReposicion.Sugerido no depende de rotación); ConsumoDiarioPromedio/
         // DiasDeCobertura sí — honestos en null (nunca 0) cuando el artículo no calificó ningún
@@ -170,7 +220,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
             })
             .ToList();
 
-        return new Reposicion(idPuntoVenta, hoy, diasDeRotacion, zonaId, filas);
+        return new Reposicion(alcance.IdSucursal, alcance.NombreSucursal, hoy, diasDeRotacion, zonaId, filas);
     }
 
     /// <summary>Tile de Tablero (stage-13-stock-inteligente, Slice 7; design decisión 8/9; tarea
@@ -181,14 +231,14 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// — orchestrator decision 5 (tasks.md): NUNCA "sin sugerido" (<c>Sugerido is null</c>), el
     /// nombre que design.md usaba antes de la corrección de la spec ratificada.</summary>
     public async Task<ResumenDeReposicion> ObtenerResumenDeReposicionAsync(
-        int idPuntoVenta, CancellationToken ct = default)
+        AlcanceDeStock alcance, CancellationToken ct = default)
     {
-        var reposicion = await ObtenerReposicionAsync(idPuntoVenta, dias: null, ct);
+        var reposicion = await ObtenerReposicionAsync(alcance, dias: null, ct);
 
         // Cláusula bajo prueba (mutation-proof-tests, tarea 7.7): f.Cantidad <= 0 — con < 0, el
         // artículo EXACTAMENTE en cero (agotado, el caso más urgente) deja de contar como sinStock.
         return new ResumenDeReposicion(
-            idPuntoVenta,
+            alcance.IdSucursal, alcance.NombreSucursal,
             reposicion.Filas.Count,
             reposicion.Filas.Count(f => f.Cantidad <= 0),
             reposicion.Filas.Count(f => f.IdProveedor is null));
@@ -197,26 +247,26 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// <summary>stage-13-stock-inteligente, Slice 5 (design decisión 14; task 5.4): el feed
     /// independiente de <c>minimoSugerido</c> para el editor — a diferencia de <see
     /// cref="ObtenerReposicionAsync"/>, NO depende de <c>minimo</c>: agrega sobre TODO el catálogo
-    /// del PV (decisión 12, "el único lugar donde ese costo es el punto"), pero solo emite una fila
+    /// de la sucursal (decisión 12, "el único lugar donde ese costo es el punto"), pero solo emite una fila
     /// por artículo con AL MENOS UN movimiento calificado en la ventana — la ausencia es la
     /// respuesta para un artículo sin historia, nunca una fila con <c>minimoSugerido = 0</c>
     /// (decisión 14). Misma definición de consumo y misma resolución de ventana que <see
     /// cref="ObtenerReposicionAsync"/> (design decisión 5): nunca una segunda.</summary>
     public async Task<Rotacion> ObtenerRotacionAsync(
-        int idPuntoVenta, int? dias, CancellationToken ct = default)
+        AlcanceDeStock alcance, int? dias, CancellationToken ct = default)
     {
-        var (idEmpresa, zonaId, hoy) = await ResolverContextoAsync(idPuntoVenta, ct);
+        var (zonaId, hoy) = await ResolverContextoAsync(alcance, ct);
         var diasDeRotacion = ReglaDeReposicion.ExigirVentanaValida(
-            dias ?? await ResolverDiasRotacionAsync(idEmpresa, idPuntoVenta, ct), "dias_rotacion_invalido");
+            dias ?? await ResolverDiasRotacionAsync(alcance, ct), "dias_rotacion_invalido");
         var diasDeCoberturaObjetivo = ReglaDeReposicion.ExigirVentanaValida(
-            await ResolverDiasCoberturaAsync(idEmpresa, idPuntoVenta, ct), "dias_cobertura_invalido");
+            await ResolverDiasCoberturaAsync(alcance, ct), "dias_cobertura_invalido");
 
         var (desdeUtc, hastaUtc) = ReglaDeReposicion.VentanaDeRotacion(hoy, diasDeRotacion, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
-        var consumo = await LeerConsumoAsync(idPuntoVenta, idsArticulo: null, desdeUtc, hastaUtc, ct);
+        var consumo = await LeerConsumoAsync(alcance.IdSucursal, idsArticulo: null, desdeUtc, hastaUtc, ct);
 
         if (consumo.Count == 0)
         {
-            return new Rotacion(idPuntoVenta, hoy, diasDeRotacion, diasDeCoberturaObjetivo, zonaId, []);
+            return new Rotacion(alcance.IdSucursal, alcance.NombreSucursal, hoy, diasDeRotacion, diasDeCoberturaObjetivo, zonaId, []);
         }
 
         // El ledger es append-only: un artículo dado de baja después de sus movimientos sigue
@@ -243,14 +293,14 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
             .OrderBy(f => f.IdArticulo)
             .ToList();
 
-        return new Rotacion(idPuntoVenta, hoy, diasDeRotacion, diasDeCoberturaObjetivo, zonaId, filas);
+        return new Rotacion(alcance.IdSucursal, alcance.NombreSucursal, hoy, diasDeRotacion, diasDeCoberturaObjetivo, zonaId, filas);
     }
 
     /// <summary>Cláusulas bajo prueba (mutation-proof-tests, en orden de daño si se pierden):
     ///   <c>s.Cantidad &lt;= s.Minimo</c> → con <c>&lt;</c>, el artículo EXACTAMENTE en el punto de
     ///                                   pedido desaparece (spec: The Low-Stock Boundary Is
     ///                                   Inclusive).
-    ///   <c>s.IdPuntoVenta == idPuntoVenta</c> → mezclar dos PVs del mismo tenant rompe el reporte
+    ///   el filtro por sucursal (<c>s.IdSucursal == idSucursal</c>) → mezclar dos sucursales del mismo tenant rompe el reporte
     ///                                   (misma familia de bug que <see cref="ObtenerExistenciasAsync"/>
     ///                                   documenta).
     ///   <c>candidatos.DefaultIfEmpty()</c> → sin el LEFT JOIN, las filas "Sin proveedor"
@@ -283,9 +333,10 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// MISMO bucket final "Sin proveedor" — nunca un FK colgante viajando al cliente ni una
     /// segunda fila "Sin proveedor" a mitad de lista (orchestrator decision 12, tasks.md;
     /// design decisión 3 es la letra autoritativa sobre el snippet pinneado de la task 4.1).</summary>
-    private IQueryable<FilaCrudaDeReposicion> ConstruirQueryDeReposicion(int idPuntoVenta) =>
+    private IQueryable<FilaCrudaDeReposicion> ConstruirQueryDeReposicion(int idSucursal) =>
         from s in db.Stock
-        where s.IdPuntoVenta == idPuntoVenta && s.Minimo != null && s.Cantidad <= s.Minimo
+        where s.IdSucursal == idSucursal
+            && s.Minimo != null && s.Cantidad <= s.Minimo
         join a in db.Articulos on s.IdArticulo equals a.Id
         join p in db.Proveedores on a.IdProveedorHabitual equals p.Id into candidatos
         from p in candidatos.DefaultIfEmpty()
@@ -303,9 +354,10 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// <c>ServicioDeReportesDeVentas.ComprobantesVentaDelPeriodo</c> documenta para <c>GroupBy</c>).
     /// Postgres ya ordena NULL último en ascendente por default, sin necesitar <c>NULLS LAST</c>
     /// explícito.</summary>
-    private IQueryable<FilaCruda> ConstruirQueryDeVencimientos(int idPuntoVenta) =>
+    private IQueryable<FilaCruda> ConstruirQueryDeVencimientos(int idSucursal) =>
         from stockLote in db.StockLotes
-        where stockLote.IdPuntoVenta == idPuntoVenta && stockLote.Cantidad > 0m
+        where stockLote.IdSucursal == idSucursal
+            && stockLote.Cantidad > 0m
         join lote in db.Lotes on stockLote.IdLote equals lote.Id
         join articulo in db.Articulos on lote.IdArticulo equals articulo.Id
         orderby lote.FechaVencimiento
@@ -320,39 +372,35 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
             .ToList();
 
     /// <summary>"hoy" es el ÚNICO valor sensible a zona del reporte (design decisión 15) —
-    /// <c>reloj.Ahora</c> (instante absoluto) se convierte a la zona del PV ANTES de tomar el
+    /// <c>reloj.Ahora</c> (instante absoluto) se convierte a la zona de la sucursal ANTES de tomar el
     /// <c>DateOnly</c>. Mutation target (task 13.5): reemplazar la conversión por
     /// <c>reloj.Ahora.UtcDateTime</c> directo tiene que hacer fallar el test de zona (spec: "'Hoy'
     /// Is Resolved In The Punto De Venta's Own Zona Horaria, Not UTC" — vinculante), mismo
     /// precedente que el fix de <c>/stock/existencias/export</c> (commit 08e7707).</summary>
-    private async Task<(int IdEmpresa, string ZonaId, DateOnly Hoy)> ResolverContextoAsync(
-        int idPuntoVenta, CancellationToken ct)
+    private async Task<(string ZonaId, DateOnly Hoy)> ResolverContextoAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var idEmpresa = await db.PuntosVenta
-            .Where(pv => pv.Id == idPuntoVenta)
-            .Select(pv => (int?)pv.IdEmpresa)
-            .FirstOrDefaultAsync(ct)
-            ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
-
-        var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, idPuntoVenta, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.ZonaHoraria.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         var zonaId = JsonSerializer.Deserialize<string>(resuelto.Valor)!;
         var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
 
         var hoy = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(reloj.Ahora, zona).DateTime);
 
-        return (idEmpresa, zonaId, hoy);
+        return (zonaId, hoy);
     }
 
-    private async Task<int> ResolverDiasAlertaAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    private async Task<int> ResolverDiasAlertaAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var resuelto = await parametros.ResolverAsync(ParametroConocido.DiasAlertaVencimiento.Clave, idEmpresa, idPuntoVenta, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.DiasAlertaVencimiento.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 
     /// <summary>Slice 4 — mismo patrón que <see cref="ResolverDiasAlertaAsync"/>.</summary>
-    private async Task<int> ResolverDiasRotacionAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    private async Task<int> ResolverDiasRotacionAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var resuelto = await parametros.ResolverAsync(ParametroConocido.DiasRotacion.Clave, idEmpresa, idPuntoVenta, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.DiasRotacion.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 
@@ -362,9 +410,10 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// diferencia de <c>dias_rotacion</c>, ninguna ruta acepta un <c>?dias=</c> que lo
     /// sobrescriba — solo el parámetro resuelto (spec: "dias_cobertura_objetivo feeds
     /// minimoSugerido, never minimo directly").</summary>
-    private async Task<int> ResolverDiasCoberturaAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    private async Task<int> ResolverDiasCoberturaAsync(AlcanceDeStock alcance, CancellationToken ct)
     {
-        var resuelto = await parametros.ResolverAsync(ParametroConocido.DiasCoberturaObjetivo.Clave, idEmpresa, idPuntoVenta, ct);
+        var resuelto = await parametros.ResolverDeSucursalAsync(
+            ParametroConocido.DiasCoberturaObjetivo.Clave, alcance.IdEmpresa, alcance.IdSucursal, ct);
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 
@@ -374,7 +423,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// MotivoStock.Anulacion &amp;&amp; m.IdComprobanteCompra == null</c> — sin el segundo
     /// término, la anulación de una COMPRA (que también escribe <c>motivo = anulacion</c> desde la
     /// etapa 8) se netea silenciosamente dentro de las ventas (la trampa del neteo, design
-    /// decisión 6). <paramref name="idsArticulo"/> nulo agrega sobre TODO el catálogo del PV — el
+    /// decisión 6). <paramref name="idsArticulo"/> nulo agrega sobre TODO el catálogo de la sucursal — el
     /// caso de <see cref="ObtenerRotacionAsync"/>, el único lugar donde ese costo es el punto
     /// (design decisión 12); <see cref="ObtenerReposicionAsync"/> siempre pasa la lista acotada
     /// de artículos ya bajo mínimo. Plain LINQ sobre <c>db.MovimientosStock</c> — cero SQL crudo,
@@ -386,11 +435,11 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// POSITIVA (<c>ServicioDeVentas</c> ya la negó) — <c>-SUM</c> neteas devoluciones sin una
     /// rama de signo.</summary>
     private async Task<IReadOnlyDictionary<int, decimal>> LeerConsumoAsync(
-        int idPuntoVenta, IReadOnlyList<int>? idsArticulo, DateTimeOffset desdeUtc, DateTimeOffset hastaUtcExclusivo,
+        int idSucursal, IReadOnlyList<int>? idsArticulo, DateTimeOffset desdeUtc, DateTimeOffset hastaUtcExclusivo,
         CancellationToken ct)
     {
         var query = db.MovimientosStock
-            .Where(m => m.IdPuntoVenta == idPuntoVenta
+            .Where(m => m.IdSucursal == idSucursal
                      && m.CreadoEl >= desdeUtc && m.CreadoEl < hastaUtcExclusivo
                      && (m.Motivo == MotivoStock.Venta
                          || (m.Motivo == MotivoStock.Anulacion && m.IdComprobanteCompra == null)));

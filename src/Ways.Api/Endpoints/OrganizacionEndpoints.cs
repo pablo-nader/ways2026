@@ -121,6 +121,14 @@ public static class OrganizacionEndpoints
         .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Cambia el modo (Escritorio/Web) de un punto de venta sin dispositivo activo.");
 
+        // Mover la caja a otra sucursal de su empresa. POST y no PUT/PATCH por el mismo motivo que /modo: es una acción
+        // con precondiciones propias (409 si la sucursal de origen quedaría con uso) y su propio rastro (pv.sucursal).
+        puntosVenta.MapPost("/{id:int}/sucursal", (
+            ServicioDeOrganizacion servicio, int id, PuntoVentaSucursalEdicion datos, CancellationToken ct) =>
+            servicio.MoverPuntoVentaDeSucursalAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Mueve un punto de venta a otra sucursal de su empresa; el stock se queda en la sucursal.");
+
         puntosVenta.MapDelete("/{id:int}", async (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
         {
             await servicio.EliminarPuntoVentaAsync(id, ct);
@@ -128,6 +136,45 @@ public static class OrganizacionEndpoints
         })
         .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Baja lógica del punto de venta.");
+
+        var sucursales = app.MapGroup("/api/sucursales")
+            .WithTags("Organización");
+
+        // Mismo criterio asimétrico que los puntos de venta: LEER es LecturaDePuntosVenta porque los filtros de las
+        // pantallas de stock (Supervisor) listan sucursales; crear, renombrar y dar de baja es GestionDeOrganizacion.
+        sucursales.MapGet("/", (ServicioDeOrganizacion servicio, int? idEmpresa, CancellationToken ct) =>
+            servicio.ListarSucursalesAsync(idEmpresa, ct))
+        .RequireAuthorization(Politicas.LecturaDePuntosVenta)
+        .WithSummary("Lista sucursales vivas, opcionalmente de una empresa.");
+
+        sucursales.MapPost("/", async (
+            ServicioDeOrganizacion servicio, SucursalAlta datos, CancellationToken ct) =>
+        {
+            var creada = await servicio.CrearSucursalAsync(datos, ct);
+            return Results.Created($"/api/sucursales/{creada.Id}", creada);
+        })
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Crea una sucursal sobre una empresa existente.");
+
+        sucursales.MapPut("/{id:int}", (
+            ServicioDeOrganizacion servicio, int id, SucursalEdicion datos, CancellationToken ct) =>
+            servicio.ActualizarSucursalAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Renombra una sucursal.");
+
+        sucursales.MapDelete("/{id:int}", async (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.EliminarSucursalAsync(id, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Baja lógica de una sucursal sin puntos de venta ni uso.");
+
+        sucursales.MapPost("/{id:int}/fusionar", (
+            ServicioDeOrganizacion servicio, int id, SucursalFusion datos, CancellationToken ct) =>
+            servicio.FusionarSucursalAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Fusiona la sucursal en otra de su empresa: le pasa sus cajas y su stock y queda dada de baja.");
 
         return app;
     }

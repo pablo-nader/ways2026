@@ -163,6 +163,22 @@ export function aSolicitudDeTransferencia(
   }
 }
 
+/** Transferencia entre sucursales (la forma de la web de back office): el servidor deriva de cada sucursal la caja de
+ * trazabilidad. Nunca manda los ids de punto de venta en la misma solicitud: el servidor rechaza mezclar las dos formas. */
+export function aSolicitudDeTransferenciaPorSucursal(
+  idSucursalOrigen: number,
+  idSucursalDestino: number,
+  observaciones: string,
+  lineas: LineaDeTransferenciaFormulario[],
+): SolicitudDeTransferencia {
+  return {
+    idSucursalOrigen,
+    idSucursalDestino,
+    observaciones: observaciones.trim(),
+    lineas: aLineasDeTransferencia(lineas),
+  }
+}
+
 // ---- Conteo de inventario ---------------------------------------------------------------------
 
 export function aSolicitudDeConteo(

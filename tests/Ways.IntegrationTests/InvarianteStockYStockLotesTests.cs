@@ -307,16 +307,18 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
     private async Task<decimal> LeerStockAsync(Contexto ctx, int idArticulo, int idPuntoVenta)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         return await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstOrDefaultAsync();
     }
 
     private async Task<decimal> LeerStockLoteAsync(Contexto ctx, int idArticulo, int idPuntoVenta, int idLote)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         return await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == idPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == idSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).FirstOrDefaultAsync();
     }
 
@@ -326,8 +328,9 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
     private async Task AssertInvarianteStockAsync(Contexto ctx, int idArticulo, int idPuntoVenta)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstOrDefaultAsync();
         var sumaDeMovimientos = await db.MovimientosStock
             .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == idPuntoVenta)
@@ -341,8 +344,9 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
     private async Task AssertInvarianteStockLoteAsync(Contexto ctx, int idArticulo, int idPuntoVenta, int idLote)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         var cantidad = await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == idPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == idSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).FirstOrDefaultAsync();
         var sumaDeMovimientos = await db.MovimientosStock
             .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == idPuntoVenta && m.IdLote == idLote)
@@ -355,11 +359,13 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
     private async Task AssertSumaDeStockLotesIgualaAlAgregadoAsync(Contexto ctx, int idArticulo, int idPuntoVenta)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         var agregado = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstOrDefaultAsync();
+        var idSucursal2 = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         var sumaDeLotes = await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == idPuntoVenta)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == idSucursal2)
             .SumAsync(sl => sl.Cantidad);
         Assert.Equal(agregado, sumaDeLotes);
     }

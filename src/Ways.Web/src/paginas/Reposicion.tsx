@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeOrganizacion } from '../api/organizacion'
+import { cajaDeReferenciaDeSucursal, clienteDeOrganizacion, etiquetaDeSucursal } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
 import { ROL } from '../api/tipos'
 import type { FilaDeReposicion, PuntoVentaListado, Reposicion as ReposicionRespuesta } from '../api/tipos'
@@ -10,6 +10,7 @@ import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
+import { useSucursales } from '../componentes/useSucursales'
 import { agruparPorProveedor, type GrupoDeReposicion } from './agruparPorProveedor'
 import { itemsDeOrdenDesdeFilasDeReposicion } from './filasDeReposicionAOrdenDeCompra'
 
@@ -36,8 +37,8 @@ const COLUMNAS:ColumnasOrdenables<FilaDeReposicion> = {
 
 /**
  * Reposición (stage-13-stock-inteligente, Slice 6 — web; design: "Reposicion.tsx — grouped by
- * proveedor (slice 6)"): artículos bajo su mínimo de un punto de venta, agrupados por proveedor
- * habitual — mismo shape que `Existencias.tsx` (selector de punto de venta + botón de descarga +
+ * proveedor (slice 6)"): artículos bajo su mínimo de una sucursal, agrupados por proveedor
+ * habitual — mismo shape que `Existencias.tsx` (selector de sucursal + botón de descarga +
  * tabla, sin paginado). El agrupamiento es un FOLD puro sobre la lista ya ordenada que devuelve
  * el servidor (`agruparPorProveedor`, design decisión 4): el orden de los grupos es el del servidor.
  * El usuario puede ordenar las filas por columna, siempre dentro de cada grupo.
@@ -59,10 +60,14 @@ export function Reposicion() {
   const { usuario } = useAuth()
   const esAdmin = usuario !== null && usuario.rolId === ROL.Admin
 
-  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
-  const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
+  const { sucursales, error: errorSucursales } = useSucursales()
+  const [sucursalElegida, setSucursalElegida] = useState<number | null>(null)
+  // Mientras no se eligió ninguna, la primera: sin efecto que la fije después de la carga.
+  const idSucursal = sucursalElegida ?? sucursales?.[0]?.id ?? null
+  const variasEmpresas = new Set((sucursales ?? []).map((s) => s.idEmpresa)).size > 1
 
-  const [idPuntoVenta, setIdPuntoVenta] = useState<number | null>(null)
+  // La orden de compra todavía nace contra un punto de venta: se usa la caja de referencia de la sucursal elegida.
+  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[]>([])
   const [reposicion, setReposicion] = useState<ReposicionRespuesta | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
@@ -74,14 +79,10 @@ export function Reposicion() {
     clienteDeOrganizacion
       .listarPuntosVenta()
       .then((lista) => {
-        if (!vigente) return
-        setPuntosVenta(lista)
-        if (lista.length > 0) setIdPuntoVenta(lista[0].id)
+        if (vigente) setPuntosVenta(lista)
       })
-      .catch((e) => {
-        if (!vigente) return
-        setPuntosVenta([])
-        setErrorPuntosVenta(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los puntos de venta.')
+      .catch(() => {
+        // Sin puntos de venta cargados "Generar OC" no navega; el reporte en sí no los necesita.
       })
 
     return () => {
@@ -90,13 +91,13 @@ export function Reposicion() {
   }, [])
 
   const cargar = useCallback(() => {
-    if (idPuntoVenta === null) return
+    if (idSucursal === null) return
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
 
     clienteDeReportes
-      .reposicion(idPuntoVenta, null)
+      .reposicion(idSucursal, null)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setReposicion(datos)
@@ -110,7 +111,7 @@ export function Reposicion() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [idPuntoVenta])
+  }, [idSucursal])
 
   useEffect(() => {
     cargar()
@@ -125,9 +126,10 @@ export function Reposicion() {
   // renderiza para ese grupo (mutation target #34c, parte 1). Pasa el header + los items ya
   // mapeados por `location.state`, nunca un fetch redundante en la pantalla destino.
   function generarOrdenDeCompra(grupo: GrupoDeReposicion) {
-    if (grupo.idProveedor === null || idPuntoVenta === null) return
+    const cajaDeReferencia = idSucursal === null ? null : cajaDeReferenciaDeSucursal(puntosVenta, idSucursal)
+    if (grupo.idProveedor === null || cajaDeReferencia === null) return
     navigate('/ordenes-compra/nueva', {
-      state: { idProveedor: grupo.idProveedor, idPuntoVenta, items: itemsDeOrdenDesdeFilasDeReposicion(grupo.filas) },
+      state: { idProveedor: grupo.idProveedor, idPuntoVenta: cajaDeReferencia.id, items: itemsDeOrdenDesdeFilasDeReposicion(grupo.filas) },
     })
   }
 
@@ -142,37 +144,37 @@ export function Reposicion() {
             </button>
           </div>
         )}
-        {errorPuntosVenta && <div className="alert alert-warning py-1 px-2 small">{errorPuntosVenta}</div>}
+        {errorSucursales && <div className="alert alert-warning py-1 px-2 small">{errorSucursales}</div>}
 
-        {puntosVenta === null ? (
+        {sucursales === null ? (
           <Cargando />
-        ) : puntosVenta.length === 0 ? (
-          <p className="text-muted text-center py-4">No hay puntos de venta visibles para la reposición.</p>
-        ) : idPuntoVenta === null ? (
+        ) : sucursales.length === 0 ? (
+          <p className="text-muted text-center py-4">No hay sucursales visibles para la reposición.</p>
+        ) : idSucursal === null ? (
           <Cargando />
         ) : (
           <>
             <div className="row g-2 align-items-end mb-3">
               <div className="col-md-3">
-                <label className="form-label" htmlFor="reposicion-punto-venta">
-                  Punto de venta
+                <label className="form-label" htmlFor="reposicion-sucursal">
+                  Sucursal
                 </label>
                 <select
-                  id="reposicion-punto-venta"
+                  id="reposicion-sucursal"
                   className="form-select"
-                  value={idPuntoVenta}
-                  onChange={(e) => setIdPuntoVenta(Number(e.target.value))}
+                  value={idSucursal}
+                  onChange={(e) => setSucursalElegida(Number(e.target.value))}
                 >
-                  {puntosVenta.map((pv) => (
-                    <option key={pv.id} value={pv.id}>
-                      {pv.nombre}
+                  {sucursales.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {etiquetaDeSucursal(s, variasEmpresas)}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="col-auto">
                 <BotonDeDescarga
-                  ruta={rutasDeExportacion.reposicion(idPuntoVenta, null)}
+                  ruta={rutasDeExportacion.reposicion(idSucursal, null)}
                   etiqueta="Descargar"
                   onError={setErrorDescarga}
                   onInicio={() => setErrorDescarga('')}
@@ -241,7 +243,7 @@ export function Reposicion() {
                     {reposicion.filas.length === 0 && (
                       <tr>
                         <td colSpan={5} className="text-center text-muted py-4">
-                          No hay artículos bajo el mínimo para este punto de venta.
+                          No hay artículos bajo el mínimo para esta sucursal.
                         </td>
                       </tr>
                     )}

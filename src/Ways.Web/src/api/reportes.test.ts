@@ -590,3 +590,28 @@ describe('rangoDeLaSemanaActual', () => {
     expect(rangoDeLaSemanaActual(new Date(2026, 10, 1))).toEqual({ desde: '2026-10-26', hasta: '2026-11-01' })
   })
 })
+
+describe('los reportes de stock hablan de sucursal', () => {
+  it('existencias, vencimientos, reposición y rotación piden idSucursal, nunca idPuntoVenta', async () => {
+    apiGetMock.mockClear()
+
+    await clienteDeReportes.existencias(20)
+    await clienteDeReportes.vencimientos(20, 15)
+    await clienteDeReportes.reposicion(20, null)
+    await clienteDeReportes.rotacion(20, 30)
+
+    const rutas = (apiGetMock.mock.calls as unknown as string[][]).map((llamada) => llamada[0])
+    expect(rutas).toEqual([
+      '/reportes/stock/existencias?idSucursal=20',
+      '/reportes/stock/vencimientos?idSucursal=20&dias=15',
+      '/reportes/stock/reposicion?idSucursal=20',
+      '/reportes/stock/rotacion?idSucursal=20&dias=30',
+    ])
+  })
+
+  it('las descargas apuntan a la sucursal', () => {
+    expect(rutasDeExportacion.existencias(20)).toBe('/reportes/stock/existencias/export?idSucursal=20&formato=xlsx')
+    expect(rutasDeExportacion.vencimientos(20, 15)).toBe('/reportes/stock/vencimientos/export?idSucursal=20&dias=15&formato=xlsx')
+    expect(rutasDeExportacion.reposicion(20, null)).toBe('/reportes/stock/reposicion/export?idSucursal=20&formato=xlsx')
+  })
+})

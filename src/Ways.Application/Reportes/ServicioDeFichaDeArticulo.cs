@@ -13,7 +13,7 @@ public sealed record SolicitudDeFichaDeArticulo(string Articulo, string? Empresa
 
 public sealed record PrecioDeListaDeFicha(string Lista, bool EsDerivada, decimal? Precio);
 
-public sealed record StockDeFicha(string PuntoVenta, decimal Cantidad, decimal? Minimo);
+public sealed record StockDeFicha(string Sucursal, decimal Cantidad, decimal? Minimo);
 
 public sealed record VentasDeFicha(DateOnly Desde, DateOnly Hasta, IReadOnlyList<string> Zonas, decimal Cantidad, decimal Importe);
 
@@ -33,7 +33,7 @@ public sealed record FichaDeArticulo(
     IReadOnlyList<StockDeFicha> Stock, VentasDeFicha? Ventas, CostosDeFicha? Costos);
 
 /// <summary>
-/// Ficha de un artículo para el conector MCP: precios vigentes por lista, stock por punto de venta, ventas de los
+/// Ficha de un artículo para el conector MCP: precios vigentes por lista, stock por sucursal, ventas de los
 /// últimos 30 días y, solo si el pedido lo permite, costo y últimas compras. Los precios salen de
 /// <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/> (la misma regla que el POS y la grilla, derivadas
 /// incluidas) y las ventas de <see cref="ServicioDeConsultasDeVentas.VentasDeUnArticuloAsync"/>. Quién puede ver
@@ -172,25 +172,26 @@ public class ServicioDeFichaDeArticulo(
         ];
     }
 
-    /// <summary>Una fila por punto de venta con saldo registrado. El tenant lo aísla el filtro de EF de <c>stock</c> y
-    /// la FK compuesta <c>(id_articulo, id_tenant)</c>: las filas de stock de un artículo solo pueden ser de su tenant,
-    /// y el artículo ya salió de una búsqueda con el filtro de tenant. Sin empresa, un punto de venta dado de baja que
-    /// conserva stock se muestra como "(punto de venta id N)"; con empresa no aparece, porque no se puede saber de qué
-    /// empresa era. El mínimo solo se lee con permiso de reportes, igual que en la web.</summary>
+    /// <summary>Una fila por sucursal con saldo registrado: el stock es de la sucursal y lo comparten sus cajas. El
+    /// tenant lo aísla el filtro de EF de <c>stock</c> y la FK compuesta <c>(id_articulo, id_tenant)</c>: las filas de
+    /// stock de un artículo solo pueden ser de su tenant, y el artículo ya salió de una búsqueda con el filtro de tenant.
+    /// Sin empresa, una sucursal dada de baja que conserva stock se muestra como "(sucursal id N)"; con empresa no
+    /// aparece, porque no se puede saber de qué empresa era. El mínimo solo se lee con permiso de reportes, igual que en
+    /// la web.</summary>
     private async Task<IReadOnlyList<StockDeFicha>> LeerStockAsync(int idArticulo, int? idEmpresa, bool verMinimo, CancellationToken ct)
     {
         var filas = await (
             from s in db.Stock.AsNoTracking()
             where s.IdArticulo == idArticulo
-            join pv in db.PuntosVenta on s.IdPuntoVenta equals pv.Id into puntos
-            from pv in puntos.DefaultIfEmpty()
-            where idEmpresa == null || (pv != null && pv.IdEmpresa == idEmpresa)
-            orderby s.IdPuntoVenta
+            join sucursal in db.Sucursales on s.IdSucursal equals sucursal.Id into sucursales
+            from sucursal in sucursales.DefaultIfEmpty()
+            where idEmpresa == null || (sucursal != null && sucursal.IdEmpresa == idEmpresa)
+            orderby s.IdSucursal
             select new
             {
-                s.IdPuntoVenta,
-                Nombre = pv != null ? pv.Nombre : null,
-                IdEmpresa = pv != null ? (int?)pv.IdEmpresa : null,
+                s.IdSucursal,
+                Nombre = sucursal != null ? sucursal.Nombre : null,
+                IdEmpresa = sucursal != null ? (int?)sucursal.IdEmpresa : null,
                 s.Cantidad,
                 s.Minimo
             }).ToListAsync(ct);
@@ -205,7 +206,7 @@ public class ServicioDeFichaDeArticulo(
         [
             .. filas.Select(f =>
             {
-                var nombre = f.Nombre ?? $"(punto de venta id {f.IdPuntoVenta})";
+                var nombre = f.Nombre ?? $"(sucursal id {f.IdSucursal})";
                 if (variasEmpresas && f.IdEmpresa is { } empresa)
                 {
                     nombre = $"{nombre} ({nombresDeEmpresa.GetValueOrDefault(empresa) ?? $"empresa id {empresa}"})";

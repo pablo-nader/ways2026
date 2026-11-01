@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PuntoVentaListado } from '../../api/tipos'
-import { aFormularioDePuntoVenta } from './puntoVentaFormulario'
+import { ALTA_VACIA, aFormularioDePuntoVenta, aFormularioDeSucursalDePuntoVenta } from './puntoVentaFormulario'
 
 function listado(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaListado {
   return {
@@ -48,5 +48,28 @@ describe('aFormularioDePuntoVenta', () => {
       web: 'https://x.test',
       envioPorDefecto: true,
     })
+  })
+})
+
+describe('aFormularioDeSucursalDePuntoVenta', () => {
+  it('parte de la sucursal vigente de la caja y conserva su empresa', () => {
+    expect(aFormularioDeSucursalDePuntoVenta(listado({ idSucursal: 500 }))).toEqual({
+      id: 100,
+      nombre: 'PV Centro',
+      idEmpresa: 20,
+      idSucursalActual: 500,
+      idSucursal: '500',
+    })
+  })
+
+  it('una caja sin sucursal informada parte sin elección', () => {
+    const f = aFormularioDeSucursalDePuntoVenta(listado())
+
+    expect(f.idSucursalActual).toBeNull()
+    expect(f.idSucursal).toBe('')
+  })
+
+  it('el alta arranca sin sucursal: la caja nace con una propia', () => {
+    expect(ALTA_VACIA.idSucursal).toBe('')
   })
 })

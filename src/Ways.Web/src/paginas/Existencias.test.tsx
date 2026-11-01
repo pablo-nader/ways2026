@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Existencias } from './Existencias'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { ArticuloListado, Existencias as ExistenciasRespuesta, FilaExistencia, MinimosDeStock, PuntoVentaListado, Rotacion, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, Existencias as ExistenciasRespuesta, FilaExistencia, MinimosDeStock, PuntoVentaListado, SucursalListado, Rotacion, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPutMock = vi.fn()
@@ -53,11 +53,24 @@ vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
+const sucursalCentro: SucursalListado = {
+  id: 20,
+  idTenant: 1,
+  idEmpresa: 1,
+  nombre: 'Sucursal Centro',
+  razonSocialEmpresa: 'Empresa Demo',
+  cantidadPuntosVenta: 1,
+}
+
+const sucursalNorte: SucursalListado = { ...sucursalCentro, id: 21, nombre: 'Sucursal Norte' }
+
 const puntoVentaCentro: PuntoVentaListado = {
   id: 10,
   idTenant: 1,
   idEmpresa: 1,
   nombre: 'PV Centro',
+  idSucursal: 20,
+  nombreSucursal: 'Sucursal Centro',
   domicilio: null,
   horario: null,
   whatsapp: null,
@@ -74,6 +87,8 @@ const puntoVentaNorte: PuntoVentaListado = {
   idTenant: 1,
   idEmpresa: 1,
   nombre: 'PV Norte',
+  idSucursal: 21,
+  nombreSucursal: 'Sucursal Norte',
   domicilio: null,
   horario: null,
   whatsapp: null,
@@ -90,14 +105,14 @@ function filaFixture(sobrescribir: Partial<FilaExistencia> = {}): FilaExistencia
 }
 
 function existenciasFixture(filas: FilaExistencia[] = [filaFixture()], idPuntoVenta = 10): ExistenciasRespuesta {
-  return { idPuntoVenta, filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', filas }
 }
 
 // stage-13-stock-inteligente, Slice 7 (tarea 7.6): feed de `minimoSugerido` — vacío por default
 // (todas las filas de existencias muestran `—` en Sugerido), sobrescrito puntualmente por los tests
 // de la columna.
 function rotacionFixture(filas: Rotacion['filas'] = [], idPuntoVenta = 10): Rotacion {
-  return { idPuntoVenta, hoy: '2026-08-14', diasDeRotacion: 30, diasCoberturaObjetivo: 7, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', hoy: '2026-08-14', diasDeRotacion: 30, diasCoberturaObjetivo: 7, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
 }
 
 function minimosFixture(sobrescribir: Partial<MinimosDeStock> = {}): MinimosDeStock {
@@ -164,6 +179,7 @@ function renderExistenciasProtegido() {
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaCentro, puntoVentaNorte])
+    if (ruta === '/sucursales') return Promise.resolve([sucursalCentro, sucursalNorte])
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture())
@@ -181,12 +197,12 @@ beforeEach(() => {
 })
 
 describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — web)', () => {
-  it('arranca con el primer punto de venta cargado', async () => {
+  it('arranca con la primera sucursal cargada', async () => {
     mockearRutasBase()
     renderExistencias()
 
-    await screen.findByLabelText('Punto de venta')
-    expect(screen.getByLabelText('Punto de venta')).toHaveValue('10')
+    await screen.findByLabelText('Sucursal')
+    expect(screen.getByLabelText('Sucursal')).toHaveValue('20')
   })
 
   it('sin stock cargado muestra un estado vacío, no un re-query', async () => {
@@ -196,7 +212,7 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
     })
     renderExistencias()
 
-    expect(await screen.findByText('No hay stock cargado para este punto de venta.')).toBeInTheDocument()
+    expect(await screen.findByText('No hay stock cargado para esta sucursal.')).toBeInTheDocument()
     const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/existencias?'))
     expect(llamadas).toHaveLength(1)
   })
@@ -221,7 +237,7 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
     expect(llamada[0] as string).not.toContain('idArticulo')
   })
 
-  it('cambiar el punto de venta dispara una nueva consulta con el idPuntoVenta elegido', async () => {
+  it('cambiar la sucursal dispara una nueva consulta con el idSucursal elegido', async () => {
     mockearRutasBase()
     const usuario = userEvent.setup()
     renderExistencias()
@@ -229,15 +245,15 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
     await screen.findByText('Yerba mate 1kg')
     apiGetMock.mockClear()
     mockearRutasBase()
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '21')
 
     await waitFor(() => {
       const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/existencias?'))
-      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idPuntoVenta=11'))).toBe(true)
+      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idSucursal=21'))).toBe(true)
     })
   })
 
-  it('el botón de descarga apunta a /reportes/stock/existencias/export con el idPuntoVenta elegido', async () => {
+  it('el botón de descarga apunta a /reportes/stock/existencias/export con el idSucursal elegido', async () => {
     mockearRutasBase()
     apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
     const usuario = userEvent.setup()
@@ -247,7 +263,7 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
     await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
 
     expect(await screen.findByText('No se pudo descargar el archivo.')).toBeInTheDocument()
-    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/existencias\/export\?idPuntoVenta=10/)
+    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/existencias\/export\?idSucursal=20/)
   })
 
   it('una respuesta desactualizada nunca pisa la más reciente (generación)', async () => {
@@ -268,9 +284,9 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
 
     const usuario = userEvent.setup()
     renderExistencias()
-    await screen.findByLabelText('Punto de venta')
+    await screen.findByLabelText('Sucursal')
 
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '21')
     expect(await screen.findByText('segunda-respuesta')).toBeInTheDocument()
 
     // El flush del microtask va DENTRO de act: un waitFor solo pasaría en su primer tick,
@@ -424,8 +440,8 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     let llamadasCentro = 0
 
     mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/stock/existencias?idPuntoVenta=11')) return norte
-      if (ruta.startsWith('/reportes/stock/existencias?idPuntoVenta=10')) {
+      if (ruta.startsWith('/reportes/stock/existencias?idSucursal=21')) return norte
+      if (ruta.startsWith('/reportes/stock/existencias?idSucursal=20')) {
         llamadasCentro += 1
         return Promise.resolve(existenciasFixture(dosFilasFixture(), 10))
       }
@@ -439,8 +455,8 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
 
     // Cambia a Norte (queda pendiente) y vuelve a Centro (resuelve de nuevo, rápido) — deja una
     // generación intermedia obsoleta que todavía no aterrizó.
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '10')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '21')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '20')
     await screen.findByText('Aceite de girasol 900ml')
     expect(llamadasCentro).toBe(2)
 
@@ -601,7 +617,7 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     // hermana de la ventana). El picker de alta ya no forma parte de esa superficie: sigue
     // ausente por `filaEnEdicion`, no por `disabled`.
     expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled() // única "Editar" visible: fila B
-    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
+    expect(screen.getByLabelText('Sucursal')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Descargar' })).toBeDisabled()
     expect(screen.queryByLabelText('Buscar artículo para agregar')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled() // el propio Guardar en vuelo
@@ -610,7 +626,7 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     await screen.findByText('Bajo')
 
     expect(screen.getAllByRole('button', { name: 'Editar' })[0]).not.toBeDisabled()
-    expect(screen.getByLabelText('Punto de venta')).not.toBeDisabled()
+    expect(screen.getByLabelText('Sucursal')).not.toBeDisabled()
     expect(screen.getByRole('button', { name: 'Descargar' })).not.toBeDisabled()
     expect(screen.getByLabelText('Buscar artículo para agregar')).toBeInTheDocument() // reaparece al cerrar la edición
   })
@@ -738,7 +754,7 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     const idArticuloFantasma = articuloFixture().id // 50 — coincide a propósito con la fila PERSISTIDA de PV Norte
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
-      if (ruta.startsWith('/reportes/stock/existencias?idPuntoVenta=11'))
+      if (ruta.startsWith('/reportes/stock/existencias?idSucursal=21'))
         return Promise.resolve(existenciasFixture([filaFixture({ idArticulo: idArticuloFantasma, nombre: 'Arroz persistido en Norte' })], 11))
       if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture())
       return undefined
@@ -754,7 +770,7 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
 
     // Cambia de PV SIN guardar: `cargar()` reemplaza la grilla entera con la de PV Norte, que trae
     // una fila PERSISTIDA con el MISMO idArticulo (50) que el ref fantasma todavía recuerda.
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '21')
     expect(await screen.findByText('Arroz persistido en Norte')).toBeInTheDocument()
 
     // Editar + Cancelar sobre esa fila PERSISTIDA: si el ref no se limpió al recargar, `cancelarEdicion`

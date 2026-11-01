@@ -167,7 +167,8 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
     {
         await using var db = Db(ctx);
         var pv = idPuntoVenta ?? ctx.IdPuntoVenta;
-        return await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == pv)
+        var idSucursal = await SucursalDePrueba.DeAsync(db, pv);
+        return await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => (decimal?)s.Cantidad).FirstOrDefaultAsync() ?? 0m;
     }
 
@@ -1135,16 +1136,19 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         await using var db = Db(ctx);
         var idEmpleado = await db.Usuarios.Select(u => u.Id).FirstAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+
         db.MovimientosStock.Add(new MovimientoStock
         {
-            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = -cantidad,
-            Motivo = MotivoStock.Venta, IdEmpleado = idEmpleado, CreadoEl = DateTimeOffset.UtcNow, IdLote = idLote
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdSucursal = idSucursal,
+            Cantidad = -cantidad, Motivo = MotivoStock.Venta, IdEmpleado = idEmpleado, CreadoEl = DateTimeOffset.UtcNow,
+            IdLote = idLote
         });
-        var stock = await db.Stock.FirstAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var stock = await db.Stock.FirstAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal);
         stock.Cantidad -= cantidad;
         if (idLote is { } lote)
         {
-            var delLote = await db.StockLotes.FirstAsync(s => s.IdLote == lote && s.IdPuntoVenta == ctx.IdPuntoVenta);
+            var delLote = await db.StockLotes.FirstAsync(s => s.IdLote == lote && s.IdSucursal == idSucursal);
             delLote.Cantidad -= cantidad;
         }
 

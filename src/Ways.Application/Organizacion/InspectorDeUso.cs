@@ -106,20 +106,31 @@ public sealed class InspectorDeUso(IWaysDbContext db)
     /// Lo que devuelve es la <see cref="RamaDeUso.Etiqueta"/> de la rama que disparó, no el nombre
     /// pelado de la tabla: <c>EtiquetasDeTablas.DescribirBloqueo</c> la parsea para nombrar el
     /// puente solo cuando el hit VINO por el puente.
+    ///
+    /// <paramref name="soloRamas"/> acota la pregunta a un subconjunto del inventario (la baja de un punto de venta
+    /// pregunta por las ramas propias de su sucursal). Los parámetros siguen siendo los de todo el inventario, así que
+    /// el contrato posicional de <paramref name="valoresDeClave"/> no cambia.
     /// </summary>
     public async Task<string?> PrimeraDependenciaEnUsoAsync(
         Type tipoAncla,
         IReadOnlyList<object> valoresDeClave,
         DateTimeOffset ancla,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<RamaDeUso, bool>? soloRamas = null)
     {
         ArgumentNullException.ThrowIfNull(tipoAncla);
         ArgumentNullException.ThrowIfNull(valoresDeClave);
 
-        var ramas = InventarioDeDependientes.Construir(db.Model, tipoAncla);
+        var todas = InventarioDeDependientes.Construir(db.Model, tipoAncla);
         var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, tipoAncla);
 
-        ValidarValoresDeClave(tipoAncla, ramas, propiedades, valoresDeClave);
+        ValidarValoresDeClave(tipoAncla, todas, propiedades, valoresDeClave);
+
+        IReadOnlyList<RamaDeUso> ramas = soloRamas is null ? todas : [.. todas.Where(soloRamas)];
+        if (ramas.Count == 0)
+        {
+            return null;
+        }
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
 

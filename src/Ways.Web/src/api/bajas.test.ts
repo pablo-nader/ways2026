@@ -342,3 +342,13 @@ describe('arrastreDeTenant', () => {
     expect(arrastreDeTenant({ cantidadEmpresas: 0, cantidadPuntosVenta: 0, cantidadUsuarios: 0 })).toEqual([])
   })
 })
+
+describe('copiaDeFalloDeBaja — sucursales', () => {
+  it('sucursal_en_uso y sucursal_con_puntos_venta rinden guías distintas entre sí, ambas detrás del mensaje del servidor', () => {
+    const enUso = copiaDeFalloDeBaja(new ErrorApi(409, 'sucursal_en_uso', 'Tiene stock.'), 'la sucursal')
+    const conCajas = copiaDeFalloDeBaja(new ErrorApi(409, 'sucursal_con_puntos_venta', 'Tiene cajas.'), 'la sucursal')
+
+    expect(enUso).toBe('Tiene stock. Dá de baja o reasigná esos datos antes de eliminar la sucursal.')
+    expect(conCajas).toBe('Tiene cajas. Movelas a otra sucursal desde la pantalla de Puntos de venta primero.')
+  })
+})

@@ -60,7 +60,7 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, HttpClient Admin, int IdArea, int IdAlicuotaIva,
-        int IdListaPrecio, int IdMedioEfectivo, int IdMedioCuentaCorriente);
+        int IdListaPrecio, int IdMedioEfectivo, int IdMedioCuentaCorriente, int IdSucursal);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -123,9 +123,11 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         });
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, resultado.IdPuntoVenta);
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
-            lista.Id, idMedioEfectivo, medioCc.Id);
+            lista.Id, idMedioEfectivo, medioCc.Id, idSucursal);
     }
 
     private async Task<int> SembrarArticuloConPrecioAsync(Contexto ctx, string nombre, decimal precio)
@@ -186,11 +188,11 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = ctx.IdSucursal, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         db.MovimientosStock.Add(new Ways.Domain.Stock.MovimientoStock
         {
-            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = cantidad,
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdSucursal = ctx.IdSucursal, Cantidad = cantidad,
             Motivo = Ways.Domain.Stock.MotivoStock.Ajuste, IdEmpleado = idEmpleado, CreadoEl = ahora
         });
         await db.SaveChangesAsync();
@@ -391,7 +393,7 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
                 await db.MovimientosStock.Where(m => m.IdArticulo == idArticulo).Select(m => m.Motivo).SingleAsync());
 
             var cantidad = await db.Stock
-                .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+                .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
                 .Select(s => s.Cantidad).FirstAsync();
             Assert.Equal(10m, cantidad);
         }
@@ -473,7 +475,7 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
             await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
             var cantidad = await db.Stock
-                .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+                .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
                 .Select(s => s.Cantidad).FirstAsync();
             var sumaDeMovimientos = await db.MovimientosStock
                 .Where(m => m.IdArticulo == idArticulo && m.IdPuntoVenta == ctx.IdPuntoVenta)

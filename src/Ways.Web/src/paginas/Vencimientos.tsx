@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeOrganizacion } from '../api/organizacion'
+import { etiquetaDeSucursal } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
-import type { EstadoDeVencimiento, FilaDeVencimiento, PuntoVentaListado, Vencimientos as VencimientosRespuesta } from '../api/tipos'
+import type { EstadoDeVencimiento, FilaDeVencimiento, Vencimientos as VencimientosRespuesta } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
+import { useSucursales } from '../componentes/useSucursales'
 import { atributosDeCampoEntero, parsearEnteroTipeado } from '../formato/numeros'
 import { pluralizar } from '../formato/pluralizar'
 
@@ -40,18 +41,19 @@ function BadgeDeEstado({ estado }: { estado: EstadoDeVencimiento }) {
 /**
  * Vencimientos (stage-12-lotes-vencimientos, Slice 15 — web; design decisión 15/16/17, spec
  * lotes-y-vencimientos: "Vencimientos Report Resolves 'Hoy' In The Punto De Venta's Own Zona
- * Horaria, With An Export Sibling"): lotes con saldo positivo de un punto de venta, clasificados
- * en las cuatro categorías del reporte. Mismo patrón que `Existencias.tsx` (selector de punto de
- * venta + botón de descarga + tabla, sin paginado — listado acotado por construcción salvo el
+ * Horaria, With An Export Sibling"): lotes con saldo positivo de una sucursal (el stock es de la sucursal),
+ * clasificados en las cuatro categorías del reporte. Mismo patrón que `Existencias.tsx` (selector de sucursal
+ * + botón de descarga + tabla, sin paginado — listado acotado por construcción salvo el
  * tope del export) más un filtro propio de `dias` (horizonte de alerta, opcional — el servidor
  * resuelve `dias_alerta_vencimiento` cuando se omite). Misma política que `/tablero`/
  * `/reportes/existencias` (`Politicas.LecturaDeReportes`: Supervisor + Admin).
  */
 export function Vencimientos() {
-  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
-  const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
-
-  const [idPuntoVenta, setIdPuntoVenta] = useState<number | null>(null)
+  const { sucursales, error: errorSucursales } = useSucursales()
+  const [sucursalElegida, setSucursalElegida] = useState<number | null>(null)
+  // Mientras no se eligió ninguna, la primera: sin efecto que la fije después de la carga.
+  const idSucursal = sucursalElegida ?? sucursales?.[0]?.id ?? null
+  const variasEmpresas = new Set((sucursales ?? []).map((s) => s.idEmpresa)).size > 1
   const [dias, setDias] = useState('')
   const [vencimientos, setVencimientos] = useState<VencimientosRespuesta | null>(null)
   const [cargando, setCargando] = useState(false)
@@ -59,38 +61,18 @@ export function Vencimientos() {
   const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
-  useEffect(() => {
-    let vigente = true
-    clienteDeOrganizacion
-      .listarPuntosVenta()
-      .then((lista) => {
-        if (!vigente) return
-        setPuntosVenta(lista)
-        if (lista.length > 0) setIdPuntoVenta(lista[0].id)
-      })
-      .catch((e) => {
-        if (!vigente) return
-        setPuntosVenta([])
-        setErrorPuntosVenta(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los puntos de venta.')
-      })
-
-    return () => {
-      vigente = false
-    }
-  }, [])
-
   // `dias` vacío ⇒ `null` — deja que el servidor resuelva `dias_alerta_vencimiento` (nunca se
   // manda un valor inventado del lado del cliente cuando el servidor ya sabe resolverlo).
   const diasNumero = parsearEnteroTipeado(dias)
 
   const cargar = useCallback(() => {
-    if (idPuntoVenta === null) return
+    if (idSucursal === null) return
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
 
     clienteDeReportes
-      .vencimientos(idPuntoVenta, diasNumero)
+      .vencimientos(idSucursal, diasNumero)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setVencimientos(datos)
@@ -105,7 +87,7 @@ export function Vencimientos() {
         setCargando(false)
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idPuntoVenta, diasNumero])
+  }, [idSucursal, diasNumero])
 
   useEffect(() => {
     cargar()
@@ -125,30 +107,30 @@ export function Vencimientos() {
             </button>
           </div>
         )}
-        {errorPuntosVenta && <div className="alert alert-warning py-1 px-2 small">{errorPuntosVenta}</div>}
+        {errorSucursales && <div className="alert alert-warning py-1 px-2 small">{errorSucursales}</div>}
 
-        {puntosVenta === null ? (
+        {sucursales === null ? (
           <Cargando />
-        ) : puntosVenta.length === 0 ? (
-          <p className="text-muted text-center py-4">No hay puntos de venta visibles para los vencimientos.</p>
-        ) : idPuntoVenta === null ? (
+        ) : sucursales.length === 0 ? (
+          <p className="text-muted text-center py-4">No hay sucursales visibles para los vencimientos.</p>
+        ) : idSucursal === null ? (
           <Cargando />
         ) : (
           <>
             <div className="row g-2 align-items-end mb-3">
               <div className="col-md-3">
-                <label className="form-label" htmlFor="vencimientos-punto-venta">
-                  Punto de venta
+                <label className="form-label" htmlFor="vencimientos-sucursal">
+                  Sucursal
                 </label>
                 <select
-                  id="vencimientos-punto-venta"
+                  id="vencimientos-sucursal"
                   className="form-select"
-                  value={idPuntoVenta}
-                  onChange={(e) => setIdPuntoVenta(Number(e.target.value))}
+                  value={idSucursal}
+                  onChange={(e) => setSucursalElegida(Number(e.target.value))}
                 >
-                  {puntosVenta.map((pv) => (
-                    <option key={pv.id} value={pv.id}>
-                      {pv.nombre}
+                  {sucursales.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {etiquetaDeSucursal(s, variasEmpresas)}
                     </option>
                   ))}
                 </select>
@@ -168,7 +150,7 @@ export function Vencimientos() {
               </div>
               <div className="col-auto">
                 <BotonDeDescarga
-                  ruta={rutasDeExportacion.vencimientos(idPuntoVenta, diasNumero)}
+                  ruta={rutasDeExportacion.vencimientos(idSucursal, diasNumero)}
                   etiqueta="Descargar"
                   onError={setErrorDescarga}
                   onInicio={() => setErrorDescarga('')}
@@ -222,7 +204,7 @@ export function Vencimientos() {
                       {vencimientos.filas.length === 0 && (
                         <tr>
                           <td colSpan={5} className="text-center text-muted py-4">
-                            No hay lotes con saldo positivo para este punto de venta.
+                            No hay lotes con saldo positivo para esta sucursal.
                           </td>
                         </tr>
                       )}

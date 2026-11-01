@@ -35,14 +35,14 @@ public static class RegistroDelConectorMcp
         "que lo explica, no un error; las de compras y las de códigos responden un error sin datos y no escriben " +
         "nada. quien_soy informa el usuario, el rol y el tenant de la conexión. " +
         "Las consultas de ventas: ventas_resumen responde cuánto se vendió (por ejemplo, '¿cuánto vendimos hoy?'); " +
-        "ventas_agrupadas lo abre por punto de venta, medio de pago, vendedor, día, área, grupo, categoría o marca " +
+        "ventas_agrupadas lo abre por punto de venta, sucursal, medio de pago, vendedor, día, área, grupo, categoría o marca " +
         "('¿cuánto vendió cada vendedor esta semana?', '¿qué marca vendió más este mes?'); ventas_por_articulo lista " +
         "los artículos más vendidos, con filtros por texto, área, grupo, categoría, marca y proveedor ('¿cuánto se " +
         "vendió de Coca-Cola el mes pasado?'). El período se indica con un nombre (hoy, ayer, esta_semana, " +
         "semana_pasada, este_mes, mes_pasado), que se resuelve en la zona horaria de cada empresa, o con desde y " +
         "hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo 366 días). articulo_info es la ficha de un " +
         "artículo ('¿qué precio y stock tiene Cola 2L?', '¿a qué precio lo compramos la última vez y a quién?'): " +
-        "precios vigentes por lista, stock por punto de venta, ventas de los últimos 30 días y últimas compras; las " +
+        "precios vigentes por lista, stock por sucursal, ventas de los últimos 30 días y últimas compras; las " +
         "ventas, el costo y las compras solo se muestran a Supervisor y Admin. " +
         "Para cargar una factura de proveedor: primero contexto_de_compras (puntos de venta, percepciones por " +
         "defecto de cada empresa, tipos de comprobante de compra, alícuotas de IVA y el rol del usuario), después " +

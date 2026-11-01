@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Vencimientos } from './Vencimientos'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { FilaDeVencimiento, PuntoVentaListado, UsuarioAutenticado, Vencimientos as VencimientosRespuesta } from '../api/tipos'
+import type { FilaDeVencimiento, PuntoVentaListado, SucursalListado, UsuarioAutenticado, Vencimientos as VencimientosRespuesta } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiDescargarMock = vi.fn()
@@ -48,11 +48,24 @@ vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
+const sucursalCentro: SucursalListado = {
+  id: 20,
+  idTenant: 1,
+  idEmpresa: 1,
+  nombre: 'Sucursal Centro',
+  razonSocialEmpresa: 'Empresa Demo',
+  cantidadPuntosVenta: 1,
+}
+
+const sucursalNorte: SucursalListado = { ...sucursalCentro, id: 21, nombre: 'Sucursal Norte' }
+
 const puntoVentaCentro: PuntoVentaListado = {
   id: 10,
   idTenant: 1,
   idEmpresa: 1,
   nombre: 'PV Centro',
+  idSucursal: 20,
+  nombreSucursal: 'Sucursal Centro',
   domicilio: null,
   horario: null,
   whatsapp: null,
@@ -69,6 +82,8 @@ const puntoVentaNorte: PuntoVentaListado = {
   idTenant: 1,
   idEmpresa: 1,
   nombre: 'PV Norte',
+  idSucursal: 21,
+  nombreSucursal: 'Sucursal Norte',
   domicilio: null,
   horario: null,
   whatsapp: null,
@@ -94,7 +109,7 @@ function filaFixture(sobrescribir: Partial<FilaDeVencimiento> = {}): FilaDeVenci
 }
 
 function vencimientosFixture(filas: FilaDeVencimiento[] = [filaFixture()], idPuntoVenta = 10): VencimientosRespuesta {
-  return { idPuntoVenta, hoy: '2026-08-14', diasDeAlerta: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', hoy: '2026-08-14', diasDeAlerta: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
 }
 
 function renderVencimientos() {
@@ -124,6 +139,7 @@ function renderVencimientosProtegido() {
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaCentro, puntoVentaNorte])
+    if (ruta === '/sucursales') return Promise.resolve([sucursalCentro, sucursalNorte])
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     if (ruta.startsWith('/reportes/stock/vencimientos?')) return Promise.resolve(vencimientosFixture())
@@ -139,12 +155,12 @@ beforeEach(() => {
 })
 
 describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — web)', () => {
-  it('arranca con el primer punto de venta cargado y sin dias forzado (el servidor resuelve el default)', async () => {
+  it('arranca con la primera sucursal cargada y sin dias forzado (el servidor resuelve el default)', async () => {
     mockearRutasBase()
     renderVencimientos()
 
-    await screen.findByLabelText('Punto de venta')
-    expect(screen.getByLabelText('Punto de venta')).toHaveValue('10')
+    await screen.findByLabelText('Sucursal')
+    expect(screen.getByLabelText('Sucursal')).toHaveValue('20')
 
     // La consulta del reporte la dispara un efecto POSTERIOR a que el punto de venta quede
     // seleccionado: leer `mock.calls` en el mismo tick encuentra la lista todavía sin esa llamada.
@@ -155,12 +171,39 @@ describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — we
     })
   })
 
+  /** Cláusula bajo prueba: `etiquetaDeSucursal(s, variasEmpresas)`. Con una sola empresa a la vista el rótulo es el
+   * nombre; con dos, cada sucursal aclara a cuál pertenece (dos sucursales "Centro" no se distinguirían). */
+  it('rotula cada sucursal con su empresa solo cuando hay varias a la vista', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/sucursales') {
+        return Promise.resolve([sucursalCentro, { ...sucursalNorte, idEmpresa: 2, razonSocialEmpresa: 'Otra SA' }])
+      }
+      if (ruta.startsWith('/reportes/stock/vencimientos?')) return Promise.resolve(vencimientosFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    renderVencimientos()
+
+    const selector = await screen.findByLabelText('Sucursal')
+    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Sucursal Centro (Empresa Demo)',
+      'Sucursal Norte (Otra SA)',
+    ])
+  })
+
+  it('con una sola empresa a la vista el rótulo es solo el nombre de la sucursal', async () => {
+    mockearRutasBase()
+    renderVencimientos()
+
+    const selector = await screen.findByLabelText('Sucursal')
+    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sucursal Centro', 'Sucursal Norte'])
+  })
+
   it('un valor tipeado en "Días de alerta" viaja como dias en la query', async () => {
     mockearRutasBase()
     const usuario = userEvent.setup()
     renderVencimientos()
 
-    await screen.findByLabelText('Punto de venta')
+    await screen.findByLabelText('Sucursal')
     apiGetMock.mockClear()
     mockearRutasBase()
     await usuario.type(screen.getByLabelText('Días de alerta'), '45')
@@ -226,12 +269,12 @@ describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — we
     })
     renderVencimientos()
 
-    expect(await screen.findByText('No hay lotes con saldo positivo para este punto de venta.')).toBeInTheDocument()
+    expect(await screen.findByText('No hay lotes con saldo positivo para esta sucursal.')).toBeInTheDocument()
     const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/vencimientos?'))
     expect(llamadas).toHaveLength(1)
   })
 
-  it('cambiar el punto de venta dispara una nueva consulta con el idPuntoVenta elegido', async () => {
+  it('cambiar la sucursal dispara una nueva consulta con el idSucursal elegido', async () => {
     mockearRutasBase()
     const usuario = userEvent.setup()
     renderVencimientos()
@@ -239,15 +282,15 @@ describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — we
     await screen.findByText('Yogur bebible 1L')
     apiGetMock.mockClear()
     mockearRutasBase()
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '21')
 
     await waitFor(() => {
       const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/vencimientos?'))
-      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idPuntoVenta=11'))).toBe(true)
+      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idSucursal=21'))).toBe(true)
     })
   })
 
-  it('el botón de descarga apunta a /reportes/stock/vencimientos/export con el idPuntoVenta elegido', async () => {
+  it('el botón de descarga apunta a /reportes/stock/vencimientos/export con el idSucursal elegido', async () => {
     mockearRutasBase()
     apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
     const usuario = userEvent.setup()
@@ -257,7 +300,7 @@ describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — we
     await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
 
     expect(await screen.findByText('No se pudo descargar el archivo.')).toBeInTheDocument()
-    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/vencimientos\/export\?idPuntoVenta=10/)
+    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/vencimientos\/export\?idSucursal=20/)
   })
 
   it('una respuesta desactualizada nunca pisa la más reciente (generación)', async () => {
@@ -278,9 +321,9 @@ describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — we
 
     const usuario = userEvent.setup()
     renderVencimientos()
-    await screen.findByLabelText('Punto de venta')
+    await screen.findByLabelText('Sucursal')
 
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    await usuario.selectOptions(screen.getByLabelText('Sucursal'), '21')
     expect(await screen.findByText('segunda-respuesta')).toBeInTheDocument()
 
     // El flush del microtask va DENTRO de act (mutation-proof-tests regla 7): un waitFor solo
