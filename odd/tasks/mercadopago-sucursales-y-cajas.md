@@ -175,3 +175,13 @@ T3 (store sync).
   token) still answers `mercadopago_requiere_reconexion` on a healthy connection; it should retry once with the fresh
   token or answer `mercadopago_no_disponible`. Pick it up in T3, where the first write calls appear.
 - Info: a non-GET call without an idempotency key is allowed; T3/T4 must always pass one.
+
+## Judgment-day T2 verdict
+
+- 2026-11-01: **APPROVED** in round zero: neither blind judge reported a CRITICAL finding on 5516a04d. RDD is off.
+- Info (both judges): the web range check runs on the raw value while the server rounds to 6 decimals first; the input
+  pattern already limits to 6 decimals, so it is unreachable in practice.
+- Info (both judges): the PUT replaces the whole address; the only caller (Sucursales.tsx) sends the full form, but a stale
+  modal can overwrite an address saved meanwhile by another admin (no concurrency token, same as the name).
+- Info (one judge each): an over-long provincia answers `provincia_muy_largo` instead of `provincia_invalida`; the web and
+  server provincia lists are duplicated by hand with no test tying them.
