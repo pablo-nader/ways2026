@@ -56,7 +56,7 @@ much in each digital account the business has, nor where each movement came from
   adjustments written by pago edits. Route: delegated.
 - [x] T2 — Ledger read model (backend): `GET /api/reportes/libro-tesoreria` with rows, per-account
   breakdown, arqueo difference with tolerance, previous balance and current balances. Route: delegated.
-- [ ] T3 — Web screen replacing `/caja/tesoreria` + `/pagos?id=N` deep link + cash adjustment modal.
+- [x] T3 — Web screen replacing `/caja/tesoreria` + `/pagos?id=N` deep link + cash adjustment modal.
   Route: delegated.
 - [ ] T4 — Delete the old reports (endpoints, services, DTOs, web, tests), keeping shared pieces
   (`ExportacionDeCaja` histórico part, `ModalDeAjusteDeCuenta`, account ABM). Route: delegated.
@@ -77,6 +77,8 @@ pago row together. The freeze removes this once conciliated.
   `ServicioDeLibroDeTesoreria` desde las fuentes; domain 18 + application 4 + integration 8 tests nuevos, mutaciones de tolerancia y de empresa
   registradas en `LibroDeTesoreriaTests`.
 
+- 2026-11-01: T3 done (commit en el siguiente registro): `/caja/tesoreria` ahora es el libro (resumen de liquidez, tabla con saldo anterior, tooltips de caja y de medios por cuenta, ajustes de efectivo y de cuenta solo Admin), `/pagos?id=N` abre la edición del pago. Rojo = `--ws-danger` (6,23:1 claro / 6,62:1 oscuro sobre `--ws-surface`; 5,40 y 6,95 sobre `--ws-surface-sunken`). Borrados: `SeccionDeCuentas`, `tesoreria/cuentas.ts` y sus tests. Quedan para T4 los clientes `reportes.tesoreria`/`libroDeCuenta`/`rutasDeExportacion.tesoreria` (los importa `reportes.test.ts`). Vitest completo 299 archivos / 9219 tests verdes, build y oxlint sin hallazgos nuevos.
+
 ### Decisiones del libro (T2)
 
 - Caja #N = id del turno (columna Turno del histórico de cajas). Medio efectivo = comportamiento efectivo del catálogo o el ancla
@@ -86,7 +88,10 @@ pago row together. The freeze removes this once conciliated.
 - Los ajustes del sistema (`Ajuste` de tesorería) se ignoran: la fila del pago ya muestra su valor vigente. Transferencia/depósito/retiro de
   cuenta no tienen escritor y quedan fuera.
 - Un pago del cajón de un turno todavía abierto aparece negativo en su fila de pago sin la fila de caja que lo compensa, hasta el cierre.
+- Roles (decisión del dueño, 2026-10-31): Supervisor y Admin leen el libro, sueldos incluidos; el link al pago y los ajustes son solo Admin.
+- T1+T2 en PR #583 (judgment-day APPROVED, sin hallazgos críticos). T3 commits 26c8a2cf + dc40d9d6 (judgment-day: JD-T3-1 confirmado por ambos jueces, corregido y re-juzgado APPROVED).
+- JD-T3-1 corregido: el ajuste de cuenta desde el libro usa `soloImporte` (solo importe con signo, sin releer la cadena ni enviar `saldoObjetivo`); la pantalla de cuentas conserva ambos modos.
 
 ## Next step
 
-T3.
+T4.

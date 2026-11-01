@@ -28,6 +28,7 @@ const {
   construirQueryDeBreakdownConPv,
   construirQueryDeHistoricoDeCajas,
   construirQueryDeLibroDeCuenta,
+  construirQueryDeLibroDeTesoreria,
   construirQueryDeLibroIva,
   construirQueryDeReporte,
   construirQueryDeReporteDeArticulos,
@@ -610,6 +611,22 @@ describe('libro de una cuenta de tesorería', () => {
 
     expect(apiGetMock).toHaveBeenNthCalledWith(1, '/reportes/tesoreria/cuentas?idEmpresa=7')
     expect(apiGetMock).toHaveBeenNthCalledWith(2, '/reportes/tesoreria/cuentas/12/libro?pagina=1&tamanio=25')
+  })
+})
+
+describe('libro de tesorería', () => {
+  it('el query lleva la empresa y los límites inclusivos del día con el offset local', () => {
+    const query = decodeURIComponent(construirQueryDeLibroDeTesoreria({ idEmpresa: 3, desde: '2026-10-25', hasta: '2026-10-31' }))
+
+    expect(query).toBe('?idEmpresa=3&desde=2026-10-25T00:00:00-03:00&hasta=2026-10-31T23:59:59.999-03:00')
+  })
+
+  it('el cliente pega a /reportes/libro-tesoreria', async () => {
+    apiGetMock.mockClear()
+
+    await clienteDeReportes.libroDeTesoreria({ idEmpresa: 3, desde: '2026-10-25', hasta: '2026-10-31' })
+
+    expect((apiGetMock.mock.calls[0] as unknown as [string])[0]).toMatch(/^\/reportes\/libro-tesoreria\?idEmpresa=3&desde=/)
   })
 })
 

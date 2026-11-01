@@ -27,6 +27,11 @@ type Props = {
   onAjustado: (resultado: ResultadoDeAjusteDeCuenta) => void
   /** Se llama una sola vez cuando NO se sabe si el ajuste se escribió: quien abrió el modal lo cierra, relee y avisa. */
   onIncierto: () => void
+  /**
+   * Desde el libro el saldo de la tarjeta se calcula por fuentes y no coincide con la cadena de la cuenta: solo se ofrece el
+   * importe con signo, no se relee el saldo de la cadena y nunca se envía `saldoObjetivo`.
+   */
+  soloImporte?: boolean
 }
 
 /**
@@ -39,8 +44,10 @@ type Props = {
  * puede reemplazar ni reabrir lo que escribe. El ajuste no lleva clave de idempotencia, así que nunca se reintenta solo y un
  * resultado incierto (red cortada, 5xx) no deja el formulario abierto para reenviar a ciegas: se avisa al llamador.
  */
-export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado, onIncierto }: Props) {
-  const [formulario, setFormulario] = useState<FormularioDeAjuste>(formularioDeAjusteVacio)
+export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado, onIncierto, soloImporte = false }: Props) {
+  const [formulario, setFormulario] = useState<FormularioDeAjuste>(() =>
+    soloImporte ? { ...formularioDeAjusteVacio(), modo: 'importe' } : formularioDeAjusteVacio(),
+  )
   const [error, setError] = useState<ErrorDeAjuste | null>(null)
   // El saldo que llega por props sale de un listado que pudo quedar viejo: se relee al abrir y la vista previa parte de ese.
   const [saldoActual, setSaldoActual] = useState(cuenta.saldoActual)
@@ -57,6 +64,8 @@ export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado,
   }, [])
 
   useEffect(() => {
+    if (soloImporte) return
+
     let vigente = true
     clienteDeReportes
       .cuentasDeTesoreria(idEmpresa)
@@ -78,7 +87,7 @@ export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado,
     return () => {
       vigente = false
     }
-  }, [cuenta.id, idEmpresa])
+  }, [cuenta.id, idEmpresa, soloImporte])
 
   function cambiar(cambios: Partial<FormularioDeAjuste>) {
     setFormulario((previo) => ({ ...previo, ...cambios }))
@@ -142,7 +151,7 @@ export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado,
 
       <fieldset disabled={ajustando} className="border-0 p-0 m-0">
         <div className="mb-3">
-          {(
+          {!soloImporte && (
             [
               ['saldoObjetivo', 'Tengo el saldo real'],
               ['importe', 'Sumar o restar un importe'],

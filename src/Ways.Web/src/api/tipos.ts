@@ -2084,6 +2084,71 @@ export type LibroDeCuenta = {
   tamanio: number
 }
 
+// --- Libro de tesorería (`GET /api/reportes/libro-tesoreria`) — espejo de `ContratosDeLibroDeTesoreria`. -----
+
+export type TipoDeFilaDelLibro = 'Caja' | 'Pago' | 'AjusteEfectivo' | 'AjusteCuenta'
+
+export type CuentaDelLibro = { idCuentaTesoreria: number; nombre: string; activo: boolean }
+
+export type ImporteDeCuenta = { idCuentaTesoreria: number; importe: number }
+
+export type SaldosDelLibro = { efectivo: number; porCuenta: ImporteDeCuenta[] }
+
+export type DesgloseDeMedioDelLibro = {
+  idMedioPago: number | null
+  medio: string | null
+  importe: number
+  comision: number
+  retenciones: number
+  neto: number
+}
+
+export type DesgloseDeCuentaDelLibro = { idCuentaTesoreria: number; neto: number; medios: DesgloseDeMedioDelLibro[] }
+
+/** `numero` es el id del turno; `diferenciaArqueo` es declarado menos esperado y viene `null` si es cero o está dentro de la tolerancia. */
+export type DatosDeCajaDelLibro = {
+  idTurnoCaja: number
+  numero: number
+  fechaApertura: string
+  fechaCierre: string
+  idPuntoVenta: number
+  puntoVenta: string | null
+  diferenciaArqueo: number | null
+  desglose: DesgloseDeCuentaDelLibro[]
+}
+
+export type DatosDePagoDelLibro = {
+  idPago: number
+  detalle: string
+  categoria: CategoriaPago
+  origenFondos: OrigenFondosPago
+  idTurnoCaja: number | null
+}
+
+export type DatosDeAjusteDelLibro = { concepto: string }
+
+/** Exactamente uno de `caja`, `pago` y `ajuste` viene poblado, según `tipo`. `efectivo` y `sinCuenta` son `null` si la fila no los toca. */
+export type FilaDelLibro = {
+  fecha: string
+  tipo: TipoDeFilaDelLibro
+  efectivo: number | null
+  cuentas: ImporteDeCuenta[]
+  sinCuenta: number | null
+  caja: DatosDeCajaDelLibro | null
+  pago: DatosDePagoDelLibro | null
+  ajuste: DatosDeAjusteDelLibro | null
+}
+
+export type LibroDeTesoreria = {
+  idEmpresa: number
+  desde: string
+  hasta: string
+  cuentas: CuentaDelLibro[]
+  saldoAnterior: SaldosDelLibro
+  saldoActual: SaldosDelLibro
+  filas: FilaDelLibro[]
+}
+
 // --- Existencias (stage-11-exportacion-reportes, Slice 9 — droppable a Etapa 13) — espejo de
 // `Ways.Application.Reportes.Contratos`. Sin fecha/zona horaria: el stock es estado ACTUAL, no
 // tiene dimensión temporal (a diferencia del resto de los reportes de esta etapa).

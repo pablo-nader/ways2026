@@ -311,6 +311,37 @@ describe('ModalDeAjusteDeCuenta', () => {
     expect(onAjustado).not.toHaveBeenCalled()
   })
 
+  it('el modo de la pantalla de cuentas ofrece los dos modos y relee el saldo de la cadena', async () => {
+    montar()
+
+    expect(screen.getByRole('radio', { name: 'Tengo el saldo real' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Sumar o restar un importe' })).toBeInTheDocument()
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/reportes/tesoreria/cuentas?idEmpresa=1'))
+  })
+
+  it('con soloImporte ofrece solo el importe con signo, muestra el saldo recibido y no relee la cadena', async () => {
+    apiGetMock.mockResolvedValue(cuentasConSaldo(5))
+    apiPostMock.mockResolvedValue(resultado(940))
+    const usuario = userEvent.setup()
+    const onAjustado = vi.fn()
+    render(
+      <ModalDeAjusteDeCuenta idEmpresa={1} cuenta={cuenta} soloImporte onCerrar={vi.fn()} onAjustado={onAjustado} onIncierto={vi.fn()} />,
+    )
+
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Saldo real de la plataforma')).not.toBeInTheDocument()
+    expect(screen.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 1.000,00')
+
+    await usuario.type(screen.getByLabelText(/Importe/), '-60')
+    await usuario.type(screen.getByLabelText('Concepto'), 'Retiro no registrado')
+    await usuario.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+
+    await waitFor(() => expect(onAjustado).toHaveBeenCalledTimes(1))
+    expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/7/ajustes', { concepto: 'Retiro no registrado', importe: -60 })
+    expect(apiGetMock).not.toHaveBeenCalled()
+    expect(screen.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 1.000,00')
+  })
+
   it('una respuesta que llega con el modal ya desmontado no avisa a nadie', async () => {
     const pendiente = diferido<ResultadoDeAjusteDeCuenta>()
     apiPostMock.mockReturnValue(pendiente.promesa)
