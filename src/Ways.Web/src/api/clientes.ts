@@ -58,6 +58,9 @@ export const FILTROS_DE_CLIENTES_VACIOS: FiltrosDeClientes = {
 
 export type ConsultaDeClientes = ConsultaDePadron<FiltrosDeClientes, ColumnaOrdenableDeClientes>
 
+/** Cuerpo de `POST /api/clientes/rapido`. */
+export type AltaRapidaDeCliente = { nombre: string; telefono: string | null; domicilio: string | null }
+
 export const clienteDeClientes = {
   /** El padrón: filtra, ordena y pagina en el servidor. */
   listarGrilla: (consulta: ConsultaDeClientes) =>
@@ -72,6 +75,8 @@ export const clienteDeClientes = {
   },
   obtener: (id: number) => api.get<ClienteListado>(`/clientes/${id}`),
   crear: (datos: AltaCliente) => api.post<ClienteListado>('/clientes', datos),
+  /** Alta del POS: solo nombre, teléfono y domicilio; el servidor fija el resto y el cliente nace sin cuenta corriente. */
+  crearRapido: (datos: AltaRapidaDeCliente) => api.post<ClienteListado>('/clientes/rapido', datos),
   actualizar: (id: number, datos: EdicionCliente) => api.put<ClienteListado>(`/clientes/${id}`, datos),
   eliminar: (id: number) => api.delete(`/clientes/${id}`),
   listasDePrecioAsignables: () => api.get<ListaPrecioAsignable[]>('/listas-precio'),

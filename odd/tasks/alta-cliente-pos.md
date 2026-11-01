@@ -29,8 +29,8 @@ Hoy solo el Admin crea clientes (`POST /api/clientes` exige `GestionDeCatalogo`)
 
 ## Tareas
 
-- [ ] T1 — Backend: `POST /api/clientes/rapido` con defaults forzados y tests. Ruta: delegada (2+ archivos no triviales).
-- [ ] T2 — POS web: modal de alta rápida, selección y copia local, con tests. Ruta: delegada (2+ archivos no triviales).
+- [x] T1 — Backend: `POST /api/clientes/rapido` con defaults forzados y tests. Ruta: delegada (2+ archivos no triviales). Evidencia: build OK, Domain ValidadorDePagos 52 OK, Application.Tests 1637 OK, integración filtrada 23 OK. Commit `feat(clientes): alta rápida desde el POS…`.
+- [x] T2 — POS web: modal de alta rápida, selección y copia local, con tests. Ruta: delegada (2+ archivos no triviales). Evidencia: RED observado, tsc limpio, vitest completo 9352 OK, oxlint sin errores. Commit `feat(pos): botón Nuevo cliente…`.
 - [ ] T3 — Judgment-day, PR(s), release del POS pendiente del dueño.
 
 ## Criterios de aceptación
@@ -47,4 +47,4 @@ Hoy solo el Admin crea clientes (`POST /api/clientes` exige `GestionDeCatalogo`)
 
 ## Siguiente paso
 
-T1 y T2 en paralelo con contrato fijado.
+T3: judgment-day sobre los dos commits; ~650 líneas → dos PRs stacked-to-main (backend, luego web). Después, release del POS (bump Ways.Desktop + tag pos-v*) con OK del dueño.
