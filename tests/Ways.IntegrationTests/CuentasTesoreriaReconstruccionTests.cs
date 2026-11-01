@@ -386,31 +386,30 @@ public class CuentasTesoreriaReconstruccionTests(WaysApiFixture fixture) : IClas
     // ---- libro ----------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task ElLibroDevuelveLasFilasReconstruidasEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto()
+    public async Task LasFilasReconstruidasQuedanEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto()
     {
-        var (ctx, cuenta, _, _, _, _) = await SembrarHistorialAsync(nameof(ElLibroDevuelveLasFilasReconstruidasEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto));
+        var (ctx, cuenta, _, _, _, _) = await SembrarHistorialAsync(nameof(LasFilasReconstruidasQuedanEnOrdenDeFechaYUnRangoPosteriorAbreConElSaldoCorrecto));
         await LeerPlanAsync(await ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-11")));
-        var ruta = $"/api/reportes/tesoreria/cuentas/{cuenta}/libro";
 
-        var completo = (await ctx.Supervisor.GetFromJsonAsync<LibroDeCuenta>(ruta, OpcionesJson))!;
-        Assert.Equal(7, completo.Items.Count);
-        Assert.Equal(completo.Items.OrderBy(i => i.Fecha).Select(i => i.Id), completo.Items.Select(i => i.Id));
-        Assert.Equal([2000m, 1900m, 3900m, 3700m, 4200m, 4150m, 4130m], completo.Items.Select(i => i.Final).ToArray());
-        Assert.Equal((1000m, 4130m, 4130m), (completo.SaldoDeApertura, completo.SaldoAlCierre, completo.SaldoActual));
+        var completo = await LibroAsync(ctx, cuenta);
+        Assert.Equal(7, completo.Count);
+        Assert.Equal(completo.OrderBy(i => i.Fecha).ThenBy(i => i.Id).Select(i => i.Id), completo.Select(i => i.Id));
+        Assert.Equal([2000m, 1900m, 3900m, 3700m, 4200m, 4150m, 4130m], completo.Select(i => i.Final).ToArray());
+        Assert.Equal((1000m, 4130m), (completo[0].Inicio, completo[^1].Final));
 
         // Un rango que arranca después de las filas históricas abre con el final de la última anterior en (fecha, id).
-        var desde = Uri.EscapeDataString("2026-03-12T00:00:00-03:00");
-        var posterior = (await ctx.Supervisor.GetFromJsonAsync<LibroDeCuenta>($"{ruta}?desde={desde}", OpcionesJson))!;
-        Assert.Equal(3700m, posterior.SaldoDeApertura);
-        Assert.Equal(3, posterior.Items.Count);
-        Assert.Equal(4130m, posterior.SaldoAlCierre);
+        var desde = DateTimeOffset.Parse("2026-03-12T00:00:00-03:00");
+        var posterior = completo.Where(f => f.Fecha >= desde).ToList();
+        Assert.Equal(3700m, completo.Last(f => f.Fecha < desde).Final);
+        Assert.Equal(3, posterior.Count);
+        Assert.Equal(4130m, posterior[^1].Final);
 
-        var segundoDia = Uri.EscapeDataString("2026-03-11T00:00:00-03:00");
-        var hastaDia11 = Uri.EscapeDataString("2026-03-11T23:59:59-03:00");
-        var medio = (await ctx.Supervisor.GetFromJsonAsync<LibroDeCuenta>($"{ruta}?desde={segundoDia}&hasta={hastaDia11}", OpcionesJson))!;
-        Assert.Equal(1900m, medio.SaldoDeApertura);
-        Assert.Equal([3900m, 3700m], medio.Items.Select(i => i.Final).ToArray());
-        Assert.Equal(3700m, medio.SaldoAlCierre);
+        var segundoDia = DateTimeOffset.Parse("2026-03-11T00:00:00-03:00");
+        var hastaDia11 = DateTimeOffset.Parse("2026-03-11T23:59:59-03:00");
+        var medio = completo.Where(f => f.Fecha >= segundoDia && f.Fecha <= hastaDia11).ToList();
+        Assert.Equal(1900m, completo.Last(f => f.Fecha < segundoDia).Final);
+        Assert.Equal([3900m, 3700m], medio.Select(i => i.Final).ToArray());
+        Assert.Equal(3700m, medio[^1].Final);
     }
 
     // ---- autorización y validación -----------------------------------------------------------------

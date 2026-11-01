@@ -201,47 +201,6 @@ public sealed record DetalleDeTurno(
     DateTimeOffset? FechaRecalculo,
     int? IdEmpleadoRecalculo);
 
-// ---- stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
-// MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec tesoreria:
-// Tesorería Book Has A Read/Listing Endpoint): G3, el libro encadenado ----
-
-/// <summary>Fila de <c>GET /api/reportes/tesoreria</c> — proyección de
-/// <see cref="MovimientoTesoreria"/> SIN <c>IdTenant</c> (nunca expuesto en una respuesta, doc 09),
-/// mismo criterio "mirror the entity's real columns" que <see cref="FilaDeHistoricoDeCajas"/>. Cero
-/// derivación: <see cref="Inicio"/>/<see cref="Final"/> ya vienen calculados y persistidos por
-/// <see cref="ServicioDeTurnos"/> al cierre (design decisión 6 de stage-6-turnos-caja) — este
-/// contrato solo los transporta.
-///
-/// stage-tesoreria-por-empresa (PR5): agrega <see cref="IdEmpresa"/> (la cadena es por empresa,
-/// no por punto de venta), <see cref="NombrePuntoVenta"/> (dangling-fk-read-models: <c>null</c>
-/// tanto sin punto de venta como con uno dado de baja lógica — mismo predicado, nunca dos) y,
-/// cuando <see cref="IdPago"/> está seteado, <see cref="PagoCategoria"/>/<see cref="PagoConcepto"/>
-/// resueltos del pago de origen (para que el libro sea legible sin una segunda consulta) — ambos
-/// <c>null</c> cuando la fila no es de tipo <see cref="TipoMovimientoTesoreria.Pago"/> o el pago
-/// referenciado ya no es visible.</summary>
-public sealed record MovimientoTesoreriaListado(
-    int Id,
-    int IdEmpresa,
-    int? IdPuntoVenta,
-    string? NombrePuntoVenta,
-    DateTimeOffset Fecha,
-    TipoMovimientoTesoreria Tipo,
-    int? IdTurnoCaja,
-    [property: JsonPropertyName("idGasto")] int? IdPago,
-    [property: JsonPropertyName("gastoCategoria")] CategoriaPago? PagoCategoria,
-    [property: JsonPropertyName("gastoConcepto")] string? PagoConcepto,
-    string Concepto,
-    decimal Inicio,
-    decimal Ingreso,
-    decimal Egreso,
-    decimal Final,
-    int IdEmpleado);
-
-/// <summary>Página de <c>GET /api/reportes/tesoreria</c> — mismo shape que
-/// <see cref="PaginaDeHistoricoDeCajas"/>.</summary>
-public sealed record PaginaDeMovimientosTesoreria(
-    IReadOnlyList<MovimientoTesoreriaListado> Items, int Total, int Pagina, int Tamanio);
-
 // ---- cierre por retiro (práctica del dueño: retira el efectivo contado y deja el fondo inicial
 // en el cajón; nada se cuenta al cierre — spec arqueo-de-cierre: Cierre Por Retiro) ----
 

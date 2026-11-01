@@ -9,15 +9,12 @@ import { api } from './cliente'
 import type {
   ArticuloDeReporte,
   Comisiones,
-  CuentasDeLaEmpresa,
   Existencias,
   Granularidad,
-  LibroDeCuenta,
   LibroDeTesoreria,
   LibroIva,
   PaginaDe,
   PaginaDeHistoricoDeCajas,
-  PaginaDeMovimientosTesoreria,
   Rentabilidad,
   Reposicion,
   ResumenDePagos,
@@ -145,12 +142,6 @@ export const clienteDeReportes = {
     api.get<Comisiones>(`/reportes/comisiones${construirQueryDeBreakdownConPv(filtros)}`),
   historicoDeCajas: (filtros: FiltrosDeHistoricoDeCajas, orden: OrdenDeHistoricoDeCajas = null) =>
     api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros, orden)}`),
-  tesoreria: (filtros: FiltrosDeTesoreria, orden: OrdenDeTesoreria = null) =>
-    api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros, orden)}`),
-  cuentasDeTesoreria: (idEmpresa: number) =>
-    api.get<CuentasDeLaEmpresa>(`/reportes/tesoreria/cuentas?idEmpresa=${idEmpresa}`),
-  libroDeCuenta: (idCuenta: number, filtros: FiltrosDeLibroDeCuenta) =>
-    api.get<LibroDeCuenta>(`/reportes/tesoreria/cuentas/${idCuenta}/libro${construirQueryDeLibroDeCuenta(filtros)}`),
   libroDeTesoreria: (filtros: FiltrosDeLibroDeTesoreria) =>
     api.get<LibroDeTesoreria>(`/reportes/libro-tesoreria${construirQueryDeLibroDeTesoreria(filtros)}`),
   existencias: (idPuntoVenta: number) =>
@@ -266,81 +257,6 @@ export function construirQueryDeHistoricoDeCajas(
   return `?${parametros.toString()}`
 }
 
-/** Filtro de `GET /api/reportes/tesoreria` — `idEmpresa` es OBLIGATORIO (stage-tesoreria-por-
- * empresa, PR5: la cadena inicio/final es por empresa, doc 10 §7); `idPuntoVenta` es OPCIONAL,
- * un filtro adicional sobre esa misma cadena — a diferencia de antes de este PR, acá SÍ existe la
- * opción "Todos" (`idPuntoVenta: null`), porque mezclar empresas nunca fue el riesgo (design
- * decisión 11 protegía contra mezclar puntos de venta de la MISMA empresa, algo que ya no aplica
- * porque la cadena nunca fue por punto de venta). Un `idPuntoVenta` puntual muestra un
- * subconjunto de la cadena de la empresa, no una cadena propia. */
-export type FiltrosDeTesoreria = {
-  idEmpresa: number
-  idPuntoVenta: number | null
-  desde: string
-  hasta: string
-  pagina: number
-  tamanio: number
-}
-
-function construirQueryDeAlcanceDeTesoreria(
-  filtros: { idEmpresa: number; idPuntoVenta: number | null; desde: string; hasta: string },
-): string {
-  const parametros = new URLSearchParams()
-  parametros.set('idEmpresa', String(filtros.idEmpresa))
-  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
-  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
-  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
-  return `?${parametros.toString()}`
-}
-
-/** Claves de `orden` que acepta `GET /api/reportes/tesoreria`: una por cada columna de datos del libro. */
-export const COLUMNAS_ORDENABLES_DE_TESORERIA = [
-  'tipo',
-  'inicio',
-  'ingreso',
-  'egreso',
-  'final',
-  'concepto',
-  'puntoVenta',
-  'empleado',
-  'fecha',
-] as const
-
-export type ColumnaOrdenableDeTesoreria = (typeof COLUMNAS_ORDENABLES_DE_TESORERIA)[number]
-
-export type OrdenDeTesoreria = OrdenDeServidor<ColumnaOrdenableDeTesoreria>
-
-export function esColumnaOrdenableDeTesoreria(columna: string): columna is ColumnaOrdenableDeTesoreria {
-  return (COLUMNAS_ORDENABLES_DE_TESORERIA as readonly string[]).includes(columna)
-}
-
-/** Sin `orden` el libro llega en su orden de cadena (id ascendente). Con `orden`, cada fila conserva el
- * inicio y el final que el servidor persistió: ordenar no recalcula saldos. */
-export function construirQueryDeTesoreria(filtros: FiltrosDeTesoreria, orden: OrdenDeTesoreria = null): string {
-  const parametros = new URLSearchParams(construirQueryDeAlcanceDeTesoreria(filtros).slice(1))
-  agregarOrdenAlQuery(parametros, orden)
-  parametros.set('pagina', String(filtros.pagina))
-  parametros.set('tamanio', String(filtros.tamanio))
-  return `?${parametros.toString()}`
-}
-
-/** Filtro del libro de una cuenta de tesorería: mismos límites inclusivos y mismo offset local que el libro de efectivo. */
-export type FiltrosDeLibroDeCuenta = {
-  desde: string
-  hasta: string
-  pagina: number
-  tamanio: number
-}
-
-export function construirQueryDeLibroDeCuenta(filtros: FiltrosDeLibroDeCuenta): string {
-  const parametros = new URLSearchParams()
-  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
-  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
-  parametros.set('pagina', String(filtros.pagina))
-  parametros.set('tamanio', String(filtros.tamanio))
-  return `?${parametros.toString()}`
-}
-
 /** Filtro del libro de tesorería: `desde` y `hasta` son obligatorios y viajan como límites inclusivos del día con el offset local. */
 export type FiltrosDeLibroDeTesoreria = { idEmpresa: number; desde: string; hasta: string }
 
@@ -371,9 +287,6 @@ export const rutasDeExportacion = {
    * de Slice 3). `pagina`/`tamanio` no viajan — el export no pagina. */
   historicoDeCajas: (filtros: { idPuntoVenta: number | null; desde: string; hasta: string }) =>
     `/reportes/cajas/export${construirQueryDeAlcanceDeCajas(filtros)}&formato=xlsx`,
-  /** `desde`/`hasta` OBLIGATORIOS en `/tesoreria/export`, mismo criterio que `historicoDeCajas`. */
-  tesoreria: (filtros: { idEmpresa: number; idPuntoVenta: number | null; desde: string; hasta: string }) =>
-    `/reportes/tesoreria/export${construirQueryDeAlcanceDeTesoreria(filtros)}&formato=xlsx`,
   /** Sin `desde`/`hasta`: el stock no tiene rango, el nombre de archivo se fecha con el día del
    * servidor (mismo criterio que la ruta JSON hermana). */
   existencias: (idPuntoVenta: number) => `/reportes/stock/existencias/export?idPuntoVenta=${idPuntoVenta}&formato=xlsx`,
