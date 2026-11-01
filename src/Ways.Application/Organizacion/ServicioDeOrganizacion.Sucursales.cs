@@ -233,7 +233,7 @@ public partial class ServicioDeOrganizacion
             if (origen is not null)
             {
                 // Misma regla que la fusión: la última caja lleva los valores de su sucursal a la nueva solo donde esta
-                // no tiene los suyos, así no cambia de comportamiento más de lo necesario.
+                // no tiene los suyos; lo que se traslada también rige para las otras cajas del destino.
                 await FusionarParametrosAsync(origen.Id, destino.Id, momento, ct);
                 Marcar(origen, momento);
                 RegistrarBajaDeSucursal(origen, momento, porCascada: true);
