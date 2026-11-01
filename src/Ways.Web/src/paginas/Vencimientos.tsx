@@ -9,6 +9,7 @@ import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { useSucursales } from '../componentes/useSucursales'
 import { atributosDeCampoEntero, parsearEnteroTipeado } from '../formato/numeros'
+import { pluralizar } from '../formato/pluralizar'
 
 function formatearCantidad(valor: number): string {
   return valor.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
@@ -165,7 +166,7 @@ export function Vencimientos() {
               <>
                 <p className="text-muted small">
                   Vencimientos al {vencimientos.hoy} ({vencimientos.zonaHoraria}) — horizonte de alerta:{' '}
-                  {vencimientos.diasDeAlerta} día(s).
+                  {pluralizar(vencimientos.diasDeAlerta, 'día')}.
                 </p>
                 <div className="table-responsive">
                   <table className="table table-sm table-striped table-bordered align-middle">

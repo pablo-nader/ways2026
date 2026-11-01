@@ -244,3 +244,35 @@ public sealed record ResultadoDeResolucionConEscalones(
     ResultadoDeResolucion Resultado,
     IReadOnlyList<EscalonDeCantidad> Escalones,
     IReadOnlyList<EscalonDeFamilia>? EscalonesDeFamilia = null);
+
+/// <summary>Cuerpo de <c>POST /api/ofertas/vigentes</c>: las ofertas vivas de cada artículo pedido, sin mirar la
+/// cantidad. <see cref="IdsArticulos"/> lleva de 1 a 200 ids positivos sin repetir (400 <c>ids_articulos_requeridos</c>,
+/// <c>ids_articulos_excedidos</c>, <c>ids_articulos_invalidos</c>); <see cref="IdEmpresa"/> es la del punto de venta y
+/// filtra como en <c>/resolver</c> (las ofertas de otra empresa no entran; las de todo el tenant sí). Con
+/// <see cref="IdListaPrecio"/> solo entran las ofertas que apuntan a esa lista o a todas; sin ella la lista no
+/// restringe. <see cref="Momento"/> ausente es "ahora"; fecha, hora y día se evalúan en la hora local del servidor,
+/// igual que la resolución.</summary>
+public sealed record SolicitudDeVigentes(
+    IReadOnlyList<int>? IdsArticulos,
+    int IdEmpresa,
+    int? IdListaPrecio = null,
+    DateTimeOffset? Momento = null);
+
+/// <summary>Una oferta viva de un artículo. <see cref="Alcance"/> es <c>Articulo</c>, <c>Grupo</c>, <c>Categoria</c> o
+/// <c>Familia</c>. <see cref="CantidadMinima"/> y <see cref="SoloMultiplos"/> dicen la condición de cantidad para que el
+/// llamador la muestre; el beneficio es uno solo de <see cref="Porcentaje"/>, <see cref="PrecioUnitario"/> o
+/// <see cref="ImporteFijo"/>.</summary>
+public sealed record OfertaVigenteDto(
+    int IdOferta,
+    string Nombre,
+    string Alcance,
+    decimal? CantidadMinima,
+    bool SoloMultiplos,
+    decimal? Porcentaje,
+    decimal? PrecioUnitario,
+    decimal? ImporteFijo,
+    DateOnly? FechaHasta,
+    bool Acumulable);
+
+/// <summary>Las ofertas vivas de un artículo, ordenadas por prioridad descendente y luego por id.</summary>
+public sealed record OfertasVigentesDeArticulo(int IdArticulo, IReadOnlyList<OfertaVigenteDto> Ofertas);

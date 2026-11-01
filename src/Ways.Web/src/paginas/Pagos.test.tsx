@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pagos } from './Pagos'
 import type {
@@ -907,14 +907,127 @@ describe('Pagos (administración) — pago de un pago de personal', () => {
     expect(delPago).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Eliminar pago Pago de personal: Ana' })).toBeDisabled()
     const filaDelPago = delPago.closest('tr') as HTMLElement
-    expect(within(filaDelPago).getByRole('button', { name: 'Vincular a compra' })).toBeDisabled()
-    expect(within(filaDelPago).getByRole('button', { name: 'Crear compra' })).toBeDisabled()
+    expect(within(filaDelPago).getByRole('button', { name: 'Reasignar' })).toBeEnabled()
+    expect(within(filaDelPago).queryByRole('button', { name: 'Vincular a compra' })).not.toBeInTheDocument()
+    expect(within(filaDelPago).queryByRole('button', { name: 'Crear compra' })).not.toBeInTheDocument()
 
     expect(screen.getByRole('button', { name: 'Editar pago Alquiler' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Eliminar pago Alquiler' })).toBeEnabled()
     const filaComun = screen.getByRole('button', { name: 'Editar pago Alquiler' }).closest('tr') as HTMLElement
+    expect(within(filaComun).queryByRole('button', { name: 'Reasignar' })).not.toBeInTheDocument()
     expect(within(filaComun).getByRole('button', { name: 'Vincular a compra' })).toBeEnabled()
     expect(within(filaComun).getByRole('button', { name: 'Crear compra' })).toBeEnabled()
+  })
+})
+
+describe('Pagos (administración) — reasignar un pago de sueldo', () => {
+  const personal = [
+    { id: 5, nombre: 'Beto' },
+    { id: 9, nombre: 'Ana' },
+  ]
+
+  function montar() {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/personal')) return Promise.resolve({ items: personal, total: 2, pagina: 1, tamanio: 200 })
+      if (ruta === '/empresas') return Promise.resolve([empresaFixture()])
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo, medioCuentaCorriente])
+      if (ruta === '/catalogos/areas') return Promise.resolve([areaFixture()])
+      if (ruta === '/proveedores/opciones') return Promise.resolve([proveedorFixture()])
+      if (ruta.startsWith('/pagos/administracion'))
+        return Promise.resolve(
+          paginaFixture([pagoFixture({ id: 40, concepto: 'Pago de personal: Ana', idMovimientoPersonal: 9, importe: 2500 })]),
+        )
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    renderPagos()
+  }
+
+  function llamadasAlListado() {
+    return apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith('/pagos/administracion')).length
+  }
+
+  async function abrirYElegir(nombre: string) {
+    await userEvent.click(await screen.findByRole('button', { name: 'Reasignar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Reasignar pago' })
+    // web-test-data-gates: se espera la opción (el dato), no el <select> que nace vacío.
+    await within(dialogo).findByRole('option', { name: nombre })
+    await userEvent.selectOptions(within(dialogo).getByLabelText('Empleado'), nombre)
+    return dialogo
+  }
+
+  it('muestra el pago y los empleados, envía el elegido, cierra y relee el listado', async () => {
+    montar()
+    apiPostMock.mockResolvedValue({ idPago: 40, idPersonalAnterior: 9, idPersonal: 5, concepto: 'Pago de personal: Beto' })
+
+    const dialogo = await abrirYElegir('Beto')
+    expect(within(dialogo).getByText('Pago de personal: Ana')).toBeInTheDocument()
+    const antes = llamadasAlListado()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Reasignar' }))
+
+    expect(await screen.findByText('Pago reasignado: Pago de personal: Beto.')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion/40/reasignar-personal', { idPersonal: 5 })
+    expect(screen.queryByRole('dialog', { name: 'Reasignar pago' })).not.toBeInTheDocument()
+    await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+  })
+
+  it('un rechazo cierto muestra el mensaje del servidor y deja el modal abierto', async () => {
+    montar()
+    const { ErrorApi } = await import('../api/cliente')
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'reasignacion_al_mismo_personal', 'El pago ya es de ese empleado.'))
+
+    const dialogo = await abrirYElegir('Ana')
+    const antes = llamadasAlListado()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Reasignar' }))
+
+    expect(await within(dialogo).findByText('El pago ya es de ese empleado.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Reasignar pago' })).toBeInTheDocument()
+    expect(llamadasAlListado()).toBe(antes)
+    expect(within(dialogo).getByRole('button', { name: 'Reasignar' })).toBeEnabled()
+  })
+
+  it('un resultado incierto cierra el modal y relee el listado', async () => {
+    montar()
+    const { ErrorApi } = await import('../api/cliente')
+    apiPostMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar.'))
+
+    const dialogo = await abrirYElegir('Beto')
+    const antes = llamadasAlListado()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Reasignar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reasignar pago' })).not.toBeInTheDocument())
+    await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+    expect(screen.getByText(/No se pudo confirmar el resultado/)).toBeInTheDocument()
+  })
+
+  it('un doble click en el mismo tick envía una sola solicitud y deja el modal inerte', async () => {
+    montar()
+    let resolver!: (v: unknown) => void
+    apiPostMock.mockReturnValue(new Promise((r) => (resolver = r)))
+
+    const dialogo = await abrirYElegir('Beto')
+    const boton = within(dialogo).getByRole('button', { name: 'Reasignar' })
+    fireEvent.click(boton)
+    fireEvent.click(boton)
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(within(dialogo).getByLabelText('Empleado')).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+
+    await act(async () => {
+      resolver({ idPago: 40, idPersonalAnterior: 9, idPersonal: 5, concepto: 'Pago de personal: Beto' })
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reasignar pago' })).not.toBeInTheDocument())
+  })
+
+  it('no habilita Reasignar hasta elegir un empleado', async () => {
+    montar()
+    await userEvent.click(await screen.findByRole('button', { name: 'Reasignar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Reasignar pago' })
+    await within(dialogo).findByRole('option', { name: 'Beto' })
+    expect(within(dialogo).getByRole('button', { name: 'Reasignar' })).toBeDisabled()
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 })
 
@@ -1191,5 +1304,68 @@ describe('Pagos (administración) — edición y baja', () => {
     await act(async () => {
       resolver(undefined)
     })
+  })
+})
+
+describe('Pagos (administración) — enlace profundo ?id=N', () => {
+  function Ubicacion() {
+    return <output data-testid="ubicacion">{useLocation().search}</output>
+  }
+
+  function renderConId(ruta: string) {
+    return render(
+      <MemoryRouter initialEntries={[ruta]}>
+        <Pagos />
+        <Ubicacion />
+      </MemoryRouter>,
+    )
+  }
+
+  function mockearConPago(respuesta: () => Promise<PagoDeAdministracionListado>) {
+    mockearRutas({ pagina: paginaFixture([]) })
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) => (/^\/pagos\/administracion\/\d+$/.test(ruta) ? respuesta() : base(ruta)))
+  }
+
+  it('con ?id abre el modal de edición de ese pago y cerrarlo quita el parámetro', async () => {
+    mockearConPago(() => Promise.resolve(pagoFixture({ id: 5, concepto: 'Alquiler enlazado' })))
+    renderConId('/pagos?id=5')
+
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.getByLabelText('Concepto')).toHaveValue('Alquiler enlazado')
+    expect(apiGetMock).toHaveBeenCalledWith('/pagos/administracion/5')
+    expect(screen.getByTestId('ubicacion')).toHaveTextContent('?id=5')
+
+    await userEvent.click(d.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('ubicacion').textContent).toBe('')
+  })
+
+  it('si el pago no existe muestra el mensaje del servidor, no abre el modal y quita el parámetro', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    mockearConPago(() => Promise.reject(new (ErrorApi as unknown as new (e: number, c: string, m: string) => Error)(404, 'pago_no_encontrado', 'El pago no existe.')))
+    renderConId('/pagos?id=999')
+
+    expect(await screen.findByText('El pago no existe.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('ubicacion').textContent).toBe(''))
+  })
+
+  it('un pago originado en personal no se abre: explica el motivo', async () => {
+    mockearConPago(() => Promise.resolve(pagoFixture({ id: 6, concepto: 'Pago de personal: Ana', idMovimientoPersonal: 3 })))
+    renderConId('/pagos?id=6')
+
+    expect(await screen.findByText('Nació de un movimiento de personal y no se modifica por separado.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+  })
+
+  it('un identificador que no es entero positivo se ignora sin pedir nada', async () => {
+    mockearRutas({})
+    renderConId('/pagos?id=abc')
+
+    await screen.findByRole('option', { name: 'Empresa Demo SA' })
+    expect(apiGetMock.mock.calls.some((c) => /^\/pagos\/administracion\/\w+$/.test(c[0] as string))).toBe(false)
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
   })
 })

@@ -1074,7 +1074,14 @@ public class ServicioDeVentas(
     /// cajero vea que la anulación surtió efecto sin salir de la pantalla. Tenant scoping es
     /// implícito (mismo criterio que <see cref="ListarAsync"/>): <see cref="IWaysDbContext"/> ya
     /// filtra por tenant, acá no hace falta un <c>idTenant</c> explícito.</summary>
-    public async Task<IReadOnlyList<VentaDeTurnoListado>> ListarPorTurnoAsync(int idTurno, CancellationToken ct = default)
+    public Task<IReadOnlyList<VentaDeTurnoListado>> ListarPorTurnoAsync(int idTurno, CancellationToken ct = default) =>
+        LeerVentasDelTurnoAsync(db, idTurno, ct);
+
+    /// <summary>La proyección de <see cref="ListarPorTurnoAsync"/> para cualquier turno, abierto o cerrado: el detalle
+    /// de un turno cerrado (Caja Z) la reusa tal cual, así los dos listados no pueden diferir. El nombre de cada medio
+    /// sale del catálogo aunque esté dado de baja (los cobros son historia: el medio realmente usado conserva su nombre).</summary>
+    public static async Task<IReadOnlyList<VentaDeTurnoListado>> LeerVentasDelTurnoAsync(
+        IWaysDbContext db, int idTurno, CancellationToken ct = default)
     {
         var crudos = await db.ComprobantesVenta
             .Where(c => c.IdTurnoCaja == idTurno)
@@ -1114,7 +1121,7 @@ public class ServicioDeVentas(
             .ToDictionaryAsync(f => f.IdComprobanteVenta, f => f.Estado, ct);
 
         var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
-        var nombrePorMedioPago = await db.MediosPago.AsNoTracking()
+        var nombrePorMedioPago = await db.MediosPago.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
             .Where(m => idsMedioPago.Contains(m.Id))
             .ToDictionaryAsync(m => m.Id, m => m.Nombre, ct);
 

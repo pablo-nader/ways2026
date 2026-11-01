@@ -90,9 +90,6 @@ public class OrdenDeListadoTests
         AssertClaves(
             ServicioDeConsultaDeAuditoria.ClavesDeOrden.Keys, "fecha", "accion", "entidad", "idEntidad", "actor", "puntoVenta");
         AssertClaves(
-            ServicioDeTesoreria.ClavesDeOrden.Keys,
-            "tipo", "inicio", "ingreso", "egreso", "final", "concepto", "puntoVenta", "empleado", "fecha");
-        AssertClaves(
             ServicioDeReportesDeArticulos.ClavesDeOrdenDeArticulos.Keys,
             "codigo", "nombre", "area", "categoria", "marca", "grupo", "proveedor", "estado");
     }
@@ -108,9 +105,6 @@ public class OrdenDeListadoTests
             Assert.Equal(columna, OrdenDeListado.Interpretar(clave, null, ServicioDeConsultaDeAuditoria.ClavesDeOrden)!.Value.Columna);
         }
 
-        Assert.Equal(
-            ColumnaDeOrdenDeTesoreria.PuntoVenta,
-            OrdenDeListado.Interpretar("puntoVenta", null, ServicioDeTesoreria.ClavesDeOrden)!.Value.Columna);
         Assert.Equal(
             ColumnaDeOrdenDeArticulosDeReporte.Proveedor,
             OrdenDeListado.Interpretar("proveedor", null, ServicioDeReportesDeArticulos.ClavesDeOrdenDeArticulos)!.Value.Columna);

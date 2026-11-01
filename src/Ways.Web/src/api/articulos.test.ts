@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('./cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...args),
     post: (...args: unknown[]) => apiPostMock(...args),
     put: (...args: unknown[]) => apiPutMock(...args),
+    delete: (...args: unknown[]) => apiDeleteMock(...args),
   },
 }))
 
@@ -239,5 +241,31 @@ describe('clienteDeArticulos.sugerenciaDePrecio', () => {
     clienteDeArticulos.sugerenciaDePrecio(31, 4)
 
     expect(apiGetMock).toHaveBeenCalledExactlyOnceWith('/articulos/31/sugerencia-precio?idEmpresa=4')
+  })
+})
+
+describe('clienteDeArticulos — edición de códigos de proveedor', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+  })
+
+  it('codigosProveedor hace GET a la colección del artículo', () => {
+    clienteDeArticulos.codigosProveedor(7)
+
+    expect(apiGetMock).toHaveBeenCalledExactlyOnceWith('/articulos/7/codigos-proveedor')
+  })
+
+  it('editarCodigoProveedor hace PUT al código con { codigo }', () => {
+    clienteDeArticulos.editarCodigoProveedor(7, 12, 'ABC-1')
+
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/articulos/7/codigos-proveedor/12', { codigo: 'ABC-1' })
+  })
+
+  it('eliminarCodigoProveedor hace DELETE al código', () => {
+    clienteDeArticulos.eliminarCodigoProveedor(7, 12)
+
+    expect(apiDeleteMock).toHaveBeenCalledExactlyOnceWith('/articulos/7/codigos-proveedor/12')
   })
 })

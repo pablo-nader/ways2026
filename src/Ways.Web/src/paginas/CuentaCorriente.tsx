@@ -38,6 +38,7 @@ import { guardarPuntoVentaSeleccionado, leerPuntoVentaGuardado, ModalPagoACuenta
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { pluralizar } from '../formato/pluralizar'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -971,7 +972,7 @@ function PantallaCuentaCorriente({
             setAviso(
               reliquidacionEsNoOp(resultado)
                 ? 'No había nada para actualizar.'
-                : `Precios actualizados: ${formatearMoneda(resultado.delta)} sobre ${resultado.idsMovimientosCubiertos.length} consumo(s).${resultado.hayMas ? ' Quedan más consumos pendientes — corré la reliquidación de nuevo.' : ''}`,
+                : `Precios actualizados: ${formatearMoneda(resultado.delta)} sobre ${pluralizar(resultado.idsMovimientosCubiertos.length, 'consumo')}.${resultado.hayMas ? ' Quedan más consumos pendientes — corré la reliquidación de nuevo.' : ''}`,
             )
             cargarEstado()
           }}

@@ -14,6 +14,7 @@ import {
 import { puedeGestionarCatalogos } from '../../api/tipos'
 import { AuthContext } from '../../auth/AuthContext'
 import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
+import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
 
 type Props = {
   idArticulo: number
@@ -72,7 +73,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
   const ocupadoRef = useRef(false)
   /** Adónde vuelve el foco si "Quitar imagen" desaparece con la confirmación: la sección vive en el portal del
    * `Modal`, donde la puerta no encuentra una `Box` a la que subir. */
-  const tituloRef = useRef<HTMLElement>(null)
+  const tituloRef = useRef<HTMLHeadingElement>(null)
   const interruptorDeVentaRef = useRef<HTMLInputElement>(null)
   const interruptorOnlineRef = useRef<HTMLInputElement>(null)
   /** Interruptor al que le toca recuperar el foco cuando termine de habilitarse: deshabilitado durante su escritura, el
@@ -256,9 +257,9 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
 
   return (
     <section aria-labelledby="art-disponibilidad-titulo">
-      <strong id="art-disponibilidad-titulo" ref={tituloRef} tabIndex={-1} className="text-muted small text-uppercase">
+      <TituloDeSeccion id="art-disponibilidad-titulo" ref={tituloRef} tabIndex={-1}>
         Venta y tienda online
-      </strong>
+      </TituloDeSeccion>
 
       <div className="form-check form-switch mt-2">
         <input

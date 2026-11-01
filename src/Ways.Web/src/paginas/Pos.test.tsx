@@ -8185,7 +8185,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
-      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta\(s\) sin sincronizar/)).toBeInTheDocument()
+      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta sin sincronizar/)).toBeInTheDocument()
       expect(screen.queryByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
     })
@@ -8215,7 +8215,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
-      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta necesita atención/)).toBeInTheDocument()
+      expect(await screen.findByText(/No se puede cerrar la caja: 1 venta necesita atención\./)).toBeInTheDocument()
       expect(screen.queryByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
     })

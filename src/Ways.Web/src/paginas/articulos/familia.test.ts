@@ -3,8 +3,14 @@ import type { FamiliaDetalle, FamiliaListado, ValoresCompartidosDeLaFamilia } fr
 import {
   advertenciaDeUnion,
   altaConFamiliaLista,
+  avisoDeNominalDistintoDeFamilia,
   avisoDeValoresDistintos,
+  cambioDeNominalDeDatos,
   camposCompartidosModificados,
+  CLAVES_DE_COMPOSICION,
+  composicionDistintaDeLaFamilia,
+  desglosaCostoLaFamilia,
+  textoDeCambioDeNominal,
   camposNombradosEnMensaje,
   CAMPOS_COMPARTIDOS,
   CAMPOS_PROPIOS,
@@ -630,5 +636,88 @@ describe('unión de un artículo existente a una familia', () => {
     )
     expect(motivoDeFamiliaNoElegible(detalleFixture({ articulos: [], valores: null }))).toContain('no tiene artículos vivos')
     expect(motivoDeFamiliaNoElegible(detalleFixture({ valores: null }))).toContain('no tiene artículos vivos')
+  })
+})
+
+
+describe('composición del costo con la marca de desglose', () => {
+  const COMPOSICION = ['costoLista', 'costoListaPor', 'costoListaIncluyeIva', 'descuentoProveedor', 'impuestoInterno']
+
+  it('CLAVES_DE_COMPOSICION son las cinco del contrato, todas compartidas sin la marca', () => {
+    expect([...CLAVES_DE_COMPOSICION]).toEqual(COMPOSICION)
+    expect(CAMPOS_COMPARTIDOS.map((c) => c.clave)).toEqual(expect.arrayContaining(COMPOSICION))
+  })
+
+  it.each([
+    ['costoLista', { costoLista: '120' }],
+    ['costoListaPor', { costoListaPor: 'Bulto' as const }],
+    ['costoListaIncluyeIva', { costoListaIncluyeIva: false }],
+    ['descuentoProveedor', { descuentoProveedor: '5' }],
+    ['impuestoInterno', { impuestoInterno: '9' }],
+  ])('sin la marca, %s modificado es un campo compartido; con la marca no lo es', (clave, cambio) => {
+    expect(camposCompartidosModificados(formulario(), formulario(cambio)).map((c) => c.clave)).toEqual([clave])
+    expect(camposCompartidosModificados(formulario(), formulario(cambio), true)).toEqual([])
+  })
+
+  it('con la marca los demás campos compartidos y el costo nominal siguen contando', () => {
+    const editado = formulario({ costoLista: '120', idArea: 50, unidadesPorBulto: '12', costoNominal: '1' })
+
+    expect(camposCompartidosModificados(formulario(), editado, true).map((c) => c.clave)).toEqual([
+      'idArea',
+      'unidadesPorBulto',
+      'costoNominal',
+    ])
+  })
+
+  it('composicionDistintaDeLaFamilia lista solo las claves de composición que difieren de la referencia', () => {
+    const valores = valoresFixture()
+
+    expect(composicionDistintaDeLaFamilia(formulario(), valores)).toEqual([])
+    expect(composicionDistintaDeLaFamilia(formulario({ idArea: 50, costoNominal: '1' }), valores)).toEqual([])
+    expect(
+      composicionDistintaDeLaFamilia(formulario({ impuestoInterno: '9', descuentoProveedor: '10.0' }), valores).map((c) => c.clave),
+    ).toEqual(['impuestoInterno'])
+  })
+
+  it('desglosaCostoLaFamilia exige el detalle de ESA familia con la marca', () => {
+    const con = detalleFixture({ id: 7, permiteDesglosarCosto: true })
+
+    expect(desglosaCostoLaFamilia(7, con)).toBe(true)
+    expect(desglosaCostoLaFamilia(8, con)).toBe(false)
+    expect(desglosaCostoLaFamilia('', con)).toBe(false)
+    expect(desglosaCostoLaFamilia(7, null)).toBe(false)
+    expect(desglosaCostoLaFamilia(7, detalleFixture({ id: 7, permiteDesglosarCosto: false }))).toBe(false)
+    expect(desglosaCostoLaFamilia(7, detalleFixture({ id: 7 }))).toBe(false)
+  })
+})
+
+describe('cambio de costo nominal', () => {
+  it('cambioDeNominalDeDatos lee los dos importes, también un lado sin valor', () => {
+    expect(cambioDeNominalDeDatos({ costoNominalAnterior: 100, costoNominalNuevo: 120 })).toEqual({ anterior: 100, nuevo: 120 })
+    expect(cambioDeNominalDeDatos({ costoNominalAnterior: null, costoNominalNuevo: 120 })).toEqual({ anterior: null, nuevo: 120 })
+  })
+
+  it.each([
+    [undefined],
+    [{}],
+    [{ costoNominalAnterior: 100 }],
+    [{ costoNominalAnterior: '100', costoNominalNuevo: 120 }],
+    [{ costoNominalAnterior: 100, costoNominalNuevo: Number.NaN }],
+  ])('cambioDeNominalDeDatos devuelve null con datos incompletos o mal formados (%j)', (datos) => {
+    expect(cambioDeNominalDeDatos(datos as Record<string, unknown> | undefined)).toBeNull()
+  })
+
+  it('textoDeCambioDeNominal dice los dos importes y "sin costo" para el que falta', () => {
+    expect(textoDeCambioDeNominal({ anterior: 100, nuevo: 120 })).toBe('El costo nominal pasa de $ 100,00 a $ 120,00')
+    expect(textoDeCambioDeNominal({ anterior: null, nuevo: 120 })).toBe('El costo nominal pasa de sin costo a $ 120,00')
+  })
+
+  it('avisoDeNominalDistintoDeFamilia muestra el de la familia y el del pedido; sin datos cae al texto del servidor', () => {
+    const aviso = avisoDeNominalDistintoDeFamilia({ costoNominalDeLaFamilia: 100, costoNominalDelPedido: 95.5 }, 'x')
+
+    expect(aviso).toContain('$ 95,50')
+    expect(aviso).toContain('$ 100,00')
+    expect(aviso).toContain('El artículo no se creó.')
+    expect(avisoDeNominalDistintoDeFamilia(undefined, 'Texto del servidor.')).toBe('Texto del servidor. El artículo no se creó.')
   })
 })

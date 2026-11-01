@@ -619,74 +619,14 @@ public static class ReportesEndpoints
             "apertura, cierre, esperado, declarado, diferencia) y direccion (ascendente, descendente) ordenan " +
             "todo el conjunto filtrado antes de paginar; la exportación conserva su orden; 400 si no son válidos.");
 
-        // stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
-        // MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec
-        // tesoreria: Tesorería Book Has A Read/Listing Endpoint): gate heredado del grupo, sin
-        // política propia. stage-tesoreria-por-empresa (PR5): idEmpresa pasa a ser el filtro
-        // OBLIGATORIO (ADR-8, la cadena es por empresa, doc 10 §7); idPuntoVenta es un filtro
-        // opcional adicional sobre esa misma cadena — muestra un SUBCONJUNTO, nunca una cadena
-        // propia (design decisión 11 sigue vigente: nunca se mezclan dos empresas).
-        grupo.MapGet("/tesoreria", (
-            ServicioDeTesoreria servicio, int idEmpresa, int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
-            int? pagina, int? tamanio, string? orden, string? direccion, CancellationToken ct) =>
-            servicio.ListarAsync(
-                idEmpresa, idPuntoVenta, desde, hasta, pagina: pagina ?? 1, tamanio: tamanio ?? 25,
-                orden: orden, direccion: direccion, ct: ct))
+        // Libro único de tesorería (efectivo y una columna por cuenta), calculado desde turnos, pagos y ajustes. Mismo gate que el
+        // resto de los reportes de tesorería; el rango es obligatorio y de hasta 366 días.
+        grupo.MapGet("/libro-tesoreria", (
+            ServicioDeLibroDeTesoreria servicio, int idEmpresa, DateTimeOffset desde, DateTimeOffset hasta, CancellationToken ct) =>
+            servicio.ObtenerAsync(idEmpresa, desde, hasta, ct))
         .WithSummary(
-            "Libro de tesorería encadenado de una empresa, ordenado por id (nunca por fecha) salvo que se " +
-            "pida otro orden: orden (tipo, inicio, ingreso, egreso, final, concepto, puntoVenta, empleado, " +
-            "fecha) y direccion (ascendente, descendente) ordenan todo el conjunto filtrado antes de " +
-            "paginar, 400 si no son válidos; cada fila conserva su inicio/final persistidos. Cero " +
-            "derivación, cada fila ya trae su inicio/final persistidos al cierre. idPuntoVenta es " +
-            "un filtro opcional sobre el mismo libro: el subconjunto resultante no se encadena " +
-            "entre sí (la cadena completa es por empresa).");
-
-        // Cuentas digitales de tesorería (doc 10 §7): lectura bajo el mismo gate que el libro de efectivo (Supervisor y
-        // Admin), distinto del ABM de cuentas, que es solo Admin. Sin export: queda para una tarea aparte.
-        grupo.MapGet("/tesoreria/cuentas", (
-            ServicioDeLibroDeCuentas servicio, int idEmpresa, CancellationToken ct) =>
-            servicio.ListarCuentasAsync(idEmpresa, ct))
-        .WithSummary(
-            "Cuentas vivas de una empresa con su saldo actual y la fecha de su último movimiento, más los medios " +
-            "electrónicos activos que no acreditan en ninguna cuenta.");
-
-        grupo.MapGet("/tesoreria/cuentas/{idCuenta:int}/libro", (
-            ServicioDeLibroDeCuentas servicio, int idCuenta, DateTimeOffset? desde, DateTimeOffset? hasta,
-            int? pagina, int? tamanio, CancellationToken ct) =>
-            servicio.ObtenerLibroAsync(idCuenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary(
-            "Libro de una cuenta ordenado por id (nunca por fecha), con el saldo de apertura del rango y los " +
-            "totales del rango por tipo de movimiento.");
-
-        // Sibling declarado inmediatamente después de su ruta fuente (design: Data Flow) — hereda
-        // LecturaDeReportes por co-locación. `desde`/`hasta` son OBLIGATORIOS acá (mismo criterio
-        // que /api/ventas/export): un export es por definición un rango acotado, y el nombre de
-        // archivo determinístico necesita ambas fechas.
-        grupo.MapGet("/tesoreria/export", async (
-            ServicioDeTesoreria servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
-            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros,
-            int idEmpresa, int? idPuntoVenta, DateTimeOffset desde, DateTimeOffset hasta, string formato, CancellationToken ct) =>
-        {
-            FormatoDeExportacion.Parsear(formato);
-
-            var filas = await servicio.ListarParaExportacionAsync(
-                idEmpresa, idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct);
-
-            var zonaId = await AlcanceDeListadoHttp.ResolverZonaParaEmpresaAsync(parametros, idEmpresa, idPuntoVenta, ct);
-            var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
-            var (desdeFecha, hastaFecha) = FechaDelRango.De(desde, hasta);
-
-            var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, idEmpresa.ToString(), idPuntoVenta is { } pv ? $"PV {pv}" : null, desdeFecha, hastaFecha, zonaId);
-            var tabla = ExportacionDeCaja.De(filas, ctx, zona);
-
-            var bytes = exportador.Generar(tabla);
-            var alcance = idPuntoVenta is { } id ? $"pv{id}" : $"empresa{idEmpresa}";
-            var nombre = NombreDeArchivo.Construir("tesoreria", alcance, desdeFecha, hastaFecha);
-
-            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
-        })
-        .WithSummary("Export XLSX de /tesoreria: mismos parámetros y figuras, mismo orden de cadena.");
+            "Libro de tesorería de una empresa: una fila por cierre de caja, pago y ajuste manual, con el efectivo y el importe en cada " +
+            "cuenta, más el saldo anterior al rango y el saldo actual. desde y hasta son obligatorios (inclusive, hasta 366 días).");
 
         // stage-11-exportacion-reportes, Slice 5b (spec historico-de-cajas: G2 And G3 Endpoints
         // Have Export Siblings Equal To Their JSON): a diferencia del resto de exports de esta

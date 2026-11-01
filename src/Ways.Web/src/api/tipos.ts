@@ -973,7 +973,15 @@ export type HistorialDePrecio = { id: number; precio: number; vigenteDesde: stri
 // menor id.
 
 /** Fila de `GET /api/familias`: `cantidadArticulos` cuenta solo los miembros vivos. */
-export type FamiliaListado = { id: number; nombre: string; activo: boolean; cantidadArticulos: number }
+export type FamiliaListado = {
+  id: number
+  nombre: string
+  activo: boolean
+  cantidadArticulos: number
+  /** Con la marca, cada miembro tiene su propia composición del costo; el costo nominal sigue siendo el mismo. El
+   * servidor siempre lo manda; ausente se lee como `false`. */
+  permiteDesglosarCosto?: boolean
+}
 
 /** Miembro vivo de una familia. `idMarca` viaja `null` cuando el artículo no tiene marca o la suya está
  * dada de baja: el servidor nunca expone un id colgante. */
@@ -1018,19 +1026,29 @@ export type FamiliaDetalle = {
   id: number
   nombre: string
   activo: boolean
+  /** Ver `FamiliaListado.permiteDesglosarCosto`. */
+  permiteDesglosarCosto?: boolean
   articulos: MiembroDeFamilia[]
   valores: ValoresCompartidosDeLaFamilia | null
   precios: EstadoDePreciosDeLista[]
 }
 
-/** Cuerpo de `PUT /api/familias/{id}`: lo único de una familia que se edita. Los dos campos son obligatorios: el
- * nombre se guarda sin espacios en los extremos y es único entre las familias vivas sin distinguir mayúsculas. */
-export type EdicionFamilia = { nombre: string; activo: boolean }
+/** Cuerpo de `PUT /api/familias/{id}`: lo que de una familia se edita. `nombre` y `activo` son obligatorios: el
+ * nombre se guarda sin espacios en los extremos y es único entre las familias vivas sin distinguir mayúsculas.
+ * `permiteDesglosarCosto` ausente conserva la marca; `false` la apaga solo si todos los miembros tienen la misma
+ * composición del costo (409 `composicion_distinta`) y toma un lock exclusivo aunque ya esté apagada, así que solo
+ * se manda cuando el usuario la cambió. */
+export type EdicionFamilia = { nombre: string; activo: boolean; permiteDesglosarCosto?: boolean }
 
 /** Cuerpo de `POST /api/familias/previsualizacion`: qué pasaría si se agruparan `idsArticulos` con
  * `idArticuloReferencia` como modelo. Se admiten hasta 100 destinos además de la referencia. Si la referencia ya es
  * miembro de una familia, agrupar sería sumar los artículos a ESA familia; si no, crear una nueva. */
-export type SolicitudDePrevisualizacion = { idArticuloReferencia: number; idsArticulos: number[] }
+export type SolicitudDePrevisualizacion = {
+  idArticuloReferencia: number
+  idsArticulos: number[]
+  /** Solo cuenta si la referencia no tiene familia: con la marca, `campos` no incluye la composición del costo. */
+  permiteDesglosarCosto?: boolean
+}
 
 /** El cambio de UNA lista fija para un artículo que se alinea: su estado de precios actual y el de la referencia. */
 export type CambioDePreciosDeLista = { idListaPrecio: number; actual: EstadoDePrecios; nuevo: EstadoDePrecios }
@@ -1064,7 +1082,7 @@ export type PrevisualizacionDeAgrupacion = {
 
 /** Cuerpo de `POST /api/familias`: crea la familia con la referencia, que es siempre miembro aunque no figure en
  * `idsArticulos`, y los artículos, que se alinean con ella. Ninguno puede pertenecer ya a una familia. */
-export type AltaDeFamilia = { nombre: string; idArticuloReferencia: number; idsArticulos: number[] }
+export type AltaDeFamilia = { nombre: string; idArticuloReferencia: number; idsArticulos: number[]; permiteDesglosarCosto?: boolean }
 
 /** Cuerpo de `POST /api/familias/{id}/articulos`: suma artículos a la familia, alineados con su referencia. */
 export type AgregadoDeArticulos = { idsArticulos: number[] }
@@ -1114,6 +1132,7 @@ export type OfertaListado = {
   horaHasta: string | null
   diasSemana: number[]
   cantidadMinima: number | null
+  soloMultiplos: boolean
   precioUnitario: number | null
   porcentaje: number | null
   importeFijo: number | null
@@ -1141,6 +1160,7 @@ export type AltaOferta = {
   horaHasta: string | null
   diasSemana: number[] | null
   cantidadMinima: number | null
+  soloMultiplos: boolean
   precioUnitario: number | null
   porcentaje: number | null
   importeFijo: number | null
@@ -1968,50 +1988,6 @@ export type PaginaDePagosDeAdministracion = {
   tamanio: number
 }
 
-// --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de
-// `Ways.Application.Caja.Contratos`. `inicio`/`final` ya vienen calculados y persistidos al
-// cierre (design decisión 6 de stage-6-turnos-caja); este contrato solo los transporta.
-
-/** Espejo del enum `TipoMovimientoTesoreria` (Ways.Domain.Caja) — viaja como texto. */
-export type TipoMovimientoTesoreria = 'RetiroCaja' | 'Deposito' | 'Gasto' | 'Ajuste'
-
-/** Fila de `GET /api/reportes/tesoreria` — espejo de `MovimientoTesoreriaListado`, SIN
- * `idTenant` (nunca expuesto en una respuesta, doc 09). `idPuntoVenta` es `number | null` porque
- * el DTO de C# ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal
- * tipado desde antes de este PR — un pago de origen Tesoreria puede originar una fila con
- * `idPuntoVenta` presente hoy, pero el esquema siempre lo permitió nulo).
- *
- * stage-tesoreria-por-empresa (PR5): agrega `idEmpresa` (la cadena es por empresa),
- * `nombrePuntoVenta` (dangling-fk-read-models: `null` sin punto de venta o con uno dado de baja
- * lógica, mismo criterio que `nombreProveedor`/`nombreArea` de `PagoDeAdministracionListado`) y,
- * para una fila `tipo: 'Gasto'`, `gastoCategoria`/`gastoConcepto` resueltos del pago de origen. */
-export type MovimientoTesoreriaListado = {
-  id: number
-  idEmpresa: number
-  idPuntoVenta: number | null
-  nombrePuntoVenta: string | null
-  fecha: string
-  tipo: TipoMovimientoTesoreria
-  idTurnoCaja: number | null
-  idGasto: number | null
-  gastoCategoria: CategoriaPago | null
-  gastoConcepto: string | null
-  concepto: string
-  inicio: number
-  ingreso: number
-  egreso: number
-  final: number
-  idEmpleado: number
-}
-
-/** Página de `GET /api/reportes/tesoreria` — espejo de `PaginaDeMovimientosTesoreria`. */
-export type PaginaDeMovimientosTesoreria = {
-  items: MovimientoTesoreriaListado[]
-  total: number
-  pagina: number
-  tamanio: number
-}
-
 // --- Cuentas de tesorería (lectura) — espejo de `Ways.Application.Caja.ContratosDeCuentasTesoreria`.
 
 /** Espejo del enum `TipoMovimientoCuenta` (Ways.Domain.Caja) — viaja como texto PascalCase. */
@@ -2026,26 +2002,7 @@ export type TipoMovimientoCuenta =
   | 'Deposito'
   | 'Retiro'
 
-/** Cuenta de `GET /api/reportes/tesoreria/cuentas`. `fechaUltimoMovimiento` es `null` sin movimientos. */
-export type CuentaConSaldo = {
-  id: number
-  nombre: string
-  activo: boolean
-  saldoInicial: number
-  saldoActual: number
-  fechaUltimoMovimiento: string | null
-}
-
-/** Medio electrónico y activo cuyo cobro no entra a ninguna cuenta de la empresa. */
-export type MedioElectronicoSinCuenta = { id: number; nombre: string }
-
-export type CuentasDeLaEmpresa = {
-  idEmpresa: number
-  cuentas: CuentaConSaldo[]
-  mediosSinCuenta: MedioElectronicoSinCuenta[]
-}
-
-/** Fila del libro de una cuenta. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
+/** Movimiento de una cuenta tal como lo devuelve el ajuste manual. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
  * usuario dados de baja: el id distingue los dos casos. */
 export type MovimientoDeCuentaListado = {
   id: number
@@ -2064,30 +2021,69 @@ export type MovimientoDeCuentaListado = {
   porcentajeAplicado: number | null
 }
 
-/** Totales de TODO el rango (no de la página). Los descuentos son positivos cuando restan. */
-export type TotalesDeCuentaEnElRango = {
-  cobrado: number
+// --- Libro de tesorería (`GET /api/reportes/libro-tesoreria`) — espejo de `ContratosDeLibroDeTesoreria`. -----
+
+export type TipoDeFilaDelLibro = 'Caja' | 'Pago' | 'AjusteEfectivo' | 'AjusteCuenta'
+
+export type CuentaDelLibro = { idCuentaTesoreria: number; nombre: string; activo: boolean }
+
+export type ImporteDeCuenta = { idCuentaTesoreria: number; importe: number }
+
+export type SaldosDelLibro = { efectivo: number; porCuenta: ImporteDeCuenta[] }
+
+export type DesgloseDeMedioDelLibro = {
+  idMedioPago: number | null
+  medio: string | null
+  importe: number
   comision: number
-  retencionIibb: number
-  retencionIva: number
-  retencionGanancias: number
-  ajustes: number
-  otros: number
+  retenciones: number
   neto: number
 }
 
-export type LibroDeCuenta = {
-  idCuenta: number
-  nombre: string
-  activo: boolean
-  saldoActual: number
-  saldoDeApertura: number
-  saldoAlCierre: number
-  totales: TotalesDeCuentaEnElRango
-  items: MovimientoDeCuentaListado[]
-  total: number
-  pagina: number
-  tamanio: number
+export type DesgloseDeCuentaDelLibro = { idCuentaTesoreria: number; neto: number; medios: DesgloseDeMedioDelLibro[] }
+
+/** `numero` es el id del turno; `diferenciaArqueo` es declarado menos esperado y viene `null` si es cero o está dentro de la tolerancia. */
+export type DatosDeCajaDelLibro = {
+  idTurnoCaja: number
+  numero: number
+  fechaApertura: string
+  fechaCierre: string
+  idPuntoVenta: number
+  puntoVenta: string | null
+  diferenciaArqueo: number | null
+  desglose: DesgloseDeCuentaDelLibro[]
+}
+
+export type DatosDePagoDelLibro = {
+  idPago: number
+  detalle: string
+  categoria: CategoriaPago
+  origenFondos: OrigenFondosPago
+  idTurnoCaja: number | null
+}
+
+export type DatosDeAjusteDelLibro = { concepto: string }
+
+/** Exactamente uno de `caja`, `pago` y `ajuste` viene poblado, según `tipo`. `efectivo` y `sinCuenta` son `null` si la fila no los toca. */
+export type FilaDelLibro = {
+  fecha: string
+  tipo: TipoDeFilaDelLibro
+  efectivo: number | null
+  cuentas: ImporteDeCuenta[]
+  sinCuenta: number | null
+  caja: DatosDeCajaDelLibro | null
+  pago: DatosDePagoDelLibro | null
+  ajuste: DatosDeAjusteDelLibro | null
+}
+
+export type LibroDeTesoreria = {
+  idEmpresa: number
+  desde: string
+  hasta: string
+  cuentas: CuentaDelLibro[]
+  saldoAnterior: SaldosDelLibro
+  saldoActual: SaldosDelLibro
+  filas: FilaDelLibro[]
 }
 
 // --- Existencias (stage-11-exportacion-reportes, Slice 9 — droppable a Etapa 13) — espejo de
@@ -2752,8 +2748,11 @@ export type CompraListada = {
   total: number
   saldoPendiente: number
   origen: OrigenCompra
-  /** Razón social que resuelve el servidor; `null` si el proveedor fue dado de baja. */
-  nombreProveedor?: string | null
+  /** Nombre de fantasía del proveedor (razón social si no tiene); `null` para un rol sin acceso al dato o si el proveedor fue dado de baja. */
+  nombreProveedor: string | null
+  fechaComprobante: string | null
+  /** `null` si la compra no está confirmada; una parcial cuenta como `Pendiente`. */
+  estadoPago: 'Pagada' | 'Pendiente' | null
 }
 
 /** Fila de `GET /api/compras/duplicados` (espejo de `CompraDuplicada`): una compra no anulada del mismo
@@ -3440,7 +3439,7 @@ export type PaginaDeAuditoria = { items: FilaDeAuditoria[]; total: number; pagin
 /** Subconjunto de los pares `(accion, entidad)` de `AccionAuditada` (`Ways.Domain.Auditoria`) que
  * ofrece el `<select>` de acción de `Auditoria.tsx`: las 15 de la primera pasada más las cinco de
  * pagos y compras de la etapa 6 (`compra.edicion`, `compra.redondeo`, `pago.aplicacion`,
- * `pago.desaplicacion`, `pago.redondeo`) y las dos de cobros (`cobro.aplicacion`, `cobro.desaplicacion`). El catálogo del back tiene más entradas que esta lista;
+ * `pago.desaplicacion`, `pago.redondeo`), la reasignación de un pago de sueldo (`pago.reasignacion`) y las dos de cobros (`cobro.aplicacion`, `cobro.desaplicacion`). El catálogo del back tiene más entradas que esta lista;
  * las que faltan se siguen leyendo con el código crudo. El conteo lo congela `Auditoria.test.tsx`:
  * sin una entrada, la pantalla renderizaba el código crudo y el filtro no la podía seleccionar.
  * Etiquetas en español; el VALOR que viaja al backend es siempre el `accion` crudo
@@ -3457,6 +3456,7 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'pago.aplicacion', etiqueta: 'Aplicación de pago a compras' },
   { valor: 'pago.desaplicacion', etiqueta: 'Desaplicación de pago de una compra' },
   { valor: 'pago.redondeo', etiqueta: 'Ajuste de redondeo de pago' },
+  { valor: 'pago.reasignacion', etiqueta: 'Reasignación de pago de sueldo' },
   { valor: 'cobro.aplicacion', etiqueta: 'Aplicación de cobro a ventas' },
   { valor: 'cobro.desaplicacion', etiqueta: 'Desaplicación de cobro de una venta' },
   { valor: 'stock.ajuste', etiqueta: 'Ajuste de stock' },

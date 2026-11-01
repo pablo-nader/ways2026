@@ -20,6 +20,7 @@ import { PanelDeCambio } from './PanelDeCambio'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
 import { atributosDeCampoEntero, parsearEnteroTipeado } from '../formato/numeros'
+import { pluralizar } from '../formato/pluralizar'
 
 function formatearFechaHora(iso: string): string {
   return fechaHoraATexto(iso)
@@ -318,7 +319,7 @@ export function Auditoria() {
                         <td>{f.actor ?? `#${f.idActor}`}</td>
                         <td>
                           {f.idPuntoVenta === null ? (
-                            <span title="Evento de todo el tenant">—</span>
+                            <span title="Evento de toda la cuenta">—</span>
                           ) : (
                             (puntosVenta ?? []).find((pv) => pv.id === f.idPuntoVenta)?.nombre ?? `PV #${f.idPuntoVenta}`
                           )}
@@ -355,7 +356,7 @@ export function Auditoria() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} evento(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'evento')}
               </span>
               <div className="d-flex gap-2">
                 <button

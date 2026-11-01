@@ -533,7 +533,9 @@ export function Transferencias() {
 
         {lineasIncompletas > 0 && (
           <div className="alert alert-warning py-1 px-2 small mb-3">
-            {lineasIncompletas} línea(s) incompleta(s) — no se van a transferir.
+            {lineasIncompletas === 1
+              ? '1 línea incompleta — no se va a transferir.'
+              : `${lineasIncompletas} líneas incompletas — no se van a transferir.`}
           </div>
         )}
 

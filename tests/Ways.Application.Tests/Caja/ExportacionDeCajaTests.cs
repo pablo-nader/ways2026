@@ -35,7 +35,7 @@ public class ExportacionDeCajaTests
     {
         var apertura = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
         var cierre = new DateTimeOffset(2026, 8, 1, 18, 0, 0, TimeSpan.Zero);
-        var fila = new FilaDeHistoricoDeCajas(412, 3, apertura, cierre, 1000m, 970m, 30m, new EgresosDeTurno([], [], 0m), null, null);
+        var fila = new FilaDeHistoricoDeCajas(412, 3, apertura, cierre, 1000m, 970m, 30m, new EgresosDeTurno([], [], 0m), null, null, 0m, 0m, 0m, 0m);
 
         var tabla = ExportacionDeCaja.De([fila], Contexto, ZonaBuenosAires);
 
@@ -47,11 +47,26 @@ public class ExportacionDeCajaTests
     public void HistoricoReponeElRetiroDeLosEgresosEnSuPropiaColumna()
     {
         var ahora = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
-        var fila = new FilaDeHistoricoDeCajas(412, 3, ahora, ahora, 1000m, 1000m, 0m, new EgresosDeTurno([], [], 250m), null, null);
+        var fila = new FilaDeHistoricoDeCajas(412, 3, ahora, ahora, 1000m, 1000m, 0m, new EgresosDeTurno([], [], 250m), null, null, 0m, 0m, 0m, 0m);
 
         var tabla = ExportacionDeCaja.De([fila], Contexto, ZonaBuenosAires);
 
         Assert.Equal(250m, tabla.Filas[0][7].Valor);
+    }
+
+    [Fact]
+    public void HistoricoExportaLosCuatroImportesFacturadosEnSusColumnas()
+    {
+        var ahora = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var fila = new FilaDeHistoricoDeCajas(
+            412, 3, ahora, ahora, 0m, 0m, 0m, new EgresosDeTurno([], [], 0m), null, null, 200m, 500m, 300m, 1000m);
+
+        var tabla = ExportacionDeCaja.De([fila], Contexto, ZonaBuenosAires);
+
+        Assert.Equal(
+            ["Digitales", "Efectivo facturado", "Cuenta corriente", "Total facturado"],
+            tabla.Columnas.Skip(8).Select(c => c.Titulo));
+        Assert.Equal([200m, 500m, 300m, 1000m], tabla.Filas[0].Skip(8).Select(c => c.Valor));
     }
 
     [Fact]
@@ -79,7 +94,7 @@ public class ExportacionDeCajaTests
     [Fact]
     public void DetalleEscribeUnaFilaPorMedioEnLaSeccionMediosDePago()
     {
-        var resumen = ResumenVacio(medios: [new LineaDeResumen(IdMedioPago: 3, ImporteEsperado: 500m)]);
+        var resumen = ResumenVacio(medios: [new LineaDeResumen(IdMedioPago: 3, ImporteEsperado: 500m, Nombre: "Tarjeta Visa")]);
         var detalle = new DetalleDeTurno(resumen, [], [], null, null);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
@@ -90,7 +105,7 @@ public class ExportacionDeCajaTests
         Assert.Equal(2, tabla.Filas.Count);
         var fila = tabla.Filas[0];
         Assert.Equal("Medios de pago", fila[0].Valor);
-        Assert.Equal("Medio 3", fila[1].Valor);
+        Assert.Equal("Tarjeta Visa", fila[1].Valor);
         Assert.Null(fila[2].Valor);
         Assert.Equal(500m, fila[3].Valor);
         Assert.Equal("Retiros", tabla.Filas[1][0].Valor);
@@ -144,8 +159,7 @@ public class ExportacionDeCajaTests
     public void DetalleEscribeTicketsYPagosConSuFechaConvertidaALaZonaLocal()
     {
         var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
-        var ticket = new ComprobanteListado(
-            1, 1L, "0003-00000001", EstadoComprobante.Emitido, fecha, 3, 1, 150m, 0m, 0m);
+        var ticket = UnTicket(1, "0003-00000001", fecha, 150m);
         var pago = new PagoListado(1, 3, fecha, CategoriaPago.Otros, 1, 40m, OrigenFondosPago.CajaTurno,
             7, false, null, null, "Gasto", null, null, null, null, []);
         var detalle = new DetalleDeTurno(ResumenVacio(), [ticket], [pago], null, null);
@@ -164,6 +178,23 @@ public class ExportacionDeCajaTests
         Assert.Equal("Otros", tabla.Filas[2][1].Valor);
         Assert.Equal(new DateTime(2026, 8, 1, 9, 0, 0), tabla.Filas[2][2].Valor);
         Assert.Equal(40m, tabla.Filas[2][3].Valor);
+    }
+
+    private static VentaDeTurnoListado UnTicket(int id, string numeroVisible, DateTimeOffset fecha, decimal total) =>
+        new(id, id, numeroVisible, EstadoComprobante.Emitido, fecha, 1, "Cliente", total, 0m, 0m, [], "sin_decidir");
+
+    [Fact]
+    public void DetalleExportaLosTicketsDelMasViejoAlMasNuevoAunqueElJsonVengaAlReves()
+    {
+        var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var viejo = UnTicket(1, "0003-00000001", fecha, 10m);
+        var nuevo = UnTicket(2, "0003-00000002", fecha.AddHours(1), 20m);
+        var detalle = new DetalleDeTurno(ResumenVacio(), [nuevo, viejo], [], null, null);
+
+        var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
+
+        Assert.Equal("0003-00000001", tabla.Filas[1][1].Valor);
+        Assert.Equal("0003-00000002", tabla.Filas[2][1].Valor);
     }
 
     [Fact]

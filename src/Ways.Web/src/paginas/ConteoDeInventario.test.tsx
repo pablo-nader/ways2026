@@ -429,13 +429,13 @@ describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
     await elegirSucursalYArticulo(usuario)
     await screen.findByText('2026-08-20')
 
-    expect(screen.getByText('2 lote(s) sin contar — no se van a incluir en el conteo.')).toBeInTheDocument()
+    expect(screen.getByText('2 lotes sin contar — no se van a incluir en el conteo.')).toBeInTheDocument()
 
     await usuario.type(screen.getByLabelText('Contada del lote 2026-08-20'), '10')
-    expect(screen.getByText('1 lote(s) sin contar — no se van a incluir en el conteo.')).toBeInTheDocument()
+    expect(screen.getByText('1 lote sin contar — no se va a incluir en el conteo.')).toBeInTheDocument()
 
     await usuario.type(screen.getByLabelText('Contada del lote 2026-09-01'), '5')
-    expect(screen.queryByText(/lote\(s\) sin contar/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/lotes? sin contar/)).not.toBeInTheDocument()
   })
 
   it('envía la rama por lote — contada:null, lotes solo con los completos, exactamente un lote sin tocar queda afuera', async () => {

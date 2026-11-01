@@ -31,8 +31,11 @@ public static class ExportacionDeListados
     [
         new ColumnaExportable("Comprobante", TipoDeColumna.Texto),
         new ColumnaExportable("Proveedor", TipoDeColumna.Entero),
-        new ColumnaExportable("Fecha de recepción", TipoDeColumna.FechaHora),
+        new ColumnaExportable("Nombre del proveedor", TipoDeColumna.Texto),
+        new ColumnaExportable("Fecha del comprobante", TipoDeColumna.Fecha),
+        new ColumnaExportable("Fecha de carga", TipoDeColumna.FechaHora),
         new ColumnaExportable("Estado", TipoDeColumna.Texto),
+        new ColumnaExportable("Estado de pago", TipoDeColumna.Texto),
         new ColumnaExportable("Total", TipoDeColumna.Moneda)
     ];
 
@@ -76,8 +79,11 @@ public static class ExportacionDeListados
             [
                 Celda.Texto(f.NumeroExterno ?? "-"),
                 Celda.Entero(f.IdProveedor),
+                Celda.Texto(f.NombreProveedor),
+                Celda.Fecha(f.FechaComprobante),
                 Celda.FechaHora(f.FechaRecepcion, zona),
                 Celda.Texto(f.Estado.ToString()),
+                Celda.Texto(f.EstadoPago),
                 Celda.Moneda(f.Total)
             ])
             .ToList();
