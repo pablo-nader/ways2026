@@ -230,9 +230,43 @@ Commit `198123a3` on `pnader/mercadopago-e2-t3` (route: delegated writer).
   rule removed, together -> 8 domain tests failed. All reverted, green again.
 - Verdict pending: scoped re-judgment of the fix delta.
 
+## Judgment-day T3 verdict
+
+- 2026-11-01: **APPROVED** after two rounds. Round 1: both judges confirmed three warnings (create key fixed per sucursal,
+  no recovery from a store deleted in Mercado Pago, sanitizer glued words); fixed in cdc6701f. Scoped re-judgment: both
+  judges confirmed the adopt PUT reused the failed PUT's key, and the sin-número rule was too narrow; fixed in 224e9df5
+  (update key = sucursal + hash of store id, body hash and sucursal state; sin-número forms compared on letters/digits).
+  Mutation: dropping the store id from the key fails the adopt test; shrinking the sin-número set fails 4 domain cases.
+  Final scoped re-judgment: both clean (suggestions only). RDD is off.
+- Open (one judge, not fixed): a registered sucursal counts as in use for bajas (OD4 strict, same as the E1 connection for
+  the empresa) and fusion leaves the origin's link as history; there is no unregister path; a reconnection to another
+  Mercado Pago account leaves the old link as history. Suggestion: `desactualizada` fires on any sucursal edit, even of
+  fields not sent to Mercado Pago.
+
+## T4 design (2026-11-01)
+
+Branch `pnader/mercadopago-e2-t4`, stacked on T3. Backend only; the web is T6.
+
+- Table `cajas_mercadopago` (operativa: id_tenant + id_empresa, RLS): `id_caja_mercadopago` PK, `id_tenant`, `id_empresa`,
+  `id_punto_venta` (FK compuesta con empresa y tenant), `id_local_mercadopago` (FK to `locales_mercadopago`: the store it
+  hangs from), `id_usuario_mercadopago bigint`, `id_pos_mercadopago bigint`, `external_id varchar(40)`, `url_qr` (the
+  `qr_response` static QR image link, nullable), `fecha_registro`, `fecha_sincronizacion`, `created_at`/`updated_at`. UNIQUE
+  (`id_punto_venta`, `id_usuario_mercadopago`).
+- `external_id` = `WAYSPV` + id_punto_venta (letters+digits, <= 40, unique per seller).
+- `POST /api/puntos-venta/{id}/mercadopago` (Admin): 404 first; the PV's sucursal must be registered as a local for the
+  current seller, else 409 `mercadopago_local_no_registrado`; per-PV advisory lock; row exists -> `PUT /pos/{id}` with
+  name and `store_id` of the PV's current sucursal's local (this is what re-homes a PV moved to another sucursal), with the
+  same 404 -> search -> adopt/create recovery as T3; no row -> `GET /pos?external_id=` adopt, else `POST /pos` with
+  `{name, external_id, store_id, fixed_amount: false, category}` (category optional, omitted). Keys follow T3's scheme
+  (content + target + state hashes, <= 64).
+- `GET /api/puntos-venta/{id}/mercadopago`: `sin_conexion`, `local_no_registrado`, `no_registrada`, `registrada` (ids, QR
+  url) or `desactualizada` (PV `updated_at` after `fecha_sincronizacion`, or its sucursal's local differs from the row's).
+- Name sent: PV name through `TextoParaMercadoPago`, <= 45 chars.
+- Same fake-handler integration coverage as T3, plus re-homing after moving the PV to another registered sucursal.
+
 ## Next step
 
-T4 — POS sync (link table punto de venta <-> Mercado Pago POS).
+T4 implementation (delegated writer).
 
 ## Judgment-day T1 verdict
 
