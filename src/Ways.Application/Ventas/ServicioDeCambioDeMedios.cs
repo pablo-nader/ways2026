@@ -158,8 +158,7 @@ public class ServicioDeCambioDeMedios(
             venta.ResultadoFiscal, await LeerResultadoDeLaFacturaAsync(conexion, transaccionCruda, idVenta, ct));
 
         // Los cobros de un turno cerrado cuentan para el libro en la fecha del cierre; la venta, en la suya. La menor decide.
-        var fechaQueCuentaParaElLibro =
-            turnoCerrado?.FechaCierre is { } cierre && cierre < venta.Fecha ? cierre : venta.Fecha;
+        var fechaQueCuentaParaElLibro = ReglaDeCambioDeMedios.FechaQueCuentaParaElLibro(venta.Fecha, turnoCerrado?.FechaCierre);
         await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, inmutables.IdEmpresa, fechaQueCuentaParaElLibro, ct);
 
         var cobrosVivos = await db.Cobros
