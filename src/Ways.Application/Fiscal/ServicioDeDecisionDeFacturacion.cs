@@ -589,6 +589,164 @@ public class ServicioDeDecisionDeFacturacion(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
+    // ---- Cambio de medios de una venta ya decidida ---------------------------------------------
+
+    /// <summary>
+    /// Mueve lo que la venta aportó al acumulado de los medios anteriores a los nuevos cuando cambian sus medios de pago, DENTRO
+    /// de la transacción del cambio (no abre ni cierra ninguna), sin decidir de nuevo ni emitir o anular nada
+    /// (<see cref="CambioDeMediosEnFacturacion"/>). Mismo orden de locks que la decisión y que la cancelación: la venta
+    /// (<c>FOR UPDATE</c>; el llamador ya la tiene), la decisión y las filas del acumulado por medio ascendente. Los montos son los
+    /// mismos de la decisión: <c>importe − vuelto</c>, solo los positivos.
+    ///
+    /// Según lo que la venta ya aplicó:
+    /// <list type="bullet">
+    /// <item>sin decidir: nada; la decisión, cuando llegue, lee los cobros nuevos;</item>
+    /// <item>con decisión pendiente o rechazada: se deshacen sus aportes guardados y se guardan los de los medios nuevos, así que
+    /// la cancelación o la liquidación posterior (<c>ServicioDeFacturacionDeVentas.RevertirAportesAsync</c>, que lee los cobros
+    /// vigentes) revierte exactamente lo que quedó aplicado;</item>
+    /// <item>con decisión cancelada: nada, el acumulado ya no la cuenta. Emitida no llega acá: el llamador rechaza la venta con CAE;</item>
+    /// <item>decidida sin facturar (sin fila de decisión): solo si la venta es un ticket y la empresa tiene hoy un certificado
+    /// activo del ambiente configurado, la misma compuerta con la que la decisión aplicó sus aportes. El devengo anterior se
+    /// recalcula con el porcentaje actual de cada medio, porque una venta que no se factura no guarda sus aportes: si el
+    /// porcentaje cambió desde la venta, o el certificado se activó después de ella, el saldo del medio anterior queda corrido en
+    /// esa diferencia.</item>
+    /// </list>
+    /// </summary>
+    public async Task MoverAportesPorCambioDeMediosAsync(
+        DbConnection conexion, DbTransaction transaccion, int idComprobanteVenta,
+        IReadOnlyList<(int IdMedioPago, decimal Monto)> anteriores, IReadOnlyList<(int IdMedioPago, decimal Monto)> nuevos,
+        CancellationToken ct)
+    {
+        var venta = await BloquearVentaAsync(conexion, transaccion, idComprobanteVenta, ct);
+        if (venta?.DecididaEn is null)
+        {
+            return;
+        }
+
+        var decision = await BloquearDecisionParaCambioAsync(conexion, transaccion, idComprobanteVenta, ct);
+
+        SituacionFiscalDelTicket situacion;
+        IReadOnlyList<AporteDeSaldo>? aportesGuardados = null;
+        DateOnly periodo;
+        switch (decision?.Estado)
+        {
+            case "pendiente":
+                situacion = SituacionFiscalDelTicket.Facturado;
+                break;
+            case "rechazada":
+                situacion = SituacionFiscalDelTicket.Rechazado;
+                break;
+            case null:
+                situacion = SituacionFiscalDelTicket.NoFacturado;
+                break;
+            case "cancelada":
+                return;
+            default:
+                throw new InvalidOperationException(
+                    $"La venta {idComprobanteVenta} tiene la decisión en {decision.Estado}: el cambio de medios no debió llegar acá.");
+        }
+
+        if (decision is not null)
+        {
+            aportesGuardados = JsonSerializer.Deserialize<List<AporteDeSaldo>>(decision.Aportes, OpcionesDeAportes)!;
+            periodo = decision.Periodo;
+        }
+        else
+        {
+            if (!venta.EsTicketDeVenta || !await TieneCertificadoDelAmbienteAsync(venta.IdEmpresa, ct))
+            {
+                return;
+            }
+
+            periodo = await ResolverPeriodoAsync(venta, ct);
+        }
+
+        var porcentajes = await LeerPorcentajesAsync(
+            conexion, transaccion, [.. anteriores.Select(a => a.IdMedioPago).Concat(nuevos.Select(n => n.IdMedioPago)).Distinct()], ct);
+        List<PagoDeTicket> ATicket(IEnumerable<(int IdMedioPago, decimal Monto)> pagos) =>
+            [.. pagos.Where(p => p.Monto > 0m).Select(p => new PagoDeTicket(p.IdMedioPago, p.Monto, porcentajes[p.IdMedioPago]))];
+
+        var pagosAnteriores = ATicket(anteriores);
+        var pagosNuevos = ATicket(nuevos);
+        aportesGuardados ??= pagosAnteriores.Count == 0 ? [] : PoliticaDeFacturacionPorMedio.Aportes(pagosAnteriores, false);
+
+        var cambio = CambioDeMediosEnFacturacion.Planificar(situacion, aportesGuardados, pagosAnteriores, pagosNuevos);
+        var idsMedio = cambio.Variaciones.Select(v => v.IdMedioPago).Order().ToArray();
+
+        foreach (var idMedio in idsMedio)
+        {
+            await AsegurarAcumuladoAsync(conexion, transaccion, venta, idMedio, periodo, ct);
+        }
+
+        _ = await BloquearAcumuladosAsync(conexion, transaccion, venta.IdEmpresa, idsMedio, periodo, ct);
+
+        foreach (var variacion in cambio.Variaciones.OrderBy(v => v.IdMedioPago))
+        {
+            await AplicarAportesAsync(
+                conexion, transaccion, venta.IdEmpresa, variacion.IdMedioPago, periodo,
+                variacion.Saldo, variacion.Vendido, variacion.Facturado, ct);
+        }
+
+        if (decision is not null)
+        {
+            await using var comando = conexion.CreateCommand();
+            comando.Transaction = transaccion;
+            comando.CommandText =
+                "UPDATE facturaciones_de_venta SET aportes = $2::jsonb, updated_at = $3 WHERE id_facturacion_venta = $1";
+            ParametrosDeComando.Agregar(comando, decision.Id);
+            ParametrosDeComando.Agregar(comando, JsonSerializer.Serialize(cambio.AportesNuevos, OpcionesDeAportes));
+            ParametrosDeComando.Agregar(comando, reloj.Ahora);
+            await comando.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    private sealed record DecisionParaCambio(int Id, string Estado, string Aportes, DateOnly Periodo);
+
+    private static async Task<DecisionParaCambio?> BloquearDecisionParaCambioAsync(
+        DbConnection conexion, DbTransaction transaccion, int idComprobanteVenta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_facturacion_venta, estado::text, aportes::text, periodo FROM facturaciones_de_venta " +
+            "WHERE id_comprobante_venta = $1 AND id_facturacion_origen IS NULL FOR UPDATE";
+        ParametrosDeComando.Agregar(comando, idComprobanteVenta);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new DecisionParaCambio(
+            lector.GetInt32(0), lector.GetString(1), lector.GetString(2), lector.GetFieldValue<DateOnly>(3));
+    }
+
+    private async Task<bool> TieneCertificadoDelAmbienteAsync(int idEmpresa, CancellationToken ct)
+    {
+        var ambiente = opciones.Value.ResolverAmbiente();
+        return await db.CertificadosFiscales.AsNoTracking()
+            .AnyAsync(c => c.IdEmpresa == idEmpresa && c.Activo && c.Ambiente == ambiente, ct);
+    }
+
+    private static async Task<Dictionary<int, decimal>> LeerPorcentajesAsync(
+        DbConnection conexion, DbTransaction transaccion, int[] idsMedioPago, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText = "SELECT id_medio_pago, porcentaje_facturacion FROM medios_pago WHERE id_medio_pago = ANY($1)";
+        ParametrosDeComando.Agregar(comando, idsMedioPago);
+
+        var porcentajes = new Dictionary<int, decimal>();
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        while (await lector.ReadAsync(ct))
+        {
+            porcentajes[lector.GetInt32(0)] = lector.GetDecimal(1);
+        }
+
+        return porcentajes;
+    }
+
     private static string EtiquetaDeMotivo(MotivoDeFacturacion motivo) => motivo switch
     {
         MotivoDeFacturacion.Forzada => "forzada",

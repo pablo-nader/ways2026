@@ -29,7 +29,7 @@ public partial class AccionAuditadaTests
     [Fact]
     public void TieneTreintaYSieteEntradas()
     {
-        Assert.Equal(37, AccionAuditada.Todas.Count);
+        Assert.Equal(38, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -103,7 +103,8 @@ public partial class AccionAuditadaTests
             ("sucursal.baja", "sucursal"),
             ("pv.sucursal", "punto_venta"),
             ("sucursal.fusion", "sucursal"),
-            ("sucursal.mercadopago", "sucursal")
+            ("sucursal.mercadopago", "sucursal"),
+            ("venta.medios", "comprobante_venta")
         ];
 
         var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));

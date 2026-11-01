@@ -765,7 +765,8 @@ public partial class ServicioDePagos(
 
         if (turnoCerrado is not null && CalculadorDeAjustesDePago.AfectaElArqueo(pago.OrigenFondos, anterior, nuevo))
         {
-            await RecalcularArqueoAsync(idTenant, turnoCerrado, idEmpleado, momento, ct);
+            await RecalculoDeArqueoDeTurnoCerrado.RecalcularAsync(
+                db, lectorDeMovimientos, idTenant, turnoCerrado.Id, turnoCerrado.IdMedioPagoEfectivo, idEmpleado, momento, ct);
         }
 
         if (CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(pago.OrigenFondos, anterior.Importe, nuevo?.Importe)
@@ -897,65 +898,6 @@ public partial class ServicioDePagos(
                 .Where(c => c.Id == idComprobanteCompra)
                 .Select(c => (int?)c.IdPuntoVenta)
                 .FirstOrDefaultAsync(ct);
-
-    /// <summary>Recalcula el arqueo persistido de un turno cerrado con la misma derivación que el
-    /// cierre (<see cref="LectorDeMovimientosDelTurno"/> + <see cref="CalculadorDeArqueo"/>) y el
-    /// ancla pineada al cierre. El modo de cierre (clásico o por retiro) no queda persistido, así
-    /// que el declarado de las filas existentes no se toca y las filas nuevas se declaran en 0:
-    /// nadie declaró nada para ese medio. La marca del turno se escribe solo si alguna fila
-    /// cambió.</summary>
-    private async Task RecalcularArqueoAsync(
-        int idTenant, TurnoBloqueado turno, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
-    {
-        var insumos = await lectorDeMovimientos.LeerAsync(turno.Id, ct);
-        var idAncla = turno.IdMedioPagoEfectivo ?? ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
-        var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
-
-        var filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == turno.Id).ToListAsync(ct);
-        var cambios = RecalculadorDeArqueo.Planificar(
-            lineas, insumos.Actividad,
-            filas.Select(f => new ArqueoPersistido(f.IdMedioPago, f.ImporteEsperado, f.ImporteEsperadoOriginal)).ToList());
-
-        if (cambios.Count == 0)
-        {
-            return;
-        }
-
-        foreach (var cambio in cambios)
-        {
-            if (cambio.EsNueva)
-            {
-                db.ArqueosTurno.Add(new ArqueoTurno
-                {
-                    IdTenant = idTenant,
-                    IdTurnoCaja = turno.Id,
-                    IdMedioPago = cambio.IdMedioPago,
-                    ImporteEsperado = cambio.ImporteEsperado,
-                    ImporteDeclarado = 0m,
-                    ImporteEsperadoOriginal = cambio.ImporteEsperadoOriginal
-                });
-                continue;
-            }
-
-            var fila = filas.Single(f => f.IdMedioPago == cambio.IdMedioPago);
-            fila.ImporteEsperado = cambio.ImporteEsperado;
-            fila.ImporteEsperadoOriginal = cambio.ImporteEsperadoOriginal;
-        }
-
-        await db.SaveChangesAsync(ct);
-
-        var conexion = await ObtenerConexionAbiertaAsync(ct);
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
-        comando.CommandText =
-            "UPDATE turnos_caja SET fecha_recalculo = $1, id_empleado_recalculo = $2, updated_at = $1 " +
-            "WHERE id_turno_caja = $3 AND id_tenant = $4";
-        ParametrosDeComando.Agregar(comando, momento);
-        ParametrosDeComando.Agregar(comando, idEmpleado);
-        ParametrosDeComando.Agregar(comando, turno.Id);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        await comando.ExecuteNonQueryAsync(ct);
-    }
 
     /// <summary>Un ítem por línea, en el orden de las líneas (el primero es el de menor id).</summary>
     private async Task EscribirItemsDelPagoAsync(
