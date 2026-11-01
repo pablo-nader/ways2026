@@ -22,8 +22,15 @@ import { formatearImporte } from '../formato/importes'
 import { parsearEnteroTipeado, parsearNumeroDecimal } from '../formato/numeros'
 
 export const clienteDeOfertas = {
-  listar: (incluirEliminados: boolean) =>
-    api.get<OfertaListado[]>(`/ofertas${incluirEliminados ? '?incluirEliminados=true' : ''}`),
+  /** Con `idArticulo` el servidor devuelve solo las ofertas vivas del artículo y de su familia; sin él, el listado completo. */
+  listar: (incluirEliminados: boolean, idArticulo?: number) => {
+    const consulta = new URLSearchParams()
+    if (incluirEliminados) consulta.set('incluirEliminados', 'true')
+    if (idArticulo !== undefined) consulta.set('idArticulo', String(idArticulo))
+    const texto = consulta.toString()
+
+    return api.get<OfertaListado[]>(`/ofertas${texto === '' ? '' : `?${texto}`}`)
+  },
   /** El listado no completa `idsListas` (evita el N+1) — antes de editar hay que pedir el
    * detalle puntual para no perder el subconjunto real de listas objetivo. */
   obtener: (id: number) => api.get<OfertaListado>(`/ofertas/${id}`),
@@ -248,7 +255,7 @@ export function resumenDeBeneficio(o: OfertaListado): string {
   return o.soloMultiplos && o.cantidadMinima !== null ? `${base} (solo múltiplos de ${o.cantidadMinima})` : base
 }
 
-function textoDeBeneficio(o: OfertaListado): string {
+export function textoDeBeneficio(o: OfertaListado): string {
   if (o.porcentaje !== null) return `${o.porcentaje}% de descuento`
   if (o.importeFijo !== null) return `${formatearImporte(o.importeFijo, { simbolo: true })} fijo por unidad`
   if (o.precioUnitario !== null) return `Precio unitario ${formatearImporte(o.precioUnitario, { simbolo: true })}`

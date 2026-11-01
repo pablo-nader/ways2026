@@ -1,14 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   aAltaOferta,
   aValoresOferta,
+  clienteDeOfertas,
   copiaDeFalloAlGuardarOferta,
   formularioOfertaVacio,
   opcionesDeFamiliaDeOferta,
   opcionesDeLista,
   resumenDeBeneficio,
 } from './ofertas'
-import { ErrorApi } from './cliente'
+import { api, ErrorApi } from './cliente'
 import type { FamiliaListado, ListaPrecioListado, OfertaListado } from './tipos'
 
 function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado {
@@ -436,5 +437,24 @@ describe('solo múltiplos de la cantidad mínima', () => {
 
     expect(resumenDeBeneficio(estricta)).toBe('Precio unitario $ 3.750,00 (solo múltiplos de 2)')
     expect(resumenDeBeneficio({ ...estricta, soloMultiplos: false })).toBe('Precio unitario $ 3.750,00')
+  })
+})
+
+describe('clienteDeOfertas.listar', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each([
+    [false, undefined, '/ofertas'],
+    [true, undefined, '/ofertas?incluirEliminados=true'],
+    [false, 7, '/ofertas?idArticulo=7'],
+    [true, 7, '/ofertas?incluirEliminados=true&idArticulo=7'],
+  ])('incluirEliminados=%s, idArticulo=%s pide %s', async (incluir, idArticulo, ruta) => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue([])
+
+    await clienteDeOfertas.listar(incluir, idArticulo)
+
+    expect(get).toHaveBeenCalledWith(ruta)
   })
 })

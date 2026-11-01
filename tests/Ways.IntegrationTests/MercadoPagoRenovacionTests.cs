@@ -71,10 +71,8 @@ public class MercadoPagoRenovacionTests(WaysApiFixture fixture) : IClassFixture<
         var refresco = $"TG-{etiqueta}-refresco-secreto";
         ctx.MercadoPago.Responder = _ => Exitoso(acceso, refresco, ctx.MercadoPago.IdUsuario);
 
-        using var anonimo = ClienteAnonimoSinRedirecciones(ctx.Host);
         var (_, estado) = await IniciarAsync(ctx);
-        var ubicacion = Ubicacion(await LlamarAlCallbackAsync(anonimo, estado));
-        Assert.Contains("mercadopago=conectado", ubicacion);
+        Assert.Equal(HttpStatusCode.OK, (await CompletarAsync(ctx, estado)).StatusCode);
 
         ctx.MercadoPago.Responder = new Guion().Responder;
         var fila = (await _apoyo.FilasAsync(ctx.IdEmpresa)).Last(f => f.Estado == "activa");
