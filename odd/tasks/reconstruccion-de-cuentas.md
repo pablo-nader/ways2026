@@ -36,10 +36,10 @@ no hay ajustes manuales en las cuentas (2026-10-31).
 
 ## Tareas
 
-- [ ] **R1 — Backend.** Orden `(fecha, id)` en lectores del libro y de la cola; reconstructor puro de la cadena;
+- [x] **R1 — Backend.** Commit `ca43a8a0`, PR #582, judgment-day APPROVED (dos jueces sin hallazgos). Orden `(fecha, id)` en lectores del libro y de la cola; reconstructor puro de la cadena;
   servicio con vista previa y aplicación; endpoints Admin; tests unitarios + integración. Ruta: delegada (escritor
   único, 2+ archivos no triviales).
-- [ ] **R2 — Web.** Modal en `CuentasTesoreria.tsx` con empresa, rango, vista previa y confirmación; cliente API;
+- [x] **R2 — Web (sin commitear).** Modal en `CuentasTesoreria.tsx` con empresa, rango, vista previa y confirmación; cliente API;
   tests Vitest. Ruta: delegada.
 
 ## Criterios de aceptación
@@ -57,7 +57,9 @@ no hay ajustes manuales en las cuentas (2026-10-31).
   `OrdenDelLibroDeCuentaPorFecha` (modelo: `ix_movimientos_cuenta_cuenta_id` pasa a `ix_movimientos_cuenta_cuenta_fecha_id`
   `(id_cuenta_tesoreria, id_tenant, fecha, id_movimiento_cuenta)`; sin tablas ni columnas nuevas). Tests: dominio, integración
   (`CuentasTesoreriaReconstruccionTests`, incluida la carrera 409 `reconstruccion_concurrente`) y guardas estructurales.
+- 2026-11-01: R2 escrita (sin commitear): `ModalDeReconstruccionDeCuentas`, botón en `CuentasTesoreria`, cliente `clienteDeReconstruccion` y tests; build, oxlint y vitest completo en verde.
 
 ## Siguiente paso
 
-R1 backend.
+Judgment-day de R2 y PR apilado sobre #582. Después, que el dueño corra la vista previa en producción con el rango
+desde que cargó las primeras ventas.

@@ -18,6 +18,7 @@ import {
   type CuentaTesoreriaListado,
   type ErrorDeCuenta,
   type Formulario,
+  type PlanDeReconstruccion,
 } from '../api/cuentasTesoreria'
 import type { EmpresaListado } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -35,6 +36,7 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
+import { ModalDeReconstruccionDeCuentas } from '../componentes/ModalDeReconstruccionDeCuentas'
 import { formatearImporte } from '../formato/importes'
 
 const ID_FORMULARIO = 'formulario-cuenta-tesoreria'
@@ -92,6 +94,7 @@ export function CuentasTesoreria() {
   const [guardando, setGuardando] = useState(false)
   const [baja, setBaja] = useState<CuentaTesoreriaListado | null>(null)
   const [ocupadoBaja, setOcupadoBaja] = useState<number | null>(null)
+  const [reconstruyendo, setReconstruyendo] = useState(false)
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
   const contenedorRef = useRef<HTMLDivElement>(null)
 
@@ -281,6 +284,17 @@ export function CuentasTesoreria() {
     }
   }
 
+  /** El modal ya escribió: la lectura nueva lleva su propia generación y descarta cualquier respuesta anterior. */
+  function alReconstruir(plan: PlanDeReconstruccion) {
+    const token = ++generacion.current
+    setError('')
+    void refrescarTrasEscribir(
+      token,
+      `Historial reconstruido: ${plan.filas} ${plan.filas === 1 ? 'fila' : 'filas'} de ${plan.turnos} ${plan.turnos === 1 ? 'turno' : 'turnos'}.`,
+      AVISO_REFRESCO_FALLIDO,
+    )
+  }
+
   /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera. */
   const bloqueado = guardando || ocupadoBaja !== null || baja !== null
 
@@ -298,6 +312,17 @@ export function CuentasTesoreria() {
         onClick={() => abrirFormulario(formularioVacio(empresas ?? []))}
         disabled={bloqueado || empresas === null || errorEmpresas !== ''}
       />
+      <button
+        type="button"
+        className="btn btn-outline-primary text-nowrap"
+        onClick={() => {
+          setAviso('')
+          setReconstruyendo(true)
+        }}
+        disabled={bloqueado || empresas === null || empresas.length === 0}
+      >
+        Reconstruir historial
+      </button>
     </nav>
   )
 
@@ -330,6 +355,14 @@ export function CuentasTesoreria() {
             onCambio={cambiarFormulario}
             onGuardar={guardar}
             onCancelar={cancelarFormulario}
+          />
+        )}
+
+        {reconstruyendo && empresas !== null && (
+          <ModalDeReconstruccionDeCuentas
+            empresas={empresas}
+            onCerrar={() => setReconstruyendo(false)}
+            onReconstruido={alReconstruir}
           />
         )}
 
