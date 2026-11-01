@@ -7,6 +7,7 @@ import {
   lineasIniciales,
 } from '../api/registroDePagos'
 import type { FormularioDeEdicionDePago, PagoEditable } from '../api/registroDePagos'
+import { conEmpleadoAsignado, ofreceElegirPersonal } from '../api/sueldoConPersonal'
 import { CATEGORIAS_PAGO } from '../api/tipos'
 import type {
   AreaListado,
@@ -26,6 +27,15 @@ type Props = {
   areas: AreaListado[]
   /** Con una compra ligada el servidor exige categoría proveedor y el mismo proveedor (400). */
   ligadoACompra?: boolean
+  /**
+   * Empleados (solo id y nombre) a los que se puede asignar un pago de sueldos común, que pasa a ser un pago de personal.
+   * Sin esta lista (`undefined`) el modal no ofrece elegir un empleado; con una lista vacía lo ofrece y solo queda "Sin empleado".
+   */
+  personal?: readonly { id: number; nombre: string }[]
+  /** Si el personal se puede asignar ahora (el pago de personal necesita conexión) y, si no, el motivo. */
+  personalDisponible?: { habilitado: boolean; motivo: string }
+  /** Motivo por el que no se pudo leer el personal; el pago sigue editable sin empleado. */
+  errorDePersonal?: string
   /** Recibe la solicitud con el reparto por medio ya armada y validada de forma local. */
   onGuardarConLineas: (solicitud: SolicitudDeEdicionDePagoConLineas) => void
   /** Avisos de efectos (arqueo recalculado, ajuste compensatorio) mostrados sobre el formulario. */
@@ -49,6 +59,9 @@ export function ModalDeEdicionDePago({
   proveedores,
   areas,
   ligadoACompra = false,
+  personal,
+  personalDisponible = { habilitado: true, motivo: '' },
+  errorDePersonal = '',
   advertencias = [],
   guardando,
   error,
@@ -57,6 +70,7 @@ export function ModalDeEdicionDePago({
 }: Props) {
   const [formulario, setFormulario] = useState<FormularioDeEdicionDePago>(() => aFormularioDeEdicion(pago))
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => lineasIniciales(pago))
+  const [idPersonal, setIdPersonal] = useState<number | ''>('')
   const [errorLocal, setErrorLocal] = useState('')
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
@@ -64,6 +78,17 @@ export function ModalDeEdicionDePago({
   // opción actual se conserva rotulada como no disponible.
   const proveedorFaltante = formulario.idProveedor !== '' && !proveedores.some((p) => p.id === formulario.idProveedor)
   const areaFaltante = formulario.idArea !== '' && !areas.some((a) => a.id === formulario.idArea)
+
+  // El empleado reemplaza al proveedor en Sueldos; un pago de sueldos que ya traía proveedor lo conserva a la vista.
+  const ofrecePersonal =
+    personal !== undefined && !ligadoACompra && ofreceElegirPersonal(formulario.categoria) && formulario.idProveedor === ''
+  const conEmpleado = ofrecePersonal && idPersonal !== ''
+
+  function alCambiarCategoria(categoria: FormularioDeEdicionDePago['categoria']) {
+    // Al editar, el proveedor del pago no se descarta al entrar a Sueldos: solo asignar un empleado lo reemplaza.
+    if (!ofreceElegirPersonal(categoria)) setIdPersonal('')
+    setFormulario((prev) => ({ ...prev, categoria }))
+  }
 
   function alCambiarProveedor(valorCrudo: string) {
     const nuevo = valorCrudo === '' ? null : Number(valorCrudo)
@@ -78,8 +103,12 @@ export function ModalDeEdicionDePago({
     if (guardando) return
 
     const errorDeLineas = errorDeLineasDePago(lineas)
-    if (formulario.concepto.trim() === '') {
+    if (!conEmpleado && formulario.concepto.trim() === '') {
       setErrorLocal('Completá el concepto.')
+      return
+    }
+    if (conEmpleado && !personalDisponible.habilitado) {
+      setErrorLocal(personalDisponible.motivo)
       return
     }
     if (errorDeLineas !== null) {
@@ -87,7 +116,8 @@ export function ModalDeEdicionDePago({
       return
     }
     setErrorLocal('')
-    onGuardarConLineas(aSolicitudDeEdicionConLineas(formulario, lineas))
+    const solicitud = aSolicitudDeEdicionConLineas(formulario, lineas)
+    onGuardarConLineas(conEmpleado ? conEmpleadoAsignado(solicitud, idPersonal) : solicitud)
   }
 
   const pie = (
@@ -133,7 +163,7 @@ export function ModalDeEdicionDePago({
             className="form-select"
             value={formulario.categoria}
             disabled={ligadoACompra}
-            onChange={(e) => setFormulario((prev) => ({ ...prev, categoria: e.target.value as FormularioDeEdicionDePago['categoria'] }))}
+            onChange={(e) => alCambiarCategoria(e.target.value as FormularioDeEdicionDePago['categoria'])}
           >
             {CATEGORIAS_PAGO.map((c) => (
               <option key={c.valor} value={c.valor}>
@@ -143,26 +173,52 @@ export function ModalDeEdicionDePago({
           </select>
         </div>
 
-        <div className="col-md-6">
-          <label className="form-label" htmlFor="pago-edicion-proveedor">
-            Proveedor (opcional)
-          </label>
-          <select
-            id="pago-edicion-proveedor"
-            className="form-select"
-            value={formulario.idProveedor}
-            disabled={ligadoACompra}
-            onChange={(e) => alCambiarProveedor(e.target.value)}
-          >
-            <option value="">Sin proveedor</option>
-            {proveedorFaltante && <option value={formulario.idProveedor}>Proveedor #{formulario.idProveedor} (no disponible)</option>}
-            {proveedoresOrdenados.map((p) => (
-              <option key={p.id} value={p.id}>
-                {etiquetaDeProveedor(p)}
-              </option>
-            ))}
-          </select>
-        </div>
+        {ofrecePersonal ? (
+          <div className="col-md-6">
+            <label className="form-label" htmlFor="pago-edicion-personal">
+              Empleado (opcional)
+            </label>
+            <select
+              id="pago-edicion-personal"
+              className="form-select"
+              value={idPersonal}
+              onChange={(e) => setIdPersonal(e.target.value === '' ? '' : Number(e.target.value))}
+            >
+              <option value="">Sin empleado</option>
+              {personal.map((p) => (
+                <option key={p.id} value={p.id} disabled={!personalDisponible.habilitado}>
+                  {p.nombre}
+                </option>
+              ))}
+            </select>
+            {!personalDisponible.habilitado && <div className="form-text text-danger">{personalDisponible.motivo}</div>}
+            {errorDePersonal && personalDisponible.habilitado && <div className="form-text text-danger">{errorDePersonal}</div>}
+            {conEmpleado && (
+              <div className="form-text">Se registra como pago de personal y baja el saldo del empleado.</div>
+            )}
+          </div>
+        ) : (
+          <div className="col-md-6">
+            <label className="form-label" htmlFor="pago-edicion-proveedor">
+              Proveedor (opcional)
+            </label>
+            <select
+              id="pago-edicion-proveedor"
+              className="form-select"
+              value={formulario.idProveedor}
+              disabled={ligadoACompra}
+              onChange={(e) => alCambiarProveedor(e.target.value)}
+            >
+              <option value="">Sin proveedor</option>
+              {proveedorFaltante && <option value={formulario.idProveedor}>Proveedor #{formulario.idProveedor} (no disponible)</option>}
+              {proveedoresOrdenados.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {etiquetaDeProveedor(p)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="col-md-6">
           <label className="form-label" htmlFor="pago-edicion-area">
@@ -192,7 +248,9 @@ export function ModalDeEdicionDePago({
             id="pago-edicion-concepto"
             type="text"
             className="form-control"
-            value={formulario.concepto}
+            value={conEmpleado ? '' : formulario.concepto}
+            disabled={conEmpleado}
+            placeholder={conEmpleado ? 'Se genera con el nombre del empleado' : undefined}
             onChange={(e) => setFormulario((prev) => ({ ...prev, concepto: e.target.value }))}
           />
         </div>

@@ -2011,7 +2011,8 @@ export type SolicitudDeEdicionDePago = {
 }
 
 /** Cuerpo de `PUT /api/pagos/administracion/{id}` — espejo de `SolicitudDeEdicionDePagoConLineas`: reemplaza el
- * conjunto de líneas del pago. */
+ * conjunto de líneas del pago. Con `idPersonal` el pago de sueldos común pasa a ser un pago de ese empleado: el concepto
+ * viaja vacío (lo genera el servidor) y no lleva proveedor. */
 export type SolicitudDeEdicionDePagoConLineas = {
   categoria: CategoriaPago
   idProveedor: number | null
@@ -2020,6 +2021,7 @@ export type SolicitudDeEdicionDePagoConLineas = {
   detalle: string | null
   numeroFactura: string | null
   lineas: LineaDePagoSolicitud[]
+  idPersonal?: number
 }
 
 /** Página de resultados de `GET /api/pagos/administracion` — espejo de
@@ -2225,6 +2227,9 @@ export type LineaDeVenta = {
   descuentoDeOfertaDeLinea?: number
 }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
+
+/** Cuerpo de `PUT /api/ventas/{id}/medios` (y de su gemelo de administración): los medios nuevos reemplazan a todos los cobros de la venta. */
+export type SolicitudDeCambioDeMedios = { pagos: PagoDeVenta[] }
 
 /** stage-17-presupuestos-y-remitos, Slice 7 (design: Interfaces/Contracts, decisión 2/tensión
  * T7): `idCliente`/`lineas` pasan a opcionales — con `idPresupuestoOrigen` presente, `lineas` NO
@@ -4091,3 +4096,57 @@ export type DatosDePersonal = {
   /** `null` = sin horario habitual; si no, exactamente 7 horas (lunes a domingo), 0 = franco. */
   horarioHabitual: number[] | null
 }
+
+/** Estado fiscal de una venta en la grilla de administración (`estadoFiscal` de `GET /api/ventas/administracion`). */
+export type EstadoFiscalDeGrilla = 'sin_factura' | 'en_tramite' | 'con_cae'
+
+/** Fila de `GET /api/ventas/administracion`. Un punto de venta, cliente o empleado dado de baja llega con id y nombre `null`. */
+export type FilaDeVentaDeAdministracion = {
+  id: number
+  numero: number
+  numeroVisible: string
+  fecha: string
+  idTipoComprobante: number
+  codigoTipo: string
+  tipo: string
+  idPuntoVenta: number | null
+  puntoVenta: string | null
+  idTurnoCaja: number | null
+  /** `null` = la venta no tiene turno. */
+  turnoCerrado: boolean | null
+  idCliente: number | null
+  cliente: string | null
+  idEmpleado: number | null
+  empleado: string | null
+  total: number
+  estado: EstadoComprobante
+  estadoFiscal: EstadoFiscalDeGrilla
+  /** Nombres distintos de los medios cobrados, "A, B"; `null` sin cobros. */
+  medios: string | null
+  conciliado: boolean
+  medioEditable: boolean
+  motivoMedioNoEditable: string | null
+}
+
+export type PaginaDeVentasDeAdministracion = PaginaDe<FilaDeVentaDeAdministracion>
+
+/** Fila de `GET /api/caja/retiros`. */
+export type FilaDeRetiro = {
+  id: number
+  fecha: string
+  idTurnoCaja: number
+  idPuntoVenta: number | null
+  puntoVenta: string | null
+  idEmpleado: number | null
+  empleado: string | null
+  importe: number
+  motivo: string
+  turnoCerrado: boolean
+  conciliado: boolean
+  esRetiroDeCierre: boolean
+}
+
+export type PaginaDeRetiros = PaginaDe<FilaDeRetiro>
+
+/** Cuerpo de `PUT /api/caja/retiros/{id}`. */
+export type SolicitudDeEdicionDeRetiro = { importe: number; motivo: string }
