@@ -235,6 +235,7 @@ public static class DependencyInjection
 
         // Conexión OAuth de cada empresa con Mercado Pago; el cliente HTTP, el cifrado y el protector del state viven en Infrastructure.
         services.AddScoped<ServicioDeConexionMercadoPago>();
+        services.AddScoped<ServicioDeLocalesMercadoPago>();
         services.AddScoped<ServicioDeRenovacionDeConexionesMercadoPago>();
         services.AddScoped<IProveedorDeTokenMercadoPago, ProveedorDeTokenMercadoPago>();
 

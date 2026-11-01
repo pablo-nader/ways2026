@@ -13,6 +13,7 @@ import type { DatosDeCajaDelLibro, FilaDelLibro, LibroDeTesoreria } from '../../
 import { fechaHoraATexto } from '../../formato/fechas'
 import { ConGlobo } from './ConGlobo'
 import {
+  categoriaDeFila,
   claseDeImporte,
   columnasDeCuentas,
   detalleDeAjuste,
@@ -158,6 +159,11 @@ function CeldaDeCuenta({ fila, idCuenta, id }: { fila: FilaDelLibro; idCuenta: n
   )
 }
 
+function CategoriaChip({ fila }: { fila: FilaDelLibro }) {
+  const { etiqueta, tono } = categoriaDeFila(fila)
+  return <span className={`badge text-bg-${tono}`}>{etiqueta}</span>
+}
+
 function Detalle({ fila, indice }: { fila: FilaDelLibro; indice: number }) {
   if (fila.tipo === 'Caja' && fila.caja) return <DetalleDeCaja caja={fila.caja} id={`libro-globo-caja-${indice}`} />
   if (fila.tipo === 'Pago' && fila.pago) return <>{fila.pago.detalle}</>
@@ -177,11 +183,13 @@ function compararPorFecha(a: EntradaDelLibro, b: EntradaDelLibro): number {
 function columnasDeLaGrilla(columnas: readonly { id: number; titulo: string }[], conSinCuenta: boolean) {
   const filtrables: ColumnasFiltrables<EntradaDelLibro> = {
     fecha: { etiqueta: 'Fecha', valor: ({ fila }) => fechaHoraATexto(fila.fecha) },
+    categoria: { etiqueta: 'Categoría', valor: ({ fila }) => categoriaDeFila(fila).etiqueta },
     detalle: { etiqueta: 'Detalle', valor: ({ fila }) => textoDelDetalle(fila) },
     efectivo: { etiqueta: 'Efectivo', valor: ({ fila }) => textoDeImporte(fila.efectivo) },
   }
   const ordenables: ColumnasOrdenables<EntradaDelLibro> = {
     fecha: { valor: marcaDeTiempo, comparar: compararPorFecha },
+    categoria: { valor: ({ fila }) => categoriaDeFila(fila).etiqueta },
     detalle: { valor: ({ fila }) => textoDelDetalle(fila) },
     efectivo: { valor: ({ fila }) => fila.efectivo },
   }
@@ -214,6 +222,7 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
   const filas = ordenadas.filas
   const celdasDeFiltros = [
     'fecha',
+    'categoria',
     'detalle',
     'efectivo',
     ...columnas.map((c) => `cuenta-${c.id}`),
@@ -229,6 +238,9 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
           <tr>
             <EncabezadoOrdenable columna="fecha" orden={ordenadas.orden} onAlternar={ordenadas.alternar}>
               Fecha
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="categoria" orden={ordenadas.orden} onAlternar={ordenadas.alternar}>
+              Categoría
             </EncabezadoOrdenable>
             <EncabezadoOrdenable columna="detalle" orden={ordenadas.orden} onAlternar={ordenadas.alternar}>
               Detalle
@@ -274,6 +286,9 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
                   {congelada && <MarcaDeConciliado />}
                   {fechaHoraATexto(fila.fecha)}
                 </td>
+                <td>
+                  <CategoriaChip fila={fila} />
+                </td>
                 <td className="libro-detalle">
                   <Detalle fila={fila} indice={i} />
                 </td>
@@ -306,13 +321,14 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
           })}
           {filas.length === 0 && (
             <tr>
-              <td colSpan={columnas.length + 4 + (conSinCuenta ? 1 : 0)} className="text-center text-muted py-4">
+              <td colSpan={columnas.length + 5 + (conSinCuenta ? 1 : 0)} className="text-center text-muted py-4">
                 {libro.filas.length === 0 ? 'No hay movimientos en el rango elegido.' : 'Ninguna fila coincide con los filtros.'}
               </td>
             </tr>
           )}
           <tr data-fila="saldo-anterior" className={saldoAnteriorCongelado ? 'libro-fila--conciliada' : undefined}>
             <td>{saldoAnteriorCongelado && <MarcaDeConciliado />}</td>
+            <td />
             <td className="libro-detalle fw-semibold">Saldo anterior</td>
             <td className="text-end">
               <Importe valor={libro.saldoAnterior.efectivo} />

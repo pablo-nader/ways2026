@@ -224,6 +224,22 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void LocalDeMercadoPagoDiceLaOperacionYLosIdsSinNingunToken()
+    {
+        var momento = DateTimeOffset.UtcNow;
+        var payload = PayloadDeAuditoria.LocalDeMercadoPago("alta", 77, 555, "WAYSS7", momento);
+
+        AsumirConstruible(AccionAuditada.SucursalMercadoPago, payload);
+        Assert.Null(payload.Anterior);
+        Assert.Equal("alta", payload.Nuevo["operacion"]);
+        Assert.Equal(77L, payload.Nuevo["id_usuario_mercadopago"]);
+        Assert.Equal(555L, payload.Nuevo["id_store_mercadopago"]);
+        Assert.Equal("WAYSS7", payload.Nuevo["external_id"]);
+        Assert.Equal(momento, payload.Nuevo["fecha_sincronizacion"]);
+        Assert.DoesNotContain(payload.Nuevo.Keys, k => k.Contains("token", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void AltaDePuntoVentaEsConstruibleYNoTieneEstadoPrevio()
     {
         var payload = PayloadDeAuditoria.AltaDePuntoVenta(7, "Sucursal Centro", Ways.Domain.Organizacion.ModoPuntoVenta.Web);

@@ -336,16 +336,17 @@ describe('Tesoreria — libro: liquidez y saldo anterior', () => {
 
     const encabezados = within(screen.getByRole('table'))
       .getAllByRole('columnheader')
-      .slice(0, 6)
+      .slice(0, 7)
       .map((h) => h.textContent?.replace(/[▲▼↕]/g, ''))
-    expect(encabezados).toEqual(['Fecha', 'Detalle', 'Efectivo', 'Mercado Pago', 'Banco', 'Ver detalle'])
+    expect(encabezados).toEqual(['Fecha', 'Categoría', 'Detalle', 'Efectivo', 'Mercado Pago', 'Banco', 'Ver detalle'])
 
     const primera = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).at(-1) as HTMLElement
     const celdas = celdasDeLaFila(primera).map((c) => c.textContent)
-    expect(celdas[1]).toBe('Saldo anterior')
-    expect(celdas[2]).toMatch(/^\$\s10\.000,00$/)
-    expect(celdas[3]).toMatch(/^\$\s500,00$/)
-    expect(celdas[4]).toMatch(/^\$\s0,00$/)
+    expect(celdas[1]).toBe('')
+    expect(celdas[2]).toBe('Saldo anterior')
+    expect(celdas[3]).toMatch(/^\$\s10\.000,00$/)
+    expect(celdas[4]).toMatch(/^\$\s500,00$/)
+    expect(celdas[5]).toMatch(/^\$\s0,00$/)
   })
 
   it('la columna "Sin cuenta" solo aparece cuando alguna fila trae importe sin cuenta', async () => {
@@ -384,10 +385,10 @@ describe('Tesoreria — libro: filas', () => {
     expect(enlace).toHaveAttribute('rel', 'noopener noreferrer')
 
     const celdas = celdasDeLaFila(enlace.closest('tr') as HTMLElement)
-    expect(celdas[1]).toBe(detalle.closest('td'))
-    expect(celdas[2]).toHaveTextContent(/^\$\s3\.000,00$/)
-    expect(celdas[3]).toHaveTextContent(/^\$\s950,00$/)
-    expect(celdas[4].textContent).toBe('')
+    expect(celdas[2]).toBe(detalle.closest('td'))
+    expect(celdas[3]).toHaveTextContent(/^\$\s3\.000,00$/)
+    expect(celdas[4]).toHaveTextContent(/^\$\s950,00$/)
+    expect(celdas[5].textContent).toBe('')
     expect(celdas[celdas.length - 1]).toContainElement(enlace)
   })
 
@@ -444,7 +445,7 @@ describe('Tesoreria — libro: filas', () => {
     renderTesoreria()
     await esperarElLibro()
     const usuario = userEvent.setup()
-    const celda = celdasDeLaFila(screen.getByText(/^Caja #137/).closest('tr') as HTMLElement)[3]
+    const celda = celdasDeLaFila(screen.getByText(/^Caja #137/).closest('tr') as HTMLElement)[4]
 
     await usuario.hover(within(celda).getByText(/950,00/))
 
@@ -469,7 +470,7 @@ describe('Tesoreria — libro: filas', () => {
     mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: [fila] })) })
     renderTesoreria()
     await esperarElLibro()
-    const celda = celdasDeLaFila(screen.getByText(/^Caja #137/).closest('tr') as HTMLElement)[3]
+    const celda = celdasDeLaFila(screen.getByText(/^Caja #137/).closest('tr') as HTMLElement)[4]
 
     act(() =>
       (
@@ -516,7 +517,7 @@ describe('Tesoreria — libro: filas', () => {
     renderTesoreria()
     await esperarElLibro()
 
-    const detalles = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((f) => celdasDeLaFila(f as HTMLElement)[1].textContent)
+    const detalles = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((f) => celdasDeLaFila(f as HTMLElement)[2].textContent)
     expect(detalles).toEqual(['Ajuste: Comisión bancaria', 'Ajuste: Conteo', 'Proveedor: Flete', 'Caja #137 ($ -1.500)', 'Saldo anterior'])
   })
 
@@ -538,10 +539,46 @@ describe('Tesoreria — libro: filas', () => {
     await esperarElLibro()
 
     const filaPago = screen.getByText('Proveedor: Flete').closest('tr') as HTMLElement
-    expect(within(celdasDeLaFila(filaPago)[2]).getByText(/-\$\s400,00/)).toHaveClass('libro-importe--negativo')
+    expect(within(celdasDeLaFila(filaPago)[3]).getByText(/-\$\s400,00/)).toHaveClass('libro-importe--negativo')
 
     const filaAjuste = screen.getByText('Ajuste: Conteo').closest('tr') as HTMLElement
-    expect(within(celdasDeLaFila(filaAjuste)[2]).getByText(/200,00/)).not.toHaveClass('libro-importe--negativo')
+    expect(within(celdasDeLaFila(filaAjuste)[3]).getByText(/200,00/)).not.toHaveClass('libro-importe--negativo')
+  })
+
+  it('la categoría es un chip en su propia columna: el pago lleva la de su categoría, la caja "Caja", los ajustes "Ajuste" y el saldo anterior ninguno', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+
+    const chipDe = (texto: string | RegExp) => {
+      const fila = screen.getByText(texto).closest('tr') as HTMLElement
+      return celdasDeLaFila(fila)[1].querySelector('.badge') as HTMLElement
+    }
+    expect(chipDe('Proveedor: Flete')).toHaveTextContent(/^Proveedores$/)
+    expect(chipDe('Proveedor: Flete')).toHaveClass('text-bg-primary')
+    expect(chipDe(/^Caja #137/)).toHaveTextContent(/^Caja$/)
+    expect(chipDe('Ajuste: Conteo')).toHaveTextContent(/^Ajuste$/)
+    expect(chipDe('Ajuste: Comisión bancaria')).toHaveTextContent(/^Ajuste$/)
+
+    const saldoAnterior = screen.getByText('Saldo anterior').closest('tr') as HTMLElement
+    expect(saldoAnterior.querySelector('.badge')).toBeNull()
+  })
+
+  it('cada categoría de pago se muestra con su etiqueta y un tono propio', async () => {
+    const pagos = (['Proveedor', 'Sueldos', 'Viaticos', 'Impuestos', 'Servicios', 'Otros'] as const).map((categoria, i) => ({
+      ...filaDePago,
+      fecha: `2026-10-2${i + 1}T10:00:00Z`,
+      pago: { ...filaDePago.pago!, idPago: i + 1, detalle: `Destino ${i + 1}`, categoria },
+    }))
+    mockearRutas({ libro: () => Promise.resolve(libroFixture({ filas: pagos })) })
+    renderTesoreria()
+    await esperarElLibro()
+
+    const chips = Array.from(screen.getByRole('table').querySelectorAll('tbody .badge')) as HTMLElement[]
+    expect(chips.map((c) => c.textContent)).toEqual(['Otros', 'Servicios', 'Impuestos', 'Viáticos', 'Sueldos', 'Proveedores'])
+    const tonos = chips.map((c) => Array.from(c.classList).find((k) => k.startsWith('text-bg-')))
+    expect(tonos.every((t) => t !== undefined)).toBe(true)
+    expect(new Set(tonos.slice(1)).size).toBe(5)
   })
 
   it('los ajustes se rotulan "Ajuste: concepto" y el de cuenta cae en su columna', async () => {
@@ -551,8 +588,8 @@ describe('Tesoreria — libro: filas', () => {
 
     const fila = screen.getByText('Ajuste: Comisión bancaria').closest('tr') as HTMLElement
     const celdas = celdasDeLaFila(fila)
-    expect(celdas[2].textContent).toBe('')
-    expect(within(celdas[4]).getByText(/-\$\s300,00/)).toHaveClass('libro-importe--negativo')
+    expect(celdas[3].textContent).toBe('')
+    expect(within(celdas[5]).getByText(/-\$\s300,00/)).toHaveClass('libro-importe--negativo')
   })
 
   it('sin movimientos en el rango deja el saldo anterior y lo avisa', async () => {
@@ -569,8 +606,14 @@ describe('Tesoreria — libro: filtros y orden por columna', () => {
   function detallesVisibles(): string[] {
     return Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((f) => {
       const celdas = celdasDeLaFila(f as HTMLElement)
-      return (celdas[1] ?? celdas[0]).textContent ?? ''
+      return (celdas[2] ?? celdas[0]).textContent ?? ''
     })
+  }
+
+  function categoriasVisibles(): string[] {
+    return Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map(
+      (f) => celdasDeLaFila(f as HTMLElement)[1].textContent ?? '',
+    )
   }
 
   it('cada columna tiene su filtro y el encabezado de fecha arranca ordenado de lo nuevo a lo viejo', async () => {
@@ -578,7 +621,7 @@ describe('Tesoreria — libro: filtros y orden por columna', () => {
     renderTesoreria()
     await esperarElLibro()
 
-    for (const nombre of ['fecha', 'detalle', 'efectivo', 'mercado pago', 'banco']) {
+    for (const nombre of ['fecha', 'categoría', 'detalle', 'efectivo', 'mercado pago', 'banco']) {
       expect(screen.getByRole('searchbox', { name: `Filtrar por ${nombre}` })).toBeInTheDocument()
     }
     expect(screen.getByRole('columnheader', { name: /^Fecha/ })).toHaveAttribute('aria-sort', 'descending')
@@ -637,6 +680,36 @@ describe('Tesoreria — libro: filtros y orden por columna', () => {
     await esperarElLibro()
 
     expect(detallesVisibles()).toEqual(['Segundo', 'Primero', 'Saldo anterior'])
+  })
+
+  it('filtrar por categoría usa la etiqueta mostrada, no el detalle', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por categoría' }), 'PROVEEDORES')
+
+    expect(detallesVisibles()).toEqual(['Proveedor: Flete', 'Saldo anterior'])
+
+    await usuario.clear(screen.getByRole('searchbox', { name: 'Filtrar por categoría' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por categoría' }), 'ajuste')
+    expect(detallesVisibles()).toEqual(['Ajuste: Comisión bancaria', 'Ajuste: Conteo', 'Saldo anterior'])
+  })
+
+  it('ordenar por categoría alterna ascendente y descendente y deja el saldo anterior al final', async () => {
+    mockearRutas()
+    renderTesoreria()
+    await esperarElLibro()
+    const usuario = userEvent.setup()
+
+    await usuario.click(screen.getByRole('button', { name: /^Categoría/ }))
+    expect(screen.getByRole('columnheader', { name: /^Categoría/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(categoriasVisibles()).toEqual(['Ajuste', 'Ajuste', 'Caja', 'Proveedores', ''])
+
+    await usuario.click(screen.getByRole('button', { name: /^Categoría/ }))
+    expect(screen.getByRole('columnheader', { name: /^Categoría/ })).toHaveAttribute('aria-sort', 'descending')
+    expect(categoriasVisibles()).toEqual(['Proveedores', 'Caja', 'Ajuste', 'Ajuste', ''])
   })
 
   it('ordenar por efectivo compara números y manda las filas sin efectivo al final', async () => {

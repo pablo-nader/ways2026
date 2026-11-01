@@ -9,7 +9,7 @@ using Ways.Domain.Common;
 namespace Ways.Api.Endpoints;
 
 /// <summary>
-/// Conexión de una empresa con Mercado Pago por OAuth. Inicio, completar, lectura y desconexión son de Admin
+/// Conexión de una empresa con Mercado Pago por OAuth y registro de sus sucursales como locales. Inicio, completar, lectura, desconexión y el local de cada sucursal son de Admin
 /// (<see cref="Politicas.GestionDeCatalogo"/>); el callback es anónimo porque la URI de retorno registrada en Mercado Pago es
 /// una sola y la sesión del comercio puede no existir en ese host, por eso no canjea nada: solo reenvía el code y el state a la
 /// web del comercio, donde la sesión que inició el flujo completa el canje.
@@ -92,6 +92,23 @@ public static class MercadoPagoEndpoints
             "Completa la conexión dentro de la sesión que la inició: canjea el code y guarda la conexión cifrada. 400 " +
             "mercadopago_estado_invalido, 403 mercadopago_estado_ajeno, 409 mercadopago_ya_conectada|mercadopago_cuenta_en_uso, " +
             "502 mercadopago_intercambio_fallido.");
+
+        var locales = app.MapGroup("/api/sucursales/{idSucursal:int}/mercadopago")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        locales.MapGet("/", (ServicioDeLocalesMercadoPago servicio, int idSucursal, CancellationToken ct) =>
+            servicio.ObtenerAsync(idSucursal, ct))
+        .WithSummary(
+            "Estado de la sucursal como local de Mercado Pago en la cuenta conectada a su empresa: sin_conexion, no_registrada, " +
+            "registrada o desactualizada, con los datos de dirección que le faltan. 404 si la sucursal no existe.");
+
+        locales.MapPost("/", (ServicioDeLocalesMercadoPago servicio, int idSucursal, CancellationToken ct) =>
+            servicio.RegistrarAsync(idSucursal, ct))
+        .WithSummary(
+            "Registra la sucursal como local de Mercado Pago, adopta el que ya exista con su external_id o actualiza el existente " +
+            "con los datos actuales. 404 sucursal inexistente, 400 direccion_incompleta_para_mercadopago, 409 " +
+            "mercadopago_no_conectada|mercadopago_requiere_reconexion, 502 mercadopago_solicitud_rechazada, 503 mercadopago_no_disponible.");
 
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,

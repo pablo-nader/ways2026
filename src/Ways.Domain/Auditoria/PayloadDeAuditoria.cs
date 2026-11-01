@@ -363,6 +363,22 @@ public static class PayloadDeAuditoria
             ConDireccion(new Dictionary<string, object?> { ["nombre"] = nombreAnterior }, direccionAnterior),
             ConDireccion(new Dictionary<string, object?> { ["nombre"] = nombreNuevo }, direccionNueva));
 
+    /// <summary><c>sucursal.mercadopago</c>. Sin estado previo; <c>{operacion, id_usuario_mercadopago, id_store_mercadopago, external_id,
+    /// fecha_sincronizacion}</c>. <paramref name="operacion"/> es <c>alta</c>, <c>adopcion</c> o <c>actualizacion</c>. Nunca lleva un token.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        LocalDeMercadoPago(
+            string operacion, long idUsuarioMercadoPago, long idStoreMercadoPago, string externalId,
+            DateTimeOffset fechaSincronizacion) => (
+            null,
+            new Dictionary<string, object?>
+            {
+                ["operacion"] = operacion,
+                ["id_usuario_mercadopago"] = idUsuarioMercadoPago,
+                ["id_store_mercadopago"] = idStoreMercadoPago,
+                ["external_id"] = externalId,
+                ["fecha_sincronizacion"] = fechaSincronizacion
+            });
+
     private static Dictionary<string, object?> ConDireccion(
         Dictionary<string, object?> campos, DireccionDeSucursal direccion)
     {
