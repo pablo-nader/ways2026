@@ -160,6 +160,14 @@ public static class ReportesEndpoints
             "(con descendientes) y artículo — clasificación actual, filtros combinados con AND. " +
             "Sin costo ni margen: ver /rentabilidad.");
 
+        grupo.MapGet("/ventas/por-articulo/{idArticulo:int}/tickets", (
+            ServicioDeReportesDeArticulos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            int idArticulo, CancellationToken ct) =>
+            servicio.ObtenerTicketsDeArticuloAsync(idEmpresa, idPuntoVenta, desde, hasta, idArticulo, ct))
+        .WithSummary(
+            "Comprobantes de venta en los que se vendió un artículo en el período, del más reciente al " +
+            "más antiguo, con las mismas reglas de inclusión que /ventas/por-articulo. Sin costo ni margen.");
+
         grupo.MapGet("/ventas/por-hora", (
             ServicioDeReportesDeArticulos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
             CancellationToken ct) =>
