@@ -36,7 +36,9 @@ public static class ResolvedorDeOfertas
 
         // Base: la de mayor prioridad entre las NO acumulables (spec: Base Selection and
         // Tie-Break) — empate 1: mayor descuento de línea a la cantidad del umbral
-        // (ClaveDeLinea); empate 2: mayor descuento unitario; empate 3: menor id_oferta. Si no
+        // (ClaveDeLinea); empate 2: mayor descuento unitario; empate 3: la común antes que la "solo múltiplos"
+        // (con todo lo anterior igual cobran lo mismo, y así la ganadora no alterna con la cantidad); empate 4: menor
+        // id_oferta. Si no
         // hay ninguna no-acumulable que matchee, no hay base (spec: "Acumulable-only candidates
         // apply with no base" — el precio original queda como base implícita).
         (OfertaCandidata Candidata, decimal Descuento, FraccionDeDescuento Clave)? candidataBase = null;
@@ -100,6 +102,12 @@ public static class ResolvedorDeOfertas
         if (descuento != actual.Descuento)
         {
             return descuento > actual.Descuento;
+        }
+
+        var esComun = MultiploDe(candidata) is null;
+        if (esComun != (MultiploDe(actual.Candidata) is null))
+        {
+            return esComun;
         }
 
         return candidata.Id < actual.Candidata.Id;
