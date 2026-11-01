@@ -214,6 +214,12 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_vivo_numero" or "ux_cobros_mercadopago_intento" } =>
                 (StatusCodes.Status409Conflict, "Esa venta ya tiene un cobro con Mercado Pago en curso.", "cobro_mercadopago_en_curso"),
 
+            // Backstop de la orden de Mercado Pago de un cobro: el webhook busca el cobro por el id de la orden en todos los tenants y
+            // necesita que sea único. Mercado Pago devuelve una orden distinta por cada clave de idempotencia, así que solo lo alcanza una
+            // respuesta repetida para dos cobros o una escritura cruda. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_orden" } =>
+                (StatusCodes.Status409Conflict, "Esa orden de Mercado Pago ya pertenece a otro cobro.", "cobro_mercadopago_orden_duplicada"),
+
             // Backstop del vínculo entre una venta y su cobro de Mercado Pago: la venta toma el cobro con FOR UPDATE y rechaza uno ya
             // ligado, así que solo lo alcanza una escritura que se salte ese lock. Por nombre exacto, antes de ClasificarUnicidad.
             { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_comprobante_venta" } =>

@@ -3743,6 +3743,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasAlternateKey("Id", "IdTenant")
                         .HasName("ak_cobros_mercadopago_id_id_tenant");
 
+                    b.HasIndex("IdOrdenMercadoPago")
+                        .IsUnique()
+                        .HasDatabaseName("ux_cobros_mercadopago_orden")
+                        .HasFilter("id_orden_mercadopago IS NOT NULL");
+
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_cobros_mercadopago_tenant");
 

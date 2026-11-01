@@ -38,6 +38,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // criterio EXACTO que "/api/auth/login" de arriba (ninguno de los dos puede exigir una
         // policy de rol: son los dos únicos puntos de entrada SIN sesión previa del sistema).
         ("POST", "/api/auth/login-dispositivo"),
+        // Webhook de Mercado Pago (E3-T4): anónimo a propósito, sin sesión ni rol; la firma x-signature es la única credencial.
+        // Sus pruebas (firma válida/inválida, ts, orden desconocida, aislamiento por tenant) están en MercadoPagoWebhookTests.
+        ("POST", "/api/integraciones/mercadopago/webhook"),
         ("POST", "/api/ofertas/resolver"),
         // feature combos (T3b): la vista previa del carrito con combos — read-only POST, mismo grupo
         // y mismo criterio exacto que "/api/ofertas/resolver" de arriba (el cajero Vendedor la
