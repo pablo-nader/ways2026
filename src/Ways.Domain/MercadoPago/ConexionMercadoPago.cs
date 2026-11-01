@@ -50,6 +50,9 @@ public class ConexionMercadoPago : EntidadTenant
 
     public DateTimeOffset? FechaDesconexion { get; set; }
 
+    /// <summary>Usuario de Ways que la desconectó. Nulo mientras no se desconecta y en las desconexiones anteriores a este campo.</summary>
+    public int? IdUsuarioDesconecto { get; set; }
+
     public DateTimeOffset? FechaUltimaRenovacion { get; set; }
 
     /// <summary>Cuándo falló el último intento de renovar el token (falla de Mercado Pago, credenciales rechazadas o rotación perdida).

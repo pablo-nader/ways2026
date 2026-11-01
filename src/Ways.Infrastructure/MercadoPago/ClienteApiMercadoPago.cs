@@ -43,8 +43,67 @@ public sealed class ClienteApiMercadoPago(
         CancellationToken ct = default)
     {
         var token = await tokens.ObtenerAccessTokenAsync(idEmpresa, ct);
+        var rutaSinConsulta = ruta.Split('?')[0];
+        var reintentado = false;
 
-        using var pedido = new HttpRequestMessage(metodo, ruta.TrimStart('/'));
+        while (true)
+        {
+            TokenDelVendedorMercadoPago? tokenParaReintentar = null;
+
+            using (var pedido = ArmarPedido(token, metodo, ruta, cuerpo, claveIdempotencia))
+            {
+                HttpResponseMessage respuesta;
+                try
+                {
+                    respuesta = await http.SendAsync(pedido, HttpCompletionOption.ResponseHeadersRead, ct);
+                }
+                catch (HttpRequestException)
+                {
+                    log.LogWarning("Mercado Pago no respondió a {Metodo} {Ruta}.", metodo.Method, rutaSinConsulta);
+                    throw NoDisponible();
+                }
+                catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    log.LogWarning("Mercado Pago agotó el tiempo en {Metodo} {Ruta}.", metodo.Method, rutaSinConsulta);
+                    throw NoDisponible();
+                }
+
+                using (respuesta)
+                {
+                    var estado = (int)respuesta.StatusCode;
+
+                    if (respuesta.IsSuccessStatusCode)
+                    {
+                        return await LeerAsync<TRespuesta>(respuesta, metodo, rutaSinConsulta, ct);
+                    }
+
+                    log.LogWarning("Mercado Pago respondió {Estado} a {Metodo} {Ruta}.", estado, metodo.Method, rutaSinConsulta);
+
+                    if (respuesta.StatusCode == HttpStatusCode.Unauthorized)
+                    {
+                        tokenParaReintentar = await ResolverRechazoAsync(token, idEmpresa, reintentado, ct);
+                    }
+                    else if (estado is >= 400 and < 500 and not 408 and not 429)
+                    {
+                        var (codigo, mensaje) = await LeerErrorAsync(respuesta, token.AccessToken, metodo, rutaSinConsulta, ct);
+                        throw new ErrorDeApiMercadoPago(estado, codigo, mensaje);
+                    }
+                    else
+                    {
+                        throw NoDisponible();
+                    }
+                }
+            }
+
+            token = tokenParaReintentar!;
+            reintentado = true;
+        }
+    }
+
+    private static HttpRequestMessage ArmarPedido(
+        TokenDelVendedorMercadoPago token, HttpMethod metodo, string ruta, object? cuerpo, string? claveIdempotencia)
+    {
+        var pedido = new HttpRequestMessage(metodo, ruta.TrimStart('/'));
         pedido.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
         if (!string.IsNullOrWhiteSpace(claveIdempotencia))
         {
@@ -57,63 +116,62 @@ public sealed class ClienteApiMercadoPago(
                 JsonSerializer.Serialize(cuerpo, cuerpo.GetType(), OpcionesJson), Encoding.UTF8, "application/json");
         }
 
-        var rutaSinConsulta = ruta.Split('?')[0];
-        HttpResponseMessage respuesta;
+        return pedido;
+    }
+
+    /// <summary>
+    /// Mercado Pago respondió 401. La marca va guardada por la versión del token usado: si cambió una fila, el token era el vigente y
+    /// lo revocó el vendedor. Si no cambió ninguna, una renovación ya rotó el token entre la lectura y este 401 (o la conexión dejó de
+    /// estar activa): se relee, y solo si sigue activa con un vencimiento distinto del usado se devuelve el token nuevo para reintentar
+    /// el pedido, una única vez. Toda otra salida lanza <see cref="CodigosDeErrorDeMercadoPago.RequiereReconexion"/>.
+    /// </summary>
+    private async Task<TokenDelVendedorMercadoPago> ResolverRechazoAsync(
+        TokenDelVendedorMercadoPago token, int idEmpresa, bool yaReintentado, CancellationToken ct)
+    {
+        var cambioLaFila = false;
         try
         {
-            respuesta = await http.SendAsync(pedido, HttpCompletionOption.ResponseHeadersRead, ct);
+            cambioLaFila = await tokens.MarcarTokenRechazadoAsync(token, CancellationToken.None);
         }
-        catch (HttpRequestException)
+        catch (Exception error)
         {
-            log.LogWarning("Mercado Pago no respondió a {Metodo} {Ruta}.", metodo.Method, rutaSinConsulta);
-            throw NoDisponible();
+            log.LogError(
+                error, "No se pudo dejar la conexión {IdConexion} de Mercado Pago en requiere_reconexion tras un 401.",
+                token.IdConexion);
+            throw RequiereReconexion();
         }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+
+        if (cambioLaFila || yaReintentado)
         {
-            log.LogWarning("Mercado Pago agotó el tiempo en {Metodo} {Ruta}.", metodo.Method, rutaSinConsulta);
-            throw NoDisponible();
+            throw RequiereReconexion();
         }
 
-        using (respuesta)
+        TokenDelVendedorMercadoPago renovado;
+        try
         {
-            var estado = (int)respuesta.StatusCode;
-
-            if (respuesta.IsSuccessStatusCode)
-            {
-                return await LeerAsync<TRespuesta>(respuesta, metodo, rutaSinConsulta, ct);
-            }
-
-            log.LogWarning("Mercado Pago respondió {Estado} a {Metodo} {Ruta}.", estado, metodo.Method, rutaSinConsulta);
-
-            if (respuesta.StatusCode == HttpStatusCode.Unauthorized)
-            {
-                // El token se creía vigente: lo revocó el vendedor. La marca va guardada por la versión del token usado.
-                try
-                {
-                    await tokens.MarcarTokenRechazadoAsync(token, CancellationToken.None);
-                }
-                catch (Exception error)
-                {
-                    log.LogError(
-                        error, "No se pudo dejar la conexión {IdConexion} de Mercado Pago en requiere_reconexion tras un 401.",
-                        token.IdConexion);
-                }
-
-                throw new ErrorDominio(
-                    CodigosDeErrorDeMercadoPago.RequiereReconexion,
-                    "Mercado Pago rechazó las credenciales de esta empresa: hay que reconectarla.",
-                    409);
-            }
-
-            if (estado is >= 400 and < 500 and not 408 and not 429)
-            {
-                var (codigo, mensaje) = await LeerErrorAsync(respuesta, token.AccessToken, metodo, rutaSinConsulta, ct);
-                throw new ErrorDeApiMercadoPago(estado, codigo, mensaje);
-            }
-
-            throw NoDisponible();
+            renovado = await tokens.ObtenerAccessTokenAsync(idEmpresa, ct);
         }
+        catch (ErrorDominio error) when (error.Codigo is CodigosDeErrorDeMercadoPago.RequiereReconexion or CodigosDeErrorDeMercadoPago.NoConectada)
+        {
+            throw RequiereReconexion();
+        }
+
+        if (renovado.IdConexion != token.IdConexion || renovado.ExpiraEn == token.ExpiraEn)
+        {
+            throw RequiereReconexion();
+        }
+
+        log.LogInformation(
+            "El 401 de Mercado Pago correspondía a un token ya renovado de la conexión {IdConexion}: se reintenta una vez.",
+            token.IdConexion);
+        return renovado;
     }
+
+    private static ErrorDominio RequiereReconexion() =>
+        new(
+            CodigosDeErrorDeMercadoPago.RequiereReconexion,
+            "Mercado Pago rechazó las credenciales de esta empresa: hay que reconectarla.",
+            409);
 
     public async Task<ListadoDeTerminalesMercadoPago> ListarTerminalesAsync(
         int idEmpresa, long? idStore = null, long? idPos = null, CancellationToken ct = default)

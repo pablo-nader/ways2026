@@ -3541,6 +3541,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_usuario_conecto");
 
+                    b.Property<int?>("IdUsuarioDesconecto")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_usuario_desconecto");
+
                     b.Property<long>("IdUsuarioMercadoPago")
                         .HasColumnType("bigint")
                         .HasColumnName("id_usuario_mercadopago");
@@ -3569,6 +3573,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdUsuarioConecto")
                         .HasDatabaseName("ix_conexiones_mercadopago_usuario_conecto");
+
+                    b.HasIndex("IdUsuarioDesconecto")
+                        .HasDatabaseName("ix_conexiones_mercadopago_usuario_desconecto");
 
                     b.HasIndex("IdUsuarioMercadoPago")
                         .IsUnique()
@@ -7543,6 +7550,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_conexiones_mercadopago_usuario_conecto");
+
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdUsuarioDesconecto")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_conexiones_mercadopago_usuario_desconecto");
 
                     b.HasOne("Ways.Domain.Organizacion.Empresa", null)
                         .WithMany()

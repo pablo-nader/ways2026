@@ -8,6 +8,17 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
     /// <inheritdoc />
     public partial class RenovacionDeConexionesMercadoPago : Migration
     {
+        public const string SqlDeBajaDeRequiereReconexion =
+            """
+            SET LOCAL app.acceso = 'plataforma';
+            -- rls-migration-backfills: conexiones_mercadopago corre con FORCE ROW LEVEL SECURITY; sin el GUC de plataforma el rol
+            -- de la aplicación no ve ninguna fila y el UPDATE no escribe nada.
+            UPDATE conexiones_mercadopago
+            SET estado = 'desconectada',
+                fecha_desconexion = COALESCE(fecha_requiere_reconexion, updated_at)
+            WHERE estado = 'requiere_reconexion';
+            """;
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -55,6 +66,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             migrationBuilder.DropCheckConstraint(
                 name: "ck_conexiones_mercadopago_requiere_reconexion",
                 table: "conexiones_mercadopago");
+
+            // El estado viejo no conoce requiere_reconexion: esas filas pasan a desconectada, con la fecha en que se marcaron como
+            // fecha de desconexión (ya no tienen tokens), antes de que vuelva el CHECK de dos valores y de quitar la columna.
+            migrationBuilder.Sql(SqlDeBajaDeRequiereReconexion);
 
             migrationBuilder.DropColumn(
                 name: "fecha_requiere_reconexion",

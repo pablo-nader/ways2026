@@ -192,6 +192,7 @@ Usuario | comprobantes_compra | id_empleado | marcado
 Usuario | comprobantes_venta | id_empleado | marcado
 Usuario | conciliaciones_tesoreria | id_usuario | sinmarca
 Usuario | conexiones_mercadopago | id_usuario_conecto | marcado
+Usuario | conexiones_mercadopago | id_usuario_desconecto | marcado
 Usuario | dispositivos | id_usuario_alta | marcado
 Usuario | jornadas_personal | id_empleado | sinmarca
 Usuario | movimientos_caja | id_empleado | sinmarca

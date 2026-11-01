@@ -527,6 +527,31 @@ public class MercadoPagoApiTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
+    public async Task UnaExcepcionInesperadaDeLaRenovacionAnotaElIntentoYElBackoffEvitaRepetirLaLlamada()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-inesperada-backoff");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(12));
+        ctx.MercadoPago.ResponderPedido = _ => throw new InvalidOperationException("falla inesperada");
+        Assert.Null(Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).FechaUltimoIntentoRenovacion);
+
+        Assert.Equal(conectada.Acceso, (await ObtenerAsync(ctx)).AccessToken);
+
+        Assert.Equal(1, Renovaciones(ctx));
+        var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        Assert.NotNull(fila.FechaUltimoIntentoRenovacion);
+        Assert.InRange(fila.FechaUltimoIntentoRenovacion!.Value, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(1));
+        Assert.Equal("activa", fila.Estado);
+
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.Equal(conectada.Acceso, (await ObtenerAsync(ctx)).AccessToken);
+        }
+
+        Assert.Equal(1, Renovaciones(ctx));
+    }
+
+    [Fact]
     public async Task UnaExcepcionInesperadaConElTokenYaVencidoEsNoDisponibleYNoUnaExcepcionCruda()
     {
         var ctx = await _apoyo.PrepararAsync("mp-api-inesperada-vencido");
@@ -589,6 +614,41 @@ public class MercadoPagoApiTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(CodigosDeErrorDeMercadoPago.RequiereReconexion, otra.Codigo);
         Assert.Equal(llamadas, ctx.MercadoPago.Pedidos.Count);
         Assert.Equal(conectada.Fila.Id, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).Id);
+    }
+
+    [Fact]
+    public async Task UnRechazo401DeUnTokenQueUnaRenovacionYaRotoReintentaUnaVezYNoMarcaLaConexion()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-401-reintento");
+        var conectada = await ConectarAsync(ctx);
+        var llamadasALaApi = 0;
+        Guionar(
+            ctx,
+            () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            _ => ++llamadasALaApi == 1 ? Json(HttpStatusCode.Unauthorized, """{"message":"invalid token"}""") : Json(HttpStatusCode.OK, Terminales));
+        // La renovación commitea entre la lectura del token y la respuesta 401: la fila cambia de vencimiento.
+        var yaRoto = false;
+        ctx.MercadoPago.AntesDeResponder = async () =>
+        {
+            if (!yaRoto)
+            {
+                yaRoto = true;
+                await EjecutarSqlAsync(
+                    "UPDATE conexiones_mercadopago SET access_token_expira_en = access_token_expira_en + interval '1 day' " +
+                    "WHERE id_conexion_mercadopago = $1",
+                    conectada.Fila.Id);
+            }
+        };
+
+        var listado = await ListarAsync(ctx);
+
+        Assert.Single(listado.Terminales);
+        var pedidos = ctx.MercadoPago.Pedidos.Where(p => !EsDeTokens(p)).ToList();
+        Assert.Equal(2, pedidos.Count);
+        var fila = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        Assert.Equal("activa", fila.Estado);
+        Assert.Null(fila.FechaRequiereReconexion);
+        Assert.NotNull(fila.AccessCifrado);
     }
 
     [Fact]

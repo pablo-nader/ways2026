@@ -95,6 +95,12 @@ public class ProveedorDeTokenMercadoPago(
             log.LogError(
                 error, "Falló la renovación previa al uso de la conexión {IdConexion} de Mercado Pago; se usa el token guardado si todavía sirve.",
                 conexion.Id);
+
+            // La transacción de la renovación hizo rollback con la falla: sin este UPDATE aparte el backoff no se aplicaría.
+            if (error is not ErrorDominio)
+            {
+                await renovacion.RegistrarIntentoAparteAsync(conexion.Id, conexion.IdTenant, ahora);
+            }
         }
 
         if (resultado == ResultadoDeRenovacion.RequiereReconexion)
