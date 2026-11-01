@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneTreintaYCincoEntradas()
+    public void TieneTreintaYSeisEntradas()
     {
-        Assert.Equal(35, AccionAuditada.Todas.Count);
+        Assert.Equal(36, AccionAuditada.Todas.Count);
     }
 
     [Fact]
