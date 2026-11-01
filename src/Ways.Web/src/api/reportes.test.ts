@@ -7,7 +7,6 @@ import type {
   FiltrosDeRentabilidad,
   FiltrosDeReporte,
   FiltrosDeReporteDeArticulos,
-  FiltrosDeTesoreria,
   FiltrosDeTopArticulos,
   FiltrosDeVentasPorArticulo,
 } from './reportes'
@@ -20,19 +19,15 @@ vi.mock('./cliente', () => ({
 
 const {
   COLUMNAS_ORDENABLES_DE_REPORTE_DE_ARTICULOS,
-  COLUMNAS_ORDENABLES_DE_TESORERIA,
   clienteDeReportes,
   esColumnaOrdenableDeReporteDeArticulos,
-  esColumnaOrdenableDeTesoreria,
   construirQueryDeBreakdown,
   construirQueryDeBreakdownConPv,
   construirQueryDeHistoricoDeCajas,
-  construirQueryDeLibroDeCuenta,
   construirQueryDeLibroDeTesoreria,
   construirQueryDeLibroIva,
   construirQueryDeReporte,
   construirQueryDeReporteDeArticulos,
-  construirQueryDeTesoreria,
   construirQueryDeVentasPorArticulo,
   construirQueryDeVentasPorHora,
   rangoDeLasUltimasCuatroSemanas,
@@ -75,18 +70,14 @@ function filtrosHistoricoDeCajasFixture(sobrescribir: Partial<FiltrosDeHistorico
   return { idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', pagina: 1, tamanio: 25, ...sobrescribir }
 }
 
-function filtrosTesoreriaFixture(sobrescribir: Partial<FiltrosDeTesoreria> = {}): FiltrosDeTesoreria {
-  return { idEmpresa: 1, idPuntoVenta: 7, desde: '2026-08-05', hasta: '2026-08-11', pagina: 1, tamanio: 25, ...sobrescribir }
-}
-
 function filtrosReporteDeArticulosFixture(
   sobrescribir: Partial<FiltrosDeReporteDeArticulos> = {},
 ): FiltrosDeReporteDeArticulos {
   return { ...filtrosDeReporteDeArticulosVacios(), ...sobrescribir }
 }
 
-// ---- construirQueryDeHistoricoDeCajas / construirQueryDeTesoreria: mismo patrón de offset
-// explícito que compras.ts/cuentaCorriente.ts — /cajas y /tesoreria filtran contra un timestamptz. --
+// ---- construirQueryDeHistoricoDeCajas: mismo patrón de offset explícito que
+// compras.ts/cuentaCorriente.ts — /cajas filtra contra un timestamptz. --
 
 function offsetEsperado(anio: number, mes: number, dia: number): string {
   const minutos = new Date(anio, mes - 1, dia).getTimezoneOffset()
@@ -194,27 +185,6 @@ describe('rutasDeExportacion', () => {
 
     expect(ruta).toContain('idPuntoVenta=7')
   })
-
-  it('tesoreria reutiliza el offset de /tesoreria y suma formato=xlsx, sin pagina/tamanio', () => {
-    const offsetDesde = offsetEsperado(2026, 8, 5)
-    const offsetHasta = offsetEsperado(2026, 8, 11)
-    const ruta = decodeURIComponent(
-      rutasDeExportacion.tesoreria({ idEmpresa: 1, idPuntoVenta: 7, desde: '2026-08-05', hasta: '2026-08-11' }),
-    )
-
-    expect(ruta).toBe(
-      `/reportes/tesoreria/export?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05T00:00:00${offsetDesde}&hasta=2026-08-11T23:59:59.999${offsetHasta}&formato=xlsx`,
-    )
-  })
-
-  it('tesoreria omite idPuntoVenta cuando es null ("Todos")', () => {
-    const ruta = decodeURIComponent(
-      rutasDeExportacion.tesoreria({ idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11' }),
-    )
-
-    expect(ruta).toContain('idEmpresa=1')
-    expect(ruta).not.toContain('idPuntoVenta=')
-  })
 })
 
 describe('construirQueryDeHistoricoDeCajas', () => {
@@ -243,102 +213,24 @@ describe('construirQueryDeHistoricoDeCajas', () => {
   })
 })
 
-describe('construirQueryDeTesoreria', () => {
-  it('idEmpresa viaja siempre (obligatorio), con idPuntoVenta/desde/hasta y pagina/tamanio', () => {
-    const offsetDesde = offsetEsperado(2026, 8, 5)
-    const offsetHasta = offsetEsperado(2026, 8, 11)
-    const query = decodeURIComponent(construirQueryDeTesoreria(filtrosTesoreriaFixture()))
-
-    expect(query).toBe(
-      `?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05T00:00:00${offsetDesde}&hasta=2026-08-11T23:59:59.999${offsetHasta}&pagina=1&tamanio=25`,
-    )
-  })
-
-  it('idPuntoVenta se omite cuando es null ("Todos")', () => {
-    const query = decodeURIComponent(construirQueryDeTesoreria(filtrosTesoreriaFixture({ idPuntoVenta: null })))
-
-    expect(query).toContain('idEmpresa=1')
-    expect(query).not.toContain('idPuntoVenta=')
-  })
-})
-
-describe('construirQueryDeHistoricoDeCajas / construirQueryDeTesoreria — offset fijo (sin espejar la fórmula de la implementación)', () => {
+describe('construirQueryDeHistoricoDeCajas — offset fijo (sin espejar la fórmula de la implementación)', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('minutos=180 (UTC-3) produce el literal -03:00 en ambos', () => {
+  it('minutos=180 (UTC-3) produce el literal -03:00', () => {
     vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(180)
 
     expect(decodeURIComponent(construirQueryDeHistoricoDeCajas(filtrosHistoricoDeCajasFixture()))).toContain('desde=2026-08-05T00:00:00-03:00')
-    expect(decodeURIComponent(construirQueryDeTesoreria(filtrosTesoreriaFixture()))).toContain('desde=2026-08-05T00:00:00-03:00')
   })
 })
 
-describe('clienteDeReportes.historicoDeCajas / clienteDeReportes.tesoreria', () => {
+describe('clienteDeReportes.historicoDeCajas', () => {
   it('historicoDeCajas pega contra /reportes/cajas con el query armado', async () => {
     apiGetMock.mockClear()
     await clienteDeReportes.historicoDeCajas(filtrosHistoricoDeCajasFixture())
 
     expect(apiGetMock).toHaveBeenCalledWith(expect.stringMatching(/^\/reportes\/cajas\?/))
-  })
-
-  it('tesoreria pega contra /reportes/tesoreria con el query armado', async () => {
-    apiGetMock.mockClear()
-    await clienteDeReportes.tesoreria(filtrosTesoreriaFixture())
-
-    expect(apiGetMock).toHaveBeenCalledWith(expect.stringMatching(/^\/reportes\/tesoreria\?idEmpresa=1&idPuntoVenta=7/))
-  })
-})
-
-describe('orden de /reportes/tesoreria', () => {
-  it('sin orden la consulta no lleva orden ni dirección (el libro sale en orden de cadena)', () => {
-    const parametros = new URLSearchParams(construirQueryDeTesoreria(filtrosTesoreriaFixture()).slice(1))
-
-    expect(parametros.has('orden')).toBe(false)
-    expect(parametros.has('direccion')).toBe(false)
-  })
-
-  it('con orden lleva orden y dirección junto con el resto de los filtros y la página', () => {
-    const parametros = new URLSearchParams(
-      construirQueryDeTesoreria(filtrosTesoreriaFixture({ pagina: 3 }), { columna: 'puntoVenta', direccion: 'descendente' }).slice(1),
-    )
-
-    expect(parametros.get('orden')).toBe('puntoVenta')
-    expect(parametros.get('direccion')).toBe('descendente')
-    expect(parametros.get('pagina')).toBe('3')
-    expect(parametros.get('idEmpresa')).toBe('1')
-    expect(parametros.get('idPuntoVenta')).toBe('7')
-  })
-
-  it('el cliente pasa el orden al query', async () => {
-    apiGetMock.mockClear()
-    await clienteDeReportes.tesoreria(filtrosTesoreriaFixture(), { columna: 'fecha', direccion: 'ascendente' })
-
-    expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('orden=fecha&direccion=ascendente'))
-  })
-
-  it('el export nunca lleva el orden', () => {
-    const ruta = rutasDeExportacion.tesoreria(filtrosTesoreriaFixture())
-
-    expect(ruta).not.toContain('orden=')
-    expect(ruta).not.toContain('direccion=')
-  })
-
-  it('las columnas ordenables son exactamente las claves que acepta el servidor', () => {
-    expect([...COLUMNAS_ORDENABLES_DE_TESORERIA]).toEqual([
-      'tipo',
-      'inicio',
-      'ingreso',
-      'egreso',
-      'final',
-      'concepto',
-      'puntoVenta',
-      'empleado',
-      'fecha',
-    ])
-    expect(esColumnaOrdenableDeTesoreria('final')).toBe(true)
-    expect(esColumnaOrdenableDeTesoreria('saldo')).toBe(false)
   })
 })
 
@@ -583,34 +475,6 @@ describe('rangoDelMesActual', () => {
 
   it('usa la fecha local, no UTC: el 1 de enero a las 00:30 sigue siendo enero', () => {
     expect(rangoDelMesActual(new Date(2026, 0, 1, 0, 30))).toEqual({ desde: '2026-01-01', hasta: '2026-01-31' })
-  })
-})
-
-describe('libro de una cuenta de tesorería', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('el query lleva el rango con el día completo (offset local), la página y el tamaño, sin idEmpresa', () => {
-    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(180)
-
-    const query = decodeURIComponent(construirQueryDeLibroDeCuenta({ desde: '2026-08-05', hasta: '2026-08-11', pagina: 2, tamanio: 25 }))
-
-    expect(query).toBe('?desde=2026-08-05T00:00:00-03:00&hasta=2026-08-11T23:59:59.999-03:00&pagina=2&tamanio=25')
-  })
-
-  it('un rango vacío omite desde y hasta', () => {
-    expect(construirQueryDeLibroDeCuenta({ desde: '', hasta: '', pagina: 1, tamanio: 25 })).toBe('?pagina=1&tamanio=25')
-  })
-
-  it('las cuentas de la empresa y el libro de una cuenta pegan a las rutas de reportes', async () => {
-    apiGetMock.mockClear()
-
-    await clienteDeReportes.cuentasDeTesoreria(7)
-    await clienteDeReportes.libroDeCuenta(12, { desde: '', hasta: '', pagina: 1, tamanio: 25 })
-
-    expect(apiGetMock).toHaveBeenNthCalledWith(1, '/reportes/tesoreria/cuentas?idEmpresa=7')
-    expect(apiGetMock).toHaveBeenNthCalledWith(2, '/reportes/tesoreria/cuentas/12/libro?pagina=1&tamanio=25')
   })
 })
 
