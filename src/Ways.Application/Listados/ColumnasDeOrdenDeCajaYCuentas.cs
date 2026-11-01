@@ -42,3 +42,35 @@ public enum ColumnaDeOrdenDeCuentaDePersonal
     SaldoResultante,
     Detalle,
 }
+
+/// <summary>Columnas por las que <c>GET /api/caja/retiros</c> acepta <c>orden</c>.</summary>
+public enum ColumnaDeOrdenDeRetiros
+{
+    Fecha,
+    PuntoVenta,
+    Turno,
+    Empleado,
+    Importe,
+    Motivo,
+    EstadoTurno,
+    Conciliado,
+    EsRetiroDeCierre,
+}
+
+/// <summary>Columnas por las que <c>GET /api/ventas/administracion</c> acepta <c>orden</c>.</summary>
+public enum ColumnaDeOrdenDeVentasDeAdministracion
+{
+    Fecha,
+    Numero,
+    Tipo,
+    PuntoVenta,
+    Turno,
+    Cliente,
+    Empleado,
+    Medios,
+    Total,
+    Estado,
+    EstadoFiscal,
+    EstadoTurno,
+    Conciliado,
+}

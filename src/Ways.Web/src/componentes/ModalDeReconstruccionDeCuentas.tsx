@@ -5,8 +5,11 @@ import {
   descuentosDeAcreditacion,
   errorAlReconstruir,
   nombreDeEmpresa,
+  origenesDeReconstruccion,
   rangoDeReconstruccionPorDefecto,
   validarRangoDeReconstruccion,
+  type AcreditacionDeReconstruccion,
+  type DebitoDeReconstruccion,
   type PlanDeReconstruccion,
   type SolicitudDeReconstruccion,
 } from '../api/cuentasTesoreria'
@@ -29,7 +32,8 @@ const importe = (valor: number) => formatearImporte(valor, { simbolo: true })
 
 /**
  * Reconstrucción histórica del libro de las cuentas de tesorería (solo Admin): acredita, con la fecha de cierre del turno, los
- * cobros de turnos cerrados antes de que el medio tuviera cuenta.
+ * cobros de turnos cerrados antes de que el medio tuviera cuenta, y debita, con la fecha del pago, los pagos que todavía no
+ * debitaron la cuenta de su medio.
  *
  * `react-async-state`: la vista previa es una lectura con generación (cambiar empresa o fechas la invalida y descarta la
  * respuesta tardía) y solo habilita la confirmación si su clave es la de los campos actuales. La escritura lleva ref síncrona
@@ -162,14 +166,15 @@ export function ModalDeReconstruccionDeCuentas({ empresas, onCerrar, onReconstru
       {resultado ? (
         <div role="status" className="alert alert-success">
           Reconstrucción lista: se escribieron {resultado.filas} {resultado.filas === 1 ? 'fila' : 'filas'} de{' '}
-          {resultado.turnos} {resultado.turnos === 1 ? 'turno' : 'turnos'}. La pantalla vuelve a leer los saldos de las cuentas.
+          {origenesDeReconstruccion(resultado.turnos, resultado.pagos)}. La pantalla vuelve a leer los saldos de las cuentas.
         </div>
       ) : (
         <>
           <p className="small text-muted">
             Acredita en las cuentas los cobros digitales de turnos ya cerrados que quedaron sin registrar porque el medio todavía
             no tenía cuenta. Se aplican los porcentajes de comisión y retenciones que tiene cada medio hoy, y cada fila se fecha
-            el día en que se cerró el turno. Correrlo de nuevo sobre el mismo rango no duplica nada.
+            el día en que se cerró el turno. También debita en la cuenta los pagos hechos con esos medios que todavía no la
+            debitaron, fechados el día del pago. Correrlo de nuevo sobre el mismo rango no duplica nada.
           </p>
 
           <fieldset disabled={escribiendo} className="border-0 p-0 m-0">
@@ -225,59 +230,32 @@ export function ModalDeReconstruccionDeCuentas({ empresas, onCerrar, onReconstru
 }
 
 function VistaPreviaDeReconstruccion({ plan }: { plan: PlanDeReconstruccion }) {
+  const hayCongelado = plan.congeladas.length > 0 || plan.debitosCongelados.length > 0
+
   if (plan.filas === 0) {
-    return <div className="alert alert-info">No hay turnos sin acreditar en ese rango.</div>
+    if (!hayCongelado) {
+      return <div className="alert alert-info">No hay turnos sin acreditar ni pagos sin debitar en ese rango.</div>
+    }
+
+    return (
+      <>
+        <div className="alert alert-info">
+          No se puede escribir nada: lo pendiente de ese rango ya está conciliado y la conciliación lo congela.
+        </div>
+        <SeccionCongelada plan={plan} />
+      </>
+    )
   }
 
   return (
     <>
       <p className="small mb-2">
-        Se escribirían <strong>{plan.filas}</strong> {plan.filas === 1 ? 'fila' : 'filas'} de <strong>{plan.turnos}</strong>{' '}
-        {plan.turnos === 1 ? 'turno' : 'turnos'}.
+        Se escribirían <strong>{plan.filas}</strong> {plan.filas === 1 ? 'fila' : 'filas'} de{' '}
+        {origenesDeReconstruccion(plan.turnos, plan.pagos)}.
       </p>
 
-      <div className="table-responsive mb-3">
-        <table className="table table-sm table-striped table-bordered align-middle mb-0" aria-label="Acreditaciones">
-          <thead>
-            <tr>
-              <th scope="col">Cierre del turno</th>
-              <th scope="col">Turno</th>
-              <th scope="col">Medio</th>
-              <th scope="col">Cuenta</th>
-              <th scope="col" className="text-end">
-                Cobro bruto
-              </th>
-              <th scope="col" className="text-end">
-                Comisión
-              </th>
-              <th scope="col" className="text-end">
-                Retenciones
-              </th>
-              <th scope="col" className="text-end">
-                Neto
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {plan.acreditaciones.map((a) => {
-              const { comision, retenciones } = descuentosDeAcreditacion(a)
-
-              return (
-                <tr key={`${a.idTurnoCaja}-${a.idMedioPago}`}>
-                  <td>{fechaHoraATexto(a.fechaCierre)}</td>
-                  <td>#{a.idTurnoCaja}</td>
-                  <td>{a.nombreMedio}</td>
-                  <td>{a.nombreCuenta}</td>
-                  <td className="text-end">{importe(a.baseBruta)}</td>
-                  <td className="text-end">{importe(comision)}</td>
-                  <td className="text-end">{importe(retenciones)}</td>
-                  <td className="text-end">{importe(a.neto)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      {plan.acreditaciones.length > 0 && <TablaDeAcreditaciones acreditaciones={plan.acreditaciones} titulo="Acreditaciones" />}
+      {plan.debitos.length > 0 && <TablaDeDebitos debitos={plan.debitos} titulo="Débitos de pagos" />}
 
       <h3 className="h6">Efecto por cuenta</h3>
       <div className="table-responsive">
@@ -312,6 +290,112 @@ function VistaPreviaDeReconstruccion({ plan }: { plan: PlanDeReconstruccion }) {
           </tbody>
         </table>
       </div>
+
+      {hayCongelado && <SeccionCongelada plan={plan} />}
     </>
+  )
+}
+
+/** Lo que cae a la marca de conciliación o antes: se muestra para que se vea por qué no se escribe, nunca se cuenta. */
+function SeccionCongelada({ plan }: { plan: PlanDeReconstruccion }) {
+  const titulo = plan.conciliadoHasta
+    ? `Congelado por la conciliación (hasta ${fechaHoraATexto(plan.conciliadoHasta)})`
+    : 'Congelado por la conciliación'
+
+  return (
+    <section aria-label={titulo} className="mt-3">
+      <h3 className="h6">{titulo}</h3>
+      <p className="small text-muted">
+        Turnos y pagos con fecha a la marca de conciliación o antes: la reconstrucción no los escribe.
+      </p>
+      {plan.congeladas.length > 0 && (
+        <TablaDeAcreditaciones acreditaciones={plan.congeladas} titulo="Acreditaciones congeladas" />
+      )}
+      {plan.debitosCongelados.length > 0 && <TablaDeDebitos debitos={plan.debitosCongelados} titulo="Débitos congelados" />}
+    </section>
+  )
+}
+
+function TablaDeAcreditaciones({
+  acreditaciones,
+  titulo,
+}: {
+  acreditaciones: readonly AcreditacionDeReconstruccion[]
+  titulo: string
+}) {
+  return (
+    <div className="table-responsive mb-3">
+      <table className="table table-sm table-striped table-bordered align-middle mb-0" aria-label={titulo}>
+        <thead>
+          <tr>
+            <th scope="col">Cierre del turno</th>
+            <th scope="col">Turno</th>
+            <th scope="col">Medio</th>
+            <th scope="col">Cuenta</th>
+            <th scope="col" className="text-end">
+              Cobro bruto
+            </th>
+            <th scope="col" className="text-end">
+              Comisión
+            </th>
+            <th scope="col" className="text-end">
+              Retenciones
+            </th>
+            <th scope="col" className="text-end">
+              Neto
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {acreditaciones.map((a) => {
+            const { comision, retenciones } = descuentosDeAcreditacion(a)
+
+            return (
+              <tr key={`${a.idTurnoCaja}-${a.idMedioPago}`}>
+                <td>{fechaHoraATexto(a.fechaCierre)}</td>
+                <td>#{a.idTurnoCaja}</td>
+                <td>{a.nombreMedio}</td>
+                <td>{a.nombreCuenta}</td>
+                <td className="text-end">{importe(a.baseBruta)}</td>
+                <td className="text-end">{importe(comision)}</td>
+                <td className="text-end">{importe(retenciones)}</td>
+                <td className="text-end">{importe(a.neto)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TablaDeDebitos({ debitos, titulo }: { debitos: readonly DebitoDeReconstruccion[]; titulo: string }) {
+  return (
+    <div className="table-responsive mb-3">
+      <table className="table table-sm table-striped table-bordered align-middle mb-0" aria-label={titulo}>
+        <thead>
+          <tr>
+            <th scope="col">Fecha del pago</th>
+            <th scope="col">Pago</th>
+            <th scope="col">Medio</th>
+            <th scope="col">Cuenta</th>
+            <th scope="col" className="text-end">
+              Importe
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {debitos.map((d) => (
+            <tr key={`${d.idPago}-${d.idMedioPago}`}>
+              <td>{fechaHoraATexto(d.fecha)}</td>
+              <td>{`#${d.idPago} · ${d.concepto}`}</td>
+              <td>{d.nombreMedio}</td>
+              <td>{d.nombreCuenta}</td>
+              <td className="text-end">{importe(d.importe)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }

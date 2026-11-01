@@ -1778,7 +1778,7 @@ public partial class ServicioDePagos(
     /// venta 404 y turno abierto 409). El pago solo de descuento no tiene origen y solo resuelve el punto de
     /// venta y la fecha. Este método no escribe nada.</summary>
     public async Task<EntornoDePagoDeSueldo> PrepararPagosDeSueldoAsync(
-        OrigenFondosPago? origenFondos, int? idEmpresa, int? idPuntoVenta, DateOnly fecha,
+        OrigenFondosPago? origenFondos, int? idEmpresa, int? idPuntoVenta, DateOnly? fecha, bool exigirHoy,
         IReadOnlyCollection<int> idsMedioPago, CancellationToken ct = default)
     {
         var momento = reloj.Ahora;
@@ -1814,10 +1814,19 @@ public partial class ServicioDePagos(
         }
 
         var zona = await ResolverZonaAsync(idEmpresaResuelta, idPuntoVentaResuelto, ct);
-        ExigirFechaNoFutura(fecha, momento, zona);
+        var hoy = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(momento, zona).DateTime);
+        var fechaDelPago = fecha ?? hoy;
+        if (exigirHoy && fechaDelPago != hoy)
+        {
+            throw new ErrorDominio(
+                "fecha_no_es_hoy", "Un pago de personal desde el POS se registra siempre con la fecha de hoy.", 400);
+        }
+
+        ExigirFechaNoFutura(fechaDelPago, momento, zona);
 
         return new EntornoDePagoDeSueldo(
-            idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona, momento), nombresDeMedios);
+            idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, fechaDelPago,
+            FechaDeNegocioAInstante(fechaDelPago, zona, momento), nombresDeMedios);
     }
 
     /// <summary>Un solo pago de categoría sueldos con un ítem por línea de dinero, dentro de la transacción del

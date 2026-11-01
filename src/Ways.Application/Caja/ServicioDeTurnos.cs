@@ -403,7 +403,8 @@ public class ServicioDeTurnos(
                 Importe = solicitud.ImporteRetirado,
                 Motivo = "Retiro de cierre de turno",
                 IdEmpleado = idEmpleado,
-                CreadoEl = momento
+                CreadoEl = momento,
+                EsRetiroDeCierre = true
             });
             await db.SaveChangesAsync(ct);
         }

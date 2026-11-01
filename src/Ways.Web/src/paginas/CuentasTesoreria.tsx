@@ -13,6 +13,7 @@ import {
   errorAlGuardar,
   formularioVacio,
   nombreDeEmpresa,
+  origenesDeReconstruccion,
   validarFormulario,
   type CampoConError,
   type CuentaTesoreriaListado,
@@ -286,7 +287,7 @@ export function CuentasTesoreria() {
     setError('')
     void refrescarTrasEscribir(
       token,
-      `Historial reconstruido: ${plan.filas} ${plan.filas === 1 ? 'fila' : 'filas'} de ${plan.turnos} ${plan.turnos === 1 ? 'turno' : 'turnos'}.`,
+      `Historial reconstruido: ${plan.filas} ${plan.filas === 1 ? 'fila' : 'filas'} de ${origenesDeReconstruccion(plan.turnos, plan.pagos)}.`,
       AVISO_REFRESCO_FALLIDO,
     )
   }
