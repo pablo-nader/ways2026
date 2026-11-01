@@ -15,6 +15,7 @@ namespace Ways.Application.Reportes;
 public enum AgrupacionDeVentas
 {
     PuntoVenta,
+    Sucursal,
     MedioPago,
     Vendedor,
     Dia,
@@ -99,6 +100,7 @@ public class ServicioDeConsultasDeVentas(
     private static readonly IReadOnlyDictionary<string, AgrupacionDeVentas> Agrupaciones = new Dictionary<string, AgrupacionDeVentas>
     {
         ["punto_venta"] = AgrupacionDeVentas.PuntoVenta,
+        ["sucursal"] = AgrupacionDeVentas.Sucursal,
         ["medio_pago"] = AgrupacionDeVentas.MedioPago,
         ["vendedor"] = AgrupacionDeVentas.Vendedor,
         ["dia"] = AgrupacionDeVentas.Dia,
@@ -231,6 +233,41 @@ public class ServicioDeConsultasDeVentas(
                     foreach (var fila in porPuntoVenta.Filas)
                     {
                         Sumar(acumulados, fila.IdPuntoVenta, fila.Neto, fila.CantidadTx);
+                    }
+
+                    break;
+                case AgrupacionDeVentas.Sucursal:
+                    // Las ventas son de la caja; la sucursal se deduce de la caja del comprobante
+                    // (ventas.id_punto_venta → puntos_venta.id_sucursal), sobre los mismos importes del resumen por
+                    // punto de venta.
+                    var porCaja = new Dictionary<int, (decimal Neto, int CantidadTx)>();
+                    if (empresa.IdPuntoVenta is { } cajaElegida)
+                    {
+                        var delResumen = await reportes.ObtenerResumenAsync(
+                            empresa.Id, cajaElegida, contexto.Desde, contexto.Hasta, Granularidad.Dia, ct);
+                        porCaja[cajaElegida] = (delResumen.NetoVendido, delResumen.CantidadTx);
+                    }
+                    else
+                    {
+                        var deLasCajas = await reportes.ObtenerPorPuntoVentaAsync(empresa.Id, contexto.Desde, contexto.Hasta, ct);
+                        foreach (var fila in deLasCajas.Filas)
+                        {
+                            porCaja[fila.IdPuntoVenta] = (fila.Neto, fila.CantidadTx);
+                        }
+                    }
+
+                    var idsDeCajas = porCaja.Keys.ToList();
+                    var sucursalDeCaja = await db.PuntosVenta.AsNoTracking()
+                        .Where(pv => idsDeCajas.Contains(pv.Id))
+                        .ToDictionaryAsync(pv => pv.Id, pv => pv.IdSucursal, ct);
+                    foreach (var (caja, venta) in porCaja)
+                    {
+                        // Una caja dada de baja entre las dos lecturas ya no se resuelve: sus ventas siguen en el
+                        // total, en una fila propia con la clave negativa de la caja.
+                        var claveDeSucursal = sucursalDeCaja.TryGetValue(caja, out var sucursalDeLaCaja)
+                            ? sucursalDeLaCaja
+                            : -caja;
+                        Sumar(acumulados, claveDeSucursal, venta.Neto, venta.CantidadTx);
                     }
 
                     break;
@@ -810,6 +847,20 @@ public class ServicioDeConsultasDeVentas(
                         ? $"{punto.Nombre} ({alcance.Contextos.FirstOrDefault(c => c.Empresa.Id == punto.IdEmpresa)?.Empresa.Nombre})"
                         : punto.Nombre
                     : $"(punto de venta id {clave})";
+                break;
+            case AgrupacionDeVentas.Sucursal:
+                // Una sucursal dada de baja que todavía tiene ventas sigue siendo una fila (el total no pierde
+                // importe) y se rotula por id, igual que un punto de venta no visible.
+                var sucursales = await db.Sucursales.AsNoTracking()
+                    .Where(su => ids.Contains(su.Id)).Select(su => new { su.Id, su.Nombre, su.IdEmpresa }).ToDictionaryAsync(su => su.Id, ct);
+                var variasEmpresasDeSucursal = alcance.Contextos.Count > 1;
+                nombre = clave => clave < 0
+                    ? $"(punto de venta id {-clave})"
+                    : sucursales.TryGetValue(clave, out var sucursal)
+                        ? variasEmpresasDeSucursal
+                            ? $"{sucursal.Nombre} ({alcance.Contextos.FirstOrDefault(c => c.Empresa.Id == sucursal.IdEmpresa)?.Empresa.Nombre})"
+                            : sucursal.Nombre
+                        : $"(sucursal id {clave})";
                 break;
             case AgrupacionDeVentas.Vendedor:
                 var vendedores = await db.Usuarios.AsNoTracking()

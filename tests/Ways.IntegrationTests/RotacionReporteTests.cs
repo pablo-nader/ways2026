@@ -448,10 +448,12 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var servicioDeParametros = new ServicioDeParametros(db, reloj, servicioDeLotes);
         var servicio = new ServicioDeReportesDeStock(db, servicioDeParametros, reloj);
 
-        var reposicion = await servicio.ObtenerReposicionAsync(ctx.IdPuntoVenta, dias: null);
+        var alcance = await servicio.ResolverAlcanceAsync(ctx.IdPuntoVenta, null);
+        var antes = contador.Consultas;
+        var reposicion = await servicio.ObtenerReposicionAsync(alcance, dias: null);
 
         Assert.Empty(reposicion.Filas);
-        Assert.Equal(6, contador.Consultas);
+        Assert.Equal(5, contador.Consultas - antes);
     }
 
     // ---- task 5.15: una cifra de rotación arbitraria nunca bloquea ni destraba la alerta ------------

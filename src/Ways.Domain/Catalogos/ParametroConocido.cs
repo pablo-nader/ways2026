@@ -17,7 +17,8 @@ namespace Ways.Domain.Catalogos;
 /// billetes formables, <see cref="Ways.Domain.Ventas.BilletesArgentinos"/>), y la migración
 /// <c>QuitarVueltoMaximo</c> borró cualquier fila remanente en <c>parametros</c>.
 /// </summary>
-public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorPorDefecto)
+public sealed record ParametroConocido(
+    string Clave, Type TipoClr, string ValorPorDefecto, AlcanceDeParametro Alcance = AlcanceDeParametro.Caja)
 {
     public static readonly ParametroConocido ToleranciaPago =
         new("tolerancia_pago", typeof(decimal), "10");
@@ -38,7 +39,7 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     /// <c>ResolucionDeParametros.Resolver</c> lo devuelve verbatim y los lectores lo
     /// deserializan con <c>JsonSerializer.Deserialize&lt;string&gt;</c>.</summary>
     public static readonly ParametroConocido ZonaHoraria =
-        new("zona_horaria", typeof(string), "\"America/Argentina/Buenos_Aires\"");
+        new("zona_horaria", typeof(string), "\"America/Argentina/Buenos_Aires\"", AlcanceDeParametro.Sucursal);
 
     /// <summary>Porcentaje de comisión del reporte provisional de comisiones (stage-10):
     /// default <c>0</c>, es decir comisiones calculadas pero siempre en cero hasta que un
@@ -52,12 +53,12 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     /// migración — mismo patrón que <see cref="ZonaHoraria"/>/<see cref="ComisionPorcentaje"/>
     /// en stage-10.</summary>
     public static readonly ParametroConocido LotesHabilitado =
-        new("lotes_habilitado", typeof(bool), "false");
+        new("lotes_habilitado", typeof(bool), "false", AlcanceDeParametro.Sucursal);
 
     /// <summary>Horizonte de alerta de "próximo a vencer" consumido por el reporte de
     /// vencimientos (stage-12, design decisión 15). Default <c>30</c> días.</summary>
     public static readonly ParametroConocido DiasAlertaVencimiento =
-        new("dias_alerta_vencimiento", typeof(int), "30");
+        new("dias_alerta_vencimiento", typeof(int), "30", AlcanceDeParametro.Sucursal);
 
     /// <summary>Ventana de días que el cálculo de rotación agrega para producir el consumo
     /// diario promedio (stage-13, design decisión 7). Sin migración — mismo patrón que <see
@@ -65,14 +66,14 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     /// cref="LotesHabilitado"/>/<see cref="DiasAlertaVencimiento"/> (stage-12). Default
     /// <c>30</c> días.</summary>
     public static readonly ParametroConocido DiasRotacion =
-        new("dias_rotacion", typeof(int), "30");
+        new("dias_rotacion", typeof(int), "30", AlcanceDeParametro.Sucursal);
 
     /// <summary>Días de cobertura objetivo que <c>minimoSugerido</c> multiplica sobre el
     /// consumo diario promedio (stage-13, design decisión 1). Nunca se escribe a
     /// <c>stock.minimo</c> automáticamente — solo alimenta la sugerencia. Default <c>7</c>
     /// días.</summary>
     public static readonly ParametroConocido DiasCoberturaObjetivo =
-        new("dias_cobertura_objetivo", typeof(int), "7");
+        new("dias_cobertura_objetivo", typeof(int), "7", AlcanceDeParametro.Sucursal);
 
     /// <summary>Múltiplo al que se redondea el precio sugerido de un artículo
     /// (<see cref="Ways.Domain.Precios.SugeridorDePrecio"/>): con <c>100</c> una sugerencia de 2896 se

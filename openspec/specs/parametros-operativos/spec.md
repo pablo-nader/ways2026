@@ -225,3 +225,43 @@ statement, following the exact pattern stage 10 used for
 - WHEN the reposición report computes `minimoSugerido`
 - THEN `minimoSugerido = 21`, shown as a suggestion and never written to
   `stock.minimo` automatically
+
+### Requirement: Sucursal-Level Keys Resolve By Sucursal, Not By Punto De Venta
+
+Each key declared in `ParametroConocido` MUST have an `Alcance`. `zona_horaria`, `lotes_habilitado`,
+`dias_alerta_vencimiento`, `dias_rotacion` and `dias_cobertura_objetivo` are `Sucursal` keys and MUST resolve sucursal
+row → empresa row → declared default; rows that carry an `id_punto_venta` MUST NOT count for them. Every other key stays
+`Caja` and resolves punto de venta → empresa → default. A read that names a punto de venta MUST resolve a `Sucursal` key
+through that punto de venta's sucursal. A `parametros` row has at most one of `id_punto_venta` and `id_sucursal`
+(`ck_parametros_un_solo_alcance`), and live rows are unique per `(empresa, sucursal, clave)` (`ux_parametros_sucursal`).
+
+#### Scenario: Two cajas of one sucursal share a sucursal key
+- GIVEN a sucursal with cajas 1 and 2 and a `zona_horaria` row for the sucursal
+- WHEN either caja resolves `zona_horaria`
+- THEN both receive the sucursal's value, and a caja of another sucursal receives the empresa value or the default
+
+#### Scenario: A sucursal key rejects a punto de venta
+- WHEN `PUT /api/parametros` sends `zona_horaria` with `idPuntoVenta`
+- THEN the request is rejected with `400 parametro_de_sucursal`; a `Caja` key with `idSucursal` is rejected with
+  `400 parametro_de_caja`, and both ids with `400 parametro_alcance_ambiguo`
+
+#### Scenario: A sucursal report reads the sucursal row
+- GIVEN rows for `dias_alerta_vencimiento` at empresa, caja 1 and sucursal level with different values
+- WHEN the vencimientos report runs for the sucursal
+- THEN it uses the sucursal's value
+
+#### Scenario: Enabling lotes for a sucursal reconciles that sucursal
+- GIVEN two sucursales with stock of a lot-controlled articulo and no `lotes_habilitado` row
+- WHEN `lotes_habilitado = true` is stored for one sucursal
+- THEN only that sucursal's stock is reconciled, and a sucursal with its own `false` row is not reconciled when the
+  empresa value later becomes `true`
+
+#### Scenario: Merging sucursales keeps the destination's rows
+- WHEN sucursal B is merged into A
+- THEN A keeps its own rows, takes B's rows for the keys it lacks, and B's remaining rows are soft-deleted
+
+#### Scenario: Migration preserves effective values
+- GIVEN punto de venta rows for sucursal keys
+- WHEN the migration runs
+- THEN each sucursal gets the value of its lowest-id live caja that had a row for that key, and the punto de venta rows
+  of those keys are soft-deleted

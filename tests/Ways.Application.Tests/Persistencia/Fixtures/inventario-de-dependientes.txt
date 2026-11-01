@@ -36,6 +36,7 @@ Empresa | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | pagos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | pagos | id_empresa,id_tenant | marcado
 Empresa | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | parametros via sucursales | id_sucursal,id_empresa,id_tenant | marcado
 Empresa | parametros | id_empresa,id_tenant | marcado
 Empresa | personal | id_empresa,id_tenant | marcado
 Empresa | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
@@ -45,6 +46,7 @@ Empresa | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | stock via sucursales | id_sucursal,id_tenant | sinmarca
 Empresa | stock_lotes via sucursales | id_sucursal,id_tenant | sinmarca
+Empresa | sucursales via sucursales | id_sucursal_fusion,id_empresa,id_tenant | marcado
 Empresa | sucursales | id_empresa,id_tenant | marcado
 Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | vitrinas | id_empresa,id_tenant | marcado
@@ -109,12 +111,14 @@ Sucursal | numeraciones_fiscales via puntos_venta | id_punto_venta,id_tenant | s
 Sucursal | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | pagos via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | parametros | id_sucursal,id_empresa,id_tenant | marcado
 Sucursal | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | puntos_venta | id_sucursal,id_empresa,id_tenant | marcado
 Sucursal | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | stock | id_sucursal,id_tenant | sinmarca
 Sucursal | stock_lotes | id_sucursal,id_tenant | sinmarca
+Sucursal | sucursales | id_sucursal_fusion,id_empresa,id_tenant | marcado
 Sucursal | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 Tenant | acumulados_de_facturacion | id_tenant | sinmarca
 Tenant | alicuotas_comprobante_compra | id_tenant | marcado

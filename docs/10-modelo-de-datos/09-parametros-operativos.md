@@ -14,10 +14,23 @@ Los números mágicos del legacy ($10 de tolerancia, $20 de vuelto máximo, $5 p
 operación de recarga) se vuelven configuración:
 
 ```sql
-parametros (                  -- [operativa a nivel punto de venta, con fallback a empresa]
-    id_parametro, id_punto_venta NULL,       -- NULL = default de la empresa
+parametros (                  -- [operativa a nivel sucursal o punto de venta, con fallback a empresa]
+    id_parametro, id_empresa, id_punto_venta NULL, id_sucursal NULL,
+    --   ambos NULL = default de la empresa; CHECK ck_parametros_un_solo_alcance: a lo sumo uno de los dos
+    --   FK compuestas: (id_punto_venta, id_tenant) → puntos_venta y (id_sucursal, id_empresa, id_tenant) → sucursales
     clave citext, valor jsonb
 );
+-- Únicos parciales (filas vivas): ux_parametros_empresa (id_punto_venta e id_sucursal NULL),
+--   ux_parametros_punto_venta y ux_parametros_sucursal; los tres traducen su 23505 a 409 `parametro_duplicado`.
+-- Cada clave pertenece a UN alcance (`ParametroConocido.Alcance`):
+--   sucursal: zona_horaria, lotes_habilitado, dias_alerta_vencimiento, dias_rotacion, dias_cobertura_objetivo
+--     resuelven sucursal > empresa > default; las filas por punto de venta NO cuentan, y una consulta por
+--     punto de venta usa la sucursal de esa caja (las cajas de un local comparten zona, lotes y días);
+--   caja: el resto (tolerancia_pago, importe_envio…) resuelve punto de venta > empresa > default.
+-- PUT: una clave de sucursal con idPuntoVenta es 400 `parametro_de_sucursal`, una de caja con idSucursal es 400
+--   `parametro_de_caja`, los dos ids son 400 `parametro_alcance_ambiguo` y una sucursal de otra empresa es 400
+--   `sucursal_no_pertenece_a_la_empresa`.
+-- La fusión de dos sucursales deja al destino con sus filas y le pasa las del origen donde no tiene la clave.
 -- tolerancia_pago, importe_adicional_recarga, slots_tickets_espera…
 -- importe_envio: importe de la línea "Envío" de una venta con envío (decimal, default 0; de 0 a
 --   999999999999.99 con hasta 2 decimales, 400 `parametro_importe_envio_invalido`)

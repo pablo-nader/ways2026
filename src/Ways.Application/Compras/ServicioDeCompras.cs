@@ -1067,12 +1067,16 @@ public partial class ServicioDeCompras(
                 .ToListAsync(ct))
             .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad))
             .ToList();
+        var sucursalDeReversa = await EscritorDeStock.ResolverSucursalesDeReversaAsync(
+            conexion, transaccionCruda, movimientosOriginales.Select(m => m.IdPuntoVenta),
+            movimientosOriginales.Select(m => m.IdSucursal), ct);
+        movimientosOriginales = [.. movimientosOriginales.Select(m => m with { IdSucursal = sucursalDeReversa[m.IdSucursal] })];
 
         // E6: una compra editada tiene en su libro, además del movimiento de la confirmación, los de cada edición (con
         // signo). La reversa es la NETA por (artículo, sucursal, punto de venta, lote): revertir cada asiento por separado
         // rechazaría con un falso stock negativo una compra cuyo libro tiene +10 y después −4 de la misma clave. La
-        // clave que ya netea a cero no se revierte. La sucursal es la guardada en cada movimiento original, nunca la que
-        // el punto de venta tenga hoy. Reversa EXACTA por lote: el movimiento original ya trae su propio id_lote y la
+        // clave que ya netea a cero no se revierte. La sucursal es la guardada en cada movimiento original, o la que la
+        // absorbió si se fusionó, nunca la que el punto de venta tenga hoy. Reversa EXACTA por lote: el movimiento original ya trae su propio id_lote y la
         // reversa lo copia estructuralmente (design: "Exactness is structural, not derived").
         var reversas = await EscritorDeStock.AsentarAsync(
             conexion, transaccionCruda,
@@ -1875,12 +1879,8 @@ public partial class ServicioDeCompras(
     /// Fuera del presupuesto de comandos del checkout — esta clase no lo comparte.</summary>
     private async Task<bool> ResolverLotesHabilitadoAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        var candidatos = await db.Parametros
-            .Where(p => p.Clave == ParametroConocido.LotesHabilitado.Clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
-            .ToListAsync(ct);
-
-        var valorJson = ResolucionDeParametros.Resolver(ParametroConocido.LotesHabilitado.Clave, candidatos, idPuntoVenta);
+        var valorJson = await ConsultaDeParametros.ResolverDePuntoVentaAsync(
+            db, ParametroConocido.LotesHabilitado.Clave, idEmpresa, idPuntoVenta, ct);
         return JsonSerializer.Deserialize<bool>(valorJson);
     }
 

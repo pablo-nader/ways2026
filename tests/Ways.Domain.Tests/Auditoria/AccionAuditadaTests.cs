@@ -15,7 +15,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// turno forzado por encima de ella. <c>venta.sobrelimite</c> la agregó la venta local a clientes
 /// identificados: una venta con cuenta corriente que superó el límite sin poder validarlo.
 /// <c>pago.edicion</c>/<c>pago.baja</c> las agregó la edición y baja de pagos.
-/// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente.
+/// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente. Las cuatro de sucursales (<c>sucursal.alta|edicion|baja</c> y <c>pv.sucursal</c>) las agregó el ABM de sucursales; <c>sucursal.fusion</c>, la fusión de sucursales.
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// <c>compra.edicion</c> la agregó la edición de una compra confirmada.
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneTreintaYUnaEntradas()
+    public void TieneTreintaYCincoEntradas()
     {
-        Assert.Equal(31, AccionAuditada.Todas.Count);
+        Assert.Equal(35, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -61,9 +61,9 @@ public partial class AccionAuditadaTests
     /// <summary>judgment-day, slice 1 ronda 2, finding 3 (juez B): el tipo NO impide
     /// <c>new AccionAuditada(...)</c> inline (el <c>record</c> posicional genera un constructor
     /// público) — este test es el único freno real contra un typo en el catálogo, congelando los
-    /// 31 pares exactos que el resto del código asume.</summary>
+    /// pares exactos que el resto del código asume.</summary>
     [Fact]
-    public void ElCatalogoTieneExactamenteLosTreintaYUnParesEsperados()
+    public void ElCatalogoTieneExactamenteLosParesEsperados()
     {
         (string Accion, string Entidad)[] esperado =
         [
@@ -97,7 +97,12 @@ public partial class AccionAuditadaTests
             ("pv.alta", "punto_venta"),
             ("compra.edicion", "comprobante_compra"),
             ("cobro.aplicacion", "comprobante_venta"),
-            ("cobro.desaplicacion", "comprobante_venta")
+            ("cobro.desaplicacion", "comprobante_venta"),
+            ("sucursal.alta", "sucursal"),
+            ("sucursal.edicion", "sucursal"),
+            ("sucursal.baja", "sucursal"),
+            ("pv.sucursal", "punto_venta"),
+            ("sucursal.fusion", "sucursal")
         ];
 
         var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));

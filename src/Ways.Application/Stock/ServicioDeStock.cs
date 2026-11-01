@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Parametros;
 using Ways.Domain.Articulos;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
@@ -321,9 +322,10 @@ public class ServicioDeStock(
     /// lote-efectiva resuelve su <c>idLote</c> (explícito o FEFO-defaulted) en la fase de
     /// resolución, ANTES de que la transacción abra, y esa fase es también donde corren el
     /// rechazo de duplicados <c>(IdArticulo, IdLote)</c> post-defaulting (decisión 11) y el
-    /// chequeo de <c>transferencia_lote_vencido</c>. El stock es de la sucursal: dentro de la transacción se resuelven
-    /// las dos sucursales, una transferencia entre cajas de la misma sucursal se rechaza
-    /// (<c>409 transferencia_misma_sucursal</c>) y las <c>2N</c> claves se escriben en el orden de locks de
+    /// chequeo de <c>transferencia_lote_vencido</c>. El stock es de la sucursal: una transferencia entre cajas de la misma
+    /// sucursal se rechaza (<c>409 transferencia_misma_sucursal</c>); dentro de la transacción se vuelven a leer las dos
+    /// sucursales bajo lock, una caja que cambió de sucursal desde la lectura previa es
+    /// <c>409 sucursal_cambio_durante_transferencia</c>, y las <c>2N</c> claves se escriben en el orden de locks de
     /// <see cref="EscritorDeStock"/> <c>(id_sucursal, id_articulo, id_lote NULLS FIRST)</c>, el que evita el deadlock
     /// contra una transferencia inversa simultánea y contra un checkout concurrente en cualquiera de las dos
     /// sucursales.</summary>
@@ -333,15 +335,7 @@ public class ServicioDeStock(
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        // spec: "Same-PV transfer is rejected... before reaching the database" — chequeo puramente
-        // en memoria, antes de cualquier consulta.
-        if (solicitud.IdPuntoVentaOrigen == solicitud.IdPuntoVentaDestino)
-        {
-            throw new ErrorDominio(
-                "transferencia_origen_igual_destino",
-                "El origen y el destino de una transferencia tienen que ser puntos de venta distintos.",
-                400);
-        }
+        var (idPuntoVentaOrigen, idPuntoVentaDestino) = await ResolverExtremosDeTransferenciaAsync(solicitud, ct);
 
         var observaciones = ExigirObservaciones(solicitud.Observaciones);
         var lineas = ExigirLineasDeTransferenciaValidas(solicitud.Lineas);
@@ -349,8 +343,20 @@ public class ServicioDeStock(
         // Pre-checks de existencia/tenant ANTES de la transacción (mismo criterio que
         // AjustarAsync): ResolverPuntoVentaAsync da el mismo 404 para "no existe" y "es de otro
         // tenant" (ADR-8), tanto para origen como para destino.
-        var puntoVentaOrigen = await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaOrigen, ct);
-        await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaDestino, ct);
+        var puntoVentaOrigen = await ResolverPuntoVentaAsync(idPuntoVentaOrigen, ct);
+        var puntoVentaDestino = await ResolverPuntoVentaAsync(idPuntoVentaDestino, ct);
+
+        // Dos cajas de una misma sucursal comparten el stock: se rechaza antes de resolver lotes, que no tiene
+        // sentido hacer para un movimiento que no existe. Las sucursales esperadas son las pedidas o, por caja, las
+        // leídas acá; EjecutarTransferenciaAsync las vuelve a exigir bajo lock.
+        var sucursalesEsperadas = (
+            Origen: solicitud.IdSucursalOrigen ?? puntoVentaOrigen.IdSucursal,
+            Destino: solicitud.IdSucursalDestino ?? puntoVentaDestino.IdSucursal);
+
+        if (puntoVentaOrigen.IdSucursal == puntoVentaDestino.IdSucursal)
+        {
+            throw ErrorTransferenciaMismaSucursal();
+        }
 
         var articuloPorId = new Dictionary<int, Articulo>();
         foreach (var idArticulo in lineas.Select(l => l.IdArticulo).Distinct())
@@ -367,29 +373,103 @@ public class ServicioDeStock(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransferenciaAsync(
-                idTenant, idEmpleado, solicitud.IdPuntoVentaOrigen, solicitud.IdPuntoVentaDestino, lineasResueltas,
+                idTenant, idEmpleado, idPuntoVentaOrigen, idPuntoVentaDestino, sucursalesEsperadas, lineasResueltas,
                 observaciones, momento, ct));
+    }
+
+    /// <summary>Las dos cajas de la transferencia, vengan como puntos de venta o como sucursales (exactamente una de las
+    /// dos formas, <c>400 transferencia_origen_destino_invalido</c> si no). Mismo origen y destino es
+    /// <c>400 transferencia_origen_igual_destino</c> en cualquiera de las dos formas, en memoria y antes de consultar.
+    /// Una sucursal se traduce a su caja viva de menor id: es solo la caja de trazabilidad del asiento, el stock se
+    /// escribe en la sucursal. Una sucursal inexistente, ajena o dada de baja es 404 y una sin cajas vivas es
+    /// <c>409 sucursal_sin_puntos_venta</c>.</summary>
+    private async Task<(int Origen, int Destino)> ResolverExtremosDeTransferenciaAsync(
+        SolicitudDeTransferencia solicitud, CancellationToken ct)
+    {
+        var porPuntoVenta = solicitud.IdPuntoVentaOrigen is not null || solicitud.IdPuntoVentaDestino is not null;
+        var porSucursal = solicitud.IdSucursalOrigen is not null || solicitud.IdSucursalDestino is not null;
+
+        if (porPuntoVenta == porSucursal
+            || (porPuntoVenta && (solicitud.IdPuntoVentaOrigen is null || solicitud.IdPuntoVentaDestino is null))
+            || (porSucursal && (solicitud.IdSucursalOrigen is null || solicitud.IdSucursalDestino is null)))
+        {
+            throw new ErrorDominio(
+                "transferencia_origen_destino_invalido",
+                "Indicá el origen y el destino de la transferencia como dos puntos de venta o como dos sucursales, no mezclados.",
+                400);
+        }
+
+        var origenIgualDestino = porPuntoVenta
+            ? solicitud.IdPuntoVentaOrigen == solicitud.IdPuntoVentaDestino
+            : solicitud.IdSucursalOrigen == solicitud.IdSucursalDestino;
+
+        if (origenIgualDestino)
+        {
+            throw new ErrorDominio(
+                "transferencia_origen_igual_destino",
+                porPuntoVenta
+                    ? "El origen y el destino de una transferencia tienen que ser puntos de venta distintos."
+                    : "El origen y el destino de una transferencia tienen que ser sucursales distintas.",
+                400);
+        }
+
+        if (porPuntoVenta)
+        {
+            return (solicitud.IdPuntoVentaOrigen!.Value, solicitud.IdPuntoVentaDestino!.Value);
+        }
+
+        return (
+            await ResolverCajaDeSucursalAsync(solicitud.IdSucursalOrigen!.Value, ct),
+            await ResolverCajaDeSucursalAsync(solicitud.IdSucursalDestino!.Value, ct));
+    }
+
+    private async Task<int> ResolverCajaDeSucursalAsync(int idSucursal, CancellationToken ct)
+    {
+        if (!await db.Sucursales.AnyAsync(s => s.Id == idSucursal, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la sucursal {idSucursal}.");
+        }
+
+        var idCaja = await db.PuntosVenta
+            .Where(p => p.IdSucursal == idSucursal)
+            .OrderBy(p => p.Id)
+            .Select(p => (int?)p.Id)
+            .FirstOrDefaultAsync(ct);
+
+        return idCaja
+            ?? throw ErrorDominio.Conflicto(
+                "sucursal_sin_puntos_venta", $"La sucursal {idSucursal} no tiene puntos de venta vivos.");
     }
 
     private async Task<ResultadoTransferencia> EjecutarTransferenciaAsync(
         int idTenant, int idEmpleado, int idPuntoVentaOrigen, int idPuntoVentaDestino,
-        IReadOnlyList<LineaDeTransferenciaResuelta> lineas, string observaciones, DateTimeOffset momento, CancellationToken ct)
+        (int Origen, int Destino) sucursalesEsperadas, IReadOnlyList<LineaDeTransferenciaResuelta> lineas,
+        string observaciones, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        var idSucursalOrigen = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaOrigen, ct);
-        var idSucursalDestino = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaDestino, ct);
-
-        // Dos cajas de una misma sucursal comparten el stock: entre ellas no hay nada que transferir.
-        if (idSucursalOrigen == idSucursalDestino)
+        // Las dos cajas se toman con FOR SHARE en orden de id, el mismo orden en que la fusión de sucursales las toma con
+        // FOR UPDATE: tomarlas en orden origen/destino podría cruzarse con ella.
+        var sucursalPorCaja = new Dictionary<int, int>();
+        foreach (var idCaja in new[] { idPuntoVentaOrigen, idPuntoVentaDestino }.Order())
         {
-            throw new ErrorDominio(
-                "transferencia_misma_sucursal",
-                "El origen y el destino pertenecen a la misma sucursal y comparten el stock; no hay nada que transferir.",
-                409);
+            sucursalPorCaja[idCaja] = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idCaja, ct);
+        }
+
+        var idSucursalOrigen = sucursalPorCaja[idPuntoVentaOrigen];
+        var idSucursalDestino = sucursalPorCaja[idPuntoVentaDestino];
+
+        // Una caja que cambió de sucursal después de que se la eligió (o de que se resolvieron sus lotes) se rechaza: la
+        // transferencia saldría de, o llegaría a, una sucursal que nadie pidió. Como las esperadas ya son distintas,
+        // esto también cubre el caso de dos cajas que terminaron en la misma sucursal.
+        if (idSucursalOrigen != sucursalesEsperadas.Origen || idSucursalDestino != sucursalesEsperadas.Destino)
+        {
+            throw ErrorDominio.Conflicto(
+                "sucursal_cambio_durante_transferencia",
+                "Una de las cajas de la transferencia cambió de sucursal mientras se preparaba. Volvé a intentarlo.");
         }
 
         // Un asiento por línea y por lado: el movimiento (con su lote) y los upserts del agregado y del lote.
@@ -457,8 +537,15 @@ public class ServicioDeStock(
             .Select(kv => new LineaTransferida(kv.Key.IdArticulo, kv.Key.IdLote, kv.Value.Origen, kv.Value.Destino))
             .ToList();
 
-        return new ResultadoTransferencia(idPuntoVentaOrigen, idPuntoVentaDestino, lineasResultado);
+        return new ResultadoTransferencia(
+            idPuntoVentaOrigen, idPuntoVentaDestino, lineasResultado, idSucursalOrigen, idSucursalDestino);
     }
+
+    private static ErrorDominio ErrorTransferenciaMismaSucursal() =>
+        new(
+            "transferencia_misma_sucursal",
+            "El origen y el destino pertenecen a la misma sucursal y comparten el stock; no hay nada que transferir.",
+            409);
 
     /// <summary>Línea de transferencia YA resuelta (design: "LineaResuelta") — <see cref="IdLote"/>
     /// es <c>null</c> para un artículo sin control de lote efectivo, o el lote explícito/FEFO-defaulted
@@ -601,12 +688,8 @@ public class ServicioDeStock(
     /// sin filtrar).</summary>
     private async Task<bool> ResolverLotesHabilitadoAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        var candidatos = await db.Parametros
-            .Where(p => p.Clave == ParametroConocido.LotesHabilitado.Clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
-            .ToListAsync(ct);
-
-        var valorJson = ResolucionDeParametros.Resolver(ParametroConocido.LotesHabilitado.Clave, candidatos, idPuntoVenta);
+        var valorJson = await ConsultaDeParametros.ResolverDePuntoVentaAsync(
+            db, ParametroConocido.LotesHabilitado.Clave, idEmpresa, idPuntoVenta, ct);
         return JsonSerializer.Deserialize<bool>(valorJson);
     }
 

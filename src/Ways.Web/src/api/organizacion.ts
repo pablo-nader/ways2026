@@ -17,6 +17,11 @@ import type {
   PuntoVentaEdicion,
   PuntoVentaListado,
   PuntoVentaModoEdicion,
+  PuntoVentaSucursalEdicion,
+  SucursalAlta,
+  SucursalEdicion,
+  SucursalFusion,
+  SucursalListado,
   TenantEdicion,
   TenantListado,
 } from './tipos'
@@ -56,6 +61,32 @@ export const clienteDeOrganizacion = {
   // un dispositivo activo (revocalo primero desde Organización → Equipos POS).
   actualizarModoPuntoVenta: (id: number, datos: PuntoVentaModoEdicion) =>
     api.post<PuntoVentaListado>(`/puntos-venta/${id}/modo`, datos),
+  // Mueve la caja a otra sucursal de su empresa: 409 `sucursal_en_uso` si era la última caja de una sucursal con
+  // stock o historia, 409 `sucursal_de_otra_empresa` si la sucursal es de otra empresa. El stock no viaja con la caja.
+  moverPuntoVentaDeSucursal: (id: number, datos: PuntoVentaSucursalEdicion) =>
+    api.post<PuntoVentaListado>(`/puntos-venta/${id}/sucursal`, datos),
+
+  // Sucursales: el listado lo leen también los filtros de las pantallas de stock (Supervisor); el resto es del ABM.
+  listarSucursales: (idEmpresa?: number) =>
+    api.get<SucursalListado[]>(idEmpresa === undefined ? '/sucursales' : `/sucursales?idEmpresa=${idEmpresa}`),
+  crearSucursal: (datos: SucursalAlta) => api.post<SucursalListado>('/sucursales', datos),
+  editarSucursal: (id: number, datos: SucursalEdicion) => api.put<SucursalListado>(`/sucursales/${id}`, datos),
+  eliminarSucursal: (id: number) => api.delete<void>(`/sucursales/${id}`),
+  /** Fusiona la sucursal `id` en `idSucursalDestino`: le pasa sus cajas y su stock y la da de baja. Devuelve el destino. */
+  fusionarSucursal: (id: number, datos: SucursalFusion) =>
+    api.post<SucursalListado>(`/sucursales/${id}/fusionar`, datos),
+}
+
+/** La caja que representa a una sucursal ante los endpoints de stock que todavía hablan de punto de venta (ajuste,
+ * conteo, lotes, stock puntual): el stock es de la sucursal, así que cualquier caja viva suya lee y escribe lo mismo.
+ * Se elige la de menor id, la misma que el servidor usa como caja de trazabilidad de una transferencia. */
+export function cajaDeReferenciaDeSucursal(puntosVenta: PuntoVentaListado[], idSucursal: number): PuntoVentaListado | null {
+  return puntosVenta.filter((pv) => pv.idSucursal === idSucursal).sort((a, b) => a.id - b.id)[0] ?? null
+}
+
+/** Rótulo de una sucursal en un selector: con varias empresas visibles se aclara a cuál pertenece. */
+export function etiquetaDeSucursal(sucursal: SucursalListado, variasEmpresas: boolean): string {
+  return variasEmpresas && sucursal.razonSocialEmpresa ? `${sucursal.nombre} (${sucursal.razonSocialEmpresa})` : sucursal.nombre
 }
 
 // --- Filtros por dueño y etiquetas (stage-20, slice 2 · design D14, D15) ---

@@ -30,6 +30,7 @@ export type SujetoDeBaja =
   | 'el tenant'
   | 'la empresa'
   | 'el punto de venta'
+  | 'la sucursal'
   | 'el usuario'
   | 'el área'
   | 'la categoría'
@@ -63,6 +64,8 @@ const GUIA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
   ['tenant_en_uso', 'Dá de baja o reasigná esos datos antes de eliminar el tenant.'],
   ['empresa_en_uso', 'Dá de baja o reasigná esos datos antes de eliminar la empresa.'],
   ['punto_venta_en_uso', 'Dá de baja o reasigná esos datos antes de eliminar el punto de venta.'],
+  ['sucursal_en_uso', 'Dá de baja o reasigná esos datos antes de eliminar la sucursal.'],
+  ['sucursal_con_puntos_venta', 'Movelas a otra sucursal desde la pantalla de Puntos de venta primero.'],
   ['usuario_en_uso', 'Reasigná o dá de baja esas operaciones antes de eliminar la cuenta.'],
   ['ultima_empresa_del_tenant', 'La baja del tenant se hace desde la pantalla de Tenants.'],
   ['ultimo_punto_venta_de_la_empresa', 'La baja de la empresa se hace desde la pantalla de Empresas.'],

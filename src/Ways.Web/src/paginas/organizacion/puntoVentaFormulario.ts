@@ -17,6 +17,8 @@ export type FormularioDePuntoVenta = {
  * modo nunca se infiere (docs/10 §9.1) y la empresa no tiene un valor razonable por defecto. */
 export type FormularioDeAltaDePuntoVenta = {
   idEmpresa: string
+  /** Sucursal donde nace la caja; '' = una sucursal nueva con el nombre del punto de venta. */
+  idSucursal: string
   nombre: string
   modo: ModoPuntoVenta | ''
   domicilio: string
@@ -30,8 +32,29 @@ export type FormularioDeAltaDePuntoVenta = {
 /** Cambio de modo: precondición y rastro de auditoría propios, aparte de la edición descriptiva. */
 export type FormularioDeModoDePuntoVenta = { id: number; nombre: string; modo: ModoPuntoVenta }
 
+/** Mover la caja a otra sucursal de su empresa: endpoint, precondiciones y rastro propios, como el modo.
+ * `idSucursal` es la elegida ('' = ninguna todavía); `idSucursalActual` la que tiene hoy. */
+export type FormularioDeSucursalDePuntoVenta = {
+  id: number
+  nombre: string
+  idEmpresa: number
+  idSucursalActual: number | null
+  idSucursal: string
+}
+
+export function aFormularioDeSucursalDePuntoVenta(p: PuntoVentaListado): FormularioDeSucursalDePuntoVenta {
+  return {
+    id: p.id,
+    nombre: p.nombre,
+    idEmpresa: p.idEmpresa,
+    idSucursalActual: p.idSucursal ?? null,
+    idSucursal: p.idSucursal === undefined ? '' : String(p.idSucursal),
+  }
+}
+
 export const ALTA_VACIA: FormularioDeAltaDePuntoVenta = {
   idEmpresa: '',
+  idSucursal: '',
   nombre: '',
   modo: '',
   domicilio: '',

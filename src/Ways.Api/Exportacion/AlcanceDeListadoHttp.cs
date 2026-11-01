@@ -9,7 +9,7 @@ namespace Ways.Api.Exportacion;
 
 /// <summary>
 /// stage-11-exportacion-reportes (Slice 3): resuelve Empresa/zona horaria para los exports de
-/// listado con <c>idPuntoVenta</c> opcional (ventas) — PV → empresa → default, misma precedencia
+/// listado con <c>idPuntoVenta</c> opcional (ventas) — sucursal de la caja → empresa → default, misma precedencia
 /// que <c>ServicioDeReportesDeVentas.ResolverZonaAsync</c>, pero arrancando desde el punto de
 /// venta en vez de una empresa ya conocida: <c>GET /api/ventas</c> nunca pidió <c>idEmpresa</c>.
 /// Los listados sin ningún concepto de punto de venta (compras, estado de cuenta) usan
@@ -42,10 +42,19 @@ public static class AlcanceDeListadoHttp
         return (idEmpresa.ToString(), zonaId);
     }
 
+    /// <summary>Zona horaria de una sucursal (sucursal → empresa → default): es un parámetro de la sucursal, no de
+    /// ninguna de sus cajas.</summary>
+    public static async Task<string> ResolverZonaDeSucursalAsync(
+        ServicioDeParametros parametros, int idEmpresa, int idSucursal, CancellationToken ct)
+    {
+        var resuelto = await parametros.ResolverDeSucursalAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, idSucursal, ct);
+        return JsonSerializer.Deserialize<string>(resuelto.Valor)!;
+    }
+
     /// <summary>Variante empresa-primero (stage-tesoreria-por-empresa, PR5): a diferencia de
     /// <see cref="ResolverAsync"/> (que arranca desde un punto de venta opcional y RESUELVE la
     /// empresa), acá la empresa ya es el filtro ancla del caller — solo resuelve la zona horaria
-    /// (PV → empresa → default, ADR-13), reusando la validación de pertenencia PV/empresa de
+    /// (sucursal de la caja → empresa → default, ADR-13), reusando la validación de pertenencia PV/empresa de
     /// <see cref="ServicioDeParametros.ResolverAsync"/> cuando viene un
     /// <paramref name="idPuntoVenta"/>.</summary>
     public static async Task<string> ResolverZonaParaEmpresaAsync(

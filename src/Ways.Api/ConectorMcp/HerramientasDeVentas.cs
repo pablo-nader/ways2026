@@ -83,9 +83,9 @@ public sealed class HerramientasDeVentas
         Idempotent = true,
         OpenWorld = false)]
     [Description(
-        "Lo vendido en un período agrupado por punto_venta, medio_pago, vendedor, dia, area, grupo, categoria o marca, con " +
+        "Lo vendido en un período agrupado por punto_venta, sucursal, medio_pago, vendedor, dia, area, grupo, categoria o marca, con " +
         "importe, cantidad y porcentaje del total de cada grupo. 'Vendido' son los comprobantes de venta emitidos, sin los " +
-        "anulados, con las notas de crédito restadas, al importe final con descuentos y recargos. En punto_venta, vendedor " +
+        "anulados, con las notas de crédito restadas, al importe final con descuentos y recargos. En punto_venta, sucursal, vendedor " +
         "y dia la cantidad cuenta comprobantes; en medio_pago cuenta pagos y el importe es lo cobrado neto del vuelto. " +
         "area, grupo, categoria y marca suman por línea de comprobante, igual que el reporte de ventas por artículo de la " +
         "web: el importe es la suma del total de las líneas, la cantidad son unidades, solo cuentan las líneas con artículo " +
@@ -102,7 +102,7 @@ public sealed class HerramientasDeVentas
         IHttpContextAccessor http,
         ServicioDeConsultasDeVentas consultas,
         ILogger<HerramientasDeVentas> log,
-        [Description("Cómo agrupar: punto_venta, medio_pago, vendedor, dia, area, grupo, categoria o marca.")]
+        [Description("Cómo agrupar: punto_venta, sucursal, medio_pago, vendedor, dia, area, grupo, categoria o marca.")]
         string agruparPor,
         [Description("Nombre del período: hoy, ayer, esta_semana, semana_pasada, este_mes o mes_pasado. No se combina con desde/hasta.")]
         string? periodo = null,
@@ -271,6 +271,7 @@ public sealed class HerramientasDeVentas
         var (titulo, columna, cantidad) = a.Por switch
         {
             AgrupacionDeVentas.PuntoVenta => ("punto de venta", "punto de venta", "comprobantes"),
+            AgrupacionDeVentas.Sucursal => ("sucursal", "sucursal", "comprobantes"),
             AgrupacionDeVentas.MedioPago => ("medio de pago", "medio", "pagos"),
             AgrupacionDeVentas.Vendedor => ("vendedor", "vendedor", "comprobantes"),
             AgrupacionDeVentas.Dia => ("día", "fecha", "comprobantes"),

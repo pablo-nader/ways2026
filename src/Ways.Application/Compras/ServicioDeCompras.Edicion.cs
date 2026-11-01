@@ -331,12 +331,19 @@ public partial class ServicioDeCompras
 
         // 5. Stock por diferencia contra el libro de la compra (confirmación y ediciones previas), un movimiento por clave
         // que cambia.
-        // El libro conserva la sucursal de cada movimiento; lo nuevo va a la sucursal actual de la caja de recepción.
-        var libroDeStock = (await db.MovimientosStock
-                .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
-                .Select(m => new { m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad })
-                .ToListAsync(ct))
-            .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad))
+        // El libro conserva la sucursal de cada movimiento, o la que la absorbió si se fusionó; lo nuevo va a la sucursal
+        // actual de la caja de recepción. Todas las cajas se bloquean antes que cualquier sucursal (orden de
+        // EscritorDeStock.ResolverSucursalesDeReversaAsync), la de recepción incluida.
+        var libroGuardado = await db.MovimientosStock
+            .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
+            .Select(m => new { m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad })
+            .ToListAsync(ct);
+        var sucursalDeReversa = await EscritorDeStock.ResolverSucursalesDeReversaAsync(
+            conexion, transaccionCruda, libroGuardado.Select(m => m.IdPuntoVenta).Append(solicitud.IdPuntoVenta),
+            libroGuardado.Select(m => m.IdSucursal), ct);
+        var libroDeStock = libroGuardado
+            .Select(m => new CantidadDeStockDeCompra(
+                m.IdArticulo, sucursalDeReversa[m.IdSucursal], m.IdPuntoVenta, m.IdLote, m.Cantidad))
             .ToList();
         var idSucursalNueva = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, solicitud.IdPuntoVenta, ct);
         var stockNuevo = itemsNuevos
@@ -663,7 +670,14 @@ public partial class ServicioDeCompras
             }
 
             var netoDelGrupo = grupo.Sum(d => d.Delta);
-            if (netoDelGrupo != 0m)
+            if (netoDelGrupo == 0m && grupo.Any(d => d.IdLote is not null))
+            {
+                // Un lote que sube y otro que baja netean cero en el agregado, pero los lotes se bloquean igual: la
+                // fila agregada se toma antes, como manda el orden de locks de EscritorDeStock.
+                await EscritorDeStock.BloquearYCrearSiFaltaAsync(
+                    conexion, transaccion, idTenant, grupo.Key.IdSucursal, grupo.Key.IdArticulo, ct);
+            }
+            else if (netoDelGrupo != 0m)
             {
                 var agregado = await EscritorDeStock.SumarAStockAsync(
                     conexion, transaccion, idTenant, grupo.Key.IdSucursal, grupo.Key.IdArticulo, netoDelGrupo, ct);
