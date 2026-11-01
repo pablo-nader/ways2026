@@ -354,7 +354,8 @@ Branch `pnader/mercadopago-e3-t4`, stacked on E3-T3b. Backend only.
   `mercadopago_no_configurado`.
 - Valid notification: find the charge by `id_orden_mercadopago` across tenants with a platform-mode lookup (new UNIQUE index on
   `id_orden_mercadopago` where not null; RLS platform GUC like the OAuth callback / jobs do), then switch to that tenant and run
-  the existing refresh path for that charge, ignoring the 2 s throttle (the webhook means "something changed"), under the same
+  the existing refresh path for that charge, respecting the same 2 s per-charge minimum interval as polling (superseded: the
+  first design ignored the throttle, which let a replayed signed notification amplify calls; see judgment-day round 1), under the same
   locks. Unknown order -> 200 (another integration's order, or not ours). Refresh errors are logged (no tokens) and still answer
   200 when the signature was valid, so Mercado Pago does not hammer a temporarily failing Mercado Pago API; polling remains the
   source of truth.
@@ -376,3 +377,11 @@ Done on `pnader/mercadopago-e3-t4`, commit `feat(mercadopago): webhook firmado q
 - Verification: `dotnet build Ways.slnx -c Release` 0 errors, `has-pending-model-changes` clean, Domain 2491, Application 1654, integration filter (`MercadoPago|UpDownUp|AislamientoDeTenant|SuperficieDeAutorizacion`) 377 green (20 m 14 s). New: 39 domain tests, 20 integration tests (24 cases) in `MercadoPagoWebhookTests.cs` (a `partial` of `MercadoPagoCobrosTests` to reuse its scenario).
 - Mutation evidence (one per run, each killed): HMAC compare forced true (6 domain tests), manifest without request-id (17), no lowercase (2), no ts window (4); platform lookup without the order filter (2 integration tests), tenant switch skipped (2), throttle not bypassed (`ElAvisoRefrescaAunque...`). 
 - Deviations / open: the webhook tests live in a `partial` of `MercadoPagoCobrosTests` (the helpers are private there); the OAuth-seller webhook routing is still unverified against the real panel, so polling stays the source of truth; Point (E4), manual approval offline (E5) and reconciliation (E6) are not covered; a webhook for an `aprobado` charge never re-reads it (a later `refunded` is not picked up here, same as polling).
+
+## Judgment-day E3-T4 round 1 (2026-11-01)
+
+Fix commit `fix(mercadopago): el webhook respeta el intervalo de consulta y no lee el cuerpo antes de validar la firma` (hash in git log). Both findings were confirmed by both judges.
+
+- T4-1 replay amplification: `ActualizarPorAvisoAsync` now refreshes with `respetarIntervalo: true`, so N replays of a captured notification cause at most one Mercado Pago call per 2 s per charge (`fecha_ultima_consulta`). The doc comment and the design bullet above are updated. The test that asserted the bypass was replaced by `ElAvisoRespetaElIntervaloDeConsultaDelCobro` (a notification right after a device poll does not call; one after 3 s does) and `DiezAvisosRepetidosCausanUnaSolaConsultaAMercadoPago`.
+- T4-2 work before the signature: `AvisoDeMercadoPago` carries a lazy `LectorDeTipo`; the service invokes it only after `Verificar` succeeds and only when the query has no `type`. The endpoint no longer reads or parses the body up front. Rejected signatures log at Debug; Warning stays for "secret not configured" and Error for refresh failures after a valid signature. Tests: `ServicioDeAvisosDeMercadoPagoTests` (reader never invoked with an invalid signature or without secret; deterministic, service level) and `UnCuerpoEnormeConFirmaInvalidaEsUn401`.
+- Mutation evidence (one per run, each killed): `respetarIntervalo: false` in the webhook refresh (2 integration tests); reader invoked before the signature check (3 application tests).
