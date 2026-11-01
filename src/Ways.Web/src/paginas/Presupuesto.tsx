@@ -30,6 +30,7 @@ import { formatearImporte } from '../formato/importes'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { toast } from '../toasts/toasts'
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? fechaHoraATexto(iso) : '—'
@@ -271,7 +272,6 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
 
   const [vencimientoAEnviar, setVencimientoAEnviar] = useState(() => vencimientoSugerido(new Date()))
   const [enviando, setEnviando] = useState(false)
@@ -313,7 +313,6 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
     guardandoRef.current = true
     setGuardando(true)
     setError('')
-    setAviso('')
     // regla 3: bumpear la generación de carga ANTES de la escritura.
     generacionRef.current += 1
 
@@ -330,7 +329,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
         await clienteDePresupuestos.actualizar(idPresupuesto, solicitud)
         guardandoRef.current = false
         setGuardando(false)
-        setAviso('Borrador guardado.')
+        toast.exito('Borrador guardado.')
         // regla 6: el refetch posterior vive aislado de este try/catch.
         cargarDetalle()
       }
@@ -358,7 +357,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
       await clienteDePresupuestos.enviar(idPresupuesto, aSolicitudDeEnvio(vencimientoAEnviar))
       enviandoRef.current = false
       setEnviando(false)
-      setAviso('Presupuesto enviado.')
+      toast.exito('Presupuesto enviado.')
       cargarDetalle()
     } catch (e) {
       enviandoRef.current = false
@@ -391,7 +390,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
       anulandoRef.current = false
       setAnulando(false)
       setConfirmandoAnular(false)
-      setAviso('Presupuesto anulado.')
+      toast.exito('Presupuesto anulado.')
       cargarDetalle()
     } catch (e) {
       anulandoRef.current = false
@@ -445,7 +444,6 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
           <div className="alert alert-warning py-1 px-2 small">

@@ -22,10 +22,9 @@ export type PropsDeModalDeArticulo = {
   errorDetalle: string
   guardando: boolean
   ocupado: boolean
-  /** Aviso/error del guardado (alta o edición): se muestran como banner ARRIBA del formulario,
-   * que sigue visible — slot propio, nunca compartido con `errorDetalle` (react-async-state
-   * regla 14: cada fuente asíncrona reporta a su propio estado). */
-  avisoGuardado: string
+  /** Error del guardado (alta o edición): banner ARRIBA del formulario, que sigue visible — slot
+   * propio, nunca compartido con `errorDetalle` (react-async-state regla 14: cada fuente
+   * asíncrona reporta a su propio estado). El éxito sale como toast desde el hook. */
   errorGuardado: string
   bloqueadoPorCatalogos: boolean
   /** Mismo texto que el aviso de la grilla (`Articulos.tsx`): el modal tapa la grilla con el
@@ -84,7 +83,6 @@ export function ModalDeArticulo({
   errorDetalle,
   guardando,
   ocupado,
-  avisoGuardado,
   errorGuardado,
   bloqueadoPorCatalogos,
   erroresCatalogosRequeridos,
@@ -142,7 +140,6 @@ export function ModalDeArticulo({
             </div>
           )}
           {avisoListasPrecio && <div className="alert alert-warning">{avisoListasPrecio}</div>}
-          {avisoGuardado && <div className="alert alert-success">{avisoGuardado}</div>}
           {errorGuardado && <div className="alert alert-danger">{errorGuardado}</div>}
           <FormularioArticulo
             // Clave por artículo (id, o 'nuevo' para el alta): switching entre dos artículos

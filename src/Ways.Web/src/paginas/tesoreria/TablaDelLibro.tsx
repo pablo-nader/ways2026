@@ -1,4 +1,14 @@
-import { Link } from 'react-router'
+import { useMemo } from 'react'
+import { EnlaceIcono } from '../../componentes/BotonIcono'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+  type EstadoDeOrden,
+} from '../../componentes/grilla'
 import type { DatosDeCajaDelLibro, FilaDelLibro, LibroDeTesoreria } from '../../api/tipos'
 import { fechaHoraATexto } from '../../formato/fechas'
 import { ConGlobo } from './ConGlobo'
@@ -6,14 +16,22 @@ import {
   claseDeImporte,
   columnasDeCuentas,
   detalleDeAjuste,
+  destinoDelDetalle,
   estaConciliada,
   etiquetaDeCaja,
+  entradasDelLibro,
   hayFilasSinCuenta,
   hayRetenciones,
   importeDeCuenta,
+  claseDeDiferencia,
+  textoDeDiferencia,
   saldoDeCuenta,
   textoDeImporte,
 } from './libro'
+
+type EntradaDelLibro = ReturnType<typeof entradasDelLibro>[number]
+
+const ORDEN_INICIAL: EstadoDeOrden = { columna: 'fecha', direccion: 'descendente' }
 
 type Props = {
   libro: LibroDeTesoreria
@@ -68,12 +86,25 @@ function DetalleDeCaja({ caja, id }: { caja: DatosDeCajaDelLibro; id: string }) 
   return (
     <ConGlobo id={id} globo={globo}>
       {(accesibilidad) => (
-        <Link to={`/caja/turnos/${caja.idTurnoCaja}/z`} target="_blank" rel="noopener noreferrer" {...accesibilidad}>
-          {etiquetaDeCaja(caja.numero, caja.diferenciaArqueo)}
-        </Link>
+        <span tabIndex={0} {...accesibilidad}>
+          {`Caja #${caja.numero}`}
+          {caja.diferenciaArqueo !== null && (
+            <>
+              {' ('}
+              <span className={claseDeDiferencia(caja.diferenciaArqueo)}>
+                {textoDeDiferencia(caja.diferenciaArqueo)}
+              </span>
+              {')'}
+            </>
+          )}
+        </span>
       )}
     </ConGlobo>
   )
+}
+
+function sumarCentavos<T>(items: readonly T[], valor: (item: T) => number): number {
+  return items.reduce((total, item) => total + Math.round(valor(item) * 100), 0) / 100
 }
 
 function CeldaDeCuenta({ fila, idCuenta, id }: { fila: FilaDelLibro; idCuenta: number; id: string }) {
@@ -104,6 +135,15 @@ function CeldaDeCuenta({ fila, idCuenta, id }: { fila: FilaDelLibro; idCuenta: n
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr>
+          <td>Total</td>
+          <td>{textoDeImporte(sumarCentavos(medios, (m) => m.importe))}</td>
+          <td>{textoDeImporte(sumarCentavos(medios, (m) => m.comision))}</td>
+          {conRetenciones && <td>{textoDeImporte(sumarCentavos(medios, (m) => m.retenciones))}</td>}
+          <td className={claseDeImporte(sumarCentavos(medios, (m) => m.neto))}>{textoDeImporte(sumarCentavos(medios, (m) => m.neto))}</td>
+        </tr>
+      </tfoot>
     </table>
   )
 
@@ -118,26 +158,68 @@ function CeldaDeCuenta({ fila, idCuenta, id }: { fila: FilaDelLibro; idCuenta: n
   )
 }
 
-function Detalle({ fila, indice, puedeAbrirPagos }: { fila: FilaDelLibro; indice: number; puedeAbrirPagos: boolean }) {
+function Detalle({ fila, indice }: { fila: FilaDelLibro; indice: number }) {
   if (fila.tipo === 'Caja' && fila.caja) return <DetalleDeCaja caja={fila.caja} id={`libro-globo-caja-${indice}`} />
+  if (fila.tipo === 'Pago' && fila.pago) return <>{fila.pago.detalle}</>
+  return <>{detalleDeAjuste(fila.ajuste?.concepto ?? '')}</>
+}
 
-  if (fila.tipo === 'Pago' && fila.pago) {
-    return puedeAbrirPagos ? (
-      <Link to={`/pagos?id=${fila.pago.idPago}`} target="_blank" rel="noopener noreferrer">
-        {fila.pago.detalle}
-      </Link>
-    ) : (
-      <>{fila.pago.detalle}</>
-    )
+function marcaDeTiempo(entrada: EntradaDelLibro): Date {
+  return new Date(entrada.fila.fecha)
+}
+
+/** A igual instante manda la posición original, para que el orden descendente sea el inverso exacto del del servidor. */
+function compararPorFecha(a: EntradaDelLibro, b: EntradaDelLibro): number {
+  return marcaDeTiempo(a).getTime() - marcaDeTiempo(b).getTime() || a.indice - b.indice
+}
+
+/** Columnas del libro: fijas más una por cuenta. Las claves de cuenta son `cuenta-<id>`. */
+function columnasDeLaGrilla(columnas: readonly { id: number; titulo: string }[], conSinCuenta: boolean) {
+  const filtrables: ColumnasFiltrables<EntradaDelLibro> = {
+    fecha: { etiqueta: 'Fecha', valor: ({ fila }) => fechaHoraATexto(fila.fecha) },
+    detalle: { etiqueta: 'Detalle', valor: ({ fila }) => textoDelDetalle(fila) },
+    efectivo: { etiqueta: 'Efectivo', valor: ({ fila }) => textoDeImporte(fila.efectivo) },
+  }
+  const ordenables: ColumnasOrdenables<EntradaDelLibro> = {
+    fecha: { valor: marcaDeTiempo, comparar: compararPorFecha },
+    detalle: { valor: ({ fila }) => textoDelDetalle(fila) },
+    efectivo: { valor: ({ fila }) => fila.efectivo },
+  }
+  for (const c of columnas) {
+    filtrables[`cuenta-${c.id}`] = { etiqueta: c.titulo, valor: ({ fila }) => textoDeImporte(importeDeCuenta(fila, c.id)) }
+    ordenables[`cuenta-${c.id}`] = { valor: ({ fila }) => importeDeCuenta(fila, c.id) }
+  }
+  if (conSinCuenta) {
+    filtrables.sinCuenta = { etiqueta: 'Sin cuenta', valor: ({ fila }) => textoDeImporte(fila.sinCuenta) }
+    ordenables.sinCuenta = { valor: ({ fila }) => fila.sinCuenta }
   }
 
-  return <>{detalleDeAjuste(fila.ajuste?.concepto ?? '')}</>
+  return { filtrables, ordenables }
+}
+
+function textoDelDetalle(fila: FilaDelLibro): string {
+  if (fila.tipo === 'Caja' && fila.caja) return etiquetaDeCaja(fila.caja.numero, fila.caja.diferenciaArqueo)
+  if (fila.tipo === 'Pago') return fila.pago?.detalle ?? ''
+  return detalleDeAjuste(fila.ajuste?.concepto ?? '')
 }
 
 /** Una columna de efectivo, una por cuenta y, si alguna fila la usa, "Sin cuenta"; la primera fila es el saldo anterior al rango. */
 export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
-  const columnas = columnasDeCuentas(libro.cuentas)
+  const todas = useMemo(() => entradasDelLibro(libro.filas), [libro.filas])
+  const columnas = useMemo(() => columnasDeCuentas(libro.cuentas), [libro.cuentas])
   const conSinCuenta = hayFilasSinCuenta(libro)
+  const { filtrables, ordenables } = useMemo(() => columnasDeLaGrilla(columnas, conSinCuenta), [columnas, conSinCuenta])
+  const filtradas = useFiltrosDeColumna(todas, filtrables)
+  const ordenadas = useOrdenamiento(filtradas.filas, ordenables, ORDEN_INICIAL)
+  const filas = ordenadas.filas
+  const celdasDeFiltros = [
+    'fecha',
+    'detalle',
+    'efectivo',
+    ...columnas.map((c) => `cuenta-${c.id}`),
+    ...(conSinCuenta ? ['sinCuenta'] : []),
+    null,
+  ]
   const saldoAnteriorCongelado = estaConciliada(libro.desde, libro.conciliadoHasta)
 
   return (
@@ -145,38 +227,46 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
       <table className="table table-sm align-middle libro-tabla">
         <thead>
           <tr>
-            <th scope="col">Fecha</th>
-            <th scope="col">Detalle</th>
-            <th scope="col" className="text-end">
+            <EncabezadoOrdenable columna="fecha" orden={ordenadas.orden} onAlternar={ordenadas.alternar}>
+              Fecha
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="detalle" orden={ordenadas.orden} onAlternar={ordenadas.alternar}>
+              Detalle
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="efectivo" orden={ordenadas.orden} onAlternar={ordenadas.alternar} className="text-end">
               Efectivo
-            </th>
+            </EncabezadoOrdenable>
             {columnas.map((c) => (
-              <th scope="col" className="text-end" key={c.id}>
+              <EncabezadoOrdenable
+                key={c.id}
+                columna={`cuenta-${c.id}`}
+                orden={ordenadas.orden}
+                onAlternar={ordenadas.alternar}
+                className="text-end"
+              >
                 {c.titulo}
-              </th>
+              </EncabezadoOrdenable>
             ))}
             {conSinCuenta && (
-              <th scope="col" className="text-end">
+              <EncabezadoOrdenable columna="sinCuenta" orden={ordenadas.orden} onAlternar={ordenadas.alternar} className="text-end">
                 Sin cuenta
-              </th>
+              </EncabezadoOrdenable>
             )}
+            <th scope="col">
+              <span className="visually-hidden">Ver detalle</span>
+            </th>
           </tr>
+          <FilaDeFiltros
+            celdas={celdasDeFiltros}
+            columnas={filtrables}
+            filtros={filtradas.filtros}
+            onCambio={filtradas.cambiar}
+            onLimpiar={filtradas.limpiar}
+            hayFiltros={filtradas.hayFiltros}
+          />
         </thead>
         <tbody>
-          <tr data-fila="saldo-anterior" className={saldoAnteriorCongelado ? 'libro-fila--conciliada' : undefined}>
-            <td>{saldoAnteriorCongelado && <MarcaDeConciliado />}</td>
-            <td className="libro-detalle fw-semibold">Saldo anterior</td>
-            <td className="text-end">
-              <Importe valor={libro.saldoAnterior.efectivo} />
-            </td>
-            {columnas.map((c) => (
-              <td className="text-end" key={c.id}>
-                <Importe valor={saldoDeCuenta(libro.saldoAnterior, c.id)} />
-              </td>
-            ))}
-            {conSinCuenta && <td />}
-          </tr>
-          {libro.filas.map((fila, i) => {
+          {filas.map(({ fila, indice: i }) => {
             const congelada = estaConciliada(fila.fecha, libro.conciliadoHasta)
             return (
               <tr key={`${fila.tipo}-${i}`} className={congelada ? 'libro-fila--conciliada' : undefined}>
@@ -185,7 +275,7 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
                   {fechaHoraATexto(fila.fecha)}
                 </td>
                 <td className="libro-detalle">
-                  <Detalle fila={fila} indice={i} puedeAbrirPagos={puedeAbrirPagos} />
+                  <Detalle fila={fila} indice={i} />
                 </td>
                 <td className="text-end">
                   <Importe valor={fila.efectivo} />
@@ -200,16 +290,41 @@ export function TablaDelLibro({ libro, puedeAbrirPagos }: Props) {
                     <Importe valor={fila.sinCuenta} />
                   </td>
                 )}
+                <td className="text-end">
+                  {destinoDelDetalle(fila, puedeAbrirPagos) && (
+                    <EnlaceIcono
+                      icono="detalle"
+                      etiqueta={`Ver detalle de ${textoDelDetalle(fila)}`}
+                      to={destinoDelDetalle(fila, puedeAbrirPagos)!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  )}
+                </td>
               </tr>
             )
           })}
-          {libro.filas.length === 0 && (
+          {filas.length === 0 && (
             <tr>
-              <td colSpan={columnas.length + 3 + (conSinCuenta ? 1 : 0)} className="text-center text-muted py-4">
-                No hay movimientos en el rango elegido.
+              <td colSpan={columnas.length + 4 + (conSinCuenta ? 1 : 0)} className="text-center text-muted py-4">
+                {libro.filas.length === 0 ? 'No hay movimientos en el rango elegido.' : 'Ninguna fila coincide con los filtros.'}
               </td>
             </tr>
           )}
+          <tr data-fila="saldo-anterior" className={saldoAnteriorCongelado ? 'libro-fila--conciliada' : undefined}>
+            <td>{saldoAnteriorCongelado && <MarcaDeConciliado />}</td>
+            <td className="libro-detalle fw-semibold">Saldo anterior</td>
+            <td className="text-end">
+              <Importe valor={libro.saldoAnterior.efectivo} />
+            </td>
+            {columnas.map((c) => (
+              <td className="text-end" key={c.id}>
+                <Importe valor={saldoDeCuenta(libro.saldoAnterior, c.id)} />
+              </td>
+            ))}
+            {conSinCuenta && <td />}
+            <td />
+          </tr>
         </tbody>
       </table>
     </div>

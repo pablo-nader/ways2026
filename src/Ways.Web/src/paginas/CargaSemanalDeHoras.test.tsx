@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CargaSemanalDeHoras } from './CargaSemanalDeHoras'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type { DiaDeCargaSemanal, FilaDeCargaSemanal, SemanaDeCargaDeHoras } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -87,8 +88,25 @@ function renderizar() {
     <MemoryRouter initialEntries={['/personal/horas']}>
       <CargaSemanalDeHoras />
       <SondaDeRuta />
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string | RegExp) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
+
+/** Un aviso que no se puede perder queda en un banner de la pantalla: ni es un toast ni hay uno con su texto. */
+async function bannerPersistente(texto: string | RegExp) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-warning')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 const celda = (nombre: string, etiqueta: string) => screen.getByLabelText(`Horas de ${nombre} el ${etiqueta}`) as HTMLInputElement
@@ -178,7 +196,7 @@ describe('CargaSemanalDeHoras — guardar', () => {
         { idPersonal: 2, fecha: '2026-10-26', horas: 4.5 },
       ],
     })
-    expect(await screen.findByText(/Se guardó la semana: 3 jornadas confirmadas y 3 movimientos registrados/)).toBeInTheDocument()
+    await toastDeExito(/Se guardó la semana: 3 jornadas confirmadas y 3 movimientos registrados/)
     expect(apiGetMock).toHaveBeenCalledTimes(2)
   })
 
@@ -225,7 +243,7 @@ describe('CargaSemanalDeHoras — guardar', () => {
     expect(celda('Beto Ruiz', 'Lun 26/10')).toHaveValue('')
   })
 
-  it('un éxito cuya relectura falla avisa que se guardó pero la vista no se actualizó', async () => {
+  it('un éxito cuya relectura falla avisa con un toast y deja un banner de que la vista no se actualizó', async () => {
     const usuario = userEvent.setup()
     apiPostMock.mockResolvedValue({ movimientosCreados: 2, jornadasConfirmadas: 2 })
     renderizar()
@@ -234,7 +252,8 @@ describe('CargaSemanalDeHoras — guardar', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar semana' }))
 
-    expect(await screen.findByText(/Se guardó la semana, pero no se pudo actualizar la vista/)).toBeInTheDocument()
+    await toastDeExito(/Se guardó la semana: 2 jornadas confirmadas y 2 movimientos registrados/)
+    await bannerPersistente(/No se pudo actualizar la vista: hasta que la semana/)
   })
 
   describe('si la relectura posterior a guardar falla', () => {
@@ -266,7 +285,7 @@ describe('CargaSemanalDeHoras — guardar', () => {
 
       await usuario.click(screen.getByRole('button', { name: 'Guardar semana' }))
 
-      expect(await screen.findByText(/tampoco se pudo actualizar la vista/)).toBeInTheDocument()
+      await bannerPersistente(/tampoco se pudo actualizar la vista/)
       await afirmarBloqueada()
       await afirmarRecuperada(usuario)
     })
@@ -281,7 +300,8 @@ describe('CargaSemanalDeHoras — guardar', () => {
 
       await usuario.click(screen.getByRole('button', { name: 'Guardar semana' }))
 
-      expect(await screen.findByText(/Se guardó la semana, pero no se pudo actualizar la vista/)).toBeInTheDocument()
+      await toastDeExito(/Se guardó la semana: 1 jornada confirmada y 1 movimiento registrado/)
+      await bannerPersistente(/No se pudo actualizar la vista: hasta que la semana/)
       await afirmarBloqueada()
       await afirmarRecuperada(usuario)
     })

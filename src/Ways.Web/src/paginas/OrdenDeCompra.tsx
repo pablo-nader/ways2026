@@ -36,6 +36,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { toast } from '../toasts/toasts'
 import { atributosDeCampoDecimal } from '../formato/numeros'
 
 function formatearFechaHora(iso: string | null): string {
@@ -294,9 +295,8 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
         if (generacionRef.current !== miGeneracion) return
         // regla 6: un refetch posterior a una escritura 2xx (enviar/cerrar/anular/guardar) NUNCA
         // vacía la pantalla a un error total — `detalle` queda como estaba (stale, mejor que
-        // nada) y solo el mensaje se muestra; el aviso de éxito de la escritura, en su propio
-        // estado, sigue visible. Solo la carga INICIAL (detalle todavía null) llega al error
-        // bloqueante de abajo.
+        // nada) y solo el mensaje se muestra; el toast de éxito de la escritura ya salió. Solo la carga
+        // INICIAL (detalle todavía null) llega al error bloqueante de abajo.
         setErrorDetalle(
           e instanceof ErrorApi
             ? e.message
@@ -352,7 +352,6 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
 
   const [enviando, setEnviando] = useState(false)
   const enviandoRef = useRef(false)
@@ -397,7 +396,6 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
     guardandoRef.current = true
     setGuardando(true)
     setError('')
-    setAviso('')
     // regla 3: bumpear la generación de carga ANTES de la escritura.
     generacionRef.current += 1
 
@@ -414,7 +412,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
         await clienteDeOrdenesDeCompra.actualizar(idOrden, solicitud)
         guardandoRef.current = false
         setGuardando(false)
-        setAviso('Borrador guardado.')
+        toast.exito('Borrador guardado.')
         // regla 6: el refetch posterior vive aislado de este try/catch.
         cargarDetalle()
       }
@@ -438,7 +436,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
       await clienteDeOrdenesDeCompra.enviar(idOrden)
       enviandoRef.current = false
       setEnviando(false)
-      setAviso('Orden enviada.')
+      toast.exito('Orden enviada.')
       cargarDetalle()
     } catch (e) {
       enviandoRef.current = false
@@ -460,7 +458,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
       await clienteDeOrdenesDeCompra.cerrar(idOrden)
       cerrandoRef.current = false
       setCerrando(false)
-      setAviso('Orden cerrada.')
+      toast.exito('Orden cerrada.')
       cargarDetalle()
     } catch (e) {
       cerrandoRef.current = false
@@ -493,7 +491,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
       anulandoRef.current = false
       setAnulando(false)
       setConfirmandoAnular(false)
-      setAviso('Orden anulada.')
+      toast.exito('Orden anulada.')
       cargarDetalle()
     } catch (e) {
       anulandoRef.current = false
@@ -540,7 +538,6 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
           <div className="alert alert-warning py-1 px-2 small">
@@ -548,7 +545,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
           </div>
         )}
         {/* regla 6: un refetch fallido posterior a una escritura ya exitosa nunca se disfraza de
-            error de la escritura — se muestra chico, sin ocultar el `aviso` de arriba ni el resto
+            error de la escritura — se muestra chico, sin ocultar el resto
             de la pantalla (que sigue mostrando el último `detalle` conocido). */}
         {errorDetalle && detalle && <div className="alert alert-warning py-1 px-2 small">{errorDetalle}</div>}
 

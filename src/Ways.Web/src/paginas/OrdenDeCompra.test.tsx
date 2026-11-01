@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { OrdenDeCompra } from './OrdenDeCompra'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type { OrdenDeCompraBorrador, OrdenDeCompraDetalle, ProveedorListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -152,8 +153,25 @@ function renderPantalla(idOrden: string | number = 30, state?: unknown) {
       <Routes>
         <Route path="/ordenes-compra/:id" element={<OrdenDeCompra />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
+
+/** Un fallo de escritura queda en un banner junto a la acción: ni es un toast ni hay uno con su texto. */
+async function bannerPersistente(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -272,13 +290,13 @@ describe('OrdenDeCompra — generación (react-async-state regla 2, mutation-pro
 
     // "Enviar" dispara el refetch #2 (queda pendiente).
     await userEvent.click(screen.getByRole('button', { name: 'Enviar' }))
-    await screen.findByText('Orden enviada.')
+    await toastDeExito('Orden enviada.')
 
     // El detalle sigue stale (Borrador) hasta que el refetch #2 aterrice — "Anular" sigue visible.
     // Dispara el refetch #3, que resuelve YA (más nuevo que el #2 todavía pendiente).
     await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Confirmar anulación' }))
-    await screen.findByText('Orden anulada.')
+    await toastDeExito('Orden anulada.')
     await screen.findByText('Anulada')
 
     // El flush del microtask stale va DENTRO de act (mutation-proof-tests regla 7): un waitFor
@@ -520,14 +538,14 @@ describe('OrdenDeCompra — Anular pide confirmación en un modal', () => {
     const dialogo = await abrirConfirmacion()
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
 
-    expect(await screen.findByText('Orden anulada.')).toBeInTheDocument()
+    await toastDeExito('Orden anulada.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument())
   })
 })
 
 describe('OrdenDeCompra — un 2xx de enviar/cerrar/anular nunca se reporta como fallo (regla 6)', () => {
-  it('enviar 2xx muestra el aviso de éxito aunque el refetch posterior falle', async () => {
+  it('enviar 2xx muestra el toast de éxito y el banner de refresco aunque el refetch posterior falle', async () => {
     let llamadasDetalle = 0
     mockearReferencia((ruta) => {
       if (ruta !== '/ordenes-compra/30') return undefined
@@ -542,7 +560,44 @@ describe('OrdenDeCompra — un 2xx de enviar/cerrar/anular nunca se reporta como
     renderPantalla()
     await userEvent.click(await screen.findByRole('button', { name: 'Enviar' }))
 
-    expect(await screen.findByText('Orden enviada.')).toBeInTheDocument()
+    await toastDeExito('Orden enviada.')
+    const banner = await screen.findByText('No se pudo actualizar la orden de compra — los datos mostrados pueden estar desactualizados.')
+    expect(banner.closest('.alert-warning')).not.toBeNull()
+    expect(banner.closest('.ws-toaster')).toBeNull()
+  })
+})
+
+describe('OrdenDeCompra — resultado de las escrituras', () => {
+  it('guardar un borrador avisa con un toast de éxito', async () => {
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Borrador' })) : undefined))
+    apiPutMock.mockResolvedValue(borradorFixture({ estado: 'Borrador' }))
+
+    renderPantalla()
+    const boton = await screen.findByRole('button', { name: 'Guardar borrador' })
+    await waitFor(() => expect(screen.getByLabelText('Proveedor')).toHaveValue('4'))
+    await userEvent.click(boton)
+
+    await toastDeExito('Borrador guardado.')
+  })
+
+  it('cerrar avisa con un toast de éxito', async () => {
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Enviada' })) : undefined))
+    apiPostMock.mockResolvedValue(borradorFixture({ estado: 'Cerrada' }))
+
+    renderPantalla()
+    await userEvent.click(await screen.findByRole('button', { name: 'Cerrar' }))
+
+    await toastDeExito('Orden cerrada.')
+  })
+
+  it('un fallo al enviar queda en un banner persistente junto a la acción', async () => {
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Borrador' })) : undefined))
+    apiPostMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'No sabemos si la orden se envió.'))
+
+    renderPantalla()
+    await userEvent.click(await screen.findByRole('button', { name: 'Enviar' }))
+
+    await bannerPersistente('No sabemos si la orden se envió.')
   })
 })
 

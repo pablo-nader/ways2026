@@ -15,6 +15,7 @@ import { puedeGestionarCatalogos } from '../../api/tipos'
 import { AuthContext } from '../../auth/AuthContext'
 import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
+import { toast } from '../../toasts/toasts'
 
 type Props = {
   idArticulo: number
@@ -61,7 +62,6 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
   // Cada fuente tiene su propio slot (regla 14); `limpiarMensajes` los borra al empezar cualquier acción (regla 16).
   const [errorDeDisponibilidad, setErrorDeDisponibilidad] = useState<{ texto: string; interruptor: 'venta' | 'online' } | null>(null)
   const [errorDeImagen, setErrorDeImagen] = useState('')
-  const [aviso, setAviso] = useState('')
   const [ocupado, setOcupado] = useState(false)
   const [escribiendo, setEscribiendo] = useState<'venta' | 'online' | 'imagen' | null>(null)
   const [puertaAbierta, setPuertaAbierta] = useState(false)
@@ -104,7 +104,6 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
   function limpiarMensajes() {
     setErrorDeDisponibilidad(null)
     setErrorDeImagen('')
-    setAviso('')
   }
 
   /**
@@ -172,7 +171,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
       (guardada) => {
         setDisponibleVenta(guardada.disponibleVenta)
         setDisponibleOnline(guardada.disponibleOnline)
-        setAviso(
+        toast.exito(
           guardada.disponibleVenta ? 'El artículo quedó disponible a la venta.' : 'El artículo quedó fuera de la venta.',
         )
       },
@@ -188,7 +187,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
       (guardada) => {
         setDisponibleVenta(guardada.disponibleVenta)
         setDisponibleOnline(guardada.disponibleOnline)
-        setAviso(
+        toast.exito(
           guardada.disponibleOnline
             ? 'El artículo quedó disponible en la tienda online.'
             : 'El artículo quedó fuera de la tienda online.',
@@ -220,7 +219,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
       (guardada) => {
         setTieneImagen(guardada.tieneImagen)
         setVersion(guardada.imagenVersion)
-        setAviso('Se subió la imagen.')
+        toast.exito('Se subió la imagen.')
       },
       'No se pudo subir la imagen.',
       setErrorDeImagen,
@@ -236,7 +235,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
         setDisparador(null)
         setTieneImagen(false)
         setVersion(null)
-        setAviso('Se quitó la imagen.')
+        toast.exito('Se quitó la imagen.')
       },
       'No se pudo quitar la imagen.',
       setErrorDeImagen,
@@ -382,12 +381,6 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
           onConfirmar={() => void confirmarQuitarImagen()}
           onCancelar={cerrarPuerta}
         />
-      )}
-
-      {aviso && (
-        <div className="text-success small mt-2" role="status">
-          {aviso}
-        </div>
       )}
     </section>
   )

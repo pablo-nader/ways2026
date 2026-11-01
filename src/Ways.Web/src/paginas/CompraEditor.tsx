@@ -82,6 +82,7 @@ import {
 } from './compras/validacionDeCompra'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { toast } from '../toasts/toasts'
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
@@ -668,7 +669,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   }, [])
   const [error, setError] = useState(estadoInicial.error ?? '')
   const [advertencia, setAdvertencia] = useState(estadoInicial.advertencia ?? '')
-  const [aviso, setAviso] = useState(estadoInicial.aviso ?? '')
   // Acción con la que se intentó guardar y faltaba algo: el mensaje y las celdas marcadas se recalculan
   // en vivo, así desaparecen solos cuando el operador completa o quita lo que faltaba.
   const [intentoFallido, setIntentoFallido] = useState<'guardar' | 'borrador' | null>(null)
@@ -679,8 +679,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   const [disparadorDeProveedor, setDisparadorDeProveedor] = useState<HTMLElement | null>(null)
 
   useEffect(() => {
+    if (estadoInicial.aviso) toast.exito(estadoInicial.aviso)
     if (ubicacion.state !== null) navigate(`${ubicacion.pathname}${ubicacion.search}`, { replace: true, state: null })
-    // Solo al montar: el estado ya quedó copiado arriba.
+    // Solo al montar: el estado ya quedó copiado arriba y el aviso de llegada sale como toast.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -774,7 +775,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   // llegar vieja después de un pago que sí se registró.
   function alPagar(resultado: ResultadoDePagoDeCompra) {
     setPagoAbierto(false)
-    setAviso(textoDePagoRegistrado(resultado, formatearMoneda))
+    toast.exito(textoDePagoRegistrado(resultado, formatearMoneda))
     setCompra((prev) =>
       prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
     )
@@ -962,7 +963,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     }
     setEsperandoCodigos(false)
     if (mensajeDeLoQueImpideGuardar(encabezado, lineas, confirmar) !== null) {
-      setAviso('')
       setAdvertencia('')
       setError('')
       setIntentoFallido(confirmar ? 'guardar' : 'borrador')
@@ -974,7 +974,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     setAccion(confirmar ? 'guardar' : 'borrador')
     setError('')
     setAdvertencia('')
-    setAviso('')
     setIntentoFallido(null)
     // regla 3: bumpear la generación de carga ANTES de la escritura — invalida cualquier GET en
     // vuelo de la compra que este guardado está a punto de reemplazar.
@@ -1010,7 +1009,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
       }
       liberar()
       setCompra(guardada)
-      setAviso('Borrador guardado.')
+      toast.exito('Borrador guardado.')
       return
     }
 
@@ -1054,14 +1053,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     liberar()
     // regla 6: un 2xx de confirmar nunca se reporta como fallo — la respuesta ES el resultado.
     setCompra(confirmada)
-    setAviso(avisoDeConfirmacion)
+    toast.exito(avisoDeConfirmacion)
     setPagoVinculado(vinculo.pagoVinculado)
     setErrorVincularPago(errorDelVinculo ?? '')
   }
 
   function iniciarEdicion() {
     // Cada acción que empieza borra lo que dijo la anterior (react-async-state, regla 16).
-    setAviso('')
     setError('')
     setAdvertencia('')
     setErrorRedondeo('')
@@ -1108,7 +1106,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     }
     setEsperandoCodigos(false)
     if (mensajeDeLoQueImpideGuardar(encabezado, lineas, true) !== null) {
-      setAviso('')
       setAdvertencia('')
       setError('')
       setIntentoFallido('guardar')
@@ -1120,7 +1117,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     setAccion('cambios')
     setError('')
     setAdvertencia('')
-    setAviso('')
     setIntentoFallido(null)
     generacionRef.current += 1
 
@@ -1130,7 +1126,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
       // La respuesta es el detalle ya recalculado (pagado y saldo incluidos): es el refresco, no hace falta pedirlo de nuevo.
       setCompra(guardada)
       setEditando(false)
-      setAviso('Cambios guardados: el stock, la cuenta del proveedor y los costos ya se ajustaron.')
+      toast.exito('Cambios guardados: el stock, la cuenta del proveedor y los costos ya se ajustaron.')
     } catch (e) {
       setError(mensajeDeErrorDeEdicion(e))
     } finally {
@@ -1210,7 +1206,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
       setCompra((prev) =>
         prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
       )
-      setAviso(`Redondeo aplicado: se perdonaron ${formatearMoneda(resultado.redondeo)} y la compra quedó paga.`)
+      toast.exito(`Redondeo aplicado: se perdonaron ${formatearMoneda(resultado.redondeo)} y la compra quedó paga.`)
     } catch (e) {
       setErrorRedondeo(e instanceof ErrorApi ? e.message : 'No se pudo ajustar el redondeo.')
     } finally {
@@ -1260,7 +1256,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {errorReferencia && (
           <div className="alert alert-warning py-1 px-2 small">
             {errorReferencia} No se pueden registrar operaciones de compra hasta que esto se resuelva.
@@ -1773,7 +1768,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                       }}
                       onAplicado={() => {
                         setAplicandoPrecios(false)
-                        setAviso('Precios aplicados — revisá el detalle por línea abajo.')
+                        toast.exito('Precios aplicados — revisá el detalle por línea abajo.')
                       }}
                       onError={() => setAplicandoPrecios(false)}
                     />

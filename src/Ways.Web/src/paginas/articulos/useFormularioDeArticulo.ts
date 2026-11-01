@@ -33,6 +33,7 @@ import type { PropsDeModalDeArticulo } from './ModalDeArticulo'
 import { useCatalogosDeArticulo } from './useCatalogosDeArticulo'
 import { rechazoDeTeclaTomada } from './teclaAtajo'
 import { useFamiliasDelFormulario } from './useFamiliasDelFormulario'
+import { toast } from '../../toasts/toasts'
 
 /** La pregunta de alcance abierta al guardar la edición de un miembro de una familia (doc 10 §3): `contexto` es
  * con lo que se abre (la familia conocida o el texto del servidor) y `campos`, las etiquetas de los campos
@@ -98,7 +99,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
   const [cargandoDetalle, setCargandoDetalle] = useState(false)
   const [errorDetalle, setErrorDetalle] = useState('')
   const [guardando, setGuardando] = useState(false)
-  const [avisoGuardado, setAvisoGuardado] = useState('')
   const [errorGuardado, setErrorGuardado] = useState('')
   const [escriturasHijas, setEscriturasHijas] = useState(0)
   // `null`: el formulario no ofrece el código del proveedor (siempre en la pantalla de artículos).
@@ -202,7 +202,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
       setFormulario(cargado)
       formularioOriginalRef.current = cargado
       setGuardando(false)
-      setAvisoGuardado('')
       setErrorGuardado(avisoInicial)
     } catch (e) {
       if (tokenEdicionRef.current !== token) return
@@ -222,7 +221,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     setDecisionDeAlcance(null)
     setGuardando(false)
     setErrorDetalle('')
-    setAvisoGuardado('')
     setErrorGuardado('')
     setCargandoDetalle(false)
     const nuevo = { ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto, ...precarga.campos }
@@ -257,7 +255,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     setCodigoProveedor(null)
     formularioOriginalRef.current = null
     setErrorDetalle('')
-    setAvisoGuardado('')
     setErrorGuardado('')
     setCargandoDetalle(false)
   }
@@ -292,7 +289,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
       const campos = camposCompartidosModificados(original, formulario, desglosa)
       if (campos.length > 0) {
         setErrorGuardado('')
-        setAvisoGuardado('')
         setDecisionDeAlcance({
           contexto: contextoDeAlcance(familiaDelArticulo(formulario.idFamilia, familias.detalle)),
           campos: campos.map((campo) => campo.etiqueta),
@@ -322,7 +318,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     const token = invalidarEdicionEnCurso()
     setGuardando(true)
     setErrorGuardado('')
-    setAvisoGuardado('')
     setErrorDeFamiliaNueva('')
     setErrorDeTecla(null)
     // Lo que sigue a un rechazo que hay que resolver DESPUÉS de soltar el guardado (recargar el artículo o la
@@ -339,7 +334,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
         if (creado.idFamilia !== null) void familias.recargarOpciones()
         if (tokenEdicionRef.current === token) {
           const cargado = aFormulario(creado)
-          setAvisoGuardado(
+          toast.exito(
             mensajeDeAlta(
               formulario.nombre,
               creado.codigoInterno,
@@ -360,7 +355,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
         if (alcance === 'SoloEste') void familias.recargarOpciones()
         if (tokenEdicionRef.current === token) {
           const cargado = aFormulario(actualizado)
-          setAvisoGuardado(
+          toast.exito(
             mensajeDeEdicion(formulario.nombre, alcance, familiaDelArticulo(formulario.idFamilia, familias.detalle)?.nombre ?? null),
           )
           setFormulario(cargado)
@@ -513,7 +508,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     void familias.recargarOpciones()
     if (idArticulo === null || articuloEnModalRef.current !== idArticulo) return
     aplicarPertenencia(idArticulo, '')
-    setAvisoGuardado(`El artículo salió de la familia${nombre === null ? '' : ` "${nombre}"`}: el precio se guardó solo en él.`)
+    toast.exito(`El artículo salió de la familia${nombre === null ? '' : ` "${nombre}"`}: el precio se guardó solo en él.`)
   }
 
   /** "Sacar de la familia": una escritura propia (DELETE), con su ventana inerte y su token. Resuelve `null`
@@ -531,7 +526,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     const token = invalidarEdicionEnCurso()
     setSaliendoDeFamilia(true)
     setErrorGuardado('')
-    setAvisoGuardado('')
 
     try {
       await clienteDeFamilias.sacarArticulo(idFamilia, idArticulo)
@@ -539,7 +533,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
       void familias.recargarOpciones()
       if (tokenEdicionRef.current === token) {
         aplicarPertenencia(idArticulo, '')
-        setAvisoGuardado(
+        toast.exito(
           `El artículo "${nombre}" salió de la familia${nombreDeLaFamilia === null ? '' : ` "${nombreDeLaFamilia}"`}: conserva todos sus valores y sus precios.`,
         )
       }
@@ -654,7 +648,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     const token = invalidarEdicionEnCurso()
     setEscribiendoFamilia(true)
     setErrorGuardado('')
-    setAvisoGuardado('')
     setErrorDeUnion('')
     let rechazo = ''
     let seguimiento: (() => void) | null = null
@@ -667,7 +660,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
         soltarFamiliaDelFormulario()
         aplicarPertenencia(idArticulo, creada.idFamilia)
         void familias.cargarDetalle(creada.idFamilia)
-        setAvisoGuardado(`Se creó la familia "${creada.nombre}": este artículo es su referencia y conserva sus valores y sus precios.`)
+        toast.exito(`Se creó la familia "${creada.nombre}": este artículo es su referencia y conserva sus valores y sus precios.`)
       }
     } catch (e) {
       if (tokenEdicionRef.current === token) {
@@ -704,7 +697,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     const token = invalidarEdicionEnCurso()
     setEscribiendoFamilia(true)
     setErrorGuardado('')
-    setAvisoGuardado('')
     setErrorDeUnion('')
     let seguimiento: (() => void) | null = null
 
@@ -742,7 +734,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
   async function recargarTrasUnirse(idArticulo: number, aviso: string) {
     if (articuloEnModalRef.current !== idArticulo) return
     await abrirEdicion(idArticulo)
-    if (articuloEnModalRef.current === idArticulo) setAvisoGuardado(aviso)
+    if (articuloEnModalRef.current === idArticulo) toast.exito(aviso)
   }
 
   // `idsEmpresas` es el único campo cuya REPRESENTACIÓN puede cambiar sin que haya un cambio real:
@@ -825,7 +817,6 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
       cargandoDetalle,
       errorDetalle,
       guardando,
-      avisoGuardado,
       errorGuardado,
       bloqueadoPorCatalogos: catalogos.erroresCatalogosRequeridos.length > 0,
       erroresCatalogosRequeridos: catalogos.erroresCatalogosRequeridos,
