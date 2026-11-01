@@ -3526,6 +3526,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_sincronizacion");
 
+                    b.Property<DateTimeOffset?>("FechaTerminal")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_terminal");
+
                     b.Property<int>("IdEmpresa")
                         .HasColumnType("integer")
                         .HasColumnName("id_empresa");
@@ -3549,6 +3553,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
+
+                    b.Property<string>("IdTerminalPoint")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("id_terminal_point");
 
                     b.Property<long>("IdUsuarioMercadoPago")
                         .HasColumnType("bigint")
@@ -3585,6 +3594,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("cajas_mercadopago", null, t =>
                         {
                             t.HasCheckConstraint("ck_cajas_mercadopago_external_id", "length(btrim(external_id)) > 0");
+
+                            t.HasCheckConstraint("ck_cajas_mercadopago_terminal", "(id_terminal_point IS NULL) = (fecha_terminal IS NULL) AND (id_terminal_point IS NULL OR length(btrim(id_terminal_point)) > 0)");
                         });
                 });
 

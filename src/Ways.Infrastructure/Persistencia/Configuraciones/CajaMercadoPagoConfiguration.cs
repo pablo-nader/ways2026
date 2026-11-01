@@ -17,6 +17,9 @@ public class CajaMercadoPagoConfiguration : IEntityTypeConfiguration<CajaMercado
         builder.ToTable("cajas_mercadopago", t =>
         {
             t.HasCheckConstraint("ck_cajas_mercadopago_external_id", "length(btrim(external_id)) > 0");
+            t.HasCheckConstraint(
+                "ck_cajas_mercadopago_terminal",
+                "(id_terminal_point IS NULL) = (fecha_terminal IS NULL) AND (id_terminal_point IS NULL OR length(btrim(id_terminal_point)) > 0)");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_cajas_mercadopago");
@@ -36,6 +39,8 @@ public class CajaMercadoPagoConfiguration : IEntityTypeConfiguration<CajaMercado
         builder.Property(c => c.UrlQr).HasColumnName("url_qr").HasMaxLength(500);
         builder.Property(c => c.FechaRegistro).HasColumnName("fecha_registro").IsRequired();
         builder.Property(c => c.FechaSincronizacion).HasColumnName("fecha_sincronizacion").IsRequired();
+        builder.Property(c => c.IdTerminalPoint).HasColumnName("id_terminal_point").HasMaxLength(80);
+        builder.Property(c => c.FechaTerminal).HasColumnName("fecha_terminal");
 
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();

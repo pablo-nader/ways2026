@@ -89,7 +89,8 @@ public class ServicioDeCajasMercadoPago(
 
         return new EstadoDeCajaMercadoPago(
             desactualizada ? EstadosDeCajaMercadoPago.Desactualizada : EstadosDeCajaMercadoPago.Registrada,
-            caja.IdPosMercadoPago, caja.IdStoreMercadoPago, caja.ExternalId, caja.UrlQr, caja.FechaRegistro, caja.FechaSincronizacion);
+            caja.IdPosMercadoPago, caja.IdStoreMercadoPago, caja.ExternalId, caja.UrlQr, caja.FechaRegistro, caja.FechaSincronizacion,
+            caja.IdTerminalPoint);
     }
 
     /// <summary>
@@ -106,8 +107,8 @@ public class ServicioDeCajasMercadoPago(
             var idSucursal = (await LeerPuntoVentaAsync(idPuntoVenta, ct)).IdSucursal;
 
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
-            await TomarLockAsync(idSucursal, ServicioDeLocalesMercadoPago.ClaveDeLockDeLocal, ct);
-            await TomarLockAsync(idPuntoVenta, ClaveDeLockDeCaja, ct);
+            await TomarLockAsync(db, idSucursal, ServicioDeLocalesMercadoPago.ClaveDeLockDeLocal, ct);
+            await TomarLockAsync(db, idPuntoVenta, ClaveDeLockDeCaja, ct);
 
             ErrorDominio? reconexion = null;
             EstadoDeCajaMercadoPago? resultado = null;
@@ -219,6 +220,18 @@ public class ServicioDeCajasMercadoPago(
         }
         else
         {
+            // La terminal está vinculada a la caja anterior de Mercado Pago: si la caja cambió (adopción o recreación), la asignación no vale.
+            if (vinculo.IdPosMercadoPago != enviado.IdPos && vinculo.IdTerminalPoint is not null)
+            {
+                var (terminalAnterior, terminalNueva) = PayloadDeAuditoria.TerminalDeMercadoPago(
+                    "desasignacion", idUsuario, vinculo.IdPosMercadoPago, vinculo.IdTerminalPoint, null, false);
+                auditoria.Registrar(new RegistroDeAuditoria(
+                    puntoVenta.IdTenant, idPuntoVenta, AccionAuditada.PuntoVentaTerminalMercadoPago, idPuntoVenta,
+                    terminalAnterior, terminalNueva));
+                vinculo.IdTerminalPoint = null;
+                vinculo.FechaTerminal = null;
+            }
+
             vinculo.IdLocalMercadoPago = local.Id;
             vinculo.IdStoreMercadoPago = local.IdStoreMercadoPago;
             vinculo.IdPosMercadoPago = enviado.IdPos;
@@ -235,7 +248,7 @@ public class ServicioDeCajasMercadoPago(
 
         return new EstadoDeCajaMercadoPago(
             EstadosDeCajaMercadoPago.Registrada, enviado.IdPos, local.IdStoreMercadoPago, externalId, urlQr, vinculo.FechaRegistro,
-            sincronizadoEn);
+            sincronizadoEn, vinculo.IdTerminalPoint);
     }
 
     private sealed record ResultadoDeEnvio(long IdPos, string? UrlQr, string Operacion);
@@ -326,7 +339,7 @@ public class ServicioDeCajasMercadoPago(
         return coincidencia?.Id;
     }
 
-    private static EstadoDeCajaMercadoPago Estado(string estado) => new(estado, null, null, null, null, null, null);
+    private static EstadoDeCajaMercadoPago Estado(string estado) => new(estado, null, null, null, null, null, null, null);
 
     private async Task<PuntoVentaLeido> LeerPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
         await db.PuntosVenta
@@ -345,7 +358,8 @@ public class ServicioDeCajasMercadoPago(
             .ThenByDescending(c => c.Id)
             .FirstOrDefaultAsync(ct);
 
-    private async Task TomarLockAsync(int primeraClave, int segundaClave, CancellationToken ct)
+    /// <summary>Lo comparte <see cref="ServicioDeTerminalesMercadoPago"/>, que toma los mismos dos locks en el mismo orden.</summary>
+    internal static async Task TomarLockAsync(IWaysDbContext db, int primeraClave, int segundaClave, CancellationToken ct)
     {
         var transaccion = db.Database.CurrentTransaction
             ?? throw new InvalidOperationException(

@@ -33,9 +33,13 @@ QR charge) and E4 (Point charge) need to create orders. Builds on E1 (`odd/tasks
   `pos_already_exists`.
 - POS update: `PATCH /v2/pos/{id}` (not PUT); every field optional; `store_id` CAN change; 404 `pos_not_found`.
 - POS search: `GET /v2/pos?external_id=...` → `{paging:{total,offset,limit}, data:[POS...]}` (key `data`, not `results`).
-- Point: `GET /terminals/v1/list?store_id&pos_id` → terminals `{id "TYPE__SERIAL", pos_id, store_id,
-  operating_mode}`; `PATCH /terminals/v1/setup` sets `PDV` (terminal restart needed). Binding a terminal to a store/POS
-  is done **in the Mercado Pago app** (scan the terminal's QR), not via API; one terminal per POS.
+- Point (verified 2026-11-01): `GET /terminals/v1/list?store_id&pos_id&limit(1-50)&offset` -> `{data:{terminals:[{id "TYPE__SERIAL",
+  pos_id int, store_id, external_pos_id, operating_mode PDV|STANDALONE|SELF_SERVICE|UNDEFINED}]}, paging:{total,offset,limit}}`. Only
+  NEWLAND_N950 and PAX_A910 are supported (the type carries its own underscore: `PAX_A910__8701`). `PATCH /terminals/v1/setup` with
+  `{"terminals":[{"id":"...","operating_mode":"PDV"}]}` answers 200 and echoes the body (terminal restart needed). Errors: 403
+  `terminal_not_allowed_action` (wrong model), 403 `store_pos_not_found` (the terminal has no store/POS), 412 (the POS already has a
+  terminal in PDV/SUSPENDED). Binding a terminal to a store + POS happens ONLY in the Mercado Pago mobile app (turn the terminal on,
+  scan the QR on its screen, pick store and POS); one terminal per POS.
 - Not verified: store get and delete; POS delete; what a PATCH to a deleted POS answers (assumed 404); whether the
   seller token needs a scope; rate limits.
 
@@ -52,7 +56,7 @@ QR charge) and E4 (Point charge) need to create orders. Builds on E1 (`odd/tasks
   per sucursal, update when the address changes.
 - [x] T4 — POS sync: link table punto de venta ↔ MP POS (`id_pos` MP, `external_id` derived from the PV id), created
   under its sucursal's store; moving a PV to another sucursal re-homes the POS.
-- [ ] T5 — Point: list the seller's terminals, assign one to a punto de venta (one per PV), switch it to PDV mode,
+- [x] T5 — Point: list the seller's terminals, assign one to a punto de venta (one per PV), switch it to PDV mode,
   with the instructions to bind it in the Mercado Pago app.
 - [ ] T6 — Web: Mercado Pago status per sucursal and per punto de venta in their screens.
 
@@ -380,9 +384,85 @@ POS happens only in the Mercado Pago mobile app; one terminal per POS; the API l
 - `DELETE /api/puntos-venta/{id}/mercadopago/terminal`: clears the assignment in Ways (does not touch Mercado Pago).
 - The caja GET (T4) also returns `idTerminalPoint`.
 
+## T5 progress (2026-11-01)
+
+Commit `1f9f626d` on `pnader/mercadopago-e2-t5` (route: delegated writer).
+
+- Domain: `TerminalPointMercadoPago` (id rule, `PDV` check), `CajaMercadoPago.IdTerminalPoint` / `FechaTerminal`, action `pv.terminalmercadopago`
+  (entity `punto_venta`) and `PayloadDeAuditoria.TerminalDeMercadoPago` (previous and new terminal, mode changed; no token).
+  Application: `ServicioDeTerminalesMercadoPago` (`ListarAsync`, `AsignarAsync`, `QuitarAsync`), `ContratosDeTerminales`, four codes in
+  `CodigosDeErrorDeMercadoPago` (`mercadopago_caja_no_registrada`, `mercadopago_terminal_no_vinculada`,
+  `mercadopago_terminal_modelo_no_admitido`, `mercadopago_caja_con_terminal_en_pdv`), DI; the lock helper of the caja service became
+  `internal static` and is shared. `EstadoDeCajaMercadoPago` gained `IdTerminalPoint`. Infrastructure: columns + CHECK
+  `ck_cajas_mercadopago_terminal` in `CajaMercadoPagoConfiguration`, migration `20261101141301_TerminalDeCajaMercadoPago` (no RLS change:
+  same table). API: `GET .../mercadopago/terminales`, `POST|DELETE .../mercadopago/terminal` in the same `GestionDeCatalogo` group (Admin).
+  Docs: docs/10 part 07 (columns, CHECK, endpoints, Point facts); the index row needed no change.
+- Model summary: `cajas_mercadopago` + `id_terminal_point varchar(80) NULL`, `fecha_terminal timestamptz NULL`; CHECK both-or-neither and
+  not blank. No new table, no FK, no unique index (the terminal belongs to its POS in Mercado Pago; one column per caja = one terminal).
+- Client check: `ClienteApiMercadoPago.ListarTerminalesAsync` already matched the verified shape (`{data:{terminals}, paging}`, numeric
+  `pos_id`, `store_id` as number or string); unchanged. The service filters by `pos_id` again on its side.
+- Verification: build 0 errors; `has-pending-model-changes`: none; Domain 2378; Application 1640 (guards and the `ClienteApiMercadoPago`
+  unit tests live here); integration filter (MercadoPago|UpDownUp|Cobertura|AislamientoDeTenant|SuperficieDeAutorizacion) 236 passed, 0 failed.
+- Mutation evidence (mutate, run `MercadoPagoCajasTests` terminal tests, restore from backup): pos_id filter removed -> 2 fail (listing,
+  other-POS terminal); `if (!EstaEnPdv)` -> `if (true)` -> 3 fail (already PDV, repeat, retry); 412 mapping `== 4120` -> 2 fail (both 412
+  cases); `terminal_not_allowed_action` literal changed -> the 403 model case fails; regex check removed from `Normalizar` -> 4 DTO cases
+  fail; DELETE made to call Mercado Pago -> the delete test fails. All restored, suite green again.
+- Deviations: (1) the brief's regex `^[A-Z0-9]+__[A-Za-z0-9]+$` rejects real ids (`PAX_A910__8701` has a single underscore inside the
+  type), so the rule is `^[A-Z0-9]+(_[A-Z0-9]+)*__[A-Za-z0-9]+$`. (2) Validation of the body happens in the service (after the 404), the
+  endpoint takes a nullable body so a missing body is a 400 `terminal_point_invalida` and not a framework binding error before the 404.
+  (3) The POST/DELETE answer `{idTerminalPoint, fechaTerminal, modoCambiado}` (not the whole caja state); DELETE is idempotent (no
+  assignment = 200 with nulls). (4) Audit action name `pv.terminalmercadopago`. (5) Tests were written with the code; RED shown by mutation.
+- Open: the PATCH idempotency key is terminal + mode only (as designed): if an operator reverts the terminal to STANDALONE in the app
+  within 24 h and Ways switches it again, Mercado Pago may answer the stored echo without applying it (unverified that `/terminals/v1/setup`
+  honors the header); a terminal stored in Ways stays stored if someone unbinds it in the app (the listing shows it gone, `asignada` is
+  false for all); two PVs of Ways cannot hold the same terminal only by Mercado Pago's one-POS rule, there is no unique index; GET lists
+  at most one page (no `limit`/`offset` sent; filtering by `pos_id` yields at most one terminal); `PATCH /terminals/v1/setup` response is not
+  read; web is T6.
+
+## Judgment-day T5 round 1
+
+- Fixed in `3f3d4134` (confirmed by both judges): T5-1 the setup PATCH uses a fresh idempotency key per attempt (`ways-terminal-{pv}-{Guid:N}`)
+  and the echoed terminal must be in PDV mode, else 502 `mercadopago_respuesta_invalida` and nothing is stored (an echo without the
+  terminal is tolerated: the real response shape is unverified). T5-2 re-registering a caja whose `id_pos` changed clears the terminal
+  (audited as `desasignacion`); the listing now returns `idTerminalAsignada` and `asignadaVigente`. T5-3 DELETE clears every caja row
+  of the PV (any seller), needs no active connection and never calls Mercado Pago (DELETE without connection or caja is now a 200 no-op).
+- Mutation evidence: constant key -> 2 fail; echo check disabled -> 1 fail; clearing on pos change disabled -> 1 fail;
+  `asignadaVigente` ignoring the listing -> 1 fail; DELETE reading the connection -> 2 fail. All restored.
+- Verification: build 0 errors; pending model changes: none; Domain 2378; Application 1640; integration `MercadoPagoCajas` 78 passed.
+
+## Judgment-day T5 verdict
+
+- 2026-11-01: **APPROVED** after one fix round. Both judges confirmed: the setup PATCH key repeated across attempts, and a
+  stale terminal assignment was silent (terminal unbound in the app, or caja re-registered under a new POS id); judge B also
+  suggested clearing without an active connection. Fixed in 3f3d4134 (fresh key per attempt + echo check, clear on POS id
+  change with audit, `idTerminalAsignada`/`asignadaVigente` in the listing, DELETE clears every row of the PV without reading
+  the connection); mutation evidence per fix. Scoped re-judgment: both clean (suggestion: a 2xx without the terminal is
+  accepted; the class comment now says so). RDD is off.
+
+## T6 design (2026-11-01)
+
+Branch `pnader/mercadopago-e2-t6`, stacked on T5. Web only (`src/Ways.Web`), Admin only.
+
+- `api/mercadoPago.ts`: typed calls for the sucursal local (GET/POST `/sucursales/{id}/mercadopago`), the caja (GET/POST
+  `/puntos-venta/{id}/mercadopago`) and the terminal (GET `.../mercadopago/terminales`, POST/DELETE `.../mercadopago/terminal`),
+  plus Spanish messages for every new error code (`direccion_incompleta_para_mercadopago`, `mercadopago_local_no_registrado`,
+  `mercadopago_local_duplicado`, `mercadopago_caja_duplicada`, `mercadopago_punto_venta_movido`, `mercadopago_caja_no_registrada`,
+  `mercadopago_terminal_no_vinculada`, `mercadopago_terminal_modelo_no_admitido`, `mercadopago_caja_con_terminal_en_pdv`,
+  `terminal_point_invalida`, `mercadopago_solicitud_rechazada`, `mercadopago_no_disponible`).
+- Sucursales screen: a "Mercado Pago" row action (Admin) opens `ModalDeMercadoPagoDeSucursal`: state badge (`sin_conexion` with a
+  pointer to Empresas, `no_registrada`, `registrada` with the store id and dates, `desactualizada`), the missing address fields
+  by label, and "Registrar en Mercado Pago" / "Actualizar en Mercado Pago".
+- Puntos de venta screen: a "Mercado Pago" row action (Admin) opens `ModalDeMercadoPagoDePuntoVenta`: caja state (same badges
+  plus `local_no_registrado`), register/update, the static QR image (`urlQr`) with a link to open it for printing, and a
+  "Terminal Point" section: list of terminals of the POS with mode, assign / remove, the binding instructions when empty, and a
+  warning when the stored assignment is no longer bound (`asignadaVigente` false).
+- No per-row status fetch in the grids (one request per row); the state lives in the modal.
+- react-async-state for every read (generation token) and write (full-window disabled, re-entrancy ref); colocated Vitest tests
+  for the pure mapping helpers (labels of states and missing fields); component tests wait for data (web-test-data-gates).
+
 ## Next step
 
-T5 implementation (delegated writer).
+T6 implementation (delegated writer).
 
 ## Judgment-day T1 verdict
 

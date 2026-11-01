@@ -503,6 +503,8 @@ cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa 
     external_id varchar(40),                 -- 'WAYSPV' + id_punto_venta: letras y dígitos, estable, único por vendedor
     url_qr varchar(500) NULL,                -- imagen del QR (qr_response.image), si Mercado Pago la devolvió
     fecha_registro, fecha_sincronizacion,    -- esta última es la de la LECTURA del punto de venta, no la del fin de la llamada
+    id_terminal_point varchar(80) NULL,      -- terminal Point elegida para la caja (TIPO__SERIE, p. ej. PAX_A910__8701); se vincula en la app de Mercado Pago
+    fecha_terminal NULL,                     -- cuándo se asignó; nula si y solo si no hay terminal
     created_at, updated_at, deleted_at
 )
 ```
@@ -510,7 +512,7 @@ cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa 
 > Constraints: FK `fk_cajas_mercadopago_tenant` (simple), `fk_cajas_mercadopago_empresa` (compuesta `(id_empresa, id_tenant)`),
 > `fk_cajas_mercadopago_punto_venta` (compuesta `(id_punto_venta, id_tenant)`, sobre la clave alterna existente) y `fk_cajas_mercadopago_local`; todas RESTRICT. Para la última se agregó la clave alterna
 > `ak_locales_mercadopago_id_local_id_empresa_id_tenant`
-> (sobre `locales_mercadopago`; no se agregó ninguna a `puntos_venta`: una clave alterna con la empresa obliga a toda alta de punto de venta a conocerla antes del `SaveChanges`). CHECK `ck_cajas_mercadopago_external_id` (no vacío). Único `ux_cajas_mercadopago_punto_venta_usuario`
+> (sobre `locales_mercadopago`; no se agregó ninguna a `puntos_venta`: una clave alterna con la empresa obliga a toda alta de punto de venta a conocerla antes del `SaveChanges`). CHECK `ck_cajas_mercadopago_external_id` (no vacío) y `ck_cajas_mercadopago_terminal` (`id_terminal_point` y `fecha_terminal` van juntos o ninguno, y el id no es blanco; el servicio valida antes, es solo respaldo). Único `ux_cajas_mercadopago_punto_venta_usuario`
 > `(id_punto_venta, id_usuario_mercadopago)`: una fila por punto de venta y cuenta; si la empresa se reconecta con otra cuenta el punto de
 > venta se registra de nuevo y la fila anterior queda de historia. `ManejadorDeErrores` traduce su 23505 a 409 `mercadopago_caja_duplicada`
 > (solo lo alcanza una escritura que no pase por el servicio, que serializa con un lock por punto de venta). Índices de soporte:
@@ -536,3 +538,15 @@ cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa 
 > `requiere_reconexion` (409) y la caída o el tiempo agotado son 503 `mercadopago_no_disponible`.
 > Verificado contra la referencia (2026-11-01), no en vivo: `POST /v2/pos`, `PATCH /v2/pos/{id}` (el `store_id` puede cambiar), `GET /v2/pos?external_id=` con la clave `data`,
 > la imagen del QR en `qr_response.image` y el 409 `pos_already_exists`. **Sin verificar contra la API real:** qué responde un `PATCH` a una caja borrada (se asume 404 `pos_not_found`).
+>
+> **Terminal Point.** `GET /api/puntos-venta/{id}/mercadopago` también devuelve `idTerminalPoint`. `GET .../mercadopago/terminales` lista las
+> terminales que Mercado Pago tiene vinculadas a la caja (`GET /terminals/v1/list?pos_id=`; solo Newland N950 y PAX A910) como `{ id, modoOperativo,
+> asignada }`, y con la lista vacía trae `instrucciones`: la terminal se vincula **solo en la app móvil de Mercado Pago** (se enciende, se escanea el
+> QR de su pantalla y se elige local y caja); una caja admite una terminal. `POST .../mercadopago/terminal` `{ idTerminal }` (obligatorio, `^[A-Z0-9]+__[A-Za-z0-9]+$`,
+> ≤ 80; 400 `terminal_point_invalida`) asigna una terminal del listado de la caja (si no figura, 409 `mercadopago_terminal_no_vinculada`) bajo los mismos dos
+> locks sucursal → punto de venta; si no está en `PDV`, `PATCH /terminals/v1/setup` `{terminals:[{id, operating_mode:"PDV"}]}` con
+> `X-Idempotency-Key` (huella de terminal y modo; Mercado Pago pide reiniciar la terminal): 403 `terminal_not_allowed_action` es 409
+> `mercadopago_terminal_modelo_no_admitido`, 403 `store_pos_not_found` es 409 `mercadopago_terminal_no_vinculada` y 412 (la caja ya tiene otra terminal
+> en `PDV` o suspendida) es 409 `mercadopago_caja_con_terminal_en_pdv`. Con la terminal ya en `PDV` no se manda el `PATCH`. Registra
+> `pv.terminalmercadopago` (anterior y nueva terminal, si cambió el modo; sin tokens). `DELETE .../mercadopago/terminal` borra la asignación en Ways y no toca Mercado Pago. Sin caja
+> registrada, las tres rutas responden 409 `mercadopago_caja_no_registrada`. Verificado contra la referencia (2026-11-01), no en vivo.

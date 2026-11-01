@@ -5,6 +5,7 @@ using System.Text.Json;
 using Npgsql;
 using Ways.Application.MercadoPago;
 using Ways.Application.Organizacion;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Organizacion;
 using static Ways.IntegrationTests.ApoyoDeMercadoPago;
 
@@ -1108,5 +1109,612 @@ public class MercadoPagoCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Empty(Llamadas(r.Ctx));
         Assert.Equal(HttpStatusCode.OK, (await r.Ctx.Admin.PostAsync(ruta, null)).StatusCode);
+    }
+
+    // ---- Terminal Point ----------------------------------------------------------------------------------------------------
+
+    private static long _siguientePos = 770_000;
+
+    private sealed record CajaConTerminales(Registrable R, long IdPos)
+    {
+        public Contexto Ctx => R.Ctx;
+    }
+
+    private const string Pax = "PAX_A910__8701";
+
+    private const string Newland = "NEWLAND_N950__N950NCB123";
+
+    private static string RutaDeTerminales(int idPuntoVenta) => $"/api/puntos-venta/{idPuntoVenta}/mercadopago/terminales";
+
+    private static string RutaDeTerminal(int idPuntoVenta) => $"/api/puntos-venta/{idPuntoVenta}/mercadopago/terminal";
+
+    private static bool EsDeTerminales(PedidoRegistrado pedido) =>
+        EsDeLaApi(pedido) && pedido.Uri.AbsolutePath.StartsWith("/terminals/", StringComparison.Ordinal);
+
+    private static IReadOnlyList<PedidoRegistrado> LlamadasDeTerminales(Contexto ctx) =>
+        [.. Pedidos(ctx).Where(EsDeTerminales)];
+
+    private static IReadOnlyList<PedidoRegistrado> Cambios(Contexto ctx) =>
+        [.. LlamadasDeTerminales(ctx).Where(p => p.Metodo == HttpMethod.Patch)];
+
+    private static string ListadoJson(params (string Id, long PosId, string Modo)[] terminales) =>
+        JsonSerializer.Serialize(new
+        {
+            data = new
+            {
+                terminals = terminales.Select(t => new
+                {
+                    id = t.Id, pos_id = t.PosId, store_id = 1, external_pos_id = "WAYSPV1", operating_mode = t.Modo
+                })
+            },
+            paging = new { total = terminales.Length, offset = 0, limit = 50 }
+        });
+
+    /// <summary>Guion de las rutas de Point: el listado responde <paramref name="listado"/> y el cambio de modo, un eco o lo que diga
+    /// <paramref name="cambio"/>.</summary>
+    private static Func<PedidoRegistrado, HttpResponseMessage?> Point(
+        Func<string> listado, Func<PedidoRegistrado, HttpResponseMessage>? cambio = null) =>
+        pedido => pedido.Uri.AbsolutePath switch
+        {
+            "/terminals/v1/list" => Json(HttpStatusCode.OK, listado()),
+            "/terminals/v1/setup" => cambio?.Invoke(pedido) ?? Json(HttpStatusCode.OK, pedido.Cuerpo),
+            _ => null
+        };
+
+    private async Task<CajaConTerminales> PrepararCajaAsync(string nombre)
+    {
+        var r = await PrepararRegistrableAsync(nombre);
+        var idPos = Interlocked.Increment(ref _siguientePos);
+        Guionar(r.Ctx, idPos: idPos);
+        Assert.Equal(HttpStatusCode.OK, (await r.Ctx.Admin.PostAsync(RutaDeCajas(r.IdPuntoVenta), null)).StatusCode);
+        Marcar(r.Ctx);
+        return new CajaConTerminales(r, idPos);
+    }
+
+    private static Task<HttpResponseMessage> AsignarAsync(Contexto ctx, int idPuntoVenta, string? idTerminal) =>
+        ctx.Admin.PostAsJsonAsync(RutaDeTerminal(idPuntoVenta), new SolicitudDeTerminalMercadoPago(idTerminal));
+
+    private async Task<(string? IdTerminal, DateTimeOffset? Fecha)> TerminalGuardadaAsync(int idPuntoVenta)
+    {
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText = "SELECT id_terminal_point, fecha_terminal FROM cajas_mercadopago WHERE id_punto_venta = $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta });
+        await using var lector = await comando.ExecuteReaderAsync();
+        Assert.True(await lector.ReadAsync());
+        return (
+            lector.IsDBNull(0) ? null : lector.GetString(0),
+            lector.IsDBNull(1) ? null : lector.GetFieldValue<DateTimeOffset>(1));
+    }
+
+    private async Task<List<(string? Anterior, string Nuevo)>> AuditoriaDeTerminalAsync(int idPuntoVenta)
+    {
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText =
+            "SELECT valor_anterior::text, valor_nuevo::text FROM auditoria WHERE accion = 'pv.terminalmercadopago' " +
+            "AND id_entidad = $1 ORDER BY id_auditoria";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta });
+
+        var filas = new List<(string?, string)>();
+        await using var lector = await comando.ExecuteReaderAsync();
+        while (await lector.ReadAsync())
+        {
+            filas.Add((lector.IsDBNull(0) ? null : lector.GetString(0), lector.GetString(1)));
+        }
+
+        return filas;
+    }
+
+    [Fact]
+    public async Task UnPuntoDeVentaInexistenteContesta404AntesQueElCuerpoEnLasTresRutasDeTerminal()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-term-404");
+
+        await AssertCodigoAsync(await ctx.Admin.GetAsync(RutaDeTerminales(987_654)), HttpStatusCode.NotFound, "no_encontrado");
+        await AssertCodigoAsync(await AsignarAsync(ctx, 987_654, "no es una terminal"), HttpStatusCode.NotFound, "no_encontrado");
+        await AssertCodigoAsync(await ctx.Admin.PostAsync(RutaDeTerminal(987_654), null), HttpStatusCode.NotFound, "no_encontrado");
+        await AssertCodigoAsync(await ctx.Admin.DeleteAsync(RutaDeTerminal(987_654)), HttpStatusCode.NotFound, "no_encontrado");
+        Assert.Empty(Llamadas(ctx));
+    }
+
+    [Fact]
+    public async Task UnPuntoDeVentaDeOtroTenantContesta404EnLasTresRutasDeTerminalSinTocarSuCaja()
+    {
+        var a = await ConectarAsync("mp-term-aislada-a");
+        var b = await PrepararCajaAsync("mp-term-aislada-b");
+
+        await AssertCodigoAsync(await a.Admin.GetAsync(RutaDeTerminales(b.R.IdPuntoVenta)), HttpStatusCode.NotFound, "no_encontrado");
+        await AssertCodigoAsync(await AsignarAsync(a, b.R.IdPuntoVenta, Pax), HttpStatusCode.NotFound, "no_encontrado");
+        await AssertCodigoAsync(await a.Admin.DeleteAsync(RutaDeTerminal(b.R.IdPuntoVenta)), HttpStatusCode.NotFound, "no_encontrado");
+        Assert.Empty(Llamadas(a));
+        Assert.Null((await TerminalGuardadaAsync(b.R.IdPuntoVenta)).IdTerminal);
+    }
+
+    [Fact]
+    public async Task SinConexionListarYAsignarSon409YQuitarEsUnNoOpSinLlamarAMercadoPago()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-term-sin-conexion");
+        var idSucursal = await CrearSucursalAsync(ctx, "Sucursal Sur");
+        var idPuntoVenta = await CrearPuntoVentaAsync(ctx, "Caja Sur", idSucursal);
+
+        await AssertCodigoAsync(await ctx.Admin.GetAsync(RutaDeTerminales(idPuntoVenta)), HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.NoConectada);
+        await AssertCodigoAsync(await AsignarAsync(ctx, idPuntoVenta, Pax), HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.NoConectada);
+        Assert.Equal(HttpStatusCode.OK, (await ctx.Admin.DeleteAsync(RutaDeTerminal(idPuntoVenta))).StatusCode);
+        Assert.Empty(Llamadas(ctx));
+    }
+
+    [Fact]
+    public async Task SiElPuntoDeVentaNoEsUnaCajaListarYAsignarSon409CajaNoRegistradaYQuitarEsUnNoOp()
+    {
+        var r = await PrepararRegistrableAsync("mp-term-sin-caja");
+        Guionar(r.Ctx, antes: Point(() => ListadoJson((Pax, 1, "STANDALONE"))));
+
+        await AssertCodigoAsync(
+            await r.Ctx.Admin.GetAsync(RutaDeTerminales(r.IdPuntoVenta)), HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.CajaNoRegistrada);
+        await AssertCodigoAsync(
+            await AsignarAsync(r.Ctx, r.IdPuntoVenta, Pax), HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.CajaNoRegistrada);
+        Assert.Equal(HttpStatusCode.OK, (await r.Ctx.Admin.DeleteAsync(RutaDeTerminal(r.IdPuntoVenta))).StatusCode);
+        Assert.Empty(LlamadasDeTerminales(r.Ctx));
+        Assert.Empty(await FilasAsync(r.IdPuntoVenta));
+    }
+
+    [Fact]
+    public async Task ElListadoPideLasTerminalesDeLaCajaMarcaLaAsignadaYDescartaLasDeOtraCaja()
+    {
+        var c = await PrepararCajaAsync("mp-term-listado");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"), (Newland, c.IdPos, "STANDALONE"), ("PAX_A910__9999", c.IdPos + 1, "PDV"))));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+        Marcar(c.Ctx);
+
+        var listado = await LeerAsync<ListadoDeTerminalesDelPuntoDeVenta>(await c.Ctx.Admin.GetAsync(RutaDeTerminales(c.R.IdPuntoVenta)));
+
+        Assert.Equal(
+            [new TerminalDelPuntoDeVenta(Pax, "PDV", true), new TerminalDelPuntoDeVenta(Newland, "STANDALONE", false)],
+            listado.Terminales);
+        Assert.Null(listado.Instrucciones);
+        var pedido = Assert.Single(LlamadasDeTerminales(c.Ctx));
+        Assert.Equal(HttpMethod.Get, pedido.Metodo);
+        Assert.Equal($"?pos_id={c.IdPos}", pedido.Uri.Query);
+    }
+
+    [Fact]
+    public async Task SinTerminalesVinculadasElListadoTraeLasInstruccionesParaVincularlasEnLaApp()
+    {
+        var c = await PrepararCajaAsync("mp-term-vacio");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson()));
+
+        var listado = await LeerAsync<ListadoDeTerminalesDelPuntoDeVenta>(await c.Ctx.Admin.GetAsync(RutaDeTerminales(c.R.IdPuntoVenta)));
+
+        Assert.Empty(listado.Terminales);
+        Assert.Contains("app de Mercado Pago", listado.Instrucciones);
+        Assert.Contains("QR", listado.Instrucciones);
+    }
+
+    // Clausula: el cuerpo tiene un solo campo, obligatorio, con la forma TIPO__SERIE y hasta 80 caracteres.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("pax_a910__8701")]
+    [InlineData("PAX_A910_8701")]
+    [InlineData("PAX_A910__87 01")]
+    [InlineData("PAX_A910__8701; DROP")]
+    public async Task UnIdentificadorDeTerminalInvalidoEsUn400SinLlamarAMercadoPago(string? idTerminal)
+    {
+        var c = await PrepararCajaAsync("mp-term-dto-" + Guid.NewGuid().ToString("N")[..8]);
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+
+        await AssertCodigoAsync(
+            await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, idTerminal), HttpStatusCode.BadRequest, TerminalPointMercadoPago.CodigoDeIdInvalido);
+        Assert.Empty(LlamadasDeTerminales(c.Ctx));
+        Assert.Null((await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+    }
+
+    [Fact]
+    public async Task UnCuerpoSinElCampoOMasLargoQueElMaximoEsUn400SinLlamarAMercadoPago()
+    {
+        var c = await PrepararCajaAsync("mp-term-dto-largo");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+        var ruta = RutaDeTerminal(c.R.IdPuntoVenta);
+
+        var sinCampo = await c.Ctx.Admin.PostAsync(ruta, new StringContent("{}", Encoding.UTF8, "application/json"));
+        await AssertCodigoAsync(sinCampo, HttpStatusCode.BadRequest, TerminalPointMercadoPago.CodigoDeIdInvalido);
+
+        var sinCuerpo = await c.Ctx.Admin.PostAsync(ruta, null);
+        await AssertCodigoAsync(sinCuerpo, HttpStatusCode.BadRequest, TerminalPointMercadoPago.CodigoDeIdInvalido);
+
+        var largo = "PAX__" + new string('A', 80);
+        await AssertCodigoAsync(await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, largo), HttpStatusCode.BadRequest, TerminalPointMercadoPago.CodigoDeIdInvalido);
+        Assert.Empty(LlamadasDeTerminales(c.Ctx));
+    }
+
+    // Clausula: la terminal tiene que figurar en el listado de la caja de este punto de venta, con el pos_id de esa caja.
+    [Fact]
+    public async Task UnaTerminalQueNoFiguraEnElListadoDeLaCajaEs409SinCambiarElModoNiGuardarNada()
+    {
+        var c = await PrepararCajaAsync("mp-term-no-vinculada");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Newland, c.IdPos, "STANDALONE"))));
+
+        var respuesta = await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax);
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.TerminalNoVinculada);
+        Assert.Contains("app de Mercado Pago", await respuesta.Content.ReadAsStringAsync());
+        Assert.Empty(Cambios(c.Ctx));
+        Assert.Null((await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+        Assert.Empty(await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta));
+    }
+
+    [Fact]
+    public async Task UnaTerminalDeOtraCajaQueMercadoPagoDevuelveIgualNoSeAsigna()
+    {
+        var c = await PrepararCajaAsync("mp-term-otra-caja");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos + 1, "STANDALONE"))));
+
+        await AssertCodigoAsync(
+            await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax), HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.TerminalNoVinculada);
+        Assert.Empty(Cambios(c.Ctx));
+        Assert.Null((await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+    }
+
+    [Fact]
+    public async Task UnaTerminalFueraDePdvSePasaAPdvConUnaClaveDeIdempotenciaYSeGuardaConSuAuditoria()
+    {
+        var c = await PrepararCajaAsync("mp-term-asigna");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+
+        var resultado = await LeerAsync<AsignacionDeTerminalMercadoPago>(await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, $"  {Pax} "));
+
+        Assert.Equal(Pax, resultado.IdTerminalPoint);
+        Assert.NotNull(resultado.FechaTerminal);
+        Assert.True(resultado.ModoCambiado);
+        var cambio = Assert.Single(Cambios(c.Ctx));
+        Assert.Equal("/terminals/v1/setup", cambio.Uri.AbsolutePath);
+        using (var cuerpo = JsonDocument.Parse(cambio.Cuerpo))
+        {
+            var terminal = Assert.Single(cuerpo.RootElement.GetProperty("terminals").EnumerateArray());
+            Assert.Equal(Pax, terminal.GetProperty("id").GetString());
+            Assert.Equal("PDV", terminal.GetProperty("operating_mode").GetString());
+        }
+
+        Assert.StartsWith($"ways-terminal-{c.R.IdPuntoVenta}-", cambio.ClaveDeIdempotencia);
+        Assert.InRange(cambio.ClaveDeIdempotencia!.Length, 1, 64);
+        Assert.Equal($"Bearer {AccessToken}", cambio.Autorizacion);
+
+        var (guardada, fecha) = await TerminalGuardadaAsync(c.R.IdPuntoVenta);
+        Assert.Equal(Pax, guardada);
+        Assert.Equal(resultado.FechaTerminal!.Value.ToUnixTimeMilliseconds(), fecha!.Value.ToUnixTimeMilliseconds());
+
+        var auditoria = Assert.Single(await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta));
+        using var nuevo = JsonDocument.Parse(auditoria.Nuevo);
+        Assert.Equal("asignacion", nuevo.RootElement.GetProperty("operacion").GetString());
+        Assert.Equal(Pax, nuevo.RootElement.GetProperty("id_terminal_point").GetString());
+        Assert.True(nuevo.RootElement.GetProperty("modo_cambiado").GetBoolean());
+        Assert.DoesNotContain(AccessToken, auditoria.Nuevo);
+        Assert.DoesNotContain("token", auditoria.Nuevo, StringComparison.OrdinalIgnoreCase);
+
+        var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await c.Ctx.Admin.GetAsync(RutaDeCajas(c.R.IdPuntoVenta)));
+        Assert.Equal(Pax, estado.IdTerminalPoint);
+    }
+
+    // Clausula: una terminal que ya esta en PDV no se vuelve a mandar a PDV.
+    [Fact]
+    public async Task UnaTerminalQueYaEstaEnPdvSeGuardaSinMandarElCambioDeModo()
+    {
+        var c = await PrepararCajaAsync("mp-term-ya-pdv");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"))));
+
+        var resultado = await LeerAsync<AsignacionDeTerminalMercadoPago>(await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax));
+
+        Assert.Equal(Pax, resultado.IdTerminalPoint);
+        Assert.False(resultado.ModoCambiado);
+        Assert.Empty(Cambios(c.Ctx));
+        Assert.Equal(Pax, (await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+        using var nuevo = JsonDocument.Parse(Assert.Single(await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta)).Nuevo);
+        Assert.False(nuevo.RootElement.GetProperty("modo_cambiado").GetBoolean());
+    }
+
+    [Fact]
+    public async Task AsignarDeNuevoLaMismaTerminalEnPdvNoCambiaNadaNiAuditaNiLlamaAlCambioDeModo()
+    {
+        var c = await PrepararCajaAsync("mp-term-repetida");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+        var primera = await LeerAsync<AsignacionDeTerminalMercadoPago>(await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax));
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"))));
+
+        var segunda = await LeerAsync<AsignacionDeTerminalMercadoPago>(await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax));
+
+        Assert.Single(Cambios(c.Ctx));
+        Assert.Equal(Pax, segunda.IdTerminalPoint);
+        Assert.False(segunda.ModoCambiado);
+        Assert.Equal(primera.FechaTerminal!.Value.ToUnixTimeMilliseconds(), segunda.FechaTerminal!.Value.ToUnixTimeMilliseconds());
+        Assert.Single(await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta));
+    }
+
+    [Fact]
+    public async Task ElegirOtraTerminalLaReemplazaYLaAuditoriaGuardaLaAnterior()
+    {
+        var c = await PrepararCajaAsync("mp-term-reemplazo");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"), (Newland, c.IdPos, "PDV"))));
+
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Newland)).StatusCode);
+
+        Assert.Equal(Newland, (await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+        var auditoria = await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta);
+        Assert.Equal(2, auditoria.Count);
+        using var anterior = JsonDocument.Parse(auditoria[1].Anterior!);
+        Assert.Equal(Pax, anterior.RootElement.GetProperty("id_terminal_point").GetString());
+    }
+
+    // Clausula: los rechazos del cambio de modo son 409 con codigo propio (403 modelo, 403 sin local ni caja, 412 otra terminal).
+    [Theory]
+    [InlineData(403, "terminal_not_allowed_action", CodigosDeErrorDeMercadoPago.TerminalModeloNoAdmitido, 409)]
+    [InlineData(403, "store_pos_not_found", CodigosDeErrorDeMercadoPago.TerminalNoVinculada, 409)]
+    [InlineData(412, "precondition_failed", CodigosDeErrorDeMercadoPago.CajaConOtraTerminalEnPdv, 409)]
+    [InlineData(412, null, CodigosDeErrorDeMercadoPago.CajaConOtraTerminalEnPdv, 409)]
+    [InlineData(403, "otro_codigo", CodigosDeErrorDeMercadoPago.SolicitudRechazada, 502)]
+    [InlineData(400, "invalid_mode", CodigosDeErrorDeMercadoPago.SolicitudRechazada, 502)]
+    public async Task LosRechazosDelCambioDeModoSeMapeanAUn409ConCodigoPropioYNoGuardanNada(
+        int estadoDeMercadoPago, string? codigoDeMercadoPago, string codigoEsperado, int estadoEsperado)
+    {
+        var c = await PrepararCajaAsync($"mp-term-rechazo-{estadoDeMercadoPago}-{codigoDeMercadoPago}");
+        var cuerpo = codigoDeMercadoPago is null
+            ? """{"message":"x"}"""
+            : $$"""{"error":"{{codigoDeMercadoPago}}","message":"rechazado"}""";
+        Guionar(
+            c.Ctx,
+            antes: Point(
+                () => ListadoJson((Pax, c.IdPos, "STANDALONE")),
+                _ => Json((HttpStatusCode)estadoDeMercadoPago, cuerpo)));
+
+        var respuesta = await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax);
+
+        await AssertCodigoAsync(respuesta, (HttpStatusCode)estadoEsperado, codigoEsperado);
+        Assert.Single(Cambios(c.Ctx));
+        Assert.Null((await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+        Assert.Empty(await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta));
+    }
+
+    [Fact]
+    public async Task ReintentarUnCambioDeModoFallidoUsaOtraClaveDeIdempotencia()
+    {
+        var c = await PrepararCajaAsync("mp-term-clave");
+        Guionar(
+            c.Ctx,
+            antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE")), _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+
+        await AssertCodigoAsync(
+            await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax), HttpStatusCode.ServiceUnavailable, CodigosDeErrorDeMercadoPago.NoDisponible);
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+
+        var cambios = Cambios(c.Ctx);
+        Assert.Equal(2, cambios.Count);
+        Assert.NotEqual(cambios[0].ClaveDeIdempotencia, cambios[1].ClaveDeIdempotencia);
+    }
+
+    // Clausula: la clave del cambio de modo es nueva en cada intento, para que un cambio posterior a una vuelta a STANDALONE se aplique.
+    [Fact]
+    public async Task DosAsignacionesTrasVolverALaTerminalAStandaloneUsanClavesDistintasYLaClaveEntraEnElLimite()
+    {
+        var c = await PrepararCajaAsync("mp-term-clave-nueva");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.Ctx.Admin.DeleteAsync(RutaDeTerminal(c.R.IdPuntoVenta))).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+
+        var cambios = Cambios(c.Ctx);
+        Assert.Equal(2, cambios.Count);
+        Assert.NotEqual(cambios[0].ClaveDeIdempotencia, cambios[1].ClaveDeIdempotencia);
+        Assert.All(cambios, x => Assert.InRange(x.ClaveDeIdempotencia!.Length, 1, 64));
+    }
+
+    // Clausula: si el eco del cambio trae la terminal en otro modo que PDV, no se guarda la asignacion.
+    [Fact]
+    public async Task UnEcoDelCambioDeModoQueNoEstaEnPdvEs502SinGuardarLaAsignacion()
+    {
+        var c = await PrepararCajaAsync("mp-term-eco-standalone");
+        Guionar(
+            c.Ctx,
+            antes: Point(
+                () => ListadoJson((Pax, c.IdPos, "STANDALONE")),
+                _ => Json(HttpStatusCode.OK, $$"""{"terminals":[{"id":"{{Pax}}","operating_mode":"STANDALONE"}]}""")));
+
+        var respuesta = await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax);
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.RespuestaInvalida);
+        Assert.Null((await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+        Assert.Empty(await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta));
+    }
+
+    // Clausula: el listado informa la asignacion guardada y si sigue entre las terminales de la caja.
+    [Fact]
+    public async Task ElListadoInformaLaTerminalAsignadaYSiSigueVigente()
+    {
+        var c = await PrepararCajaAsync("mp-term-vigente");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"))));
+        var sinAsignar = await LeerAsync<ListadoDeTerminalesDelPuntoDeVenta>(await c.Ctx.Admin.GetAsync(RutaDeTerminales(c.R.IdPuntoVenta)));
+        Assert.Null(sinAsignar.IdTerminalAsignada);
+        Assert.False(sinAsignar.AsignadaVigente);
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+
+        var vigente = await LeerAsync<ListadoDeTerminalesDelPuntoDeVenta>(await c.Ctx.Admin.GetAsync(RutaDeTerminales(c.R.IdPuntoVenta)));
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Newland, c.IdPos, "PDV"))));
+        var vieja = await LeerAsync<ListadoDeTerminalesDelPuntoDeVenta>(await c.Ctx.Admin.GetAsync(RutaDeTerminales(c.R.IdPuntoVenta)));
+
+        Assert.Equal(Pax, vigente.IdTerminalAsignada);
+        Assert.True(vigente.AsignadaVigente);
+        Assert.Equal(Pax, vieja.IdTerminalAsignada);
+        Assert.False(vieja.AsignadaVigente);
+        Assert.DoesNotContain(vieja.Terminales, t => t.Asignada);
+    }
+
+    // Clausula: si la caja cambia de pos_id (recreada), la terminal asignada a la caja vieja se limpia y se audita.
+    [Fact]
+    public async Task SiElRegistroRecreaLaCajaConOtroPosLaTerminalAsignadaSeLimpia()
+    {
+        var c = await PrepararCajaAsync("mp-term-caja-recreada");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"))));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+        Guionar(
+            c.Ctx, idPos: c.IdPos + 500_000,
+            antes: p => p.Metodo == HttpMethod.Patch && p.Uri.AbsolutePath == $"/v2/pos/{c.IdPos}" ? Json(HttpStatusCode.NotFound, """{"error": "not_found"}""") : null);
+
+        var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await c.Ctx.Admin.PostAsync(RutaDeCajas(c.R.IdPuntoVenta), null));
+
+        Assert.Equal(c.IdPos + 500_000, estado.IdPosMercadoPago);
+        Assert.Null(estado.IdTerminalPoint);
+        Assert.Equal((null, null), await TerminalGuardadaAsync(c.R.IdPuntoVenta));
+        var auditoria = await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta);
+        Assert.Equal(2, auditoria.Count);
+        using var desasignada = JsonDocument.Parse(auditoria[1].Nuevo);
+        Assert.Equal("desasignacion", desasignada.RootElement.GetProperty("operacion").GetString());
+    }
+
+    // Clausula: quitar la terminal solo limpia datos de Ways y no pide una conexion activa.
+    [Fact]
+    public async Task QuitarLaTerminalFuncionaConLaConexionEnRequiereReconexion()
+    {
+        var c = await PrepararCajaAsync("mp-term-quitar-reconexion");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"))));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+        Guionar(c.Ctx, antes: p => EsDeTerminales(p) ? new HttpResponseMessage(HttpStatusCode.Unauthorized) : null);
+        await AssertCodigoAsync(
+            await c.Ctx.Admin.GetAsync(RutaDeTerminales(c.R.IdPuntoVenta)), HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.RequiereReconexion);
+        Marcar(c.Ctx);
+
+        var respuesta = await c.Ctx.Admin.DeleteAsync(RutaDeTerminal(c.R.IdPuntoVenta));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal((null, null), await TerminalGuardadaAsync(c.R.IdPuntoVenta));
+        Assert.Empty(Llamadas(c.Ctx));
+    }
+
+    [Fact]
+    public async Task UnCambioDeModoQueSeAplicoPeroNoSeGuardoSeCompletaAlReintentarSinOtroCambio()
+    {
+        var c = await PrepararCajaAsync("mp-term-reintento");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"))));
+
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+
+        Assert.Empty(Cambios(c.Ctx));
+        Assert.Equal(Pax, (await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnoDe401EnLasTerminalesDejaLaConexionEnRequiereReconexion(bool alAsignar)
+    {
+        var c = await PrepararCajaAsync("mp-term-401-" + alAsignar);
+        Guionar(c.Ctx, antes: p => EsDeTerminales(p) ? new HttpResponseMessage(HttpStatusCode.Unauthorized) : null);
+
+        var respuesta = alAsignar
+            ? await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)
+            : await c.Ctx.Admin.GetAsync(RutaDeTerminales(c.R.IdPuntoVenta));
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, CodigosDeErrorDeMercadoPago.RequiereReconexion);
+        var conexion = Assert.Single(await _apoyo.FilasAsync(c.Ctx.IdEmpresa), f => f.Estado != "desconectada");
+        Assert.Equal("requiere_reconexion", conexion.Estado);
+        Assert.Null(conexion.AccessCifrado);
+        Assert.Null((await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+    }
+
+    // Clausula: quitar la terminal solo borra la asignacion en Ways; no llama a Mercado Pago.
+    [Fact]
+    public async Task QuitarLaTerminalBorraLaAsignacionDeWaysSinLlamarAMercadoPagoYEsIdempotente()
+    {
+        var c = await PrepararCajaAsync("mp-term-quitar");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+        Marcar(c.Ctx);
+
+        var resultado = await LeerAsync<AsignacionDeTerminalMercadoPago>(await c.Ctx.Admin.DeleteAsync(RutaDeTerminal(c.R.IdPuntoVenta)));
+        var otra = await LeerAsync<AsignacionDeTerminalMercadoPago>(await c.Ctx.Admin.DeleteAsync(RutaDeTerminal(c.R.IdPuntoVenta)));
+
+        Assert.Null(resultado.IdTerminalPoint);
+        Assert.Null(otra.IdTerminalPoint);
+        Assert.Empty(Llamadas(c.Ctx));
+        Assert.Equal((null, null), await TerminalGuardadaAsync(c.R.IdPuntoVenta));
+        var filas = Assert.Single(await FilasAsync(c.R.IdPuntoVenta));
+        Assert.Equal(c.IdPos, filas.IdPos);
+
+        var auditoria = await AuditoriaDeTerminalAsync(c.R.IdPuntoVenta);
+        Assert.Equal(2, auditoria.Count);
+        using var desasignada = JsonDocument.Parse(auditoria[1].Nuevo);
+        Assert.Equal("desasignacion", desasignada.RootElement.GetProperty("operacion").GetString());
+        using var anterior = JsonDocument.Parse(auditoria[1].Anterior!);
+        Assert.Equal(Pax, anterior.RootElement.GetProperty("id_terminal_point").GetString());
+        var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await c.Ctx.Admin.GetAsync(RutaDeCajas(c.R.IdPuntoVenta)));
+        Assert.Null(estado.IdTerminalPoint);
+    }
+
+    [Fact]
+    public async Task RegistrarDeNuevoLaCajaConservaLaTerminalAsignada()
+    {
+        var c = await PrepararCajaAsync("mp-term-conserva");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "PDV"))));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, c.R.IdPuntoVenta, Pax)).StatusCode);
+
+        var estado = await LeerAsync<EstadoDeCajaMercadoPago>(await c.Ctx.Admin.PostAsync(RutaDeCajas(c.R.IdPuntoVenta), null));
+
+        Assert.Equal(Pax, estado.IdTerminalPoint);
+        Assert.Equal(Pax, (await TerminalGuardadaAsync(c.R.IdPuntoVenta)).IdTerminal);
+    }
+
+    [Fact]
+    public async Task LaBaseRechazaUnaTerminalSinFechaOUnaFechaSinTerminalOUnaTerminalEnBlanco()
+    {
+        var c = await PrepararCajaAsync("mp-term-check");
+
+        foreach (var asignacion in new[]
+        {
+            "id_terminal_point = 'PAX_A910__1'", "fecha_terminal = now()", "id_terminal_point = '  ', fecha_terminal = now()"
+        })
+        {
+            var violacion = await Assert.ThrowsAsync<PostgresException>(async () =>
+            {
+                await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+                await using var comando = conexion.CreateCommand();
+                comando.CommandText = $"UPDATE cajas_mercadopago SET {asignacion} WHERE id_punto_venta = $1";
+                comando.Parameters.Add(new NpgsqlParameter { Value = c.R.IdPuntoVenta });
+                await comando.ExecuteNonQueryAsync();
+            });
+            Assert.Equal("23514", violacion.SqlState);
+            Assert.Equal("ck_cajas_mercadopago_terminal", violacion.ConstraintName);
+        }
+
+        await using var ok = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var bueno = ok.CreateCommand();
+        bueno.CommandText =
+            "UPDATE cajas_mercadopago SET id_terminal_point = 'PAX_A910__1', fecha_terminal = now() WHERE id_punto_venta = $1";
+        bueno.Parameters.Add(new NpgsqlParameter { Value = c.R.IdPuntoVenta });
+        Assert.Equal(1, await bueno.ExecuteNonQueryAsync());
+    }
+
+    [Fact]
+    public async Task SoloElAdminPuedeConsultarAsignarYQuitarLaTerminal()
+    {
+        var c = await PrepararCajaAsync("mp-term-roles");
+        Guionar(c.Ctx, antes: Point(() => ListadoJson((Pax, c.IdPos, "STANDALONE"))));
+        var idPuntoVenta = c.R.IdPuntoVenta;
+        var cuerpo = JsonContent.Create(new SolicitudDeTerminalMercadoPago(Pax));
+
+        foreach (var cliente in new[] { c.Ctx.Supervisor, c.Ctx.Vendedor })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await cliente.GetAsync(RutaDeTerminales(idPuntoVenta))).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await cliente.PostAsync(RutaDeTerminal(idPuntoVenta), cuerpo)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await cliente.DeleteAsync(RutaDeTerminal(idPuntoVenta))).StatusCode);
+        }
+
+        using var anonimo = c.Ctx.Host.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.GetAsync(RutaDeTerminales(idPuntoVenta))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.DeleteAsync(RutaDeTerminal(idPuntoVenta))).StatusCode);
+
+        Assert.Empty(Llamadas(c.Ctx));
+        Assert.Equal(HttpStatusCode.OK, (await AsignarAsync(c.Ctx, idPuntoVenta, Pax)).StatusCode);
     }
 }

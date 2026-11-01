@@ -268,6 +268,31 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void TerminalDeMercadoPagoDiceLaTerminalAnteriorYLaNuevaSinNingunToken()
+    {
+        var payload = PayloadDeAuditoria.TerminalDeMercadoPago("asignacion", 77, 888, "PAX_A910__1", "PAX_A910__2", true);
+
+        AsumirConstruible(AccionAuditada.PuntoVentaTerminalMercadoPago, payload);
+        Assert.Equal("PAX_A910__1", payload.Anterior!["id_terminal_point"]);
+        Assert.Equal("asignacion", payload.Nuevo["operacion"]);
+        Assert.Equal(77L, payload.Nuevo["id_usuario_mercadopago"]);
+        Assert.Equal(888L, payload.Nuevo["id_pos_mercadopago"]);
+        Assert.Equal("PAX_A910__2", payload.Nuevo["id_terminal_point"]);
+        Assert.Equal(true, payload.Nuevo["modo_cambiado"]);
+        Assert.DoesNotContain(payload.Nuevo.Keys, k => k.Contains("token", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void LaDesasignacionDeTerminalDejaLaNuevaEnNulo()
+    {
+        var payload = PayloadDeAuditoria.TerminalDeMercadoPago("desasignacion", 77, 888, "PAX_A910__1", null, false);
+
+        AsumirConstruible(AccionAuditada.PuntoVentaTerminalMercadoPago, payload);
+        Assert.Null(payload.Nuevo["id_terminal_point"]);
+        Assert.Equal("desasignacion", payload.Nuevo["operacion"]);
+    }
+
+    [Fact]
     public void LocalDeMercadoPagoDiceLaOperacionYLosIdsSinNingunToken()
     {
         var momento = DateTimeOffset.UtcNow;

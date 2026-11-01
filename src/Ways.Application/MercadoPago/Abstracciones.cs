@@ -31,6 +31,19 @@ public static class CodigosDeErrorDeMercadoPago
 
     /// <summary>La sucursal del punto de venta todavía no es un local de la cuenta de Mercado Pago conectada: se registra primero.</summary>
     public const string LocalNoRegistrado = "mercadopago_local_no_registrado";
+
+    /// <summary>El punto de venta todavía no es una caja de la cuenta de Mercado Pago conectada: se registra primero.</summary>
+    public const string CajaNoRegistrada = "mercadopago_caja_no_registrada";
+
+    /// <summary>La terminal no está vinculada a la caja del punto de venta (no figura en su listado, o Mercado Pago contesta que no
+    /// tiene local y caja): se vincula en la app de Mercado Pago.</summary>
+    public const string TerminalNoVinculada = "mercadopago_terminal_no_vinculada";
+
+    /// <summary>Mercado Pago no permite cambiar el modo de ese modelo de terminal (solo Newland N950 y PAX A910).</summary>
+    public const string TerminalModeloNoAdmitido = "mercadopago_terminal_modelo_no_admitido";
+
+    /// <summary>La caja ya tiene otra terminal en modo <c>PDV</c> o suspendida: Mercado Pago admite una por caja.</summary>
+    public const string CajaConOtraTerminalEnPdv = "mercadopago_caja_con_terminal_en_pdv";
 }
 
 public interface IClienteOAuthMercadoPago
