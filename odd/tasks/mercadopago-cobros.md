@@ -339,3 +339,26 @@ Done on `pnader/mercadopago-e3-t3b`, commit `feat(mercadopago): un cobro apartad
 - Open (one judge each, not fixed): `reponerBloque`'s recheck runs after the server already reserved the new block (narrow
   window, server keeps an orphan block); the web `CierreDeCaja` route is not gated on pending apartados (the POS close is); the
   `cobros-sin-venta` list has no paging; apartar holds the row lock across the Mercado Pago calls.
+
+## E3-T4 design (2026-11-01)
+
+Branch `pnader/mercadopago-e3-t4`, stacked on E3-T3b. Backend only.
+
+- `POST /api/integraciones/mercadopago/webhook` (anonymous; in the authorization-surface allowlist). Only `type=order` (from
+  the query string `type` or the body) is processed; anything else answers 200 and is ignored.
+- Signature: header `x-signature: ts=<ts>,v1=<hex>`; manifest `id:{data.id};request-id:{x-request-id};ts:{ts};` where
+  `data.id` comes from the URL query (lowercased when alphanumeric, Mercado Pago's rule for ids in the manifest) and
+  `x-request-id` from its header; HMAC-SHA256 with the secret `Ways:MercadoPago:SecretoWebhook` (options + DI; never logged),
+  compared in constant time. Missing/invalid headers or signature -> 401 (Mercado Pago retries); `ts` older than 10 minutes or
+  more than 2 minutes in the future (accept seconds or milliseconds) -> 401. Secret not configured -> 503
+  `mercadopago_no_configurado`.
+- Valid notification: find the charge by `id_orden_mercadopago` across tenants with a platform-mode lookup (new UNIQUE index on
+  `id_orden_mercadopago` where not null; RLS platform GUC like the OAuth callback / jobs do), then switch to that tenant and run
+  the existing refresh path for that charge, ignoring the 2 s throttle (the webhook means "something changed"), under the same
+  locks. Unknown order -> 200 (another integration's order, or not ours). Refresh errors are logged (no tokens) and still answer
+  200 when the signature was valid, so Mercado Pago does not hammer a temporarily failing Mercado Pago API; polling remains the
+  source of truth.
+- Answer within Mercado Pago's 22 s: the refresh uses the existing 15 s client timeout.
+- Tests: valid signature applies the order (charge becomes `aprobado`); wrong secret / tampered id / missing headers / stale ts
+  -> 401 and no change; unknown order -> 200; non-order type -> 200 and no MP call; the charge of tenant B is updated while the
+  request has no tenant; not configured -> 503; the unique index backstop.
