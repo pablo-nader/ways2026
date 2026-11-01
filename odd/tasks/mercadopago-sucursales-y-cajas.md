@@ -41,7 +41,7 @@ QR charge) and E4 (Point charge) need to create orders. Builds on E1 (`odd/tasks
   (writer touches domain, service, migration, API contract, web modal and tests: 2+ non-trivial files).
 - [x] T3 — Store sync: link table sucursal ↔ MP store (`id_store` MP, external_id), "registrar en Mercado Pago"
   per sucursal, update when the address changes.
-- [ ] T4 — POS sync: link table punto de venta ↔ MP POS (`id_pos` MP, `external_id` derived from the PV id), created
+- [x] T4 — POS sync: link table punto de venta ↔ MP POS (`id_pos` MP, `external_id` derived from the PV id), created
   under its sucursal's store; moving a PV to another sucursal re-homes the POS.
 - [ ] T5 — Point: list the seller's terminals, assign one to a punto de venta (one per PV), switch it to PDV mode,
   with the instructions to bind it in the Mercado Pago app.
@@ -264,9 +264,51 @@ Branch `pnader/mercadopago-e2-t4`, stacked on T3. Backend only; the web is T6.
 - Name sent: PV name through `TextoParaMercadoPago`, <= 45 chars.
 - Same fake-handler integration coverage as T3, plus re-homing after moving the PV to another registered sucursal.
 
+## T4 progress (2026-11-01)
+
+Commit `09ac04a5` on `pnader/mercadopago-e2-t4` (route: delegated writer).
+
+- Domain: `CajaMercadoPago`, `CajaParaMercadoPago` (`WAYSPV`+id, name <= 45 via the T3 sanitizer), action `pv.mercadopago` (entity
+  `punto_venta`) and `PayloadDeAuditoria.CajaDeMercadoPago`. Application: `ServicioDeCajasMercadoPago` (`ObtenerAsync`,
+  `RegistrarAsync`), `ContratosDeCajas`, code `mercadopago_local_no_registrado`, DbSet, DI. Infrastructure: `CajaMercadoPagoConfiguration`,
+  migration `20261101121553_CajasMercadoPago` (RLS via `HabilitarRlsDeTenant`). API: routes in `MercadoPagoEndpoints` (group
+  `GestionDeCatalogo`, as T3), 23505 mapping `mercadopago_caja_duplicada`. Docs: index row + section in docs/10 part 07. Golden
+  inventory: 5 lines.
+- Model summary: `cajas_mercadopago(id_caja_mercadopago, id_tenant, id_empresa, id_punto_venta, id_local_mercadopago,
+  id_usuario_mercadopago bigint, id_pos_mercadopago bigint, external_id varchar(40), url_qr varchar(500) NULL, fecha_registro,
+  fecha_sincronizacion, created_at, updated_at, deleted_at)`; UNIQUE (`id_punto_venta`, `id_usuario_mercadopago`); FKs tenant,
+  empresa (id_empresa, id_tenant), punto_venta (id_punto_venta, id_tenant) and local (id_local_mercadopago, id_empresa, id_tenant), all
+  RESTRICT; CHECK external_id not blank. New alternate key `ak_locales_mercadopago_id_local_id_empresa_id_tenant` on the T3 table.
+- Mercado Pago shape assumptions (reference, not exercised live): `POST /pos` and `PUT /pos/{id}` take `{name, external_id, store_id
+  (number), fixed_amount: false}`; response `{id, qr:{image,...}}` (also `qr_response`, both accepted); search `GET /pos?external_id=`
+  -> `{paging, results:[{id, external_id, store_id}]}`; path is `/pos` per the brief, the T1 facts say `/v2/pos`.
+- Moving a PV: the new FK hangs the caja from the PV by (id, tenant) and from the local, never from the sucursal, so the
+  `UPDATE puntos_venta SET id_sucursal` is untouched. DEFECT FOUND AND FIXED: moving the LAST caja of a sucursal that is registered as a
+  local answered 409 `sucursal_en_uso`, because T3's `locales_mercadopago` row counts as use of the origin sucursal in
+  `InspectorDeUso` (the caja cascade-drops the empty origin). The move path now excludes `locales_mercadopago` from that check, as it
+  already did `parametros` (`excluirParametros` renamed `excluirAcompanantes`); stock/lots/movements still block. The plain
+  `DELETE /api/sucursales/{id}` still treats the local as use (T3 open item). Side effect to know: a PV with a caja now counts as in
+  use for its baja (`punto_venta_en_uso`) and for empresa/tenant, like every FK.
+- Deviations: the audit action is `pv.mercadopago` (repo convention `pv.*`), not `puntoventa.mercadopago`. No alternate key was added to
+  `puntos_venta` (the first try, `(id, id_empresa, id_tenant)`, broke 73 Application tests that create a PV with its sucursal in one
+  `SaveChanges`: `PuntoVenta.IdEmpresa is unknown`), so the DB does not compare the caja's empresa with the PV's; the service takes it
+  from the PV. No 409 `pos_already_exists` recovery on create (the prior search avoids it; it would surface as 502). RED for the move
+  fix was observed (test failed with 409 `sucursal_en_uso` before the change); the rest was written with the code and proven by mutation.
+- Verification: `dotnet build Ways.slnx -c Release` 0 errors; Domain 2321 passed; Application 1637 passed (guards included);
+  integration filter (MercadoPago|UpDownUp|Cobertura|AislamientoDeTenant|SuperficieDeAutorizacion|Sucursal) 283 passed.
+- Mutation evidence (mutate, run `MercadoPagoCajas`, restore from backup copy): local lookup without the sucursal predicate -> 3 tests
+  fail (move-last-caja, re-homing, no-local-after-move); local-not-registered answer 409 -> 500 -> 2 fail; search-adopt `false` +
+  PUT-404 catch `when (false)` together -> 5 fail (adopt, borrada-adopta, borrada-crea, alta, 503); lock call removed + `store_id` forced
+  to a constant + local not re-pointed, together -> 4 fail (lock test, re-homing, alta, adopt); create key without body hash + update
+  key without store/state, plus `HabilitarRlsDeTenant` removed, together -> 4 fail (alta key, A-B-A keys, RLS test,
+  `LaCoberturaDePoliciesEsCompleta`).
+- Open: baja of a sucursal/PV with Mercado Pago links stays blocked (OD4); no unregister path; a moved PV leaves the origin's store in
+  Mercado Pago untouched; `desactualizada` fires on any PV edit; the local is read once under the PV lock but a concurrent re-registration
+  of its sucursal (other lock) can change its store id mid-call.
+
 ## Next step
 
-T4 implementation (delegated writer).
+T5 (Point terminals: list, assign one per PV, switch to PDV) is next; judgment-day of T4 is pending (orchestrator).
 
 ## Judgment-day T1 verdict
 
