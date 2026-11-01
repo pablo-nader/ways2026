@@ -717,6 +717,54 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("arqueos_turno", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Caja.ConciliacionTesoreria", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_conciliacion_tesoreria");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreadoEl")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("creado_el");
+
+                    b.Property<DateTimeOffset>("Hasta")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("hasta");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<int>("IdUsuario")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_usuario");
+
+                    b.Property<string>("Nota")
+                        .HasColumnType("text")
+                        .HasColumnName("nota");
+
+                    b.HasKey("Id")
+                        .HasName("pk_conciliaciones_tesoreria");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_conciliaciones_tesoreria_tenant");
+
+                    b.HasIndex("IdUsuario")
+                        .HasDatabaseName("ix_conciliaciones_tesoreria_usuario");
+
+                    b.HasIndex("IdEmpresa", "IdTenant", "Hasta")
+                        .HasDatabaseName("ix_conciliaciones_tesoreria_empresa_hasta");
+
+                    b.ToTable("conciliaciones_tesoreria", (string)null);
+                });
+
             modelBuilder.Entity("Ways.Domain.Caja.CuentaTesoreria", b =>
                 {
                     b.Property<int>("Id")
@@ -6616,6 +6664,31 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_arqueos_turno_turno");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Caja.ConciliacionTesoreria", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_conciliaciones_tesoreria_tenant");
+
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdUsuario")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_conciliaciones_tesoreria_usuario");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_conciliaciones_tesoreria_empresa");
                 });
 
             modelBuilder.Entity("Ways.Domain.Caja.CuentaTesoreria", b =>

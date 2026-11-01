@@ -244,11 +244,32 @@ public class ServicioDeTurnos(
             await EjecutarCierreAsync(idTurnoCaja, idTenant, idEmpleado, momento, solicitud, motivoSinRendicion, ct));
     }
 
+    /// <summary>Un cierre fechado en o antes de la marca de conciliación de la empresa cambiaría el libro congelado. La marca no se
+    /// puede poner mientras haya un turno abierto que empezó antes de ella, así que este rechazo solo ocurre si la marca se puso entre
+    /// la fijación de <c>momento</c> y esta transacción. La marca de conciliación es el primer lock de la transacción (ver
+    /// <see cref="GuardaDeConciliacion"/>), antes del UPDATE guardado; la empresa sale del punto de venta del turno, que es inmutable.
+    /// Un turno inexistente no toma lock: el UPDATE guardado responde 404.</summary>
+    private async Task ExigirCierreNoConciliadoAsync(int idTurnoCaja, int idTenant, DateTimeOffset momento, CancellationToken ct)
+    {
+        var idEmpresa = await (
+            from t in db.TurnosCaja
+            join pv in db.PuntosVenta.IgnoreQueryFilters(["BajaLogica"]) on t.IdPuntoVenta equals pv.Id
+            where t.Id == idTurnoCaja
+            select (int?)pv.IdEmpresa).FirstOrDefaultAsync(ct);
+
+        if (idEmpresa is { } id)
+        {
+            await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, id, momento, ct);
+        }
+    }
+
     private async Task<TurnoConArqueos> EjecutarCierreAsync(
         int idTurnoCaja, int idTenant, int idEmpleado, DateTimeOffset momento, SolicitudDeCierre solicitud,
         string? motivoSinRendicion, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        await ExigirCierreNoConciliadoAsync(idTurnoCaja, idTenant, momento, ct);
 
         // 1. UPDATE ... WHERE estado = 'abierto' RETURNING id_punto_venta — lock EXCLUSIVO de
         // fila, PRIMER statement (design decisión 1), sostenido hasta el COMMIT. 0 filas: ¿existe
@@ -342,6 +363,8 @@ public class ServicioDeTurnos(
         string? motivoSinRendicion, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        await ExigirCierreNoConciliadoAsync(idTurnoCaja, idTenant, momento, ct);
 
         // 1. Mismo UPDATE guardado que el cierre clásico — mismo lock, mismos 404/409.
         var observacionesCierre = string.IsNullOrWhiteSpace(solicitud.Observaciones)

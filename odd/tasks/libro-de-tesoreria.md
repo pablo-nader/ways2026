@@ -60,9 +60,11 @@ much in each digital account the business has, nor where each movement came from
   Route: delegated.
 - [ ] T4 — Delete the old reports (endpoints, services, DTOs, web, tests), keeping shared pieces
   (`ExportacionDeCaja` histórico part, `ModalDeAjusteDeCuenta`, account ABM). Route: delegated.
-- [ ] T5 — Conciliation + freeze guard on every write path that feeds the ledger. Route: delegated.
+- [x] T5a — Conciliation mark + freeze guard (backend). Route: delegated. Evidence in Progress (2026-11-01, T5a).
+- [ ] T5b — Web: "Conciliado hasta" banner in the ledger, Admin "Conciliar" action with a date-time picker, frozen rows marked
+  (rows dated at or before `conciliadoHasta`). Route: delegated.
 
-## Known limitation to revisit in T5
+## Known limitation (solved by T5a once conciliated)
 
 A drawer pago edited after the close changes the Caja row (retiros + current drawer pagos) and its
 pago row together. The freeze removes this once conciliated.
@@ -92,6 +94,27 @@ pago row together. The freeze removes this once conciliated.
 - T1+T2 en PR #583 (judgment-day APPROVED, sin hallazgos críticos). T3 commits 26c8a2cf + dc40d9d6 (judgment-day: JD-T3-1 confirmado por ambos jueces, corregido y re-juzgado APPROVED).
 - JD-T3-1 corregido: el ajuste de cuenta desde el libro usa `soloImporte` (solo importe con signo, sin releer la cadena ni enviar `saldoObjetivo`); la pantalla de cuentas conserva ambos modos.
 
+### Conciliación y congelamiento (T5a)
+
+- Tabla `conciliaciones_tesoreria` (append-only, tenant + empresa, RLS; marca vigente = max(`hasta`)), `POST /api/tesoreria/conciliaciones`
+  (Admin; 404 empresa, 400 `hasta_requerido`/`nota_muy_larga`, 409 `conciliacion_futura`/`conciliacion_anterior`/`conciliacion_con_turno_abierto`),
+  `conciliadoHasta` en la respuesta del libro. Detalle del modelo y de los locks en el doc 10 §7 ("Conciliación de la tesorería").
+- Se congela solo lo que cambia los números del libro (verificado contra `ServicioDeLibroDeTesoreria`): pagos (fecha y líneas), turno cerrado
+  (retiros, pagos del cajón, movimientos de cuenta y arqueo), ajustes manuales y el ruteo medio -> efectivo/cuenta. Siguen editables
+  (no cambian lo que el libro lee): compras, aplicaciones, redondeos, vincular compra, reasignar personal, cobros y ventas.
+- Sitios con guarda (409 `periodo_conciliado`): `ServicioDePagos.EjecutarEscrituraAsync` (edición y baja, POS y administración; fecha del pago o
+  del cierre de su turno, la menor), `InsertarPagoAsync` (alta del POS, solo carrera), `InsertarPagoDeAdministracionAsync`,
+  `EjecutarPagoDeCompraAsync`, `EjecutarPagoDeCompraConAplicacionesAsync` (solo con pago nuevo), `ServicioDePagoDePersonal.EjecutarAsync`
+  (pago de sueldo), `ServicioDeTurnos` (los dos cierres, solo carrera), `ServicioDeMediosPago` (cambio de cuenta o comportamiento).
+- Pago de administración fechado hoy: `Fecha` = instante actual (antes, medianoche local); las fechas pasadas conservan la medianoche local.
+- Medios de pago: el catálogo es del tenant (`id_empresa` NULL = compartido), así que el chequeo mira, por cada empresa con marca, las líneas de
+  pago y los movimientos de cuenta del medio fechados en o antes de ESA marca; una edición toma el lock compartido de todas las empresas.
+- Pendiente fuera de esta rama: `ServicioDeReconstruccionDeCuentas` (PR #582, no mergeado) debe saltear los turnos con `FechaCierre <= marca`
+  cuando ambas ramas estén en `main`.
+- Fuera del congelamiento (decisión de alcance, no del dueño): el ajuste manual de efectivo y el de cuenta van fechados "ahora" y no llevan guarda
+  propia (solo una marca puesta en la ventana entre su `reloj.Ahora` y el commit podría alcanzarlos); `cuentas_tesoreria.saldo_inicial` ya no se
+  puede editar con movimientos, pero sí mientras la cuenta no tenga ninguno.
+
 ## Next step
 
-T4.
+T4 (T5b queda para después de T4).

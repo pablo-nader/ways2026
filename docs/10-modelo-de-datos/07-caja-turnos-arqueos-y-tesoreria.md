@@ -279,6 +279,53 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
 > - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
 
+### Conciliación de la tesorería
+
+```sql
+conciliaciones_tesoreria (    -- [operativa — marcas append-only] una fila por conciliación de una empresa
+    id_conciliacion_tesoreria, id_empresa,
+    hasta timestamptz NOT NULL,              -- instante hasta el cual la tesorería está conciliada, inclusive
+    id_usuario,                              -- el Admin que concilió
+    creado_el timestamptz NOT NULL,
+    nota text NULL                           -- hasta 500 caracteres, la valida el servicio
+);
+```
+
+> **Estado (libro de tesorería, T5a).** Un Admin marca que la tesorería de una empresa está revisada hasta un instante; la marca
+> vigente de la empresa es el mayor `hasta`. Todo lo que alimenta el libro de tesorería con fecha menor o igual (inclusive) queda
+> congelado y se corrige con movimientos nuevos (ajustes manuales, pagos nuevos). Las marcas no se editan ni se borran. Tabla de
+> tenant sin baja lógica (como `movimientos_tesoreria`), RLS estándar, FK compuesta `fk_conciliaciones_tesoreria_empresa` y simples
+> `fk_conciliaciones_tesoreria_tenant` y `fk_conciliaciones_tesoreria_usuario`, todas RESTRICT. Índices:
+> `ix_conciliaciones_tesoreria_tenant`, `ix_conciliaciones_tesoreria_empresa_hasta` `(id_empresa, id_tenant, hasta)` (soporte de la FK y
+> lectura del máximo) e `ix_conciliaciones_tesoreria_usuario`. Sin índice único: la monotonía la sostiene el lock del escritor, y
+> ninguna FK recibe un id del cliente sin validar (la empresa se resuelve con 404 antes de escribir).
+>
+> **Endpoint (`POST /api/tesoreria/conciliaciones`, solo Admin).** Cuerpo `{ idEmpresa, hasta, nota? }`, responde 201. Orden: 404 de la
+> empresa, 400 del cuerpo (`hasta_requerido`, `nota_muy_larga`) y 409: `conciliacion_futura` (`hasta` posterior a la hora del
+> servidor), `conciliacion_anterior` (`hasta` menor o igual a la marca vigente) y `conciliacion_con_turno_abierto` (algún turno
+> abierto de la empresa con `fecha_apertura <= hasta`). `GET /api/reportes/libro-tesoreria` trae `conciliadoHasta` (la marca vigente,
+> sin importar el rango pedido; `null` si nunca se concilió).
+>
+> **Qué se congela.** Solo lo que cambia los números del libro: la edición y la baja de un pago (POS o administración) con
+> `fecha` menor o igual a la marca, o cuyo turno cerró en o antes de ella (409 `periodo_conciliado`); el alta de un pago con una fecha
+> menor o igual (el pago de administración con fecha pasada, el pago de una compra, el pago de personal con origen tesorería, y
+> cualquier alta del POS que pierda la carrera contra la marca); el cierre de un turno fechado en o antes de la marca (solo por
+> carrera: la marca no se puede poner con un turno abierto que empezó antes); y el cambio de cuenta o de comportamiento de un medio
+> de pago que tiene líneas de pago o movimientos de cuenta fechados en o antes de la marca de SU empresa. Siguen editables porque no
+> cambian lo que el libro lee: compras (edición y anulación), aplicaciones y desaplicaciones, redondeos, vincular compra, reasignar
+> personal, cobros y ventas. El pago de administración fechado hoy (en la zona de la empresa) toma la hora actual como `fecha` y no la
+> medianoche local: así queda siempre posterior a una marca puesta antes durante el día; las fechas pasadas conservan la medianoche local.
+>
+> **Locks.** `GuardaDeConciliacion`: lock advisory de transacción `pg_advisory_xact_lock(bigint)` sobre una clave de `(tenant, empresa)`
+> (bit alto encendido, distinta del advisory de tesorería y del de familias). El escritor de la marca lo toma EXCLUSIVO y no toma ningún
+> otro; todo escritor protegido lo toma COMPARTIDO como PRIMER lock de su transacción (antes de turno, compra, pago, proveedor y del
+> advisory de tesorería), lee la marca y recién ahí decide. El orden "primero" es obligatorio porque PostgreSQL encola un pedido
+> compartido detrás de un exclusivo que espera: quien pidiera la marca reteniendo otro lock podría cerrar un ciclo con el escritor de la
+> marca. Los escritores cuya empresa no se conoce antes de los locks (pago de una compra, cierre de turno, edición de un pago) la
+> pre-leen sin lock (la empresa de un pago y el punto de venta de un turno no cambian; la de una compra se verifica de nuevo bajo su lock). La edición de un medio de pago toma el compartido de TODAS las empresas del tenant, en id
+> ascendente. La reconstrucción de cuentas (PR #582) tendrá que saltear los turnos con `fecha_cierre <=` la marca cuando ambas
+> ramas estén en `main`.
+
 ### Conexiones con Mercado Pago
 
 ```sql
