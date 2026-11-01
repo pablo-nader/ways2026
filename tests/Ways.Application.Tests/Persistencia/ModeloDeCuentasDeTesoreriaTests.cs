@@ -147,8 +147,8 @@ public class ModeloDeCuentasDeTesoreriaTests
         var indices = entidad.GetIndexes().ToDictionary(i => i.GetDatabaseName()!);
 
         Assert.Equal(
-            ["IdCuentaTesoreria", "IdTenant", "Id"], indices["ix_movimientos_cuenta_cuenta_id"].Properties.Select(p => p.Name));
-        Assert.False(indices["ix_movimientos_cuenta_cuenta_id"].IsUnique);
+            ["IdCuentaTesoreria", "IdTenant", "Fecha", "Id"], indices["ix_movimientos_cuenta_cuenta_fecha_id"].Properties.Select(p => p.Name));
+        Assert.False(indices["ix_movimientos_cuenta_cuenta_fecha_id"].IsUnique);
 
         var cierre = indices["ux_movimientos_cuenta_cierre"];
         Assert.True(cierre.IsUnique);

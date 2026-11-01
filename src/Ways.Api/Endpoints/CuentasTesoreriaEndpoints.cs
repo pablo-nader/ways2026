@@ -55,6 +55,21 @@ public static class CuentasTesoreriaEndpoints
             "Ajuste manual del saldo de una cuenta: concepto obligatorio y exactamente uno de importe con signo o saldo " +
             "objetivo (la diferencia se calcula bajo el lock de la cuenta).");
 
+        // Solo Admin, por la política del grupo. La vista previa es un POST porque lleva cuerpo, pero no escribe nada.
+        grupo.MapPost("/reconstruccion/vista-previa", (
+            ServicioDeReconstruccionDeCuentas servicio, SolicitudDeReconstruccionDeCuentas solicitud, CancellationToken ct) =>
+            servicio.VistaPreviaAsync(solicitud, ct))
+        .WithSummary(
+            "Vista previa de la reconstrucción del historial: los cobros de turnos cerrados en el rango (fecha de cierre en la zona " +
+            "de la empresa, hasta 366 días) que se acreditarían en las cuentas actuales de sus medios. No escribe.");
+
+        grupo.MapPost("/reconstruccion", (
+            ServicioDeReconstruccionDeCuentas servicio, SolicitudDeReconstruccionDeCuentas solicitud, CancellationToken ct) =>
+            servicio.AplicarAsync(solicitud, ct))
+        .WithSummary(
+            "Reconstruye el historial: acredita con la fecha de cierre del turno lo que no se acreditó porque el medio no tenía " +
+            "cuenta, y recalcula inicio y final de las filas posteriores de cada cuenta. Una segunda corrida no escribe nada.");
+
         return app;
     }
 }

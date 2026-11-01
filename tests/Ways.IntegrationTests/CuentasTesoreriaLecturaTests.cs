@@ -188,15 +188,15 @@ public class CuentasTesoreriaLecturaTests(WaysApiFixture fixture) : IClassFixtur
     // ---- cuentas y saldos --------------------------------------------------------------------------
 
     [Fact]
-    public async Task LasCuentasTraenSaldoInicialSinMovimientosYElFinalDelUltimoPorIdConMovimientos()
+    public async Task LasCuentasTraenSaldoInicialSinMovimientosYElFinalDelUltimoPorFechaConMovimientos()
     {
-        var ctx = await PrepararAsync(nameof(LasCuentasTraenSaldoInicialSinMovimientosYElFinalDelUltimoPorIdConMovimientos));
+        var ctx = await PrepararAsync(nameof(LasCuentasTraenSaldoInicialSinMovimientosYElFinalDelUltimoPorFechaConMovimientos));
         var vacia = await CrearCuentaAsync(ctx, "A vacía", saldoInicial: 250m);
         var conMovimientos = await CrearCuentaAsync(ctx, "B con movimientos", saldoInicial: 100m);
-        var ultimaFecha = new DateTimeOffset(2026, 1, 5, 10, 0, 0, TimeSpan.Zero);
-        // La fecha del último por id es ANTERIOR a la del primero: el saldo y la fecha salen del id más alto.
-        await InsertarAsync(ctx, conMovimientos, new DateTimeOffset(2026, 1, 9, 10, 0, 0, TimeSpan.Zero), "cobro", 100m, 50m, 0m);
-        await InsertarAsync(ctx, conMovimientos, ultimaFecha, "comision", 150m, 0m, 20m);
+        var ultimaFecha = new DateTimeOffset(2026, 1, 9, 10, 0, 0, TimeSpan.Zero);
+        // El id más alto tiene la fecha ANTERIOR: el saldo y la fecha salen de la última fila en orden (fecha, id).
+        await InsertarAsync(ctx, conMovimientos, ultimaFecha, "cobro", 100m, 50m, 0m);
+        await InsertarAsync(ctx, conMovimientos, new DateTimeOffset(2026, 1, 5, 10, 0, 0, TimeSpan.Zero), "comision", 150m, 0m, 20m);
 
         var cuentas = (await LeerCuentasAsync(ctx.Supervisor, ctx.IdEmpresa)).Cuentas;
 
@@ -205,7 +205,7 @@ public class CuentasTesoreriaLecturaTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(250m, cuentas[0].SaldoInicial);
         Assert.Null(cuentas[0].FechaUltimoMovimiento);
         Assert.Equal(vacia, cuentas[0].Id);
-        Assert.Equal(130m, cuentas[1].SaldoActual);
+        Assert.Equal(150m, cuentas[1].SaldoActual);
         Assert.Equal(100m, cuentas[1].SaldoInicial);
         Assert.Equal(ultimaFecha, cuentas[1].FechaUltimoMovimiento);
     }
@@ -290,20 +290,23 @@ public class CuentasTesoreriaLecturaTests(WaysApiFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task ElLibroSeOrdenaPorIdAunqueLasFechasVayanAlReves()
+    public async Task ElLibroSeOrdenaPorFechaYDespuesPorIdAunqueLosIdsVayanAlReves()
     {
-        var ctx = await PrepararAsync(nameof(ElLibroSeOrdenaPorIdAunqueLasFechasVayanAlReves));
+        var ctx = await PrepararAsync(nameof(ElLibroSeOrdenaPorFechaYDespuesPorIdAunqueLosIdsVayanAlReves));
         var cuenta = await CrearCuentaAsync(ctx, "MP");
         var manana = new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero);
         var ayer = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
-        await InsertarAsync(ctx, cuenta, manana, "cobro", 0m, 100m, 0m);
-        await InsertarAsync(ctx, cuenta, ayer, "comision", 100m, 0m, 10m);
+        await InsertarAsync(ctx, cuenta, manana, "comision", 100m, 0m, 10m);
+        await InsertarAsync(ctx, cuenta, ayer, "cobro", 0m, 100m, 0m);
+        await InsertarAsync(ctx, cuenta, ayer, "retencion_iva", 90m, 0m, 5m);
 
         var libro = await LeerLibroAsync(ctx.Supervisor, cuenta);
 
-        Assert.Equal([manana, ayer], libro.Items.Select(i => i.Fecha).ToArray());
-        Assert.Equal([100m, 90m], libro.Items.Select(i => i.Final).ToArray());
+        Assert.Equal([ayer, ayer, manana], libro.Items.Select(i => i.Fecha).ToArray());
+        Assert.Equal([100m, 85m, 90m], libro.Items.Select(i => i.Final).ToArray());
+        Assert.True(libro.Items[0].Id > libro.Items[2].Id);
         Assert.True(libro.Items[0].Id < libro.Items[1].Id);
+        Assert.Equal(90m, libro.SaldoActual);
     }
 
     private async Task<(Contexto Ctx, int Cuenta)> SembrarLibroAsync(string nombre)

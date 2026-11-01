@@ -220,6 +220,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeCuentasDeTesoreria>();
         services.AddScoped<ServicioDeLibroDeCuentas>();
         services.AddScoped<ServicioDeAjusteDeCuentaDeTesoreria>();
+        services.AddScoped<ServicioDeReconstruccionDeCuentas>();
         services.AddScoped<ServicioDeAjusteDeEfectivoDeTesoreria>();
         services.AddScoped<ServicioDeLibroDeTesoreria>();
 
