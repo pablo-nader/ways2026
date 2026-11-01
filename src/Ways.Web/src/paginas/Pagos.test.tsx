@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pagos } from './Pagos'
 import type {
@@ -1191,5 +1191,68 @@ describe('Pagos (administración) — edición y baja', () => {
     await act(async () => {
       resolver(undefined)
     })
+  })
+})
+
+describe('Pagos (administración) — enlace profundo ?id=N', () => {
+  function Ubicacion() {
+    return <output data-testid="ubicacion">{useLocation().search}</output>
+  }
+
+  function renderConId(ruta: string) {
+    return render(
+      <MemoryRouter initialEntries={[ruta]}>
+        <Pagos />
+        <Ubicacion />
+      </MemoryRouter>,
+    )
+  }
+
+  function mockearConPago(respuesta: () => Promise<PagoDeAdministracionListado>) {
+    mockearRutas({ pagina: paginaFixture([]) })
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) => (/^\/pagos\/administracion\/\d+$/.test(ruta) ? respuesta() : base(ruta)))
+  }
+
+  it('con ?id abre el modal de edición de ese pago y cerrarlo quita el parámetro', async () => {
+    mockearConPago(() => Promise.resolve(pagoFixture({ id: 5, concepto: 'Alquiler enlazado' })))
+    renderConId('/pagos?id=5')
+
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.getByLabelText('Concepto')).toHaveValue('Alquiler enlazado')
+    expect(apiGetMock).toHaveBeenCalledWith('/pagos/administracion/5')
+    expect(screen.getByTestId('ubicacion')).toHaveTextContent('?id=5')
+
+    await userEvent.click(d.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('ubicacion').textContent).toBe('')
+  })
+
+  it('si el pago no existe muestra el mensaje del servidor, no abre el modal y quita el parámetro', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    mockearConPago(() => Promise.reject(new (ErrorApi as unknown as new (e: number, c: string, m: string) => Error)(404, 'pago_no_encontrado', 'El pago no existe.')))
+    renderConId('/pagos?id=999')
+
+    expect(await screen.findByText('El pago no existe.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('ubicacion').textContent).toBe(''))
+  })
+
+  it('un pago originado en personal no se abre: explica el motivo', async () => {
+    mockearConPago(() => Promise.resolve(pagoFixture({ id: 6, concepto: 'Pago de personal: Ana', idMovimientoPersonal: 3 })))
+    renderConId('/pagos?id=6')
+
+    expect(await screen.findByText('Nació de un movimiento de personal y no se modifica por separado.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+  })
+
+  it('un identificador que no es entero positivo se ignora sin pedir nada', async () => {
+    mockearRutas({})
+    renderConId('/pagos?id=abc')
+
+    await screen.findByRole('option', { name: 'Empresa Demo SA' })
+    expect(apiGetMock.mock.calls.some((c) => /^\/pagos\/administracion\/\w+$/.test(c[0] as string))).toBe(false)
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
   })
 })

@@ -13,6 +13,7 @@ import type {
   Existencias,
   Granularidad,
   LibroDeCuenta,
+  LibroDeTesoreria,
   LibroIva,
   PaginaDe,
   PaginaDeHistoricoDeCajas,
@@ -150,6 +151,8 @@ export const clienteDeReportes = {
     api.get<CuentasDeLaEmpresa>(`/reportes/tesoreria/cuentas?idEmpresa=${idEmpresa}`),
   libroDeCuenta: (idCuenta: number, filtros: FiltrosDeLibroDeCuenta) =>
     api.get<LibroDeCuenta>(`/reportes/tesoreria/cuentas/${idCuenta}/libro${construirQueryDeLibroDeCuenta(filtros)}`),
+  libroDeTesoreria: (filtros: FiltrosDeLibroDeTesoreria) =>
+    api.get<LibroDeTesoreria>(`/reportes/libro-tesoreria${construirQueryDeLibroDeTesoreria(filtros)}`),
   existencias: (idPuntoVenta: number) =>
     api.get<Existencias>(`/reportes/stock/existencias?idPuntoVenta=${idPuntoVenta}`),
   /** stage-12-lotes-vencimientos (Slice 15): `dias` es opcional — omitido, el servidor resuelve
@@ -335,6 +338,17 @@ export function construirQueryDeLibroDeCuenta(filtros: FiltrosDeLibroDeCuenta): 
   if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
+}
+
+/** Filtro del libro de tesorería: `desde` y `hasta` son obligatorios y viajan como límites inclusivos del día con el offset local. */
+export type FiltrosDeLibroDeTesoreria = { idEmpresa: number; desde: string; hasta: string }
+
+export function construirQueryDeLibroDeTesoreria(filtros: FiltrosDeLibroDeTesoreria): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   return `?${parametros.toString()}`
 }
 
