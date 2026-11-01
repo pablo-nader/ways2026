@@ -207,3 +207,36 @@ Both judges confirmed the round-1 fix introduced one defect: a `processed` order
 - Accepted (documented): numbering is per (PV, tipo) while the charge carries (PV, número); annulling a charged sale leaves the
   charge linked (refunds are E6); a charge informed without data keeps the number blocked until it is confirmed or approved
   manually (E5).
+
+## E3-T3 design (2026-11-01)
+
+Branch `pnader/mercadopago-e3-t3`, stacked on E3-T2. POS web (`src/Ways.Web/src/pos`, `paginas/Pos.tsx`) plus the small backend
+pieces the POS needs. The POS bundle reaches the cajas only with a Ways.Desktop bump + `pos-v*` tag, which stays the owner's call.
+
+- Backend: the offline snapshot's medio (`MedioPagoDeInstantanea`) carries `proveedor`; the medios ABM screen (web back office)
+  shows and edits `proveedor` (select "Sin integración / Mercado Pago QR"; Point stays hidden until E4) only for Electronico.
+- POS API client (`src/Ways.Web/src/pos` or `api/`): `crearCobroMercadoPago`, `consultarCobroMercadoPago`,
+  `cancelarCobroMercadoPago` for the three device endpoints, with Spanish copies for every code (E3-T1 and E3-T2 codes).
+- Charge flow in `Pos.tsx` `cobrar()` (keep `generacionCobroRef` and the re-entrancy guards): when the payment rows include a
+  medio with `proveedor = mercadopago_qr` (at most one, else block with the E3-T2 message):
+  1. Reserve the sale number locally first (the same reservation `encolarVentaOffline` uses), without queueing the sale yet.
+  2. Online required: if offline, show "Mercado Pago necesita conexión" (E5 will offer manual approval) and do not reserve.
+  3. `POST /api/pos/mercadopago/cobros` with the reserved number, the medio and the row's amount; open the
+     `ModalDeCobroMercadoPago`: on-screen QR (npm `qrcode`, rendered to a canvas/SVG), amount, countdown to `expiraEn`,
+     "Cancelar cobro", "Imprimir QR" (existing ESC/POS `qr()` through `encolarImpresion`).
+  4. Poll `GET` every 2 s while open (one request in flight at a time; stop on unmount; back off to 5 s on `no_disponible`).
+     `verificandoPago` shows "Verificando el pago…" instead of the QR. `aprobado` closes the modal and continues the normal
+     sale path with the payment row carrying `idCobroMercadoPago`, no `referencia`, and `importe` = the charge's
+     `importePagado` (if `importeDistinto`, block and ask the cashier to review; never auto-close a different amount).
+     `cancelado`/`expirado` closes the modal back to the payment step, number released for reuse by the same sale.
+  5. Cancel: `POST .../cancelar`; if the answer is `aprobado` (paid meanwhile), continue as approved.
+  6. The queued sale then prints exactly once (existing `alEmitir` path); a re-render or a late poll response after closing is
+     gated by a generation token.
+- A crash/reload with a live charge: on mount, the POS keeps the pending charge id with the reserved number in its local store
+  (`AlmacenClaveValor`) and offers to resume (re-open the modal) or cancel it.
+- Tests: Vitest for the pure helpers (state labels, poll scheduler, row validation) and RTL tests for the modal (approved →
+  continues once, cancel → paid race, expired, verificando, importe distinto, offline message, double click); `Pos.tsx`
+  integration-level tests in the existing `Pos.test.tsx` style for the auto-close + single print.
+- Updates from E3-T1/E3-T2 the POS must honour: `verificandoPago` / `pagoInformadoSinDatos` (no QR; "Mercado Pago informa el
+  pago, falta confirmarlo"); cancel can answer 409 `cobro_mercadopago_pagado_sin_datos` or `cobro_mercadopago_en_curso`; a sale
+  admits one MP charge; the payment row sends `idCobroMercadoPago`, no `referencia`, `importe` = `importePagado`.
