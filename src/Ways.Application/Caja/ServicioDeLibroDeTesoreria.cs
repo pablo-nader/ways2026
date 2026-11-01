@@ -415,7 +415,7 @@ public class ServicioDeLibroDeTesoreria(IWaysDbContext db)
                     new DatosDePagoDelLibro(
                         pago.Id,
                         DetalleDePagoDelLibro.Armar(
-                            pago.Categoria, pago.Concepto, pago.IdProveedor, pago.NombreProveedor, pago.IdMovimientoPersonal,
+                            pago.Concepto, pago.IdProveedor, pago.NombreProveedor, pago.IdMovimientoPersonal,
                             pago.NombrePersonal),
                         pago.Categoria, pago.OrigenFondos, pago.IdTurnoCaja),
                     Ajuste: null),
