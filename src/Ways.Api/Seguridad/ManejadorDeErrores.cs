@@ -636,6 +636,19 @@ public class ManejadorDeErrores(
             { SqlState: "23514", ConstraintName: "ck_precios_ventana_valida" } =>
                 (StatusCodes.Status400BadRequest, "vigente_hasta no puede ser anterior a vigente_desde.", "vigente_desde_invalido"),
 
+            // Dirección de la sucursal: DireccionDeSucursal.Normalizar valida antes el rango y el par completo con
+            // estos mismos códigos; esto atrapa una escritura cruda que los esquive.
+            { SqlState: "23514", ConstraintName: "ck_sucursales_latitud" } =>
+                (StatusCodes.Status400BadRequest, "La latitud tiene que estar entre -90 y 90.", "latitud_invalida"),
+
+            { SqlState: "23514", ConstraintName: "ck_sucursales_longitud" } =>
+                (StatusCodes.Status400BadRequest, "La longitud tiene que estar entre -180 y 180.", "longitud_invalida"),
+
+            { SqlState: "23514", ConstraintName: "ck_sucursales_coordenadas_completas" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La latitud y la longitud se completan juntas o no se completan.",
+                    "coordenadas_incompletas"),
+
             // Dominios por tenant: ck_dominios_host_formato. ServicioDeDominios normaliza y valida el host
             // con Dominio.NormalizarHost antes de escribir (mismo código de dominio); esto atrapa una
             // escritura cruda que la esquive.
