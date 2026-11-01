@@ -397,3 +397,27 @@ Fix commit `fix(mercadopago): el webhook respeta el intervalo de consulta y no l
 - Owner configuration for production: MP Developers -> Webhooks: URL `https://aipos.site/api/integraciones/mercadopago/webhook`,
   topic "Order (Mercado Pago)", copy the secret; EasyPanel: `Ways__MercadoPago__SecretoWebhook=<secret>`. Until then the endpoint
   answers 503 and polling keeps working.
+
+## E4 design (2026-11-01) — Point charges
+
+Branch `pnader/mercadopago-e4`, stacked on E3-T4. Backend + POS + medios ABM. One slice (the flow reuses E3 end to end).
+
+- Medio `proveedor = mercadopago_point` (already allowed by the CHECK; the ABM select shows "Mercado Pago Point").
+- Create (`POST /api/pos/mercadopago/cobros`, same endpoint and the same reserve-then-call / time-band rules): when the medio is
+  Point, the PV's caja must have an assigned terminal (`cajas_mercadopago.id_terminal_point`, E2-T5) else 409
+  `mercadopago_caja_sin_terminal`; the order is `type:"point"`, `external_reference` as today, `transactions.payments[{amount}]`,
+  `config.point.{terminal_id, print_on_terminal:"no_ticket"}` (Ways prints the ticket), `expiration_time:"PT10M"`; row `tipo =
+  point`, no `qr_data`. 409 `already_queued_order_for_terminal` -> 409 `mercadopago_terminal_ocupada` (another order is waiting on
+  that terminal).
+- Status mapping for Point orders (verified facts): `created`/`at_terminal` -> `pendiente` (flag `enTerminal` when at_terminal);
+  `action_required` -> `pendiente` with `revisarTerminal: true` ("check the result on the terminal"); `processed` -> E3 rules
+  (readable amount + payment id) -> `aprobado`; `failed` -> new state `fallido` (not live; the cashier may retry, a new intento);
+  `canceled` -> `cancelado`; `expired` -> `expirado`; `refunded` -> `devuelto`.
+- Cancel: only while the order is `created` (Mercado Pago rule); `at_terminal` -> 409 `mercadopago_cancelar_en_la_terminal`
+  ("cancelalo en la terminal"); the refresh then reflects `canceled` when the cashier cancels there.
+- POS: the same `cobrarConMercadoPago` flow; for Point the modal shows "Cobrando en la terminal {id}…", no QR, no "Imprimir QR";
+  `revisarTerminal` shows "Revisá el resultado en la terminal"; `fallido` returns to the payment step with "El pago fue rechazado en
+  la terminal: probá de nuevo u otro medio" and the number stays reserved for the retry (peek, never consumed).
+- Webhook (E3-T4) and apartar (E3-T3b) apply unchanged.
+- Tests: create without terminal 409; terminal busy 409; each status mapping; cancel at_terminal 409; fallido then retry with a new
+  intento; POS modal texts per state; ABM select.
