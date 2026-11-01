@@ -46,7 +46,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 - [x] E3-T1 — Backend charges: `medios_pago.proveedor`; table `cobros_mercadopago`; device endpoints create / read (refresh
   from Mercado Pago) / cancel a QR charge.
 - [x] E3-T2 — Backend sale: `PagoDeVenta.IdCobroMercadoPago`; the sale validates and links the approved charge (unique).
-- [ ] E3-T3 — Web: the medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close +
+- [x] E3-T3 — Web: the medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close +
   print.
 - [ ] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
 - [ ] E4 — Point: same charge with `type:"point"` on the PV's terminal.
@@ -61,7 +61,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E3-T3: web. The medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close and print, sending `idCobroMercadoPago` in the payment row. See "E3-T2 progress" for the sale contract (codes, `numeroPreasignado` required, no client `referencia`).
+E3-T4: webhook `POST /api/integraciones/mercadopago/webhook` (signature check, refresh the charge). Pending before it ships to the cajas: the POS bundle of E3-T3 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call).
 
 ## E3-T1 design (2026-11-01)
 
@@ -240,3 +240,18 @@ pieces the POS needs. The POS bundle reaches the cajas only with a Ways.Desktop 
 - Updates from E3-T1/E3-T2 the POS must honour: `verificandoPago` / `pagoInformadoSinDatos` (no QR; "Mercado Pago informa el
   pago, falta confirmarlo"); cancel can answer 409 `cobro_mercadopago_pagado_sin_datos` or `cobro_mercadopago_en_curso`; a sale
   admits one MP charge; the payment row sends `idCobroMercadoPago`, no `referencia`, `importe` = `importePagado`.
+
+## E3-T3 progress (2026-11-01)
+
+Done on `pnader/mercadopago-e3-t3`, commit `feat(pos): cobro con QR de Mercado Pago que cierra la venta e imprime el ticket` (hash in git log). The POS bundle reaches the cajas only with a Ways.Desktop bump + `pos-v*` tag (owner's call); nothing was exercised against the real Mercado Pago API.
+
+- Backend: `MedioPagoDeInstantanea.Proveedor` (last, optional positional; JSON `proveedor`, null when the medio has none) filled in `ServicioDeInstantaneaDePos`; contract tests of the snapshot shape updated and an integration test (`LosMediosDePagoDeLaInstantaneaTraenSuProveedorDeCobro`). TS twin: `MedioPagoDeInstantanea.proveedor?`, `aMedioPagoListado` reads a stored copy without it as null.
+- Medios ABM: `descriptorMediosPago` gets the select "Integración de cobro" ("Sin integración" / "Mercado Pago QR"; Point hidden until E4), `visibleSi: esElectronico`; `aAlta` always sends `proveedor` (null clears; a non-Electronico medio sends null, `proveedorDelFormulario`); descriptor tests in `api/catalogos.test.ts`.
+- Number reservation split (`pos/reservaDeCobro.ts` + hook): `reservarNumeroParaCobro(idPv)` takes the next number of the live block (same rules and wait for replenishment as `encolarVentaOffline`) and persists a reservation record in the local store (`libre` | `en_curso` with idCobro/medio/importe). `anotarCobroEnCurso`, `soltarReservaDeCobro` (back to `libre`), `consumirReservaDeCobro` (online sale registered), `leerReservaDeCobro` (drops a reservation whose sale is already in the outbox/rejected). `encolarVentaOffline` accepts `numeroReservado` (must match the stored reservation, else new motive `reserva_de_cobro_perdida`, nothing queued) and, without it, consumes a `libre` reservation BEFORE taking a new number, so a number taken for a cancelled/expired charge is never a hole (`entregadoHasta` counts it as delivered) and an `en_curso` number is never taken by another sale. Write order: block pointer first, then the reservation (a crash between the two leaves a hole, never a double use).
+- Flow (`pos/cobrarConMercadoPago.ts`, orchestrated from `Pos.tsx cobrar()` before the sale is built): offline -> message, nothing reserved; a live charge from before (reload or an error after approval) is resumed instead of creating another (approved + same medio/importe -> used as is; pending -> modal again; closed -> number released and a new charge; different medio/importe -> blocked with the reason); otherwise reserve -> `POST cobros` with that number -> mark `en_curso` -> `ModalDeCobroMercadoPago` (`noDescartable`) -> `aprobado` queues the sale with that number and the payment row `{referencia: null, idCobroMercadoPago}` (online fallback sends `numeroPreasignado` and consumes the reservation), printing through the existing single `alEmitir` path; cancelado/expirado/devuelto -> back to the payment step with the number `libre`; importe distinto -> modal blocks until "Entendido", the sale is NOT closed and the charge stays `en_curso` (one MP charge per sale: two MP rows are rejected before reserving; MP in a presupuesto is rejected).
+- Modal: SVG QR from the `qrcode` lib (`qrcode@1.5.4`, `@types/qrcode@1.5.6`, exact), drawn without innerHTML; countdown to `expiraEn`; poll every 2 s, one request in flight, 5 s after a failure; `verificandoPago` / `pagoInformadoSinDatos` show no QR and the latter disables cancel; "Imprimir QR" (ESC/POS `qrDeCobroMercadoPago` through `encolarImpresion`, only with the desktop box); cancel answered `aprobado` continues; generation gating (unmount or a new charge id ignores late answers).
+- Reload: on the first read of the local store the POS offers "Retomar cobro" / "Cancelar cobro" for an `en_curso` reservation; an approved charge without a cart stays alive and the next MP sale for the same medio and importe uses it.
+- Medio rows with a `proveedor` never ask for or send `referencia` (`filasAPagosParaCalculo`).
+- Verification: `dotnet build Ways.slnx -c Release` 0 errors, Application tests 1654, integration filter (`InstantaneaDePosEndpointsTests` + `MercadoPago`) 342 green (16 m); `npm ci`, `npx tsc -b --noEmit`, `npm run build` OK, oxlint no new findings; vitest `src/pos src/paginas/Pos.test.tsx EditorDeLineasDePago api/catalogos api/pagos PaginaCatalogo impresion` 41 files / 1986 tests green (+ the later additions: modal late-cancel test, plantilla tests).
+- Mutation evidence (one per run, each killed): second `alEmitir` call (single print); `aplicar` generation guard removed (killed by the late-cancel test; the poll's own guard is redundant with it, so removing only that one survives by design); `cancelandoRef` re-entrancy removed; `cobrandoRef` guard of `cobrar()` removed; importe-distinto branch of `vistaDelCobro` disabled (4 tests); reuse of the `libre` reservation removed (hook and Pos tests); offline guard removed (unit and Pos tests).
+- Open: a crash between the block write and the reservation write leaves one numbering hole; an online emit whose answer is lost after approval is reported as "incierto" and the next cobrar() reuses the approved charge and number (idempotent by number); a charge approved while the POS is closed is only discovered on the next mount; Point (E4), webhook (E3-T4), and manual approval offline (E5) are not covered.
