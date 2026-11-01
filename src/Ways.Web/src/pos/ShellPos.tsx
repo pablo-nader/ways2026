@@ -358,10 +358,10 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
    * escritorio que `alEmitirVenta` — pasa por la MISMA cola FIFO (`encolarImpresion`), nunca un
    * segundo camino de impresión. `{ reimpresion: true }` marca el ticket para que nunca se
    * confunda con el original. */
-  function alReimprimirVenta(comprobante: ComprobanteEmitido, medios: MedioPagoListado[]) {
+  function alReimprimirVenta(comprobante: ComprobanteEmitido, medios: MedioPagoListado[], contexto = contextoDeImpresion) {
     encolarImpresion(
       `la reimpresión del ticket ${comprobante.numeroVisible}`,
-      ticketDeVenta(comprobante, contextoDeImpresion, medios, { reimpresion: true }),
+      ticketDeVenta(comprobante, contexto, medios, { reimpresion: true }),
     )
   }
 
