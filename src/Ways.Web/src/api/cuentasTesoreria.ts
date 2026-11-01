@@ -466,7 +466,11 @@ export type PlanDeReconstruccion = {
   acreditaciones: AcreditacionDeReconstruccion[]
   debitos: DebitoDeReconstruccion[]
   cuentas: CuentaDeReconstruccion[]
-  /** Débitos de pagos con fecha a la marca de conciliación o antes: no se escriben. */
+  /** Marca de conciliación de la empresa; lo que tiene fecha a la marca o antes está congelado. */
+  conciliadoHasta: string | null
+  /** Acreditaciones de turnos cerrados a la marca de conciliación o antes: no se escriben ni cuentan en `turnos` ni `filas`. */
+  congeladas: AcreditacionDeReconstruccion[]
+  /** Débitos de pagos con fecha a la marca de conciliación o antes: no se escriben ni cuentan en `pagos` ni `filas`. */
   debitosCongelados: DebitoDeReconstruccion[]
 }
 
@@ -511,7 +515,6 @@ export function validarRangoDeReconstruccion(idEmpresa: string, desde: string, h
   return null
 }
 
-/** Clave de lo que el usuario ve en los campos: la vista previa solo vale para la clave con la que se pidió. */
 /** "1 turno", "3 pagos", "2 turnos y 1 pago": de dónde salen las filas; sin pagos nombra solo los turnos. */
 export function origenesDeReconstruccion(turnos: number, pagos: number): string {
   const deTurnos = `${turnos} ${turnos === 1 ? 'turno' : 'turnos'}`
@@ -521,6 +524,7 @@ export function origenesDeReconstruccion(turnos: number, pagos: number): string 
   return `${deTurnos} y ${dePagos}`
 }
 
+/** Clave de lo que el usuario ve en los campos: la vista previa solo vale para la clave con la que se pidió. */
 export function claveDeReconstruccion(idEmpresa: string, desde: string, hasta: string): string {
   return `${idEmpresa}|${desde}|${hasta}`
 }

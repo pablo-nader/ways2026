@@ -514,6 +514,8 @@ describe('reconstrucción histórica', () => {
       acreditaciones: [],
       debitos: [],
       cuentas: [],
+      conciliadoHasta: null,
+      congeladas: [],
       debitosCongelados: [],
     }
     apiPostMock.mockResolvedValue(plan)

@@ -905,6 +905,8 @@ describe('CuentasTesoreria — reconstruir historial', () => {
       acreditaciones: [],
       debitos: [],
       cuentas: [],
+      conciliadoHasta: null,
+      congeladas: [],
       debitosCongelados: [],
     }
     apiPostMock.mockImplementation((ruta: string) =>

@@ -8,6 +8,8 @@ import {
   origenesDeReconstruccion,
   rangoDeReconstruccionPorDefecto,
   validarRangoDeReconstruccion,
+  type AcreditacionDeReconstruccion,
+  type DebitoDeReconstruccion,
   type PlanDeReconstruccion,
   type SolicitudDeReconstruccion,
 } from '../api/cuentasTesoreria'
@@ -228,8 +230,21 @@ export function ModalDeReconstruccionDeCuentas({ empresas, onCerrar, onReconstru
 }
 
 function VistaPreviaDeReconstruccion({ plan }: { plan: PlanDeReconstruccion }) {
+  const hayCongelado = plan.congeladas.length > 0 || plan.debitosCongelados.length > 0
+
   if (plan.filas === 0) {
-    return <div className="alert alert-info">No hay turnos sin acreditar ni pagos sin debitar en ese rango.</div>
+    if (!hayCongelado) {
+      return <div className="alert alert-info">No hay turnos sin acreditar ni pagos sin debitar en ese rango.</div>
+    }
+
+    return (
+      <>
+        <div className="alert alert-info">
+          No se puede escribir nada: lo pendiente de ese rango ya está conciliado y la conciliación lo congela.
+        </div>
+        <SeccionCongelada plan={plan} />
+      </>
+    )
   }
 
   return (
@@ -239,8 +254,8 @@ function VistaPreviaDeReconstruccion({ plan }: { plan: PlanDeReconstruccion }) {
         {origenesDeReconstruccion(plan.turnos, plan.pagos)}.
       </p>
 
-      {plan.acreditaciones.length > 0 && <TablaDeAcreditaciones plan={plan} />}
-      {plan.debitos.length > 0 && <TablaDeDebitos plan={plan} />}
+      {plan.acreditaciones.length > 0 && <TablaDeAcreditaciones acreditaciones={plan.acreditaciones} titulo="Acreditaciones" />}
+      {plan.debitos.length > 0 && <TablaDeDebitos debitos={plan.debitos} titulo="Débitos de pagos" />}
 
       <h3 className="h6">Efecto por cuenta</h3>
       <div className="table-responsive">
@@ -275,14 +290,42 @@ function VistaPreviaDeReconstruccion({ plan }: { plan: PlanDeReconstruccion }) {
           </tbody>
         </table>
       </div>
+
+      {hayCongelado && <SeccionCongelada plan={plan} />}
     </>
   )
 }
 
-function TablaDeAcreditaciones({ plan }: { plan: PlanDeReconstruccion }) {
+/** Lo que cae a la marca de conciliación o antes: se muestra para que se vea por qué no se escribe, nunca se cuenta. */
+function SeccionCongelada({ plan }: { plan: PlanDeReconstruccion }) {
+  const titulo = plan.conciliadoHasta
+    ? `Congelado por la conciliación (hasta ${fechaHoraATexto(plan.conciliadoHasta)})`
+    : 'Congelado por la conciliación'
+
+  return (
+    <section aria-label={titulo} className="mt-3">
+      <h3 className="h6">{titulo}</h3>
+      <p className="small text-muted">
+        Turnos y pagos con fecha a la marca de conciliación o antes: la reconstrucción no los escribe.
+      </p>
+      {plan.congeladas.length > 0 && (
+        <TablaDeAcreditaciones acreditaciones={plan.congeladas} titulo="Acreditaciones congeladas" />
+      )}
+      {plan.debitosCongelados.length > 0 && <TablaDeDebitos debitos={plan.debitosCongelados} titulo="Débitos congelados" />}
+    </section>
+  )
+}
+
+function TablaDeAcreditaciones({
+  acreditaciones,
+  titulo,
+}: {
+  acreditaciones: readonly AcreditacionDeReconstruccion[]
+  titulo: string
+}) {
   return (
     <div className="table-responsive mb-3">
-      <table className="table table-sm table-striped table-bordered align-middle mb-0" aria-label="Acreditaciones">
+      <table className="table table-sm table-striped table-bordered align-middle mb-0" aria-label={titulo}>
         <thead>
           <tr>
             <th scope="col">Cierre del turno</th>
@@ -304,7 +347,7 @@ function TablaDeAcreditaciones({ plan }: { plan: PlanDeReconstruccion }) {
           </tr>
         </thead>
         <tbody>
-          {plan.acreditaciones.map((a) => {
+          {acreditaciones.map((a) => {
             const { comision, retenciones } = descuentosDeAcreditacion(a)
 
             return (
@@ -326,10 +369,10 @@ function TablaDeAcreditaciones({ plan }: { plan: PlanDeReconstruccion }) {
   )
 }
 
-function TablaDeDebitos({ plan }: { plan: PlanDeReconstruccion }) {
+function TablaDeDebitos({ debitos, titulo }: { debitos: readonly DebitoDeReconstruccion[]; titulo: string }) {
   return (
     <div className="table-responsive mb-3">
-      <table className="table table-sm table-striped table-bordered align-middle mb-0" aria-label="Débitos de pagos">
+      <table className="table table-sm table-striped table-bordered align-middle mb-0" aria-label={titulo}>
         <thead>
           <tr>
             <th scope="col">Fecha del pago</th>
@@ -342,7 +385,7 @@ function TablaDeDebitos({ plan }: { plan: PlanDeReconstruccion }) {
           </tr>
         </thead>
         <tbody>
-          {plan.debitos.map((d) => (
+          {debitos.map((d) => (
             <tr key={`${d.idPago}-${d.idMedioPago}`}>
               <td>{fechaHoraATexto(d.fecha)}</td>
               <td>{`#${d.idPago} · ${d.concepto}`}</td>

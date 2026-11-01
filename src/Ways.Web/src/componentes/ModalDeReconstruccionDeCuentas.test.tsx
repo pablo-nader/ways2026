@@ -5,6 +5,7 @@ import { ModalDeReconstruccionDeCuentas } from './ModalDeReconstruccionDeCuentas
 import { ErrorApi } from '../api/cliente'
 import { rangoDeReconstruccionPorDefecto, type PlanDeReconstruccion } from '../api/cuentasTesoreria'
 import type { EmpresaListado } from '../api/tipos'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const apiPostMock = vi.fn()
 
@@ -82,6 +83,8 @@ function plan(sobrescribir: Partial<PlanDeReconstruccion> = {}): PlanDeReconstru
     ],
     debitos: [],
     cuentas: [{ idCuentaTesoreria: 9, nombre: 'Cuenta MP', filas: 3, neto: 950, saldoAntes: 100, saldoDespues: 1050 }],
+    conciliadoHasta: null,
+    congeladas: [],
     debitosCongelados: [],
     ...sobrescribir,
   }
@@ -108,6 +111,26 @@ const planConDebito = () =>
     debitos: [debito],
     cuentas: [{ idCuentaTesoreria: 9, nombre: 'Cuenta MP', filas: 4, neto: 650, saldoAntes: 100, saldoDespues: 750 }],
   })
+
+const MARCA = '2026-10-06T03:00:00Z'
+const TITULO_CONGELADO = `Congelado por la conciliación (hasta ${fechaHoraATexto(MARCA)})`
+
+const acreditacionCongelada = {
+  idTurnoCaja: 12,
+  fechaCierre: '2026-10-02T21:00:00Z',
+  idMedioPago: 3,
+  nombreMedio: 'Posnet',
+  idCuentaTesoreria: 9,
+  nombreCuenta: 'Cuenta MP',
+  baseBruta: 500,
+  neto: 480,
+  componentes: [
+    { tipo: 'Cobro' as const, ingreso: 500, egreso: 0, porcentajeAplicado: null },
+    { tipo: 'Comision' as const, ingreso: 0, egreso: 20, porcentajeAplicado: 4 },
+  ],
+}
+
+const debitoCongelado = { ...debito, idPago: 33, fecha: '2026-10-03T12:00:00Z', concepto: 'Alquiler', importe: 900 }
 
 function montar(empresas: EmpresaListado[] = [empresa(1, 'Comercio SA')]) {
   const onCerrar = vi.fn()
@@ -229,6 +252,67 @@ describe('ModalDeReconstruccionDeCuentas', () => {
     expect(await screen.findByText('No hay turnos sin acreditar ni pagos sin debitar en ese rango.')).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: 'Débitos de pagos' })).not.toBeInTheDocument()
     expect(botonConfirmar()).toBeDisabled()
+  })
+
+  it('con todo congelado no dice que no hay nada pendiente, lista lo congelado y no deja confirmar', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(
+      plan({
+        turnos: 0,
+        filas: 0,
+        acreditaciones: [],
+        cuentas: [],
+        conciliadoHasta: MARCA,
+        congeladas: [acreditacionCongelada],
+        debitosCongelados: [debitoCongelado],
+      }),
+    )
+    montar()
+
+    await usuario.click(botonVistaPrevia())
+
+    const congelado = await screen.findByRole('region', { name: TITULO_CONGELADO })
+    expect(screen.queryByText('No hay turnos sin acreditar ni pagos sin debitar en ese rango.')).not.toBeInTheDocument()
+    expect(screen.getByText(/no se puede escribir nada: lo pendiente de ese rango ya está conciliado/i)).toBeInTheDocument()
+
+    const turnos = within(congelado).getByRole('table', { name: 'Acreditaciones congeladas' })
+    const filaTurno = within(turnos).getByText('#12').closest('tr') as HTMLElement
+    expect(within(filaTurno).getByText('Posnet')).toBeInTheDocument()
+    expect(filaTurno.textContent).toContain('480')
+
+    const pagos = within(congelado).getByRole('table', { name: 'Débitos congelados' })
+    const filaPago = within(pagos).getByText('#33 · Alquiler').closest('tr') as HTMLElement
+    expect(within(filaPago).getByText('Transferencia')).toBeInTheDocument()
+    expect(filaPago.textContent).toContain('900')
+
+    expect(screen.queryByRole('table', { name: 'Efecto por cuenta' })).not.toBeInTheDocument()
+    expect(botonConfirmar()).toBeDisabled()
+  })
+
+  it('con filas para escribir y algo congelado muestra las dos cosas y deja confirmar', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(plan({ conciliadoHasta: MARCA, congeladas: [], debitosCongelados: [debitoCongelado] }))
+    montar()
+
+    await usuario.click(botonVistaPrevia())
+
+    await screen.findByRole('table', { name: 'Acreditaciones' })
+    const congelado = screen.getByRole('region', { name: TITULO_CONGELADO })
+    expect(within(congelado).getByText('#33 · Alquiler')).toBeInTheDocument()
+    expect(within(congelado).queryByRole('table', { name: 'Acreditaciones congeladas' })).not.toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Efecto por cuenta' })).toBeInTheDocument()
+    expect(botonConfirmar()).toBeEnabled()
+  })
+
+  it('sin nada congelado no muestra la sección de la conciliación', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(plan({ conciliadoHasta: MARCA }))
+    montar()
+
+    await usuario.click(botonVistaPrevia())
+
+    await screen.findByRole('table', { name: 'Acreditaciones' })
+    expect(screen.queryByRole('region', { name: /congelado por la conciliación/i })).not.toBeInTheDocument()
   })
 
   it('cambiar las fechas invalida la vista previa y la confirmación', async () => {
