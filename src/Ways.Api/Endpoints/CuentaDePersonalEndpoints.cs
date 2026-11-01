@@ -61,14 +61,16 @@ public static class CuentaDePersonalEndpoints
         app.MapPost("/api/pos/personal/{id:int}/pagos", async (
             ServicioDePagoDePersonal servicio, int id, SolicitudDePagoDePersonal solicitud, CancellationToken ct) =>
         {
-            var movimiento = await servicio.PagarDesdeElPosAsync(id, solicitud, ct);
-            return Results.Created($"/api/personal/{id}/cuenta", movimiento);
+            var recibo = await servicio.PagarDesdeElPosAsync(id, solicitud, ct);
+            return Results.Created($"/api/pos/personal/{id}/pagos/{recibo.IdMovimiento}", recibo);
         })
         .WithTags("CuentaDePersonal")
         .RequireAuthorization(Politicas.OperacionDePos)
         .WithSummary(
             "Pago de personal desde el POS: solo del cajón del turno abierto (origenFondos CajaTurno) y sin descuento de " +
-            "cuenta corriente; cualquier otro origen o descuento responde 403 prohibido.");
+            "cuenta corriente; cualquier otro origen o descuento responde 403 prohibido. La fecha es siempre hoy en la zona " +
+            "del punto de venta: se puede omitir y una fecha distinta responde 400 fecha_no_es_hoy. Responde id, fecha e " +
+            "importe del movimiento, nunca el saldo del empleado.");
 
         return app;
     }

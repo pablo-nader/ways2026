@@ -1431,7 +1431,7 @@ describe('PagosDelTurno — sueldos con empleado', () => {
     )
   })
 
-  it('sin conexión deshabilita el empleado, explica por qué y no pide el personal', async () => {
+  it('sin conexión el selector sigue habilitado, explica por qué y no pide el personal', async () => {
     const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
     try {
       mockearRutas({ personal: empleados })
@@ -1440,7 +1440,7 @@ describe('PagosDelTurno — sueldos con empleado', () => {
       await screen.findByLabelText('Importe de la línea 1')
       await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Sueldos')
 
-      expect(await screen.findByLabelText('Empleado (opcional)')).toBeDisabled()
+      expect(await screen.findByLabelText('Empleado (opcional)')).toBeEnabled()
       expect(screen.getByText(/Sin conexión: pagar a un empleado necesita conexión/)).toBeInTheDocument()
       expect(apiGetMock.mock.calls.some(([ruta]) => ruta === '/pos/personal/opciones')).toBe(false)
     } finally {
@@ -1467,6 +1467,20 @@ describe('PagosDelTurno — sueldos con empleado', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled())
       expect(screen.getByText(/Sin conexión: pagar a un empleado necesita conexión/)).toBeInTheDocument()
       expect(apiPostMock).not.toHaveBeenCalled()
+
+      // El selector sigue habilitado y solo los empleados quedan inelegibles: se puede volver a "Sin empleado".
+      expect(selector).toBeEnabled()
+      expect(within(selector).getByRole('option', { name: 'Ana' })).toBeDisabled()
+      expect(within(selector).getByRole('option', { name: 'Sin empleado' })).toBeEnabled()
+
+      apiPostMock.mockResolvedValueOnce({ id: 1 })
+      await userEvent.selectOptions(selector, 'Sin empleado')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+      await waitFor(() =>
+        expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ categoria: 'Sueldos', idProveedor: null })),
+      )
     } finally {
       enLinea.mockRestore()
     }

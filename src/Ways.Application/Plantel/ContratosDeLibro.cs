@@ -29,6 +29,10 @@ public record MovimientoDePersonal(
     DateTimeOffset CreadoEn,
     DesgloseDePago? Desglose = null);
 
+/// <summary>Respuesta de <c>POST /api/pos/personal/{id}/pagos</c>: el cajero solo ve que el pago quedó registrado, nunca el
+/// saldo del empleado.</summary>
+public record ReciboDePagoDePersonalDelPos(int IdMovimiento, DateOnly Fecha, decimal Importe);
+
 /// <summary>Cuerpo de <c>POST /api/personal/{id}/pagos</c>. <see cref="Fecha"/> es obligatoria: es el día del
 /// asiento en el libro del personal y, con origen tesorería, la fecha de negocio de los pagos (puede ser
 /// retroactiva, nunca futura). <see cref="DescuentoDeCuentaCorriente"/> baja la deuda del cliente vinculado al

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
-import { fechaDeHoyParaPago } from '../api/compras'
 import { clienteDePersonalDelPos } from '../api/cuentaDePersonal'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
@@ -341,7 +340,6 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
           Number(idPersonal),
           aSolicitudDePagoDePersonalDesdeElPos({
             idPuntoVenta: puntoVenta.id,
-            fecha: fechaDeHoyParaPago(),
             lineas,
             observaciones,
           }),
@@ -517,12 +515,11 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
                     id="pago-personal"
                     className="form-select"
                     value={idPersonal}
-                    disabled={!pagoDePersonal.habilitado}
                     onChange={(e) => setIdPersonal(e.target.value === '' ? '' : Number(e.target.value))}
                   >
                     <option value="">Sin empleado</option>
                     {(personal ?? []).map((p) => (
-                      <option key={p.id} value={p.id}>
+                      <option key={p.id} value={p.id} disabled={!pagoDePersonal.habilitado}>
                         {p.nombre}
                       </option>
                     ))}

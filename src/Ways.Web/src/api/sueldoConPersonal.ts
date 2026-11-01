@@ -9,6 +9,7 @@ import type {
   LineaDeSolicitudDePagoDePersonal,
   PersonalListado,
   SolicitudDePagoDePersonal,
+  SolicitudDePagoDePersonalDelPos,
 } from './tipos'
 
 /** Solo Sueldos ofrece elegir un empleado; el resto de las categorías sigue ofreciendo el proveedor. */
@@ -70,13 +71,13 @@ export function aSolicitudDePagoDePersonalDesdeAdministracion(
  * El pago de personal del POS: el cajero paga solo del cajón del turno (`CajaTurno`) y no descuenta la cuenta corriente
  * del empleado; el servidor responde 403 con cualquier otro origen o con descuento, así que esos campos ni viajan. El
  * concepto, el área y el número de factura tampoco existen en un pago de personal. Las observaciones quedan como detalle.
+ * La fecha tampoco viaja: el servidor registra el pago con el día de hoy en la zona del punto de venta.
  */
 export function aSolicitudDePagoDePersonalDesdeElPos(f: {
   idPuntoVenta: number
-  fecha: string
   lineas: readonly LineaDePagoEditable[]
   observaciones: string
-}): SolicitudDePagoDePersonal {
+}): SolicitudDePagoDePersonalDelPos {
   const lineas: LineaDeSolicitudDePagoDePersonal[] = f.lineas.map((l) => {
     const referencia = l.referencia.trim()
     return {
@@ -88,7 +89,6 @@ export function aSolicitudDePagoDePersonalDesdeElPos(f: {
   const detalle = f.observaciones.trim()
 
   return {
-    fecha: f.fecha,
     idPuntoVenta: f.idPuntoVenta,
     origenFondos: 'CajaTurno',
     lineas,

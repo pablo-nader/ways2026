@@ -50,6 +50,11 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
   Application.Tests 1638, Domain.Tests 2322 passed; integration (PagoDePersonal*, CuentaDePersonal*, AislamientoDeTenant,
   SuperficieDeAutorizacion, RutasDeLaSpa, PersonalEndpoints, OpenApi) 194 passed; vitest 308 files / 9415 tests passed;
   tsc -b ok; lint 0 errors.
+  Judgment-day fixes (status fixed): F1 the POS route answers `ReciboDePagoDePersonalDelPos` (idMovimiento, fecha, importe),
+  never the employee balance; back office unchanged. F2 the POS date is always today in the PV zone: `fecha` may be omitted
+  (the web no longer sends it) and any other date answers 400 `fecha_no_es_hoy`; the test rejects past and future dates and
+  fails with the guard disabled (mutation killed, guard restored). F3 offline the employee select stays enabled, only the
+  employee options are disabled, so "Sin empleado" remains selectable for a plain Sueldos pago; no auto-reset.
 - [ ] T3 — Edit: convert a plain Sueldos payment into a pago de personal (backend transaction +
   web picker in the edit modal). Route: delegated writer. Branch stacked on T2 or main.
 

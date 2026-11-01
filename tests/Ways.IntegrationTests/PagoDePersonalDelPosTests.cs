@@ -95,10 +95,11 @@ public class PagoDePersonalDelPosTests(WaysApiFixture fixture) : IClassFixture<W
     private static string Dia() => FechaDelNegocio.Hoy().ToString("yyyy-MM-dd");
 
     private static object Cuerpo(
-        Contexto ctx, string origen = "CajaTurno", decimal? descuento = null, decimal importe = 10m, int? idEmpresa = null) =>
+        Contexto ctx, string origen = "CajaTurno", decimal? descuento = null, decimal importe = 10m, int? idEmpresa = null,
+        string? fecha = null) =>
         new
         {
-            fecha = Dia(),
+            fecha = fecha ?? Dia(),
             idEmpresa,
             idPuntoVenta = ctx.IdPuntoVenta,
             origenFondos = origen,
@@ -151,11 +152,20 @@ public class PagoDePersonalDelPosTests(WaysApiFixture fixture) : IClassFixture<W
         var idPersonal = await CrearPersonalAsync(ctx.Admin, "Ana", saldoInicial: 1000m);
         var idTurno = await AbrirTurnoAsync(ctx, fondoInicial: 500m);
 
-        var respuesta = await ctx.Vendedor.PostAsJsonAsync($"/api/pos/personal/{idPersonal}/pagos", Cuerpo(ctx, importe: 200m));
+        var sinFecha = new
+        {
+            idPuntoVenta = ctx.IdPuntoVenta,
+            origenFondos = "CajaTurno",
+            lineas = new[] { new { idMedioPago = ctx.IdMedioEfectivo, importe = 200m, referencia = (string?)null } },
+            detalle = "Sueldo desde el POS"
+        };
+        var respuesta = await ctx.Vendedor.PostAsJsonAsync($"/api/pos/personal/{idPersonal}/pagos", sinFecha);
+        var texto = await respuesta.Content.ReadAsStringAsync();
         var pago = await CuerpoAsync(respuesta, HttpStatusCode.Created);
 
-        Assert.Equal(800m, pago.GetProperty("saldoResultante").GetDecimal());
         Assert.Equal(-200m, pago.GetProperty("importe").GetDecimal());
+        Assert.Equal(["fecha", "idMovimiento", "importe"], pago.EnumerateObject().Select(p => p.Name).Order().ToList());
+        Assert.DoesNotContain("saldo", texto, StringComparison.OrdinalIgnoreCase);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(800m, await db.Personal.Where(p => p.Id == idPersonal).Select(p => p.Saldo).SingleAsync());
@@ -169,6 +179,30 @@ public class PagoDePersonalDelPosTests(WaysApiFixture fixture) : IClassFixture<W
         var efectivo = resumen.GetProperty("medios").EnumerateArray()
             .Single(m => m.GetProperty("idMedioPago").GetInt32() == ctx.IdMedioEfectivo);
         Assert.Equal(300m, efectivo.GetProperty("importeEsperado").GetDecimal());
+    }
+
+    [Fact]
+    public async Task ElCajeroNoPuedeRetrofecharNiAdelantarElPagoYElDeAdministracionSiPuede()
+    {
+        var ctx = await PrepararAsync(nameof(ElCajeroNoPuedeRetrofecharNiAdelantarElPagoYElDeAdministracionSiPuede));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, "Ana", saldoInicial: 1000m);
+        await AbrirTurnoAsync(ctx, fondoInicial: 500m);
+        var antes = await FotoAsync(ctx, idPersonal);
+
+        foreach (var otroDia in new[] { "2020-01-01", "2999-01-01" })
+        {
+            var respuesta = await ctx.Vendedor.PostAsJsonAsync(
+                $"/api/pos/personal/{idPersonal}/pagos", Cuerpo(ctx, fecha: otroDia));
+            var json = await CuerpoAsync(respuesta, HttpStatusCode.BadRequest);
+            Assert.Equal("fecha_no_es_hoy", json.GetProperty("codigo").GetString());
+        }
+
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+
+        // El back office conserva la fecha retroactiva: la restricción es solo de la ruta del POS.
+        var retroactivo = await ctx.Admin.PostAsJsonAsync(
+            $"/api/personal/{idPersonal}/pagos", Cuerpo(ctx, fecha: "2020-01-01"));
+        await CuerpoAsync(retroactivo, HttpStatusCode.Created);
     }
 
     [Fact]

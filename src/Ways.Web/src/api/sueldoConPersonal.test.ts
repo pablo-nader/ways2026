@@ -128,10 +128,9 @@ describe('aSolicitudDePagoDePersonalDesdeElPos', () => {
   ]
 
   it('sale siempre del cajón del turno, sin empresa ni descuento de cuenta corriente', () => {
-    const solicitud = aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, fecha: '2026-11-01', lineas, observaciones: '' })
+    const solicitud = aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, lineas, observaciones: '' })
 
     expect(solicitud).toEqual({
-      fecha: '2026-11-01',
       idPuntoVenta: 7,
       origenFondos: 'CajaTurno',
       lineas: [
@@ -141,13 +140,12 @@ describe('aSolicitudDePagoDePersonalDesdeElPos', () => {
     })
     expect(solicitud).not.toHaveProperty('idEmpresa')
     expect(solicitud).not.toHaveProperty('descuentoDeCuentaCorriente')
+    expect(solicitud).not.toHaveProperty('fecha')
   })
 
   it('las observaciones recortadas viajan como detalle y en blanco se omiten', () => {
-    expect(aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, fecha: '2026-11-01', lineas, observaciones: '  adelanto ' }).detalle).toBe(
-      'adelanto',
-    )
-    expect(aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, fecha: '2026-11-01', lineas, observaciones: '   ' })).not.toHaveProperty(
+    expect(aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, lineas, observaciones: '  adelanto ' }).detalle).toBe('adelanto')
+    expect(aSolicitudDePagoDePersonalDesdeElPos({ idPuntoVenta: 7, lineas, observaciones: '   ' })).not.toHaveProperty(
       'detalle',
     )
   })
