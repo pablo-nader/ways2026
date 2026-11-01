@@ -162,7 +162,11 @@ public sealed record TurnoConArqueos(
 /// With Totals From Persisted Arqueos) — un turno <c>cerrado</c> con sus totales sumados de las
 /// filas YA PERSISTIDAS de <see cref="ArqueoTurno"/> (nunca <c>CalculadorDeArqueo</c>), más
 /// <see cref="Egresos"/> con la MISMA definición que <see cref="ResumenDeTurno.Egresos"/>, y la
-/// marca del último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).</summary>
+/// marca del último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).
+/// <see cref="Digitales"/>/<see cref="Efectivo"/>/<see cref="CuentaCorriente"/> reparten lo FACTURADO en el turno (ventas
+/// y notas de crédito emitidas, sin recibos de cobranza) con la clasificación del ticket de cierre, prorrateando el total
+/// de cada comprobante según lo cobrado; <see cref="TotalFacturado"/> es su suma, igual a Σ total de esos comprobantes. No
+/// dependen del arqueo: <see cref="Esperado"/>/<see cref="Declarado"/>/<see cref="Diferencia"/> siguen aparte.</summary>
 public sealed record FilaDeHistoricoDeCajas(
     int IdTurnoCaja,
     int IdPuntoVenta,
@@ -173,7 +177,11 @@ public sealed record FilaDeHistoricoDeCajas(
     decimal Diferencia,
     EgresosDeTurno Egresos,
     DateTimeOffset? FechaRecalculo,
-    int? IdEmpleadoRecalculo);
+    int? IdEmpleadoRecalculo,
+    decimal Digitales,
+    decimal Efectivo,
+    decimal CuentaCorriente,
+    decimal TotalFacturado);
 
 /// <summary>Página de <c>GET /api/reportes/cajas</c> — mismo shape que
 /// <see cref="PaginaDeTurnos"/>.</summary>

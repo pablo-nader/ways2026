@@ -1707,6 +1707,11 @@ export type FilaDeHistoricoDeCajas = {
   egresos: EgresosDeTurno
   fechaRecalculo: string | null
   idEmpleadoRecalculo: number | null
+  /** Lo facturado del turno (ventas y notas de crédito, sin recibos), prorrateado por cubo. */
+  digitales: number
+  efectivo: number
+  cuentaCorriente: number
+  totalFacturado: number
 }
 
 /** Página de `GET /api/reportes/cajas` — espejo de `PaginaDeHistoricoDeCajas`. */

@@ -87,7 +87,11 @@ public static class ExportacionDeCaja
         new ColumnaExportable("Esperado", TipoDeColumna.Moneda),
         new ColumnaExportable("Declarado", TipoDeColumna.Moneda),
         new ColumnaExportable("Diferencia", TipoDeColumna.Moneda),
-        new ColumnaExportable("Retiros", TipoDeColumna.Moneda)
+        new ColumnaExportable("Retiros", TipoDeColumna.Moneda),
+        new ColumnaExportable("Digitales", TipoDeColumna.Moneda),
+        new ColumnaExportable("Efectivo facturado", TipoDeColumna.Moneda),
+        new ColumnaExportable("Cuenta corriente", TipoDeColumna.Moneda),
+        new ColumnaExportable("Total facturado", TipoDeColumna.Moneda)
     ];
 
     /// <summary>G2 listado (spec historico-de-cajas: G2 Listing Export Figures Equal The JSON
@@ -109,7 +113,11 @@ public static class ExportacionDeCaja
                     Celda.Moneda(f.Esperado),
                     Celda.Moneda(f.Declarado),
                     Celda.Moneda(f.Diferencia),
-                    Celda.Moneda(f.Egresos.Retiros)
+                    Celda.Moneda(f.Egresos.Retiros),
+                    Celda.Moneda(f.Digitales),
+                    Celda.Moneda(f.Efectivo),
+                    Celda.Moneda(f.CuentaCorriente),
+                    Celda.Moneda(f.TotalFacturado)
                 ])
                 .ToList());
 

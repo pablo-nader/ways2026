@@ -35,7 +35,7 @@ public class ExportacionDeCajaTests
     {
         var apertura = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
         var cierre = new DateTimeOffset(2026, 8, 1, 18, 0, 0, TimeSpan.Zero);
-        var fila = new FilaDeHistoricoDeCajas(412, 3, apertura, cierre, 1000m, 970m, 30m, new EgresosDeTurno([], [], 0m), null, null);
+        var fila = new FilaDeHistoricoDeCajas(412, 3, apertura, cierre, 1000m, 970m, 30m, new EgresosDeTurno([], [], 0m), null, null, 0m, 0m, 0m, 0m);
 
         var tabla = ExportacionDeCaja.De([fila], Contexto, ZonaBuenosAires);
 
@@ -47,11 +47,26 @@ public class ExportacionDeCajaTests
     public void HistoricoReponeElRetiroDeLosEgresosEnSuPropiaColumna()
     {
         var ahora = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
-        var fila = new FilaDeHistoricoDeCajas(412, 3, ahora, ahora, 1000m, 1000m, 0m, new EgresosDeTurno([], [], 250m), null, null);
+        var fila = new FilaDeHistoricoDeCajas(412, 3, ahora, ahora, 1000m, 1000m, 0m, new EgresosDeTurno([], [], 250m), null, null, 0m, 0m, 0m, 0m);
 
         var tabla = ExportacionDeCaja.De([fila], Contexto, ZonaBuenosAires);
 
         Assert.Equal(250m, tabla.Filas[0][7].Valor);
+    }
+
+    [Fact]
+    public void HistoricoExportaLosCuatroImportesFacturadosEnSusColumnas()
+    {
+        var ahora = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var fila = new FilaDeHistoricoDeCajas(
+            412, 3, ahora, ahora, 0m, 0m, 0m, new EgresosDeTurno([], [], 0m), null, null, 200m, 500m, 300m, 1000m);
+
+        var tabla = ExportacionDeCaja.De([fila], Contexto, ZonaBuenosAires);
+
+        Assert.Equal(
+            ["Digitales", "Efectivo facturado", "Cuenta corriente", "Total facturado"],
+            tabla.Columnas.Skip(8).Select(c => c.Titulo));
+        Assert.Equal([200m, 500m, 300m, 1000m], tabla.Filas[0].Skip(8).Select(c => c.Valor));
     }
 
     [Fact]

@@ -26,6 +26,13 @@ Owner request (2026-10-31) on the closed-shift screens:
 - Esperado / Declarado / Diferencia stay in the API row and the XLSX export; the screen
   replaces them with the four new columns.
 
+- Owner decision (2026-11-01), Histórico columns: scope = TX and NCX of the shift, estado Emitido (RC excluded). A TX's
+  `Total` is PRORATED across Efectivo / Digitales / Cta. cte. in proportion to its net payments (importe − vuelto), so a
+  shortfall within tolerance or an overpayment without vuelto never breaks the sum; cents are rounded per bucket and the
+  remainder goes to the largest share (tie: Efectivo > Digitales > Cta. cte.). A TX with no positive net payments goes
+  whole to Efectivo. An NCX (no payments) mirrors the split of its associated TX using the ORIGINAL sale's shift anchor;
+  without an associated TX or payments it goes whole to Efectivo. TotalFacturado = Σ buckets = Σ Total of TX + NCX.
+
 ## Constraints
 
 - POS front changes reach the tills only with a `Ways.Desktop` bump + `pos-v*` tag.
@@ -39,7 +46,7 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
 
 ## Tasks
 
-- [ ] **T1 — Backend** (delegated: 2+ non-trivial files) — branch `pnader/caja-z-columnas-s1`
+- [x] **T1 — Backend** (delegated: 2+ non-trivial files) — branch `pnader/caja-z-columnas-s1`
   - `FilaDeHistoricoDeCajas` gains Digitales / Efectivo / CuentaCorriente / TotalFacturado,
     one grouped query per page; XLSX export gains the columns.
   - `/caja/turnos/{id}/detalle`: medios carry `Nombre`; tickets carry the
@@ -53,14 +60,13 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
 ## Progress
 
 - Exploration done; owner decided RC exclusion.
-- T1 PARCIAL (route: delegated). Hecho: detalle de Caja Z (medios con `nombre`, tickets = `VentaDeTurnoListado`
-  vía `ServicioDeVentas.LeerVentasDelTurnoAsync`, nombre de medio dado de baja conservado en tickets, export XLSX con
-  nombre de medio y tickets en orden cronológico). Verificación: `dotnet test tests/Ways.Application.Tests` 1621 OK,
-  `tests/Ways.Domain.Tests` 2176 OK, integración filtrada (Historico|Detalle|VentasPorTurno|Exportacion|Cierre|
-  Visibilidad|SuperficieDeAutorizacion|CajaResumenContenido) 100 OK; mutación (quitar IgnoreQueryFilters) mata el test.
-- T1 BLOQUEADO (columnas del histórico): una NCX no lleva pagos (`ValidadorDePagos` regla 0c) y una venta puede quedar
-  hasta la tolerancia de pago (default 10) por debajo de su total, o con exceso sin vuelto: Σ pagos != Σ Total. Falta
-  decisión del dueño sobre cómo clasificar NCX y el resto.
+- T1 DONE (route: delegated). Detalle de Caja Z: medios con `nombre`, tickets = `VentaDeTurnoListado` (commit ffd6edae).
+  Histórico: `digitales`/`efectivo`/`cuentaCorriente`/`totalFacturado` en `FilaDeHistoricoDeCajas` + 4 columnas XLSX
+  (dominio `ProrrateoDeFacturadoPorMedio`, lector `LectorDeFacturadoPorTurno`, una carga agrupada por página).
+  Verificación: Domain.Tests 2185 OK; Application.Tests 1622 OK (guardas incluidas); integración filtrada (Historico|
+  Detalle|VentasPorTurno|Exportacion|Cierre|Visibilidad|SuperficieDeAutorizacion|CajaResumenContenido|AislamientoDeTenant|
+  FacturacionEspejoNoDobleConteo) 123 OK. Mutación: quitar `Estado == Emitido` del lector mata
+  `ElHistoricoRepartePorCubo...`; quitar IgnoreQueryFilters del nombre de medio mata el test de medio dado de baja.
 
 ## Next step
 
