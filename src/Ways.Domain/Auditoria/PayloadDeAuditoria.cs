@@ -346,17 +346,37 @@ public static class PayloadDeAuditoria
                 ["id_sucursal"] = idSucursal
             });
 
-    /// <summary><c>sucursal.alta</c>. Sin estado previo; <c>{id_empresa, nombre}</c>.</summary>
+    /// <summary><c>sucursal.alta</c>. Sin estado previo; <c>{id_empresa, nombre}</c> más los ocho campos de la dirección.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
-        AltaDeSucursal(int idEmpresa, string nombre) => (
-            null,
-            new Dictionary<string, object?> { ["id_empresa"] = idEmpresa, ["nombre"] = nombre });
+        AltaDeSucursal(int idEmpresa, string nombre, DireccionDeSucursal direccion)
+    {
+        var nuevo = ConDireccion(new Dictionary<string, object?> { ["id_empresa"] = idEmpresa, ["nombre"] = nombre }, direccion);
 
-    /// <summary><c>sucursal.edicion</c>. El único campo editable es el nombre.</summary>
+        return (null, nuevo);
+    }
+
+    /// <summary><c>sucursal.edicion</c>. El nombre y la dirección completa, antes y después.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
-        RenombreDeSucursal(string nombreAnterior, string nombreNuevo) => (
-            new Dictionary<string, object?> { ["nombre"] = nombreAnterior },
-            new Dictionary<string, object?> { ["nombre"] = nombreNuevo });
+        EdicionDeSucursal(
+            string nombreAnterior, DireccionDeSucursal direccionAnterior, string nombreNuevo,
+            DireccionDeSucursal direccionNueva) => (
+            ConDireccion(new Dictionary<string, object?> { ["nombre"] = nombreAnterior }, direccionAnterior),
+            ConDireccion(new Dictionary<string, object?> { ["nombre"] = nombreNuevo }, direccionNueva));
+
+    private static Dictionary<string, object?> ConDireccion(
+        Dictionary<string, object?> campos, DireccionDeSucursal direccion)
+    {
+        campos["calle"] = direccion.Calle;
+        campos["altura"] = direccion.Altura;
+        campos["ciudad"] = direccion.Ciudad;
+        campos["provincia"] = direccion.Provincia;
+        campos["codigo_postal"] = direccion.CodigoPostal;
+        campos["latitud"] = direccion.Latitud;
+        campos["longitud"] = direccion.Longitud;
+        campos["referencia"] = direccion.Referencia;
+
+        return campos;
+    }
 
     /// <summary><c>pv.sucursal</c>. <c>{id_sucursal}</c> antes y después; <c>sucursal_dada_de_baja</c> dice si la
     /// sucursal de origen quedó sin cajas ni stock y cayó con el movimiento.</summary>

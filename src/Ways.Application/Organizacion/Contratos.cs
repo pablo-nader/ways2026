@@ -144,14 +144,43 @@ public record SucursalListado(
     int IdEmpresa,
     string Nombre,
     string? RazonSocialEmpresa,
-    int CantidadPuntosVenta);
+    int CantidadPuntosVenta,
+    string? Calle = null,
+    string? Altura = null,
+    string? Ciudad = null,
+    string? Provincia = null,
+    string? CodigoPostal = null,
+    decimal? Latitud = null,
+    decimal? Longitud = null,
+    string? Referencia = null);
 
 /// <summary>Cuerpo de <c>POST /api/sucursales</c>. <paramref name="IdEmpresa"/> es <c>nullable</c> a propósito (un body
-/// que lo omite ligaría <c>0</c> y daría un 404 engañoso en vez del <c>400 empresa_requerida</c>).</summary>
-public record SucursalAlta(int? IdEmpresa, string Nombre);
+/// que lo omite ligaría <c>0</c> y daría un 404 engañoso en vez del <c>400 empresa_requerida</c>).
+/// El resto es la dirección estructurada, toda opcional (<see cref="Ways.Domain.Organizacion.DireccionDeSucursal"/>).</summary>
+public record SucursalAlta(
+    int? IdEmpresa,
+    string Nombre,
+    string? Calle = null,
+    string? Altura = null,
+    string? Ciudad = null,
+    string? Provincia = null,
+    string? CodigoPostal = null,
+    decimal? Latitud = null,
+    decimal? Longitud = null,
+    string? Referencia = null);
 
-/// <summary>Cuerpo de <c>PUT /api/sucursales/{id}</c>: el nombre es lo único editable; la empresa es estructural.</summary>
-public record SucursalEdicion(string Nombre);
+/// <summary>Cuerpo de <c>PUT /api/sucursales/{id}</c>: el nombre y la dirección son lo editable; la empresa es
+/// estructural. La dirección se reemplaza entera: un campo omitido la deja vacía.</summary>
+public record SucursalEdicion(
+    string Nombre,
+    string? Calle = null,
+    string? Altura = null,
+    string? Ciudad = null,
+    string? Provincia = null,
+    string? CodigoPostal = null,
+    decimal? Latitud = null,
+    decimal? Longitud = null,
+    string? Referencia = null);
 
 /// <summary>Cuerpo de <c>POST /api/puntos-venta/{id}/sucursal</c>: la sucursal destino de la caja. <c>Nullable</c> por la
 /// misma razón que <see cref="PuntoVentaModoEdicion"/>: omitido no puede ligarse a <c>0</c>.</summary>

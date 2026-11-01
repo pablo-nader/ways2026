@@ -4058,6 +4058,26 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("Altura")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("altura");
+
+                    b.Property<string>("Calle")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("calle");
+
+                    b.Property<string>("Ciudad")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("ciudad");
+
+                    b.Property<string>("CodigoPostal")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("codigo_postal");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -4078,11 +4098,31 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
 
+                    b.Property<decimal?>("Latitud")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("latitud");
+
+                    b.Property<decimal?>("Longitud")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("longitud");
+
                     b.Property<string>("Nombre")
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
+
+                    b.Property<string>("Provincia")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("provincia");
+
+                    b.Property<string>("Referencia")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("referencia");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -4104,7 +4144,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdSucursalFusion", "IdEmpresa", "IdTenant");
 
-                    b.ToTable("sucursales", (string)null);
+                    b.ToTable("sucursales", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_sucursales_coordenadas_completas", "(latitud IS NULL) = (longitud IS NULL)");
+
+                            t.HasCheckConstraint("ck_sucursales_latitud", "latitud BETWEEN -90 AND 90");
+
+                            t.HasCheckConstraint("ck_sucursales_longitud", "longitud BETWEEN -180 AND 180");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Organizacion.Tenant", b =>
