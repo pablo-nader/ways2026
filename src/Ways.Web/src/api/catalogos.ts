@@ -247,6 +247,21 @@ export function cuentaDelFormulario(
   }
 }
 
+/** El proveedor que se ofrece en el formulario; Point queda oculto hasta que exista su cobro (E4). */
+export const PROVEEDORES_DE_COBRO_OFRECIDOS = [{ valor: 'mercadopago_qr', etiqueta: 'Mercado Pago QR' }]
+
+const AYUDA_DEL_PROVEEDOR =
+  'Con Mercado Pago QR el POS muestra un QR al cobrar y cierra la venta cuando el pago se aprueba, sin pedir una referencia a mano. ' +
+  'Sin integración, el cajero carga la referencia como siempre.'
+
+/** Un medio no electrónico manda siempre null: el servidor rechaza el proveedor ahí y el formulario no puede arrastrar el que
+ * quedó cargado antes de cambiar el comportamiento. */
+export function proveedorDelFormulario(valores: Record<string, ValorDeCampo>): string | null {
+  if (!esElectronico(valores)) return null
+  const proveedor = String(valores.proveedor ?? '').trim()
+  return proveedor === '' ? null : proveedor
+}
+
 export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, MedioPagoAdministradoAlta> = {
   recurso: 'medios-pago',
   titulo: 'Medios de pago',
@@ -297,6 +312,15 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
         aviso: avisoDeLasCuentas,
       },
     },
+    {
+      clave: 'proveedor',
+      etiqueta: 'Integración de cobro',
+      tipo: 'select',
+      visibleSi: esElectronico,
+      opcionVacia: 'Sin integración',
+      ayuda: AYUDA_DEL_PROVEEDOR,
+      opciones: PROVEEDORES_DE_COBRO_OFRECIDOS,
+    },
     campoDeCuenta('comisionPorcentaje', 'Comisión (%)', AYUDA_DE_LA_COMISION),
     campoDeCuenta('retencionIibbPorcentaje', 'Retención IIBB (%)'),
     campoDeCuenta('retencionIvaPorcentaje', 'Retención IVA (%)'),
@@ -310,6 +334,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
     recargoPorcentaje: '',
     porcentajeFacturacion: '0',
     idEmpresa: '',
+    proveedor: '',
     idCuentaTesoreria: '',
     nombreCuentaTesoreria: '',
     cuentaTesoreriaInactiva: false,
@@ -326,6 +351,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
     recargoPorcentaje: item.recargoPorcentaje === null ? '' : String(item.recargoPorcentaje),
     porcentajeFacturacion: String(item.porcentajeFacturacion),
     idEmpresa: item.idEmpresa === null ? '' : String(item.idEmpresa),
+    proveedor: item.proveedor ?? '',
     idCuentaTesoreria: item.idCuentaTesoreria === null ? '' : String(item.idCuentaTesoreria),
     nombreCuentaTesoreria: item.nombreCuentaTesoreria ?? '',
     cuentaTesoreriaInactiva: item.cuentaTesoreriaInactiva,
@@ -344,6 +370,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
     requiereReferencia: Boolean(valores.requiereReferencia),
     recargoPorcentaje: numeroOVacio(valores.recargoPorcentaje),
     porcentajeFacturacion: numeroOVacio(valores.porcentajeFacturacion) ?? 0,
+    proveedor: proveedorDelFormulario(valores),
     ...cuentaDelFormulario(valores),
   }),
   sujetoDeBaja: 'el medio de pago',

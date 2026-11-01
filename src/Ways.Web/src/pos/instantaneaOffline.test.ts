@@ -586,8 +586,16 @@ describe('aClienteListado / aMedioPagoListado', () => {
 
   it('lleva el medio de pago con su orden por posición', () => {
     expect(aMedioPagoListado({ idMedioPago: 3, nombre: 'Tarjeta', comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true }, 1)).toEqual({
-      id: 3, nombre: 'Tarjeta', activo: true, idEmpresa: null, orden: 2, comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true, recargoPorcentaje: null, porcentajeFacturacion: 0,
+      id: 3, nombre: 'Tarjeta', activo: true, idEmpresa: null, orden: 2, comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true, recargoPorcentaje: null, porcentajeFacturacion: 0, proveedor: null,
     })
+  })
+
+  it('lleva el proveedor de cobro del medio y lo lee como null si la copia guardada no lo trae', () => {
+    const conProveedor = aMedioPagoListado({ idMedioPago: 3, nombre: 'QR', comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true, proveedor: 'mercadopago_qr' }, 0)
+    expect(conProveedor.proveedor).toBe('mercadopago_qr')
+
+    const guardado = { idMedioPago: 3, nombre: 'QR', comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true } as MedioPagoDeInstantanea
+    expect(aMedioPagoListado(guardado, 0).proveedor).toBeNull()
   })
 
   it('lleva el porcentaje de facturación del medio de pago', () => {

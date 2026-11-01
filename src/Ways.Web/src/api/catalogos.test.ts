@@ -244,6 +244,52 @@ describe('descriptorMediosPago.porcentajeFacturacion', () => {
   })
 })
 
+describe('descriptorMediosPago — integración de cobro (proveedor)', () => {
+  const valoresElectronicos = (sobrescribir: Record<string, string | boolean> = {}) => ({
+    ...descriptorMediosPago.valoresPorDefecto,
+    comportamiento: 'Electronico',
+    ...sobrescribir,
+  })
+
+  it('el campo solo se ve con Electronico y ofrece Mercado Pago QR sin Point', () => {
+    const campo = descriptorMediosPago.campos.find((c) => c.clave === 'proveedor')
+
+    expect(campo).toMatchObject({ tipo: 'select', opcionVacia: 'Sin integración' })
+    expect(campo?.opciones).toEqual([{ valor: 'mercadopago_qr', etiqueta: 'Mercado Pago QR' }])
+    expect(campo?.visibleSi?.(valoresElectronicos())).toBe(true)
+    expect(campo?.visibleSi?.(valoresElectronicos({ comportamiento: 'Efectivo' }))).toBe(false)
+  })
+
+  it('el alta nuevo arranca sin integración y la manda como null', () => {
+    expect(descriptorMediosPago.valoresPorDefecto.proveedor).toBe('')
+    expect(descriptorMediosPago.aAlta('QR', true, valoresElectronicos(), null).proveedor).toBeNull()
+  })
+
+  it('ida y vuelta: aValores lleva el proveedor al formulario y aAlta lo devuelve', () => {
+    const valores = descriptorMediosPago.aValores(medioFixture({ comportamiento: 'Electronico', proveedor: 'mercadopago_qr' }))
+
+    expect(valores.proveedor).toBe('mercadopago_qr')
+    expect(descriptorMediosPago.aAlta('QR', true, valores, null).proveedor).toBe('mercadopago_qr')
+  })
+
+  it('un medio sin proveedor (o de una copia vieja sin el campo) se edita como vacío', () => {
+    expect(descriptorMediosPago.aValores(medioFixture({ proveedor: null })).proveedor).toBe('')
+    expect(descriptorMediosPago.aValores(medioFixture()).proveedor).toBe('')
+  })
+
+  it('quitar la integración manda null explícito y no omite el campo', () => {
+    const alta = descriptorMediosPago.aAlta('QR', true, valoresElectronicos({ proveedor: '' }), null)
+
+    expect(alta).toHaveProperty('proveedor', null)
+  })
+
+  it.each(['Efectivo', 'CuentaCorriente'])('con comportamiento %s el proveedor cargado antes se manda limpio', (comportamiento) => {
+    const alta = descriptorMediosPago.aAlta('Caja', true, valoresElectronicos({ comportamiento, proveedor: 'mercadopago_qr' }), null)
+
+    expect(alta.proveedor).toBeNull()
+  })
+})
+
 describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
   const claves = [
     'idCuentaTesoreria',

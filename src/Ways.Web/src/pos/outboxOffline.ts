@@ -196,6 +196,7 @@ export type MotivoRechazoOffline =
   | 'cuenta_corriente_no_verificada'
   | 'envio_sin_cliente_con_domicilio'
   | 'envio_sin_importe'
+  | 'reserva_de_cobro_perdida'
 
 const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   cliente_no_admitido: 'Sin conexión solo se puede vender al Consumidor Final o a un cliente de la copia local de este dispositivo.',
@@ -213,6 +214,8 @@ const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   envio_sin_cliente_con_domicilio:
     'Una venta con envío necesita un cliente identificado con domicilio en la copia local de este dispositivo — elegí otro cliente o destildá "Con envío".',
   envio_sin_importe: MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL,
+  reserva_de_cobro_perdida:
+    'El número reservado para el cobro con Mercado Pago ya no está disponible en este dispositivo: la venta no se registró. Avisá a un supervisor, porque el cobro puede haber quedado aprobado.',
 }
 
 /** Rechazos que el servidor ya contestó: la venta no se registra, ni local ni por el camino online

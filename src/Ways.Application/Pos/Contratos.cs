@@ -221,11 +221,13 @@ public sealed record SolicitudDeRendicionDeCola(string CodigoTipoComprobante, lo
 /// necesita para armar <c>PagoDeVenta</c> y decidir vuelto/referencia sin ida y vuelta — mismo
 /// criterio que <c>ComprobanteListado</c> vs. el detalle completo: nunca <c>IdEmpresa</c>/
 /// <c>Orden</c>/<c>RecargoPorcentaje</c>, que el checkout no lee. <c>PorcentajeFacturacion</c> sí viaja, para que
-/// la copia local del dispositivo lo conserve; hoy ningún consumidor lo lee.</summary>
+/// la copia local del dispositivo lo conserve; hoy ningún consumidor lo lee. <c>Proveedor</c> dice quién cobra por el medio
+/// (<c>mercadopago_qr</c>) o <c>null</c>: el POS abre el cobro con QR en vez de pedir una referencia a mano.</summary>
 public sealed record MedioPagoDeInstantanea(
     int IdMedioPago,
     string Nombre,
     ComportamientoMedioPago Comportamiento,
     bool AdmiteVuelto,
     bool RequiereReferencia,
-    decimal PorcentajeFacturacion);
+    decimal PorcentajeFacturacion,
+    string? Proveedor = null);

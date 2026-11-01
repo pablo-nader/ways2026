@@ -24,7 +24,7 @@ public class ContratoDeMedioPagoSinCuentaTests
     public void ElMedioDeLaInstantaneaConservaSuFormaSinCamposDeCuenta()
     {
         Assert.Equal(
-            ["IdMedioPago", "Nombre", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "PorcentajeFacturacion"],
+            ["IdMedioPago", "Nombre", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "PorcentajeFacturacion", "Proveedor"],
             Propiedades(typeof(MedioPagoDeInstantanea)));
     }
 
@@ -32,13 +32,13 @@ public class ContratoDeMedioPagoSinCuentaTests
     public void ElJsonDelMedioDeLaInstantaneaNoTraeClavesDeCuenta()
     {
         var json = JsonSerializer.Serialize(
-            new MedioPagoDeInstantanea(1, "QR", ComportamientoMedioPago.Electronico, false, true, 0m), Opciones);
+            new MedioPagoDeInstantanea(1, "QR", ComportamientoMedioPago.Electronico, false, true, 0m, "mercadopago_qr"), Opciones);
 
         using var documento = JsonDocument.Parse(json);
         var claves = documento.RootElement.EnumerateObject().Select(p => p.Name).ToArray();
 
         Assert.Equal(
-            ["idMedioPago", "nombre", "comportamiento", "admiteVuelto", "requiereReferencia", "porcentajeFacturacion"], claves);
+            ["idMedioPago", "nombre", "comportamiento", "admiteVuelto", "requiereReferencia", "porcentajeFacturacion", "proveedor"], claves);
     }
 
     [Fact]

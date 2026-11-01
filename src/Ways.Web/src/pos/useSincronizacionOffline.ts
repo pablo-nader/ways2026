@@ -45,6 +45,14 @@ import {
   type VentaEnCola,
   type VentaRechazada,
 } from './outboxOffline'
+import {
+  borrarReservaDeCobro,
+  guardarReservaDeCobro,
+  leerReservaDeCobro,
+  reservaLibreDelPuntoDeVenta,
+  reservaYaSeVendio,
+  type ReservaDeCobro,
+} from './reservaDeCobro'
 import { INTERVALO_DE_SINCRONIZACION_MS } from './intervaloDeSincronizacion'
 import { conTiempoLimite, ErrorDeTiempoAgotado } from './tiempoLimite'
 import { crearDisparadorDeLote, ventaNecesitaElLote } from './loteDeFacturacion'
@@ -111,6 +119,12 @@ export const INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR =
 
 /** `limiteDeCreditoNoValidado` es `true` solo para una venta con cuenta corriente que se encoló sin
  * respuesta del servidor sobre el límite; `false` en cualquier otro caso. */
+/** Resultado de reservar el número de una venta cobrada con Mercado Pago. `reutilizado` es `true` cuando el número ya estaba
+ * tomado (un cobro anterior de este dispositivo se canceló o venció): no se consumió uno nuevo del bloque. */
+export type ReservaDeNumeroParaCobro =
+  | { ok: true; numero: number; reutilizado: boolean }
+  | { ok: false; motivo: 'sin_numeracion' | 'error_al_guardar' | 'cobro_en_curso' }
+
 export type EncoladoOffline =
   | { ok: true; idLocal: string; numeroVisible: string; numero: number; limiteDeCreditoNoValidado: boolean }
   | { ok: false; motivo: MotivoRechazoOffline }
@@ -214,7 +228,22 @@ export type ResultadoDeSincronizacionOffline = {
     /** `true` si el llamador va a pedir `esperarRespuesta` de esta venta: el drenado guarda su respuesta
      * hasta que se la pide o vence el tope. Sin esto no se guarda nada. */
     interesadoEnLaRespuesta?: boolean
+    /** El número que `reservarNumeroParaCobro` tomó para esta venta (cobrada con Mercado Pago): se usa ese y no se toma otro del
+     * bloque. Si la reserva ya no coincide, la venta se rechaza con `reserva_de_cobro_perdida` sin encolar nada. */
+    numeroReservado?: number
   }) => Promise<EncoladoOffline>
+  /** Toma ya el número de la venta, sin encolarla: el cobro con QR se crea en el servidor con ese número y la venta se encola
+   * recién cuando el cobro se aprueba (`encolarVentaOffline` con `numeroReservado`). Reutiliza la reserva `libre` de un cobro
+   * anterior sin consumir otro número; con un cobro `en_curso` no reserva nada. Nunca devuelve ok sin haber confirmado la escritura. */
+  reservarNumeroParaCobro: (idPuntoVenta: number) => Promise<ReservaDeNumeroParaCobro>
+  /** Marca la reserva como cobro vivo (`en_curso`) con el cobro creado en el servidor. `false` si no se pudo guardar. */
+  anotarCobroEnCurso: (datos: { numero: number; idCobro: number; idMedioPago: number; importe: number }) => Promise<boolean>
+  /** El cobro terminó sin aprobarse (cancelado, vencido): el número queda `libre` para el próximo intento. `false` si no se pudo guardar. */
+  soltarReservaDeCobro: (numero: number) => Promise<boolean>
+  /** La venta de ese número se registró por fuera del outbox (online): la reserva se da de baja y el número no vuelve a usarse. */
+  consumirReservaDeCobro: (numero: number) => Promise<boolean>
+  /** La reserva guardada, para retomarla tras una recarga; `null` si no hay o si su venta ya se encoló. */
+  leerReservaDeCobro: () => Promise<ReservaDeCobro | null>
   /** Espera hasta `ms` la respuesta de `POST /api/ventas` de una venta encolada con `interesadoEnLaRespuesta`.
    * Resuelve `null` al vencer el tope, si el servidor la rechazó (la venta queda archivada), si el envío de la
    * cabeza falló de forma transitoria (red, tiempo agotado o 5xx: las ventas siguen en el outbox y se reintentan, sin
@@ -893,6 +922,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     pagos: readonly { comportamiento: ComportamientoMedioPago; importe: number }[]
     instantaneaCongelada?: InstantaneaDePos | null
     interesadoEnLaRespuesta?: boolean
+    numeroReservado?: number
   }): Promise<EncoladoOffline> {
     // judgment-day ronda 1 (WARNING): usa la instantánea CONGELADA que el llamador pasa (la
     // misma que ya resolvió la vista previa en pantalla) cuando la pasa — nunca el estado
@@ -935,26 +965,47 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     const bloqueDeLaVenta = () =>
       bloqueRef.current?.idPuntoVenta === paramsVenta.solicitudBase.idPuntoVenta ? bloqueRef.current : null
     const sinNumeros = numerosDisponibles(bloqueDeLaVenta()) === 0
-    if (sinNumeros && idPuntoVenta !== null && admisibilidad(true) === null) {
+    if (sinNumeros && paramsVenta.numeroReservado === undefined && idPuntoVenta !== null && admisibilidad(true) === null) {
       const idPv = idPuntoVenta
       await conTiempoLimite(() => reponerBloque(idPv)).catch(() => undefined)
     }
 
     return encolarOperacion(async () => {
-      const motivo = admisibilidad(numerosDisponibles(bloqueDeLaVenta()) > 0)
+      // Un número ya tomado del bloque: el del cobro con Mercado Pago de esta venta, o el que un cobro anterior dejó `libre` (la
+      // venta que lo cobró nunca se encoló). Se usa antes de tomar uno nuevo, así un número reservado no queda como hueco.
+      const reservaGuardada = await leerReservaDeCobro(almacenRef.current)
+      const idPuntoVentaDeLaVenta = paramsVenta.solicitudBase.idPuntoVenta
+      let numeroDeLaReserva: number | undefined
+      if (paramsVenta.numeroReservado !== undefined) {
+        const coincide =
+          reservaGuardada !== null &&
+          reservaGuardada.numero === paramsVenta.numeroReservado &&
+          reservaGuardada.idPuntoVenta === idPuntoVentaDeLaVenta
+        if (!coincide) return { ok: false, motivo: 'reserva_de_cobro_perdida' }
+        numeroDeLaReserva = paramsVenta.numeroReservado
+      } else {
+        numeroDeLaReserva = reservaLibreDelPuntoDeVenta(reservaGuardada, idPuntoVentaDeLaVenta)?.numero
+      }
+
+      const motivo = admisibilidad(numeroDeLaReserva !== undefined || numerosDisponibles(bloqueDeLaVenta()) > 0)
       if (motivo) return { ok: false, motivo }
 
       // Ya validado arriba: lineasEnriquecidas y el bloque no son null/vacíos.
-      const tomado = tomarProximoNumero(bloqueDeLaVenta())
-      if (!tomado) return { ok: false, motivo: 'sin_numeracion' }
-
-      bloqueRef.current = tomado.bloqueRestante
-      await guardarBloque(almacenRef.current, tomado.bloqueRestante)
+      let numeroDeLaVenta: number
+      if (numeroDeLaReserva !== undefined) {
+        numeroDeLaVenta = numeroDeLaReserva
+      } else {
+        const tomado = tomarProximoNumero(bloqueDeLaVenta())
+        if (!tomado) return { ok: false, motivo: 'sin_numeracion' }
+        numeroDeLaVenta = tomado.numero
+        bloqueRef.current = tomado.bloqueRestante
+        await guardarBloque(almacenRef.current, tomado.bloqueRestante)
+      }
 
       const solicitudFinal: SolicitudDeVenta = {
         ...paramsVenta.solicitudBase,
         lineas: lineasEnriquecidas ?? lineasBase,
-        numeroPreasignado: tomado.numero,
+        numeroPreasignado: numeroDeLaVenta,
         ...(consumoCc > 0 ? { limiteDeCreditoNoValidado } : {}),
       }
 
@@ -971,7 +1022,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       try {
         nuevoOutbox = await agregarAOutbox(almacenRef.current, {
           idLocal,
-          numeroPreasignado: tomado.numero,
+          numeroPreasignado: numeroDeLaVenta,
           idPuntoVenta: paramsVenta.solicitudBase.idPuntoVenta,
           creadoEn: new Date().toISOString(),
           solicitud: solicitudFinal,
@@ -983,14 +1034,89 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         return { ok: false, motivo: 'error_al_guardar' }
       }
       setOutboxCount(nuevoOutbox.length)
+      // La reserva ya cumplió: si la baja no se confirma, `leerReservaVigenteDeCobro` la descarta porque la venta de ese número está en la cola.
+      if (numeroDeLaReserva !== undefined) await borrarReservaDeCobro(almacenRef.current)
 
       return {
         ok: true,
         idLocal,
-        numeroVisible: construirNumeroVisible(paramsVenta.solicitudBase.idPuntoVenta, tomado.numero),
-        numero: tomado.numero,
+        numeroVisible: construirNumeroVisible(paramsVenta.solicitudBase.idPuntoVenta, numeroDeLaVenta),
+        numero: numeroDeLaVenta,
         limiteDeCreditoNoValidado,
       }
+    })
+  }
+
+  async function reservarNumeroParaCobro(idPv: number): Promise<ReservaDeNumeroParaCobro> {
+    const bloqueDelPuntoDeVenta = () => (bloqueRef.current?.idPuntoVenta === idPv ? bloqueRef.current : null)
+    // Mismo criterio que el encolado: con el bloque agotado se espera (acotado) a la reposición antes de rendirse.
+    const guardada = await encolarOperacion(() => leerReservaDeCobro(almacenRef.current))
+    if (guardada !== null && guardada.estado === 'en_curso') return { ok: false, motivo: 'cobro_en_curso' }
+    if (reservaLibreDelPuntoDeVenta(guardada, idPv) === null && numerosDisponibles(bloqueDelPuntoDeVenta()) === 0) {
+      await conTiempoLimite(() => reponerBloque(idPv)).catch(() => undefined)
+    }
+
+    return encolarOperacion(async () => {
+      const reserva = await leerReservaDeCobro(almacenRef.current)
+      if (reserva !== null && reserva.estado === 'en_curso') return { ok: false, motivo: 'cobro_en_curso' }
+      const libre = reservaLibreDelPuntoDeVenta(reserva, idPv)
+      if (libre !== null) return { ok: true, numero: libre.numero, reutilizado: true }
+
+      const tomado = tomarProximoNumero(bloqueDelPuntoDeVenta())
+      if (!tomado) return { ok: false, motivo: 'sin_numeracion' }
+      bloqueRef.current = tomado.bloqueRestante
+      await guardarBloque(almacenRef.current, tomado.bloqueRestante)
+      const nueva: ReservaDeCobro = { idPuntoVenta: idPv, numero: tomado.numero, estado: 'libre', creadoEn: new Date().toISOString() }
+      if (!(await guardarReservaDeCobro(almacenRef.current, nueva))) return { ok: false, motivo: 'error_al_guardar' }
+      return { ok: true, numero: tomado.numero, reutilizado: false }
+    })
+  }
+
+  async function anotarCobroEnCurso(datos: { numero: number; idCobro: number; idMedioPago: number; importe: number }): Promise<boolean> {
+    return encolarOperacion(async () => {
+      const reserva = await leerReservaDeCobro(almacenRef.current)
+      if (reserva === null || reserva.numero !== datos.numero) return false
+      return guardarReservaDeCobro(almacenRef.current, {
+        ...reserva,
+        estado: 'en_curso',
+        idCobro: datos.idCobro,
+        idMedioPago: datos.idMedioPago,
+        importe: datos.importe,
+      })
+    })
+  }
+
+  async function soltarReservaDeCobro(numero: number): Promise<boolean> {
+    return encolarOperacion(async () => {
+      const reserva = await leerReservaDeCobro(almacenRef.current)
+      if (reserva === null || reserva.numero !== numero) return true
+      return guardarReservaDeCobro(almacenRef.current, {
+        idPuntoVenta: reserva.idPuntoVenta,
+        numero: reserva.numero,
+        estado: 'libre',
+        creadoEn: reserva.creadoEn,
+      })
+    })
+  }
+
+  async function consumirReservaDeCobro(numero: number): Promise<boolean> {
+    return encolarOperacion(async () => {
+      const reserva = await leerReservaDeCobro(almacenRef.current)
+      if (reserva === null || reserva.numero !== numero) return true
+      return borrarReservaDeCobro(almacenRef.current)
+    })
+  }
+
+  async function leerReservaVigenteDeCobro(): Promise<ReservaDeCobro | null> {
+    return encolarOperacion(async () => {
+      const reserva = await leerReservaDeCobro(almacenRef.current)
+      if (reserva === null) return null
+      const [outbox, rechazadas] = await Promise.all([leerOutbox(almacenRef.current), leerRechazadas(almacenRef.current)])
+      if (reservaYaSeVendio(reserva, outbox, rechazadas)) {
+        await borrarReservaDeCobro(almacenRef.current)
+        return null
+      }
+      return reserva
     })
   }
 
@@ -1069,6 +1195,11 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       if (ventaNecesitaElLote(fiscal)) dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: true })
     },
     encolarVentaOffline,
+    reservarNumeroParaCobro,
+    anotarCobroEnCurso,
+    soltarReservaDeCobro,
+    consumirReservaDeCobro,
+    leerReservaDeCobro: leerReservaVigenteDeCobro,
     esperarRespuesta,
     consumoPendienteDeCuentaCorriente,
     reintentarVentaConError,

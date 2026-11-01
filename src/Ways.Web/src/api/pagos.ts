@@ -21,6 +21,8 @@ export type PagoParaCalculo = {
   requiereReferencia: boolean
   importe: number
   referencia: string | null
+  /** Quién cobra por el medio (`mercadopago_qr`): un medio con proveedor no pide referencia, la fija el servidor desde el cobro. */
+  proveedor?: string | null
 }
 
 /** Fila del panel de pagos: estado controlado, igual criterio que el resto de los formularios de
@@ -183,9 +185,10 @@ export function filasAPagosParaCalculo(filas: FilaPago[], medioPorId: Record<num
       idMedioPago: medio.id,
       comportamiento: medio.comportamiento,
       admiteVuelto: medio.admiteVuelto,
-      requiereReferencia: medio.requiereReferencia,
+      requiereReferencia: medio.requiereReferencia && !medio.proveedor,
       importe: fila.importe,
-      referencia: fila.referencia.trim() === '' ? null : fila.referencia.trim(),
+      referencia: medio.proveedor || fila.referencia.trim() === '' ? null : fila.referencia.trim(),
+      ...(medio.proveedor ? { proveedor: medio.proveedor } : {}),
     })
   }
   return pagos

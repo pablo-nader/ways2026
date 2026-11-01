@@ -208,6 +208,9 @@ export type MedioPagoListado = CatalogoListado & {
   requiereReferencia: boolean
   recargoPorcentaje: number | null
   porcentajeFacturacion: number
+  /** Quién cobra por el medio (`mercadopago_qr`) o null. Ausente en un medio armado desde una instantánea guardada
+   * antes de este campo: se lee como null. */
+  proveedor?: string | null
 }
 export type MedioPagoAlta = {
   nombre: string
@@ -248,6 +251,8 @@ export type MedioPagoAdministradoAlta = MedioPagoAlta & {
   retencionIibbPorcentaje: number
   retencionIvaPorcentaje: number
   retencionGananciasPorcentaje: number
+  /** Siempre se manda: null quita el proveedor (el servidor conserva lo guardado si el campo falta). */
+  proveedor: string | null
 }
 
 export type CategoriaListado = CatalogoListado & { orden: number; idCategoriaPadre: number | null }
@@ -1511,6 +1516,8 @@ export type MedioPagoDeInstantanea = {
   requiereReferencia: boolean
   /** Ausente en una copia guardada antes de este campo: se lee como 0. */
   porcentajeFacturacion?: number
+  /** Quién cobra por el medio (`mercadopago_qr`) o null. Ausente en una copia guardada antes de este campo: se lee como null. */
+  proveedor?: string | null
 }
 
 /** Respuesta de `GET /api/pos/instantanea?version=2` — espejo de `InstantaneaDePos`. `momento` es
@@ -2224,7 +2231,14 @@ export type LineaDeVenta = {
    * descuento de oferta de la línea como importe, sobre las unidades que no consumió un combo (espejo de `LineaDeVenta`). */
   descuentoDeOfertaDeLinea?: number
 }
-export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
+export type PagoDeVenta = {
+  idMedioPago: number
+  importe: number
+  referencia: string | null
+  vuelto: number
+  /** El cobro aprobado de Mercado Pago que paga esta fila: viaja sin `referencia` (la fija el servidor) y con `importe` igual al pagado. */
+  idCobroMercadoPago?: number
+}
 
 /** stage-17-presupuestos-y-remitos, Slice 7 (design: Interfaces/Contracts, decisión 2/tensión
  * T7): `idCliente`/`lineas` pasan a opcionales — con `idPresupuestoOrigen` presente, `lineas` NO
