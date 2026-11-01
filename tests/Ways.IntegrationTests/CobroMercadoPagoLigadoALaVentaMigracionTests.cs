@@ -46,6 +46,8 @@ public class CobroMercadoPagoLigadoALaVentaMigracionTests(WaysApiFixture fixture
         await entorno.MigrarAsync();
 
         Assert.Equal("pendiente", await EscalarAsync<string>(owner, "SELECT estado FROM cobros_mercadopago WHERE numero_preasignado = 1"));
+        Assert.True(await EscalarAsync<bool>(
+            owner, "SELECT fecha_procesada_mercadopago IS NOT NULL FROM cobros_mercadopago WHERE numero_preasignado = 1"));
         Assert.Equal("aprobado", await EscalarAsync<string>(owner, "SELECT estado FROM cobros_mercadopago WHERE numero_preasignado = 2"));
         Assert.Equal("pendiente", await EscalarAsync<string>(owner, "SELECT estado FROM cobros_mercadopago WHERE numero_preasignado = 3"));
         Assert.Equal(
@@ -72,6 +74,7 @@ public class CobroMercadoPagoLigadoALaVentaMigracionTests(WaysApiFixture fixture
             await using var preparacion = owner.CreateCommand();
             preparacion.CommandText =
                 """
+                ALTER TABLE cobros_mercadopago ADD COLUMN fecha_procesada_mercadopago timestamptz NULL;
                 GRANT USAGE ON SCHEMA public TO ways_app;
                 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ways_app;
                 """;

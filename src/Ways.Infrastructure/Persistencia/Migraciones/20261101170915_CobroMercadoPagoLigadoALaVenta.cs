@@ -13,7 +13,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             -- rls-migration-backfills: cobros_mercadopago corre con FORCE ROW LEVEL SECURITY; sin el GUC de plataforma el rol
             -- de la aplicación no ve ninguna fila y el UPDATE no escribe nada.
             UPDATE cobros_mercadopago
-            SET estado = 'pendiente'
+            SET estado = 'pendiente', fecha_procesada_mercadopago = COALESCE(fecha_procesada_mercadopago, now())
             WHERE estado = 'aprobado' AND id_pago_mercadopago IS NULL;
             """;
 

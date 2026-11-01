@@ -195,3 +195,15 @@ Both judges confirmed the round-1 fix introduced one defect: a `processed` order
 - Tests (`MercadoPagoCobrosTests`): processed-without-data sets the column, hides the QR and sets both flags; the mark is set once and does not move; cancel is 409 with no Mercado Pago call and a later readable poll approves; a cancel whose MP 409 reveals the processed order marks it; the mark survives approval but flags nothing; whitespace / empty / over-long ids do not approve; a padded id is stored trimmed.
 - Mutation evidence (one per run, each killed): removing `??= ahora`; disabling the cancel guard; returning `qrData` when informed; dropping `|| pagoInformadoSinDatos` from `verificandoPago`; removing `.Trim()`; removing `SET LOCAL` from the backfill block; removing the `Sql()` call from `Up`.
 - Verification: build 0 errors, `has-pending-model-changes` clean, Domain 2444, Application 1654, integration filter 118 (4 m 26 s).
+
+## Judgment-day E3-T2 verdict
+
+- 2026-11-01: **APPROVED** after two fix rounds. Round 1 (both judges): an approved charge without a payment id made the sale a
+  500; fixed in 3d87a215 (approval needs a payment id, CHECK `ck_cobros_mercadopago_aprobado_con_pago`, typed 409, one MP charge
+  per sale). Re-judgment (both): a processed order without usable payment stayed pendiente forever showing its QR; fixed in
+  23ffd8a1 (`fecha_procesada_mercadopago`, QR hidden, `pagoInformadoSinDatos`, cancel 409, id trimmed, migration demotion under
+  the platform GUC). Final re-judgment: both clean. Applied after it (both suggested): the demotion also marks
+  `fecha_procesada_mercadopago`, so a demoted row hides its QR from the first read.
+- Accepted (documented): numbering is per (PV, tipo) while the charge carries (PV, número); annulling a charged sale leaves the
+  charge linked (refunds are E6); a charge informed without data keeps the number blocked until it is confirmed or approved
+  manually (E5).
