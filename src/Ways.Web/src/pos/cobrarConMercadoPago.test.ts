@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { clienteDeCobrosMercadoPago, CobroMercadoPago } from '../api/cobrosMercadoPago'
-import { cobrarConMercadoPago, resolverResultadoDelCobro, type ReservaDeCobroEnPos } from './cobrarConMercadoPago'
+import { cobrarConMercadoPago, resolverResultadoDelCobro, sanarReservaYaVendida, type ReservaDeCobroEnPos } from './cobrarConMercadoPago'
 import type { ResultadoDelCobro } from './ModalDeCobroMercadoPago'
 import type { ReservaLeida } from './reservaDeCobro'
 
@@ -385,5 +385,102 @@ describe('resolverResultadoDelCobro', () => {
 
     expect(soltar).toHaveBeenCalledWith(500)
     expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('se canceló') })
+  })
+})
+
+describe('sanarReservaYaVendida', () => {
+  it('si el servidor marca el cobro como usado en una venta, consume el número con el dueño de la reserva', async () => {
+    const consumir = vi.fn().mockResolvedValue(true)
+    const consultar = vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro({ usadoEnVenta: true }))
+
+    const resultado = await sanarReservaYaVendida({ idCobro: 31, numero: 500, dueno: 'abc' }, { consultar, consumirReservaDeCobro: consumir })
+
+    expect(resultado).toBe('sanada')
+    expect(consumir).toHaveBeenCalledWith(500, 'abc')
+  })
+
+  it('con el cobro todavía sin venta no consume nada y devuelve el cobro vivo', async () => {
+    const consumir = vi.fn().mockResolvedValue(true)
+    const vivo = cobro()
+
+    const resultado = await sanarReservaYaVendida(
+      { idCobro: 31, numero: 500 },
+      { consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(vivo), consumirReservaDeCobro: consumir },
+    )
+
+    expect(resultado).toBe(vivo)
+    expect(consumir).not.toHaveBeenCalled()
+  })
+
+  it('si no se puede consultar, devuelve null y no toca la reserva', async () => {
+    const consumir = vi.fn().mockResolvedValue(true)
+
+    const resultado = await sanarReservaYaVendida(
+      { idCobro: 31, numero: 500 },
+      { consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockRejectedValue(new ErrorDeRed(new TypeError('x'))), consumirReservaDeCobro: consumir },
+    )
+
+    expect(resultado).toBeNull()
+    expect(consumir).not.toHaveBeenCalled()
+  })
+})
+
+describe('cobros aprobados sin venta ofrecen apartarse', () => {
+  it('un aprobado de otro punto de venta se detiene con el cobro apartable y el dueño de la reserva', async () => {
+    const { deps } = armar({
+      previa: enCurso({ idPuntoVenta: 9, dueno: 'tok' }),
+      consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(aprobado),
+    })
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(resultado).toMatchObject({
+      tipo: 'detenido',
+      apartable: { dueno: 'tok', cobro: { idCobro: 31, numero: 500, idPuntoVenta: 9, idMedioPago: 4, importe: 1500, importePagado: 1500 } },
+    })
+  })
+
+  it('un aprobado cuyo número ya no es el próximo del bloque se detiene con el cobro apartable', async () => {
+    const { deps } = armar({ previa: enCurso({ fueraDeBloque: true }), consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(aprobado) })
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(resultado).toMatchObject({ tipo: 'detenido', apartable: { cobro: { idCobro: 31 } }, mensaje: expect.stringContaining('Apartalo') })
+  })
+
+  it('un aprobado con otro importe se detiene con el cobro apartable', async () => {
+    const { deps } = armar({ previa: enCurso(), consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(aprobado) })
+
+    const resultado = await cobrarConMercadoPago(deps, { idMedioPago: 4, importe: 900 })
+
+    expect(resultado).toMatchObject({ tipo: 'detenido', apartable: { cobro: { idCobro: 31, importePagado: 1500 } } })
+  })
+
+  it('el importe distinto del modal también deja el cobro apartable', async () => {
+    const distinto = cobro({ estado: 'aprobado', qrData: null, importePagado: 1400, importeDistinto: true })
+
+    const resultado = await resolverResultadoDelCobro({ tipo: 'importe_distinto', cobro: distinto }, 500, { soltarReservaDeCobro: vi.fn() }, { idPuntoVenta: 7, dueno: 'tok', idMedioPago: 4 })
+
+    expect(resultado).toMatchObject({ tipo: 'detenido', apartable: { dueno: 'tok', cobro: { idCobro: 31, importe: 1500, importePagado: 1400 } } })
+  })
+
+  it('un cobro pendiente que no coincide no es apartable', async () => {
+    const { deps } = armar({ previa: enCurso({ importe: 900 }), consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro()) })
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(resultado).toMatchObject({ tipo: 'detenido' })
+    expect(resultado).not.toHaveProperty('apartable')
+  })
+
+  it('la reserva presenta el dueño de la reserva anterior al soltarla', async () => {
+    const { deps, reserva } = armar({
+      previa: enCurso({ dueno: 'tok' }),
+      consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro({ estado: 'expirado', qrData: null })),
+    })
+
+    await cobrarConMercadoPago(deps, PAGO)
+
+    expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500, 'tok')
   })
 })

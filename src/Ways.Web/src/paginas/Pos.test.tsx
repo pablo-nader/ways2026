@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import type { ComponentProps } from 'react'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -55,7 +55,7 @@ import { ProveedorDeAccionesDePos, useAccionesDePos } from '../pos/AccionesDePos
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerBloque, leerOutbox } from '../pos/outboxOffline'
-import { guardarReservaDeCobro, leerReservaDeCobro } from '../pos/reservaDeCobro'
+import { guardarReservaDeCobro, leerCobrosSinVenta, leerReservaDeCobro } from '../pos/reservaDeCobro'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 /** `Pos()` (stage-17-presupuestos-y-remitos, Slice 7) lee `useSearchParams` — necesita un Router
@@ -11916,33 +11916,150 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
       expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
     })
 
-    // F1: mientras el cobro está en curso ninguna otra venta corre.
-    it('mientras el cobro está en curso, otra venta (en efectivo) se bloquea con un aviso y no toma el número', async () => {
+    // R1a: la reserva solo frena a la venta LOCAL (tomaría su número); una venta común por el camino online lleva el número del servidor.
+    it('una venta común (efectivo) no se bloquea con un cobro vivo: sale online con el número del servidor y la reserva queda intacta', async () => {
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_COBROS) return servidor.crear(cuerpo)
+        if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ numeroVisible: '0007-00000999' }))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
       await recargarConCobroVivo()
       await screen.findByRole('button', { name: 'Retomar cobro' })
 
       await cargarLineaYMedio(medioEfectivo.nombre)
       await userEvent.click(botonCobrar())
 
-      expect(await screen.findByText(/Hay un cobro de Mercado Pago en curso: retomalo o cancelalo/, { selector: '.alert' })).toBeInTheDocument()
-      expect(apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')).toHaveLength(0)
+      expect(await screen.findByText('Venta finalizada')).toBeInTheDocument()
+      const ventas = apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')
+      expect(ventas).toHaveLength(1)
+      expect((ventas[0][1] as { numeroPreasignado?: number }).numeroPreasignado).toBeUndefined()
       const almacen = crearAlmacenIndexedDb()
       expect(await leerOutbox(almacen)).toEqual([])
       expect((await leerBloque(almacen))?.proximo).toBe(500)
+      expect(await leerReservaDeCobro(almacen)).toMatchObject({ numero: 500, idCobro: 31 })
     })
 
-    // F4: una reserva vieja de un cobro que una venta ya usó se descarta sola.
-    it('si el servidor dice que una venta ya usó el cobro, el aviso de retomar desaparece y la reserva se descarta', async () => {
+    it('sin conexión, la venta local que tomaría el número del cobro se bloquea con un aviso y no toma el número', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await recargarConCobroVivo()
+        await screen.findByRole('button', { name: 'Retomar cobro' })
+
+        await cargarLineaYMedio(medioEfectivo.nombre)
+        await userEvent.click(botonCobrar())
+
+        expect(await screen.findByText(/Hay un cobro de Mercado Pago en curso: retomalo o cancelalo/, { selector: '.alert' })).toBeInTheDocument()
+        expect(apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')).toHaveLength(0)
+        const almacen = crearAlmacenIndexedDb()
+        expect(await leerOutbox(almacen)).toEqual([])
+        expect((await leerBloque(almacen))?.proximo).toBe(500)
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    // R2: una reserva vieja de un cobro que una venta ya usó se sana sola al montar, sin mostrar nada.
+    it('con conexión, si el servidor dice que una venta ya usó el cobro, la reserva se sana al montar: sin aviso y el bloque deja atrás el número', async () => {
       servidor.leer.mockResolvedValue(cobroAprobado({ usadoEnVenta: true }))
       await recargarConCobroVivo()
-      await screen.findByRole('button', { name: 'Retomar cobro' })
 
+      const almacen = crearAlmacenIndexedDb()
+      await waitFor(async () => expect(await leerReservaDeCobro(almacen)).toBeNull())
+      expect((await leerBloque(almacen))?.proximo).toBe(501)
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      expect(screen.queryByText(/Cargá la venta/)).not.toBeInTheDocument()
+    })
+
+    it('"Retomar cobro" consulta el cobro primero: si la venta ya se registró, consume el número y no muestra el QR ni pide cargar la venta', async () => {
+      await recargarConCobroVivo()
+      await screen.findByRole('button', { name: 'Retomar cobro' })
+      servidor.leer.mockResolvedValue(cobroAprobado({ usadoEnVenta: true }))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Retomar cobro' }))
+
+      const almacen = crearAlmacenIndexedDb()
+      await waitFor(async () => expect(await leerReservaDeCobro(almacen)).toBeNull())
+      expect((await leerBloque(almacen))?.proximo).toBe(501)
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      expect(qrEnPantalla()).not.toBeInTheDocument()
+      expect(screen.queryByText(/Cargá la venta/)).not.toBeInTheDocument()
+    })
+
+    // R1b: un cobro aprobado sin venta tiene una salida explícita que libera la caja sin dejar un hueco.
+    it('"Apartar cobro y liberar la caja" del aviso: confirma, mueve el cobro a la lista, libera la caja y la próxima venta lleva el mismo número', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Apartar cobro' }))
+
+      expect(await screen.findByText(/Cobros de Mercado Pago sin venta/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      const almacen = crearAlmacenIndexedDb()
+      expect(await leerReservaDeCobro(almacen)).toBeNull()
+      expect((await leerBloque(almacen))?.proximo).toBe(500)
+      expect(await leerCobrosSinVenta(almacen)).toMatchObject([{ idCobro: 31, numero: 500, idPuntoVenta: 7, idMedioPago: medioMercadoPago.id, importe: 100, importePagado: 100 }])
+
+      await cargarLineaYMedio(medioEfectivo.nombre)
+      await userEvent.click(botonCobrar())
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([500])
+    })
+
+    it('la lista de cobros sin venta sobrevive a una recarga y muestra importe y cobro', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Apartar cobro' }))
+      await screen.findByText(/Cobros de Mercado Pago sin venta/)
+
+      cleanup()
+      await montar()
+
+      expect(await screen.findByText(/Cobros de Mercado Pago sin venta/)).toBeInTheDocument()
+      expect(screen.getByText(/cobro 31/)).toBeInTheDocument()
+      expect(screen.getByText(/necesitan a un supervisor/)).toBeInTheDocument()
+    })
+
+    it('si el cajero se arrepiente en la confirmación, el cobro sigue como estaba', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Volver' }))
+
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, idCobro: 31 })
+      expect(await leerCobrosSinVenta(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    it('un cobro todavía pendiente no se aparta: se avisa que se retome o cancele', async () => {
+      await recargarConCobroVivo()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+
+      expect(await screen.findByText(/El cobro sigue pendiente: retomalo o cancelalo/)).toBeInTheDocument()
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, idCobro: 31 })
+      expect(await leerCobrosSinVenta(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    it('un importe distinto detiene la venta con la salida "Apartar cobro y liberar la caja"', async () => {
+      await prepararAlmacenConBloque()
+      await montar()
       await cargarLineaYMedio()
       await userEvent.click(botonCobrar())
+      await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+      servidor.leer.mockResolvedValue(cobroAprobado({ importePagado: 90, importeDistinto: true }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Entendido' }))
 
-      // Con el cobro ya usado se sigue con uno nuevo (la reserva consumida deja el número atrás).
-      await waitFor(() => expect(crearCobroLlamadas()).toHaveLength(1))
-      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Apartar cobro' }))
+
+      expect(await screen.findByText(/quedó apartado y la caja puede vender/)).toBeInTheDocument()
+      const almacen = crearAlmacenIndexedDb()
+      expect(await leerReservaDeCobro(almacen)).toBeNull()
+      expect(await leerCobrosSinVenta(almacen)).toMatchObject([{ idCobro: 31, numero: 500, importe: 100, importePagado: 90 }])
+      expect((await leerBloque(almacen))?.proximo).toBe(500)
     })
 
     it('un cobro que ya se aprobó mientras tanto se retoma sin carrito: queda vivo para la próxima venta del mismo importe', async () => {

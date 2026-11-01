@@ -254,7 +254,7 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
   })
 
   it('rechazoOfflineEsDefinitivo solo para los rechazos que el servidor ya contestó', () => {
-    expect(rechazoOfflineEsDefinitivo('cobro_en_curso')).toBe(true)
+    expect(rechazoOfflineEsDefinitivo('cobro_en_curso')).toBe(false)
     expect(rechazoOfflineEsDefinitivo('instantanea_sin_integracion')).toBe(false)
     expect(rechazoOfflineEsDefinitivo('limite_credito_excedido')).toBe(true)
     expect(rechazoOfflineEsDefinitivo('cuenta_corriente_no_verificada')).toBe(true)

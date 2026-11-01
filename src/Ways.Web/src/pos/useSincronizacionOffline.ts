@@ -46,11 +46,17 @@ import {
   type VentaRechazada,
 } from './outboxOffline'
 import {
+  agregarCobroSinVenta,
   borrarReservaDeCobro,
+  conCandadoDeReserva,
+  esLaMismaReserva,
   guardarReservaDeCobro,
+  leerCobrosSinVenta,
   leerReservaDeCobro,
+  nuevoDuenoDeReserva,
   reservaEsElProximoDelBloque,
   reservaYaSeVendio,
+  type CobroSinVenta,
   type ReservaDeCobro,
   type ReservaLeida,
 } from './reservaDeCobro'
@@ -122,7 +128,7 @@ export const INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR =
  * respuesta del servidor sobre el límite; `false` en cualquier otro caso. */
 /** Resultado de apartar el número de una venta cobrada con Mercado Pago: el `proximo` del bloque, sin consumirlo. */
 export type ReservaDeNumeroParaCobro =
-  | { ok: true; numero: number }
+  | { ok: true; numero: number; dueno: string }
   | { ok: false; motivo: 'sin_numeracion' | 'error_al_guardar' | 'cobro_en_curso' }
 
 export type EncoladoOffline =
@@ -238,11 +244,18 @@ export type ResultadoDeSincronizacionOffline = {
    * haber confirmado la escritura. */
   reservarNumeroParaCobro: (idPuntoVenta: number) => Promise<ReservaDeNumeroParaCobro>
   /** Liga la reserva al cobro creado en el servidor. `false` si no se pudo guardar. */
-  anotarCobroEnCurso: (datos: { numero: number; idCobro: number; idMedioPago: number; importe: number }) => Promise<boolean>
-  /** La reserva se cancela (cobro cancelado, vencido o no creado): el número no se consumió, así que no queda ningún hueco. */
-  soltarReservaDeCobro: (numero: number) => Promise<boolean>
-  /** La venta de ese número se registró por fuera del outbox (online): el bloque avanza más allá del número y la reserva se da de baja. */
-  consumirReservaDeCobro: (numero: number) => Promise<boolean>
+  anotarCobroEnCurso: (datos: { numero: number; idCobro: number; idMedioPago: number; importe: number; dueno?: string }) => Promise<boolean>
+  /** La reserva se cancela (cobro cancelado, vencido o no creado): el número no se consumió, así que no queda ningún hueco. Solo actúa
+   * si `dueno` es el de la reserva guardada (por omisión, el de la que esta instancia apartó): nunca suelta la de otra pestaña. */
+  soltarReservaDeCobro: (numero: number, dueno?: string) => Promise<boolean>
+  /** La venta de ese número se registró por fuera del outbox (online): el bloque avanza más allá del número y la reserva se da de baja.
+   * Mismo criterio de dueño que `soltarReservaDeCobro`. */
+  consumirReservaDeCobro: (numero: number, dueno?: string) => Promise<boolean>
+  /** Aparta un cobro aprobado sin venta en la lista durable "cobros sin venta" y libera la reserva (el número nunca se consumió: no
+   * hay hueco). `false` si no quedó en la lista o si la reserva guardada es de otro cobro: en ese caso no se suelta nada. */
+  apartarCobroSinVenta: (datos: { numero: number; dueno?: string; cobro: Omit<CobroSinVenta, 'apartadoEn'> }) => Promise<boolean>
+  /** La lista durable de cobros apartados sin venta. */
+  leerCobrosSinVenta: () => Promise<CobroSinVenta[]>
   /** La reserva guardada, para retomarla tras una recarga; `null` si no hay o si su venta ya se encoló. `fueraDeBloque` avisa que su
    * número ya no es el próximo del bloque (el bloque cambió): la venta ya no puede llevarlo. */
   leerReservaDeCobro: () => Promise<ReservaLeida | null>
@@ -355,6 +368,9 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   // Fuente de verdad del bloque local — nunca se muestra en pantalla (goal C solo pide mostrar el
   // outbox), así que vive en un ref puro, sin re-render por cada número consumido.
   const bloqueRef = useRef<BloqueDeNumeracionLocal | null>(null)
+  // Dueño de cada reserva que esta instancia apartó, por número: las demás operaciones lo presentan sin que el llamador lo cargue.
+  const duenosPropiosRef = useRef(new Map<number, string>())
+  const duenoDe = (numero: number, dueno: string | undefined) => dueno ?? duenosPropiosRef.current.get(numero)
 
   // Serializa TODA mutación de outbox/bloque (drenado, reposición, encolado de una venta nueva):
   // sin esto, un drenado en vuelo y un checkout offline concurrente podrían leer-modificar-escribir
@@ -974,19 +990,21 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       await conTiempoLimite(() => reponerBloque(idPv)).catch(() => undefined)
     }
 
-    return encolarOperacion(async () => {
+    return encolarOperacion(() => conCandadoDeReserva(async () => {
       // Con un cobro de Mercado Pago apartado, ninguna otra venta corre: tomaría el número del cobro. La del propio cobro lleva
-      // exactamente ese número, que tiene que seguir siendo el próximo del bloque.
+      // exactamente ese número, que tiene que seguir siendo el próximo del bloque PERSISTIDO (otra pestaña pudo moverlo).
       const reservaGuardada = await leerReservaDeCobro(almacenRef.current)
       const idPuntoVentaDeLaVenta = paramsVenta.solicitudBase.idPuntoVenta
       const consumeLaReserva = paramsVenta.numeroReservado !== undefined
       if (consumeLaReserva) {
+        const persistido = reservaGuardada === null ? null : await leerBloque(almacenRef.current)
         const coincide =
           reservaGuardada !== null &&
           reservaGuardada.numero === paramsVenta.numeroReservado &&
           reservaGuardada.idPuntoVenta === idPuntoVentaDeLaVenta &&
-          reservaEsElProximoDelBloque(reservaGuardada, bloqueRef.current)
+          reservaEsElProximoDelBloque(reservaGuardada, persistido)
         if (!coincide) return { ok: false, motivo: 'reserva_de_cobro_perdida' }
+        bloqueRef.current = persistido
       } else if (reservaGuardada !== null) {
         return { ok: false, motivo: 'cobro_en_curso' }
       }
@@ -1043,7 +1061,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         numero: numeroDeLaVenta,
         limiteDeCreditoNoValidado,
       }
-    })
+    }))
   }
 
   async function reservarNumeroParaCobro(idPv: number): Promise<ReservaDeNumeroParaCobro> {
@@ -1053,22 +1071,27 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       await conTiempoLimite(() => reponerBloque(idPv)).catch(() => undefined)
     }
 
-    return encolarOperacion(async () => {
+    return encolarOperacion(() => conCandadoDeReserva(async () => {
       const guardada = await leerReservaDeCobro(almacenRef.current)
       // Una reserva sin cobro es el resto de un intento que no llegó a crearlo: no hay nada vivo que proteger.
       if (guardada !== null && guardada.idCobro !== undefined) return { ok: false, motivo: 'cobro_en_curso' }
+      // El próximo número sale del bloque persistido: otra pestaña pudo haberlo movido desde que esta lo leyó.
+      const persistido = await leerBloque(almacenRef.current)
+      if (persistido !== null && persistido.idPuntoVenta === idPv) bloqueRef.current = persistido
       const bloque = bloqueDelPuntoDeVenta()
       if (bloque === null || numerosDisponibles(bloque) === 0) return { ok: false, motivo: 'sin_numeracion' }
-      const nueva: ReservaDeCobro = { idPuntoVenta: idPv, numero: bloque.proximo, estado: 'en_curso', creadoEn: new Date().toISOString() }
+      const dueno = nuevoDuenoDeReserva()
+      const nueva: ReservaDeCobro = { idPuntoVenta: idPv, numero: bloque.proximo, estado: 'en_curso', dueno, creadoEn: new Date().toISOString() }
       if (!(await guardarReservaDeCobro(almacenRef.current, nueva))) return { ok: false, motivo: 'error_al_guardar' }
-      return { ok: true, numero: nueva.numero }
-    })
+      duenosPropiosRef.current.set(nueva.numero, dueno)
+      return { ok: true, numero: nueva.numero, dueno }
+    }))
   }
 
-  async function anotarCobroEnCurso(datos: { numero: number; idCobro: number; idMedioPago: number; importe: number }): Promise<boolean> {
-    return encolarOperacion(async () => {
+  async function anotarCobroEnCurso(datos: { numero: number; idCobro: number; idMedioPago: number; importe: number; dueno?: string }): Promise<boolean> {
+    return encolarOperacion(() => conCandadoDeReserva(async () => {
       const reserva = await leerReservaDeCobro(almacenRef.current)
-      if (reserva === null || reserva.numero !== datos.numero) return false
+      if (reserva === null || !esLaMismaReserva(reserva, datos.numero, duenoDe(datos.numero, datos.dueno))) return false
       return guardarReservaDeCobro(almacenRef.current, {
         ...reserva,
         estado: 'en_curso',
@@ -1076,24 +1099,26 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         idMedioPago: datos.idMedioPago,
         importe: datos.importe,
       })
-    })
+    }))
   }
 
-  async function soltarReservaDeCobro(numero: number): Promise<boolean> {
-    return encolarOperacion(async () => {
+  async function soltarReservaDeCobro(numero: number, dueno?: string): Promise<boolean> {
+    return encolarOperacion(() => conCandadoDeReserva(async () => {
       const reserva = await leerReservaDeCobro(almacenRef.current)
-      if (reserva === null || reserva.numero !== numero) return true
-      return borrarReservaDeCobro(almacenRef.current)
-    })
+      if (reserva === null || !esLaMismaReserva(reserva, numero, duenoDe(numero, dueno))) return true
+      const borrada = await borrarReservaDeCobro(almacenRef.current)
+      if (borrada) duenosPropiosRef.current.delete(numero)
+      return borrada
+    }))
   }
 
-  async function consumirReservaDeCobro(numero: number): Promise<boolean> {
-    return encolarOperacion(async () => {
+  async function consumirReservaDeCobro(numero: number, dueno?: string): Promise<boolean> {
+    return encolarOperacion(() => conCandadoDeReserva(async () => {
       try {
         const reserva = await leerReservaDeCobro(almacenRef.current)
-        if (reserva === null || reserva.numero !== numero) return true
+        if (reserva === null || !esLaMismaReserva(reserva, numero, duenoDe(numero, dueno))) return true
         // La venta ya salió con ese número: el bloque lo deja atrás, así que ninguna otra venta lo vuelve a tomar.
-        const bloque = bloqueRef.current
+        const bloque = await leerBloque(almacenRef.current)
         if (bloque !== null && reservaEsElProximoDelBloque(reserva, bloque)) {
           const tomado = tomarProximoNumero(bloque)
           if (tomado) {
@@ -1101,15 +1126,34 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
             await guardarBloque(almacenRef.current, tomado.bloqueRestante)
           }
         }
-        return await borrarReservaDeCobro(almacenRef.current)
+        const borrada = await borrarReservaDeCobro(almacenRef.current)
+        if (borrada) duenosPropiosRef.current.delete(numero)
+        return borrada
       } catch {
         return false
       }
-    })
+    }))
+  }
+
+  async function apartarCobroSinVenta(datos: { numero: number; dueno?: string; cobro: Omit<CobroSinVenta, 'apartadoEn'> }): Promise<boolean> {
+    return encolarOperacion(() => conCandadoDeReserva(async () => {
+      try {
+        const reserva = await leerReservaDeCobro(almacenRef.current)
+        // Una reserva de otro cobro (u otra pestaña) no se toca: el cobro apartado ya no es el que la tenía.
+        if (reserva !== null && (!esLaMismaReserva(reserva, datos.numero, duenoDe(datos.numero, datos.dueno)) || reserva.idCobro !== datos.cobro.idCobro)) return false
+        if (!(await agregarCobroSinVenta(almacenRef.current, { ...datos.cobro, apartadoEn: new Date().toISOString() }))) return false
+        if (reserva === null) return true
+        const borrada = await borrarReservaDeCobro(almacenRef.current)
+        if (borrada) duenosPropiosRef.current.delete(datos.numero)
+        return borrada
+      } catch {
+        return false
+      }
+    }))
   }
 
   async function leerReservaVigenteDeCobro(): Promise<ReservaLeida | null> {
-    return encolarOperacion(async () => {
+    return encolarOperacion(() => conCandadoDeReserva(async () => {
       const reserva = await leerReservaDeCobro(almacenRef.current)
       if (reserva === null) return null
       const [outbox, rechazadas, bloque] = await Promise.all([
@@ -1127,7 +1171,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         return null
       }
       return { ...reserva, fueraDeBloque: !reservaEsElProximoDelBloque(reserva, bloque) }
-    })
+    }))
   }
 
   /** judgment-day ronda 2 (WARNING): ver el doc-comment de `reintentarVentaConError` en
@@ -1209,6 +1253,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     anotarCobroEnCurso,
     soltarReservaDeCobro,
     consumirReservaDeCobro,
+    apartarCobroSinVenta,
+    leerCobrosSinVenta: () => leerCobrosSinVenta(almacenRef.current),
     leerReservaDeCobro: leerReservaVigenteDeCobro,
     esperarRespuesta,
     consumoPendienteDeCuentaCorriente,

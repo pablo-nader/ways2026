@@ -1,11 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
 import { useSincronizacionOffline } from './useSincronizacionOffline'
 import { agregarAOutbox, guardarBloque, leerBloque, leerOutbox, type BloqueDeNumeracionLocal } from './outboxOffline'
 import { guardarInstantaneaLocal } from './instantaneaOffline'
-import { borrarReservaDeCobro, guardarReservaDeCobro, leerReservaDeCobro } from './reservaDeCobro'
+import { borrarReservaDeCobro, guardarReservaDeCobro, leerCobrosSinVenta, leerReservaDeCobro } from './reservaDeCobro'
 import { reiniciarLotesDeFacturacionParaTests } from './loteDeFacturacion'
 import type { AlmacenClaveValor } from './almacenPos'
 import type { InstantaneaDePos, SolicitudDeVenta } from '../api/tipos'
@@ -125,7 +125,7 @@ describe('reservarNumeroParaCobro (aparta el próximo número SIN consumirlo)', 
       reserva = await result.current.reservarNumeroParaCobro(7)
     })
 
-    expect(reserva).toEqual({ ok: true, numero: 500 })
+    expect(reserva).toMatchObject({ ok: true, numero: 500 })
     expect((await leerBloque(almacen))?.proximo).toBe(500)
     expect(await leerReservaDeCobro(almacen)).toMatchObject({ idPuntoVenta: 7, numero: 500, estado: 'en_curso' })
   })
@@ -142,7 +142,7 @@ describe('reservarNumeroParaCobro (aparta el próximo número SIN consumirlo)', 
       segunda = await result.current.reservarNumeroParaCobro(7)
     })
 
-    expect(segunda).toEqual({ ok: true, numero: 500 })
+    expect(segunda).toMatchObject({ ok: true, numero: 500 })
     expect((await leerBloque(almacen))?.proximo).toBe(500)
   })
 
@@ -388,7 +388,7 @@ describe('soltar, consumir y leer la reserva', () => {
     await act(async () => {
       siguiente = await result.current.reservarNumeroParaCobro(7)
     })
-    expect(siguiente).toEqual({ ok: true, numero: 501 })
+    expect(siguiente).toMatchObject({ ok: true, numero: 501 })
   })
 
   it('leerReservaDeCobro devuelve la reserva en curso para retomarla tras una recarga', async () => {
@@ -464,5 +464,326 @@ describe('reservaDeCobro (almacén)', () => {
     await almacen.escribir('reservaDeCobroMercadoPago', { idPuntoVenta: 7, numero: 5, estado: 'libre', creadoEn: 'x' })
 
     await expect(leerReservaDeCobro(almacen)).resolves.toBeNull()
+  })
+})
+
+const cobroAprobadoSinVenta = (idCobro = 31, numero = 500) => ({ idCobro, numero, idPuntoVenta: 7, idMedioPago: 4, importe: 100, importePagado: 100 })
+
+describe('apartarCobroSinVenta (R1b: la salida de un cobro aprobado sin venta)', () => {
+  it('mueve el cobro a la lista durable, suelta la reserva sin consumir el número y la próxima venta lo lleva (sin hueco)', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+    })
+
+    let apartado
+    await act(async () => {
+      apartado = await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect(apartado).toBe(true)
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
+    expect(await leerCobrosSinVenta(almacen)).toMatchObject([cobroAprobadoSinVenta()])
+    let encolado
+    await act(async () => {
+      encolado = await result.current.encolarVentaOffline(ventaEfectivo())
+    })
+    expect(encolado).toMatchObject({ ok: true, numero: 500 })
+    expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([500])
+  })
+
+  it('la lista persiste: otra instancia del hook sobre el mismo almacén la lee', async () => {
+    const almacen = await preparar()
+    const primera = await montar(almacen)
+    await act(async () => {
+      await primera.result.current.reservarNumeroParaCobro(7)
+      await primera.result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+      await primera.result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+    primera.unmount()
+
+    const segunda = await montar(almacen)
+    let lista
+    await act(async () => {
+      lista = await segunda.result.current.leerCobrosSinVenta()
+    })
+
+    expect(lista).toMatchObject([{ idCobro: 31, importePagado: 100, apartadoEn: expect.any(String) }])
+  })
+
+  it('es de solo altas: apartar otro cobro conserva el anterior y apartar el mismo no lo duplica', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 32, idMedioPago: 4, importe: 100 })
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta(32) })
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta(32) })
+    })
+
+    expect((await leerCobrosSinVenta(almacen)).map((c) => c.idCobro)).toEqual([31, 32])
+  })
+
+  it('con la reserva de OTRO cobro no suelta nada ni agrega nada a la lista', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 77, idMedioPago: 4, importe: 100 })
+    })
+
+    let apartado
+    await act(async () => {
+      apartado = await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta(31) })
+    })
+
+    expect(apartado).toBe(false)
+    expect(await leerReservaDeCobro(almacen)).toMatchObject({ idCobro: 77 })
+    expect(await leerCobrosSinVenta(almacen)).toEqual([])
+  })
+
+  it('si la lista no se puede escribir, la reserva se conserva', async () => {
+    const almacen = await preparar()
+    const original = almacen.escribir.bind(almacen)
+    almacen.escribir = async (clave, valor) => (clave === 'cobrosMercadoPagoSinVenta' ? false : original(clave, valor))
+    const { result } = await montar(almacen)
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+    })
+
+    let apartado
+    await act(async () => {
+      apartado = await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect(apartado).toBe(false)
+    expect(await leerReservaDeCobro(almacen)).toMatchObject({ idCobro: 31 })
+  })
+
+  it('un cobro de la reserva que otra pestaña ya soltó igual queda en la lista (el cobro aprobado no se pierde)', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+
+    let apartado
+    await act(async () => {
+      apartado = await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect(apartado).toBe(true)
+    expect(await leerCobrosSinVenta(almacen)).toHaveLength(1)
+  })
+})
+
+describe('R3: dueño de la reserva (compare-and-set entre pestañas)', () => {
+  it('la reserva guarda un dueño y reservar lo devuelve', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+
+    let reserva
+    await act(async () => {
+      reserva = await result.current.reservarNumeroParaCobro(7)
+    })
+
+    const guardada = await leerReservaDeCobro(almacen)
+    expect(guardada?.dueno).toEqual(expect.any(String))
+    expect(reserva).toMatchObject({ ok: true, dueno: guardada?.dueno })
+  })
+
+  it('otra pestaña (otra instancia, sin el dueño) no suelta, no consume, no anota ni aparta la reserva ajena', async () => {
+    const almacen = await preparar()
+    const a = await montar(almacen)
+    const b = await montar(almacen)
+    await act(async () => {
+      await a.result.current.reservarNumeroParaCobro(7)
+      await a.result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+    })
+
+    let anotado
+    let apartado
+    await act(async () => {
+      await b.result.current.soltarReservaDeCobro(500)
+      await b.result.current.consumirReservaDeCobro(500)
+      anotado = await b.result.current.anotarCobroEnCurso({ numero: 500, idCobro: 99, idMedioPago: 4, importe: 5 })
+      apartado = await b.result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect(anotado).toBe(false)
+    expect(apartado).toBe(false)
+    expect(await leerReservaDeCobro(almacen)).toMatchObject({ numero: 500, idCobro: 31 })
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
+    await act(async () => {
+      await a.result.current.soltarReservaDeCobro(500)
+    })
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+  })
+
+  it('un soltar con el dueño de una reserva anterior no toca la nueva reserva del MISMO número', async () => {
+    const almacen = await preparar()
+    const a = await montar(almacen)
+    const b = await montar(almacen)
+    await act(async () => {
+      await a.result.current.reservarNumeroParaCobro(7)
+      await a.result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+    })
+    let vista
+    await act(async () => {
+      vista = await b.result.current.leerReservaDeCobro()
+    })
+    const duenoViejo = (vista as unknown as { dueno: string }).dueno
+    await act(async () => {
+      await a.result.current.soltarReservaDeCobro(500)
+      await a.result.current.reservarNumeroParaCobro(7)
+      await a.result.current.anotarCobroEnCurso({ numero: 500, idCobro: 32, idMedioPago: 4, importe: 100 })
+    })
+
+    await act(async () => {
+      await b.result.current.soltarReservaDeCobro(500, duenoViejo)
+      await b.result.current.consumirReservaDeCobro(500, duenoViejo)
+    })
+
+    expect(await leerReservaDeCobro(almacen)).toMatchObject({ numero: 500, idCobro: 32 })
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
+  })
+
+  it('una reserva guardada antes de los dueños (sin dueño) se sigue pudiendo soltar', async () => {
+    const almacen = await preparar()
+    await guardarReservaDeCobro(almacen, reservaEnCurso)
+    const { result } = await montar(almacen)
+
+    await act(async () => {
+      await result.current.soltarReservaDeCobro(500)
+    })
+
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+  })
+
+  it('la venta del propio cobro decide contra el bloque PERSISTIDO: si otra pestaña lo movió, se rechaza sin encolar', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+    })
+    await guardarBloque(almacen, bloque({ proximo: 501 }))
+
+    let encolado
+    await act(async () => {
+      encolado = await result.current.encolarVentaOffline(ventaMp(500))
+    })
+
+    expect(encolado).toEqual({ ok: false, motivo: 'reserva_de_cobro_perdida' })
+    expect(await leerOutbox(almacen)).toEqual([])
+  })
+
+  it('reservar toma el próximo número del bloque persistido, no el que esta pestaña tenía en memoria', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    await guardarBloque(almacen, bloque({ proximo: 510 }))
+
+    let reserva
+    await act(async () => {
+      reserva = await result.current.reservarNumeroParaCobro(7)
+    })
+
+    expect(reserva).toMatchObject({ ok: true, numero: 510 })
+  })
+})
+
+describe('R3: Web Locks serializa las operaciones de la reserva entre pestañas', () => {
+  const originalLocks = Object.getOwnPropertyDescriptor(window.navigator, 'locks')
+  afterEach(() => {
+    if (originalLocks) Object.defineProperty(window.navigator, 'locks', originalLocks)
+    else Reflect.deleteProperty(window.navigator, 'locks')
+  })
+
+  function instalarCandados() {
+    const nombres: string[] = []
+    let dentro = 0
+    let maximoDentro = 0
+    let cola: Promise<unknown> = Promise.resolve()
+    const request = vi.fn((nombre: string, callback: () => Promise<unknown>) => {
+      nombres.push(nombre)
+      const ejecucion = cola.then(async () => {
+        dentro += 1
+        maximoDentro = Math.max(maximoDentro, dentro)
+        try {
+          return await callback()
+        } finally {
+          dentro -= 1
+        }
+      })
+      cola = ejecucion.catch(() => undefined)
+      return ejecucion
+    })
+    Object.defineProperty(window.navigator, 'locks', { configurable: true, value: { request } })
+    return { request, nombres, maximoDentro: () => maximoDentro, dentro: () => dentro }
+  }
+
+  it('reservar, anotar, soltar, consumir, apartar y leer toman el candado "ways-pos-reserva-cobro" y acceden a la reserva solo adentro', async () => {
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+    const candados = instalarCandados()
+    const accesosFueraDelCandado: string[] = []
+    const leerOriginal = almacen.leer.bind(almacen)
+    almacen.leer = async <T,>(clave: string) => {
+      if (clave === 'reservaDeCobroMercadoPago' && candados.dentro() === 0) accesosFueraDelCandado.push(clave)
+      return leerOriginal<T>(clave)
+    }
+
+    await act(async () => {
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+      await result.current.leerReservaDeCobro()
+      await result.current.soltarReservaDeCobro(500)
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.consumirReservaDeCobro(500)
+      await result.current.reservarNumeroParaCobro(7)
+      await result.current.anotarCobroEnCurso({ numero: 501, idCobro: 32, idMedioPago: 4, importe: 100 })
+      await result.current.apartarCobroSinVenta({ numero: 501, cobro: cobroAprobadoSinVenta(32, 501) })
+      await result.current.encolarVentaOffline(ventaEfectivo())
+    })
+
+    expect(new Set(candados.nombres)).toEqual(new Set(['ways-pos-reserva-cobro']))
+    expect(candados.request.mock.calls.length).toBeGreaterThanOrEqual(10)
+    expect(accesosFueraDelCandado).toEqual([])
+  })
+
+  it('dos pestañas operando a la vez nunca están dentro del candado al mismo tiempo', async () => {
+    const almacen = await preparar()
+    const a = await montar(almacen)
+    const b = await montar(almacen)
+    const candados = instalarCandados()
+
+    await act(async () => {
+      await Promise.all([
+        a.result.current.reservarNumeroParaCobro(7),
+        b.result.current.reservarNumeroParaCobro(7),
+        a.result.current.leerReservaDeCobro(),
+        b.result.current.leerReservaDeCobro(),
+      ])
+    })
+
+    expect(candados.request.mock.calls.length).toBeGreaterThanOrEqual(4)
+    expect(candados.maximoDentro()).toBe(1)
+  })
+
+  it('sin navigator.locks las operaciones siguen funcionando', async () => {
+    Reflect.deleteProperty(window.navigator, 'locks')
+    const almacen = await preparar()
+    const { result } = await montar(almacen)
+
+    let reserva
+    await act(async () => {
+      reserva = await result.current.reservarNumeroParaCobro(7)
+    })
+
+    expect(reserva).toMatchObject({ ok: true, numero: 500 })
   })
 })

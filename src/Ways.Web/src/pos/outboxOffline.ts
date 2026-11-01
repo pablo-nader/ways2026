@@ -229,7 +229,7 @@ const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
 /** Rechazos que el servidor ya contestó: la venta no se registra, ni local ni por el camino online
  * (`Pos.tsx` no la reintenta sin número — un envío online sin número arriesga un duplicado). */
 export function rechazoOfflineEsDefinitivo(motivo: MotivoRechazoOffline): boolean {
-  return motivo === 'limite_credito_excedido' || motivo === 'cuenta_corriente_no_verificada' || motivo === 'cobro_en_curso'
+  return motivo === 'limite_credito_excedido' || motivo === 'cuenta_corriente_no_verificada'
 }
 
 /** Una copia local guardada antes de que los medios trajeran `proveedor` (campo ausente, no `null`) no dice cuál medio electrónico
