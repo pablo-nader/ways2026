@@ -20,6 +20,8 @@ Empresa | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | facturaciones_de_venta | id_empresa,id_tenant | marcado
 Empresa | grupos | id_empresa,id_tenant | marcado
 Empresa | listas_precio | id_empresa,id_tenant | marcado
+Empresa | locales_mercadopago via sucursales | id_sucursal,id_empresa,id_tenant | marcado
+Empresa | locales_mercadopago | id_empresa,id_tenant | marcado
 Empresa | marcas | id_empresa,id_tenant | marcado
 Empresa | medios_pago | id_empresa,id_tenant | marcado
 Empresa | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_tenant | sinmarca
@@ -100,6 +102,7 @@ PuntoVenta | turnos_caja | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | locales_mercadopago | id_sucursal,id_empresa,id_tenant | marcado
 Sucursal | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | movimientos_cuenta_corriente_proveedor via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | movimientos_stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
@@ -158,6 +161,7 @@ Tenant | items_presupuesto | id_tenant | marcado
 Tenant | items_remito | id_tenant | marcado
 Tenant | jornadas_personal | id_tenant | sinmarca
 Tenant | listas_precio | id_tenant | marcado
+Tenant | locales_mercadopago | id_tenant | marcado
 Tenant | lotes | id_tenant | marcado
 Tenant | marcas | id_tenant | marcado
 Tenant | medios_pago | id_tenant | marcado
