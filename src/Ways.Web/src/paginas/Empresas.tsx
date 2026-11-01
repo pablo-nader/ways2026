@@ -159,9 +159,9 @@ export function Empresas() {
 
   /**
    * El retorno de Mercado Pago se toma y se borra de la URL al llegar, para cualquier usuario y antes de cualquier espera:
-   * no depende de que la carga termine ni de que la sección se monte. Solo un Admin lo pasa a la sección para canjearlo;
-   * si la carga falla el `code` simplemente no se canjea (el Admin vuelve a conectar). La referencia hace que la segunda
-   * corrida del efecto bajo StrictMode no pise lo ya leído.
+   * no depende de que la carga termine ni de que la sección se monte. Solo un Admin lo pasa a la sección, que lo canjea
+   * cuando se monta (también si la carga de empresas falló). La referencia hace que la segunda corrida del efecto bajo
+   * StrictMode no pise lo ya leído.
    */
   const retornoLeido = useRef(false)
   const [retornoDeMercadoPago, setRetornoDeMercadoPago] = useState<RetornoDeMercadoPago | null>(null)

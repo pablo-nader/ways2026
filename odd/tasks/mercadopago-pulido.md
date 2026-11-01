@@ -162,3 +162,13 @@ Judgment-day over the T2 slice, then PR (stacked on T1) with auto-merge and Auto
 - **Mutation evidence**: `if (retorno) limpiarFragmento()` (clear only for a valid return) -> the malformed-fragment tests in
   `Empresas.test.tsx` and `fragmentoMercadoPago.test.ts` fail; Empresas effect neutered (`setRetornoDeMercadoPago(null)`) -> the four
   fragment tests in `Empresas.test.tsx` fail. Both reverted.
+
+## Judgment-day T2 verdict
+
+- 2026-10-31: **APPROVED** after one fix round. Both judges confirmed PT2-1 (Admin: a malformed fragment or a failed empresas
+  load left the OAuth code/state in the URL), fixed in b5f84b99; the scoped re-judgment of the delta came back clean from both.
+  Re-judge B noted the new comment was wrong (`cargada` is set in `finally`, so the section mounts and exchanges even after a
+  failed load); comment corrected. Suggestion kept (both judges): `confirmarDesconexion` relies on the disabled button, not on
+  `bloqueado`; no path reaches it today.
+- Full vitest: `GrillaDeItemsDeCompra.test.tsx > cambio de proveedor > una fila creada con "+" conserva su artículo y su código`
+  failed in the writer's full runs and passes alone (unrelated file, load-sensitive); left to CI.
