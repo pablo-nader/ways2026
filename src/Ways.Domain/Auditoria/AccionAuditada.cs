@@ -140,6 +140,11 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>id_entidad</c> es el pago.</summary>
     public static readonly AccionAuditada PagoRedondeo = new("pago.redondeo", "pago");
 
+    /// <summary>Reasignación de un pago de sueldo a otro empleado (<c>POST /api/pagos/administracion/{id}/reasignar-personal</c>) —
+    /// <c>Pagos/ServicioDePagos.Reasignacion.cs</c>. Única operación que corrige saldos resultantes ya asentados en el libro del
+    /// personal. El <c>id_entidad</c> es el pago; el payload lleva el empleado y el concepto antes y después.</summary>
+    public static readonly AccionAuditada PagoReasignacion = new("pago.reasignacion", "pago");
+
     /// <summary>Alta de un punto de venta sobre una empresa existente —
     /// <c>Organizacion/ServicioDeOrganizacion.cs</c>, <c>CrearPuntoVentaAsync</c>. Mismo dominio
     /// abreviado <c>pv</c> que <see cref="PuntoVentaBaja"/>. El aprovisionamiento de un tenant
@@ -194,6 +199,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         PagoDesaplicacion,
         CompraRedondeo,
         PagoRedondeo,
+        PagoReasignacion,
         PuntoVentaAlta,
         CompraEdicion,
         CobroAplicacion,

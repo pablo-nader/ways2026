@@ -43,10 +43,12 @@ vi.mock('../api/cliente', () => ({
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
     codigo: string
-    constructor(estado: number, codigo: string, mensaje: string) {
+    datos: Record<string, unknown> | undefined
+    constructor(estado: number, codigo: string, mensaje: string, datos?: Record<string, unknown>) {
       super(mensaje)
       this.estado = estado
       this.codigo = codigo
+      this.datos = datos
     }
   },
 }))
@@ -326,8 +328,8 @@ function diferida<T>() {
 async function abrirAlta() {
   renderArticulos()
   await screen.findByText('Articulo Uno')
-  await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-  await screen.findByText('Nuevo artículo')
+  await userEvent.click(screen.getByRole('button', { name: 'Nuevo artículo' }))
+  await screen.findByRole('dialog', { name: 'Nuevo artículo' })
 }
 
 /** Elige una familia en el selector. El selector está desde el primer render con solo "Sin familia": esperar al elemento no
@@ -356,7 +358,7 @@ async function abrirEdicion(id = 31, codigo = 'A0031') {
 /** El "Agregar" de la pantalla, el de la grilla: dentro del formulario de un artículo hay otro "Agregar" (el
  * de los códigos de barra), así que se lo busca en la cabecera de la caja. */
 function botonNuevo() {
-  return within(screen.getByRole('banner')).getByRole('button', { name: 'Agregar' })
+  return within(screen.getByRole('banner')).getByRole('button', { name: 'Nuevo artículo' })
 }
 
 function unaFamiliaPidioSuDetalle() {
@@ -554,7 +556,7 @@ describe('Articulos — alta: elegir una familia', () => {
   it('los campos propios del artículo siguen editables', async () => {
     await abrirAltaEnLaFamilia()
 
-    for (const etiqueta of ['Código interno', 'Nombre', 'Descripción', 'Marca', 'Activo', 'Disponible para todas las empresas del tenant']) {
+    for (const etiqueta of ['Código interno', 'Nombre', 'Descripción', 'Marca', 'Activo', 'Disponible para todas las empresas']) {
       expect(screen.getByLabelText(etiqueta), etiqueta).toBeEnabled()
     }
   })
@@ -728,9 +730,9 @@ describe('Articulos — alta: elegir una familia', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
     await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).getByRole('button', { name: 'Descartar cambios' }))
-    await waitFor(() => expect(screen.queryByText('Nuevo artículo')).not.toBeInTheDocument())
-    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-    await screen.findByText('Nuevo artículo')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Nuevo artículo' })).not.toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo artículo' }))
+    await screen.findByRole('dialog', { name: 'Nuevo artículo' })
 
     await act(async () => {
       lectura.resolver(detalleSabores())
@@ -2006,7 +2008,7 @@ describe('Articulos — las familias que se ofrecen en un alta se mantienen al d
     await userEvent.click(within(screen.getByRole('dialog', { name: /^Editando artículo/ })).getByRole('button', { name: 'Cancelar' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Editando artículo/ })).not.toBeInTheDocument())
     await userEvent.click(botonNuevo())
-    await screen.findByText('Nuevo artículo')
+    await screen.findByRole('dialog', { name: 'Nuevo artículo' })
   }
 
   function opcionesDelSelector() {
@@ -2492,7 +2494,7 @@ describe('Articulos — alta: "+" para crear una familia nueva', () => {
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Ya existe una familia con ese nombre')
       expect(screen.getByRole('alert')).toHaveTextContent('El artículo no se creó.')
-      expect(screen.getByText('Nuevo artículo')).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
       expect(screen.getByLabelText('Nombre')).toHaveValue('Camisa')
       expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('77,00')
       expect(screen.getByText('Familia nueva: Talles')).toBeInTheDocument()
@@ -3367,6 +3369,131 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
       expect(screen.getAllByText('(de la familia)').length).toBeGreaterThan(0)
       expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeDisabled()
+    })
+  })
+})
+
+
+describe('Articulos — familia que permite desglosar el costo', () => {
+  const sabores = () => detalleSabores({ permiteDesglosarCosto: true })
+
+  describe('edición de un miembro', () => {
+    beforeEach(() => {
+      escenarioDelMiembro({ detalles: { 7: sabores() } })
+      apiPutMock.mockResolvedValue(miembro({ costoLista: 175 }))
+    })
+
+    it('cambiar la composición no pregunta el alcance: guarda directo y sin alcance en el PUT', async () => {
+      await abrirEdicion()
+
+      await cambiarCostoDeLista('175')
+      await guardar()
+
+      await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+      expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
+      expect(pedidosDeEdicion()[0][1]).toMatchObject({ costoLista: 175 })
+      expect(pedidosDeEdicion()[0][1]).not.toHaveProperty('alcance')
+    })
+
+    it('un campo compartido que no es de la composición sigue preguntando, y la lista no nombra el costo de lista', async () => {
+      await abrirEdicion()
+
+      await cambiarCostoDeLista('175')
+      await userEvent.click(screen.getByLabelText(/^Controla lote/))
+      await guardar()
+
+      const dialogo = await screen.findByRole('dialog', { name: 'Cambio en una familia' })
+      expect(dialogo).toHaveTextContent('Campos compartidos que cambian: Controla lote.')
+      expect(dialogo).not.toHaveTextContent('Costo de lista')
+      expect(apiPutMock).not.toHaveBeenCalled()
+    })
+
+    it('explica en la sección de la familia qué es propio y qué se pregunta', async () => {
+      await abrirEdicion()
+
+      expect(screen.getByText(/El costo de lista, su base, el descuento y los impuestos internos son propios de cada artículo/)).toBeInTheDocument()
+    })
+
+    it('409 alcance_requerido con el cambio de nominal: lo muestra antes de las respuestas y, al elegir, reescribe con ese alcance', async () => {
+      apiPutMock.mockReset()
+      apiPutMock.mockRejectedValueOnce(
+        new ErrorApi(409, 'alcance_requerido', 'El costo nominal pasa de $ 120,00 a $ 150,00.', {
+          costoNominalAnterior: 120,
+          costoNominalNuevo: 150,
+        }),
+      )
+      apiPutMock.mockResolvedValueOnce(miembro({ costoLista: 175 }))
+      await abrirEdicion()
+
+      await cambiarCostoDeLista('175')
+      await guardar()
+
+      const dialogo = await screen.findByRole('dialog', { name: 'Cambio en una familia' })
+      expect(dialogo).toHaveTextContent(PREGUNTA_DE_ALCANCE_SABORES)
+      expect(dialogo).toHaveTextContent('El costo nominal pasa de $ 120,00 a $ 150,00. Con "Toda la familia"')
+      expect(screen.queryByText(/Los campos compartidos del artículo cambiaron/)).not.toBeInTheDocument()
+      expect(lecturasDelArticulo(31)).toBe(1)
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Toda la familia' }))
+
+      await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(2))
+      expect(pedidosDeEdicion()[1][1]).toMatchObject({ costoLista: 175, alcance: 'Familia' })
+    })
+  })
+
+  describe('alta dentro de la familia', () => {
+    const creado = articuloFixture({ id: 40, codigoInterno: 'A0040', nombre: 'Frutilla', idFamilia: 7, ...compartidosDelArticulo })
+
+    beforeEach(() => {
+      mockearApi({ familias: [familiaListado({ permiteDesglosarCosto: true })], detalles: { 7: sabores() }, articulos: { 40: creado } })
+      apiPostMock.mockResolvedValue(creado)
+    })
+
+    it('deja editable la composición del costo y sigue bloqueando el resto de los compartidos', async () => {
+      await abrirAltaEnLaFamilia()
+
+      for (const etiqueta of [/^Costo de lista sin IVA/, /^Costo de lista con IVA/, /^Costo por/, /^Descuento/, /^Impuestos internos/]) {
+        expect(screen.getByLabelText(etiqueta)).toBeEnabled()
+      }
+      for (const etiqueta of [/^Área/, /^Alícuota de IVA/, /^Unidades por bulto/, /^Controla lote/]) {
+        expect(screen.getByLabelText(etiqueta)).toBeDisabled()
+      }
+      expect(screen.getByText(/Esta familia permite desglosar el costo/)).toBeInTheDocument()
+    })
+
+    it('manda la composición propia que se tipeó', async () => {
+      await abrirAltaEnLaFamilia()
+
+      await userEvent.type(screen.getByLabelText('Nombre'), 'Frutilla')
+      await userEvent.clear(screen.getByLabelText(/^Impuestos internos/))
+      await userEvent.type(screen.getByLabelText(/^Impuestos internos/), '8')
+      await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+      await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+      expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1]).toMatchObject({ idFamilia: 7, impuestoInterno: 8 })
+    })
+
+    it('409 costo_nominal_distinto_de_familia: dice los dos importes, conserva lo tipeado y la familia', async () => {
+      apiPostMock.mockReset()
+      apiPostMock.mockRejectedValueOnce(
+        new ErrorApi(409, 'costo_nominal_distinto_de_familia', 'El costo nominal no coincide.', {
+          costoNominalDeLaFamilia: 120,
+          costoNominalDelPedido: 130.5,
+        }),
+      )
+      await abrirAltaEnLaFamilia()
+      await userEvent.type(screen.getByLabelText('Nombre'), 'Frutilla')
+      await userEvent.clear(screen.getByLabelText(/^Impuestos internos/))
+      await userEvent.type(screen.getByLabelText(/^Impuestos internos/), '8')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+      expect(await screen.findByText(/da un costo nominal de \$ 130,50 y el de la familia es \$ 120,00/)).toBeInTheDocument()
+      expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('7')
+      expect(screen.getByLabelText(/^Impuestos internos/)).toHaveValue('8')
+      expect(screen.getByLabelText('Nombre')).toHaveValue('Frutilla')
+      expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+      expect(unaFamiliaPidioSuDetalle()).toHaveLength(1)
     })
   })
 })

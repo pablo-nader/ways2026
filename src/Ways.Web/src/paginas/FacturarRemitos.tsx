@@ -19,6 +19,7 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
+import { pluralizar } from '../formato/pluralizar'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -404,7 +405,7 @@ export function FacturarRemitos() {
                     {remitos.length > 0 && (
                       <>
                         <div className="d-flex justify-content-between mb-3">
-                          <strong>Total a facturar ({seleccionados.length} remito(s))</strong>
+                          <strong>Total a facturar ({pluralizar(seleccionados.length, 'remito')})</strong>
                           <strong>{formatearMoneda(total)}</strong>
                         </div>
 

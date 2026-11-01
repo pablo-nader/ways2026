@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Caja;
 using Ways.Application.Compras;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
@@ -384,7 +385,7 @@ public partial class ServicioDePagos
         var puntoVenta = await ResolverPuntoVentaAsync(idPuntoVentaDeLaCompra, ct);
         var zona = await ResolverZonaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
         ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
-        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona);
+        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona, momento);
 
         decimal? toleranciaDeRedondeo = solicitud.CerrarEnCero
             ? await RedondeoDeProveedor.ResolverToleranciaAsync(db, puntoVenta.IdEmpresa, puntoVenta.Id, ct)
@@ -419,6 +420,13 @@ public partial class ServicioDePagos
         decimal? toleranciaDeRedondeo, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        // Solo el pago nuevo entra al libro: aplicar pagos existentes no cambia lo que el libro lee. La marca de conciliación es el
+        // primer lock (ver GuardaDeConciliacion).
+        if (plan is not null)
+        {
+            await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, puntoVenta.IdEmpresa, fechaDeNegocio, ct);
+        }
 
         var compra = await BloquearCompraAsync(idCompra, idTenant, ct);
 

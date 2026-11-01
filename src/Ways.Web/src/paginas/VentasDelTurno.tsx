@@ -43,6 +43,7 @@ import {
   totalesPorMedioDeVentas,
 } from './utilidadesVentasDelTurno'
 import type { EstadoFiltro, FiltrosDeVentasDelTurno } from './utilidadesVentasDelTurno'
+import { pluralizar } from '../formato/pluralizar'
 
 const COLUMNAS_DE_VENTAS: ColumnasOrdenables<VentaDeTurnoListado> = {
   numero: { valor: (v) => v.numeroVisible },
@@ -741,7 +742,7 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
               ))}
               <span className="fw-bold">Total general: {formatearMoneda(totales.total)}</span>
               <span className="small text-muted">
-                {totales.cantidad} venta(s)
+                {pluralizar(totales.cantidad, 'venta')}
               </span>
             </div>
 

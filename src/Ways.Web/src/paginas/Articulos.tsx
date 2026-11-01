@@ -12,7 +12,8 @@ import { ModalDeArticulo } from './articulos/ModalDeArticulo'
 import { PreguntaDeAlcance } from './articulos/PreguntaDeAlcance'
 import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
 import { useFormularioDeArticulo } from './articulos/useFormularioDeArticulo'
-import { BotonIcono } from '../componentes/BotonIcono'
+import { Icono } from '../componentes/BotonIcono'
+import { toast } from '../toasts/toasts'
 
 const MENSAJE_ID_INVALIDO = 'No se especificó un artículo válido.'
 
@@ -65,10 +66,9 @@ export function Articulos() {
   const navigationType = useNavigationType()
   const { modo, idParam } = analizarRutaModal(location.pathname)
 
-  // El aviso de la Baja vive en la pantalla; su rechazo, dentro de la confirmación que sigue abierta
+  // La baja se avisa con un toast; su rechazo, dentro de la confirmación que sigue abierta
   // (articulos-grilla-web: el error de CARGA del listado vive dentro de `GrillaDeArticulos`, con su
   // propio banner — regla 14 de react-async-state, un slot de estado por fuente).
-  const [aviso, setAviso] = useState('')
   const [bajaPendiente, setBajaPendiente] = useState<BajaPendiente | null>(null)
   const [errorDeBaja, setErrorDeBaja] = useState('')
   const [eliminando, setEliminando] = useState(false)
@@ -267,11 +267,10 @@ export function Articulos() {
     const { fila } = bajaPendiente
 
     setErrorDeBaja('')
-    setAviso('')
     setEliminando(true)
     try {
       await clienteDeArticulos.eliminar(fila.id)
-      setAviso(`Artículo "${fila.nombre}" dado de baja.`)
+      toast.exito(`Artículo "${fila.nombre}" dado de baja.`)
       setBajaPendiente(null)
       // Igual criterio que `guardar()`: la baja ya se confirmó acá, el refresco de la grilla es
       // un pedido aparte que `GrillaDeArticulos` resuelve (y reporta) por su cuenta.
@@ -286,20 +285,22 @@ export function Articulos() {
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <BotonIcono
-        icono="agregar"
+      <button
+        type="button"
         ref={refBotonNuevo}
-        className="text-nowrap"
+        className="btn btn-primary btn-sm text-nowrap d-inline-flex align-items-center gap-1"
         disabled={ocupado}
         onClick={irACrear}
-      />
+      >
+        <Icono icono="agregar" />
+        Nuevo artículo
+      </button>
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Artículos" variante="inverse" herramientas={herramientas}>
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {catalogos.erroresCatalogosRequeridos.length > 0 && (
           <div className="alert alert-warning">
             {catalogos.erroresCatalogosRequeridos.join(' ')} El guardado (alta o edición) de artículos va a quedar bloqueado
@@ -327,6 +328,7 @@ export function Articulos() {
           <PreguntaDeAlcance
             contexto={articulo.decisionDeAlcance.contexto}
             cambios={articulo.decisionDeAlcance.campos}
+            cambioDeNominal={articulo.decisionDeAlcance.cambioDeNominal}
             ocupado={ocupado}
             onElegir={articulo.elegirAlcance}
             onCancelar={articulo.cancelarAlcance}
@@ -351,6 +353,8 @@ export function Articulos() {
       {bajaPendiente !== null && (
         <ConfirmacionDeBaja
           titulo={`el artículo "${bajaPendiente.fila.nombre}"`}
+          nota="Deja de aparecer en la tienda online y, en cada caja, desde su próxima sincronización. Las ventas registradas no cambian."
+          etiquetaConfirmar="Dar de baja"
           ocupado={eliminando}
           disparador={bajaPendiente.disparador}
           error={errorDeBaja || null}

@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Compras } from './Compras'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { CompraListada, PaginaDeCompras, ProveedorListado, SaldoDeProveedor, TipoComprobanteListado, UsuarioAutenticado } from '../api/tipos'
+import type { CompraListada, PaginaDeCompras } from '../api/tipos'
+import type { ProveedorListado, SaldoDeProveedor, TipoComprobanteListado, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 
@@ -101,6 +102,8 @@ function compraListadaFixture(sobrescribir: Partial<CompraListada> = {}): Compra
     saldoPendiente: 0,
     origen: 'Manual',
     nombreProveedor: 'Proveedor Uno SA',
+    fechaComprobante: '2026-08-01',
+    estadoPago: 'Pagada',
     ...sobrescribir,
   }
 }
@@ -213,26 +216,70 @@ describe('Compras — listado', () => {
     expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
   })
 
-  it('filtrar por proveedor carga su saldo y muestra el estado de pago por fila', async () => {
-    const saldo: SaldoDeProveedor = {
-      idProveedor: 1,
-      saldo: 500,
-      compras: [{ idComprobanteCompra: 1, numeroExterno: '0003-00012345', total: 1149.5, pagado: 649.5, estadoPago: 'Parcial' }],
-    }
+  it('la grilla muestra "Fecha de carga" y "Fecha del comprobante" como columnas', async () => {
+    mockearRutasBase((ruta) => (ruta.startsWith('/compras?') ? Promise.resolve(paginaFixture([compraListadaFixture()])) : undefined))
+    renderCompras()
+
+    await screen.findByText('0003-00012345')
+    expect(screen.getByRole('columnheader', { name: /Fecha de carga/ })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Fecha del comprobante' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: /Fecha de recepción/ })).not.toBeInTheDocument()
+    const fila = screen.getByRole('row', { name: /0003-00012345/ })
+    expect(within(fila).getByText('01/08/2026')).toBeInTheDocument()
+  })
+
+  it('una compra sin fecha de comprobante muestra un guion', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/compras?')
+        ? Promise.resolve(paginaFixture([compraListadaFixture({ numeroExterno: 'sin-fecha', fechaComprobante: null })]))
+        : undefined,
+    )
+    renderCompras()
+
+    await screen.findByText('sin-fecha')
+    const celdas = within(screen.getByRole('row', { name: /sin-fecha/ })).getAllByRole('cell')
+    expect(celdas[6].textContent).toBe('—')
+  })
+
+  it('el estado de pago se ve como chip sin elegir proveedor: Pagado en verde, Pendiente en ámbar, guion en borrador', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/compras?')
+        ? Promise.resolve(
+            paginaFixture([
+              compraListadaFixture({ id: 1, numeroExterno: 'fila-paga', estadoPago: 'Pagada' }),
+              compraListadaFixture({ id: 2, numeroExterno: 'fila-debe', estadoPago: 'Pendiente' }),
+              compraListadaFixture({ id: 3, numeroExterno: 'fila-borrador', estado: 'Borrador', estadoPago: null }),
+            ]),
+          )
+        : undefined,
+    )
+    renderCompras()
+
+    await screen.findByText('fila-paga')
+    const paga = within(screen.getByRole('row', { name: /fila-paga/ })).getByText('Pagado')
+    expect(paga).toHaveClass('badge', 'text-bg-success')
+    const debe = within(screen.getByRole('row', { name: /fila-debe/ })).getByText('Pendiente')
+    expect(debe).toHaveClass('badge', 'text-bg-warning')
+    const celdasBorrador = within(screen.getByRole('row', { name: /fila-borrador/ })).getAllByRole('cell')
+    expect(celdasBorrador[4].textContent).toBe('—')
+    expect(apiGetMock.mock.calls.some((c: unknown[]) => (c[0] as string).includes('/saldo'))).toBe(false)
+  })
+
+  it('con un proveedor filtrado el chip sigue viniendo de la lista aunque el saldo falle', async () => {
     mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/compras?')) return Promise.resolve(paginaFixture([compraListadaFixture()]))
-      if (ruta === '/proveedores/1/saldo') return Promise.resolve(saldo)
+      if (ruta.startsWith('/compras?')) return Promise.resolve(paginaFixture([compraListadaFixture({ estadoPago: 'Pendiente' })]))
+      if (ruta === '/proveedores/1/saldo') return Promise.reject(new Error('saldo caído'))
       return undefined
     })
     const usuario = userEvent.setup()
     renderCompras()
 
     await screen.findByText('0003-00012345')
-    expect(screen.getAllByText('—')[0]).toBeInTheDocument() // sin filtro de proveedor, sin estado de pago todavía
-
+    await waitFor(() => expect(within(screen.getByLabelText('Proveedor')).getAllByRole('option').length).toBeGreaterThan(1))
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
 
-    expect(await screen.findByText('Parcial')).toBeInTheDocument()
+    await waitFor(() => expect(apiGetMock.mock.calls.some((c: unknown[]) => c[0] === '/proveedores/1/saldo')).toBe(true))
+    expect(within(screen.getByRole('row', { name: /0003-00012345/ })).getByText('Pendiente')).toBeInTheDocument()
   })
 
   it('un Vendedor filtrando por proveedor ve el saldo agregado (decisión: entrada Vendedor-reachable, no solo Admin vía /proveedores)', async () => {
@@ -339,7 +386,7 @@ describe('Compras — orden en el servidor', () => {
     ['Proveedor', 'proveedor'],
     ['Tipo', 'tipo'],
     ['Estado', 'estado'],
-    ['Fecha de recepción', 'fechaRecepcion'],
+    ['Fecha de carga', 'fechaRecepcion'],
     ['Total', 'total'],
   ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
     mockearRutasBase(conUnaFila)
@@ -352,13 +399,15 @@ describe('Compras — orden en el servidor', () => {
     await waitFor(() => expect(llamadasAlListado().at(-1)).toContain(`orden=${clave}&direccion=ascendente`))
   })
 
-  it('"Estado de pago" no ordena: la pantalla lo deriva de otra consulta y no es una clave del servidor', async () => {
+  it('"Estado de pago" y "Fecha del comprobante" no ordenan: no son claves del servidor', async () => {
     mockearRutasBase(conUnaFila)
     renderCompras()
     await screen.findByText('0003-00012345')
 
     expect(screen.getByRole('columnheader', { name: 'Estado de pago' })).not.toHaveAttribute('aria-sort')
     expect(screen.queryByRole('button', { name: /Estado de pago/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Fecha del comprobante' })).not.toHaveAttribute('aria-sort')
+    expect(screen.queryByRole('button', { name: /Fecha del comprobante/ })).not.toBeInTheDocument()
   })
 
   it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
@@ -470,5 +519,147 @@ describe('Compras — origen', () => {
 
     await usuario.selectOptions(screen.getByLabelText('Origen'), '')
     await waitFor(() => expect(consultas().at(-1)).not.toContain('origen='))
+  })
+})
+
+describe('Compras — proveedor por nombre de fantasía', () => {
+  it('el selector muestra la fantasía con fallback a razón social, ordenado por esa etiqueta', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/proveedores?')) {
+        return Promise.resolve({
+          items: [
+            proveedorFixture({ id: 1, razonSocial: 'Zeta SA', nombreFantasia: 'Alfa Distribuidora' }),
+            proveedorFixture({ id: 2, razonSocial: 'Beta SRL', nombreFantasia: '  ' }),
+          ],
+          total: 2,
+          pagina: 1,
+          tamanio: 200,
+        })
+      }
+      if (ruta === '/catalogos-fiscales/tipos-comprobante') return Promise.resolve([tipoFixture()])
+      return Promise.resolve(paginaFixture([]))
+    })
+    renderCompras()
+
+    const selector = screen.getByLabelText('Proveedor')
+    await waitFor(() => expect(within(selector).getAllByRole('option')).toHaveLength(3))
+    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Todos', 'Alfa Distribuidora', 'Beta SRL'])
+    expect(within(selector).queryByRole('option', { name: 'Zeta SA' })).not.toBeInTheDocument()
+  })
+
+  it('la grilla muestra el nombre que manda el servidor (fantasía)', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/compras?')
+        ? Promise.resolve(paginaFixture([compraListadaFixture({ nombreProveedor: 'Alfa Distribuidora' })]))
+        : undefined,
+    )
+    renderCompras()
+
+    await screen.findByText('0003-00012345')
+    expect(within(screen.getByRole('row', { name: /0003-00012345/ })).getByText('Alfa Distribuidora')).toBeInTheDocument()
+  })
+})
+
+describe('Compras — filtros de la grilla', () => {
+  const consultas = () =>
+    apiGetMock.mock.calls.map((call: unknown[]) => call[0] as string).filter((ruta: string) => ruta.startsWith('/compras?'))
+
+  /** Espera a los datos de los selectores (proveedores y tipos), no a los selects, que existen antes. */
+  async function montarConPaginaDos() {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/compras?')
+        ? Promise.resolve(paginaFixture([compraListadaFixture()], { total: 50, pagina: ruta.includes('pagina=2') ? 2 : 1 }))
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText(/Página 1 de 2/)
+    await waitFor(() => expect(within(screen.getByLabelText('Tipo')).getAllByRole('option').length).toBeGreaterThan(1))
+    await waitFor(() => expect(within(screen.getByLabelText('Proveedor')).getAllByRole('option').length).toBeGreaterThan(1))
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 2/)
+    return usuario
+  }
+
+  it('Tipo manda idTipoComprobante y vuelve a la página 1', async () => {
+    const usuario = await montarConPaginaDos()
+
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    await waitFor(() => {
+      expect(consultas().at(-1)).toContain('idTipoComprobante=5')
+      expect(consultas().at(-1)).toContain('pagina=1')
+    })
+    await screen.findByText(/Página 1 de 2/)
+  })
+
+  it('Estado de pago manda pagada/pendiente y vuelve a la página 1; Todos lo quita', async () => {
+    const usuario = await montarConPaginaDos()
+
+    await usuario.selectOptions(screen.getByLabelText('Estado de pago'), 'Pendiente')
+    await waitFor(() => {
+      expect(consultas().at(-1)).toContain('estadoPago=pendiente')
+      expect(consultas().at(-1)).toContain('pagina=1')
+    })
+
+    await usuario.selectOptions(screen.getByLabelText('Estado de pago'), 'Pagado')
+    await waitFor(() => expect(consultas().at(-1)).toContain('estadoPago=pagada'))
+
+    await usuario.selectOptions(screen.getByLabelText('Estado de pago'), 'Todos')
+    await waitFor(() => expect(consultas().at(-1)).not.toContain('estadoPago'))
+  })
+
+  it('Número manda numero con Enter y vuelve a la página 1', async () => {
+    const usuario = await montarConPaginaDos()
+
+    await usuario.type(screen.getByLabelText('Número'), '0003{Enter}')
+
+    await waitFor(() => {
+      expect(consultas().at(-1)).toContain('numero=0003')
+      expect(consultas().at(-1)).toContain('pagina=1')
+    })
+  })
+
+  it('Número también filtra solo, después de una pausa al tipear', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('No hay compras que coincidan con los filtros.')
+
+    await usuario.type(screen.getByLabelText('Número'), '77')
+
+    await waitFor(() => expect(consultas().at(-1)).toContain('numero=77'), { timeout: 2000 })
+  })
+
+  it('Fecha del comprobante manda desde/hasta sin offset y no toca desde/hasta de la carga', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('No hay compras que coincidan con los filtros.')
+
+    await usuario.type(screen.getByLabelText('Fecha del comprobante desde'), '01/07/2026')
+    await waitFor(() => expect(consultas().at(-1)).toContain('fechaComprobanteDesde=2026-07-01'))
+    await usuario.type(screen.getByLabelText('Fecha del comprobante hasta'), '31/07/2026')
+    await waitFor(() => expect(consultas().at(-1)).toContain('fechaComprobanteHasta=2026-07-31'))
+    expect(consultas().at(-1)).not.toMatch(/[?&]desde=/)
+  })
+
+  it('Fecha de carga sigue mandando desde con offset', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('No hay compras que coincidan con los filtros.')
+
+    await usuario.type(screen.getByLabelText('Fecha de carga desde'), '01/07/2026')
+
+    await waitFor(() => expect(decodeURIComponent(consultas().at(-1)!)).toMatch(/desde=2026-07-01T00:00:00[+-]\d\d:\d\d/))
+  })
+
+  it('los filtros siguen visibles si el listado falla, para poder corregirlos', async () => {
+    mockearRutasBase((ruta) => (ruta.startsWith('/compras?') ? Promise.reject(new Error('caída')) : undefined))
+    renderCompras()
+
+    await screen.findByText('No se pudieron cargar las compras.')
+    expect(screen.getByLabelText('Estado de pago')).toBeInTheDocument()
   })
 })

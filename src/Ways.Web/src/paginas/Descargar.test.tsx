@@ -55,7 +55,7 @@ describe('Descargar', () => {
     renderDescargar()
 
     expect(screen.getByRole('link', { name: 'Equipos POS' })).toHaveAttribute('href', '/organizacion/equipos-pos')
-    expect(screen.getByText(/sigue bloqueando la baja de su punto de venta, del tenant y del usuario que lo vinculó/)).toBeInTheDocument()
+    expect(screen.getByText(/sigue bloqueando la baja de su punto de venta, de la cuenta y del usuario que lo vinculó/)).toBeInTheDocument()
     expect(screen.queryByText(/soporte/)).not.toBeInTheDocument()
   })
 

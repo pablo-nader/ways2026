@@ -35,6 +35,7 @@ import {
 } from './empresaFormulario'
 import { ModalDeEmpresa } from './organizacion/ModalDeEmpresa'
 import { tomarRetornoDeMercadoPago } from './organizacion/fragmentoMercadoPago'
+import { toast } from '../toasts/toasts'
 import { SeccionMercadoPago } from './organizacion/SeccionMercadoPago'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -105,7 +106,6 @@ export function Empresas() {
   const [cargada, setCargada] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<FormularioDeEmpresa | null>(null)
   /** Rechazo del guardado: vive adentro del modal, aparte del `error` de la pantalla (carga y baja). */
   const [errorFormulario, setErrorFormulario] = useState('')
@@ -130,7 +130,7 @@ export function Empresas() {
   const ocupadoRef = useRef(false)
   /** Destino de foco al cerrar el modal cuando el "Editar" que lo abrió ya no existe (durante el
    * refresco las filas se reemplazan por "Cargando…"): esta pantalla no tiene botón de alta, así que
-   * el punto estable es la zona de avisos, donde queda el aviso de éxito. */
+   * el punto estable es la zona de avisos, un contenedor fijo que siempre existe. */
   const zonaDeAvisosRef = useRef<HTMLDivElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
@@ -178,11 +178,11 @@ export function Empresas() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -201,7 +201,6 @@ export function Empresas() {
     setOcupado(datos.id)
     setError('')
     setErrorFormulario('')
-    setAviso('')
     try {
       // La respuesta de la escritura no se compara con la generación: el modal queda inerte hasta
       // que el refresco aterriza y nada puede acuñar otro token ni reabrir el formulario mientras tanto.
@@ -236,7 +235,6 @@ export function Empresas() {
     setDisparadorDeLaPuerta(disparador)
     setBaja(empresa)
     setError('')
-    setAviso('')
   }
 
   /** Cancelar no supersede nada: solo cierra la puerta. Por eso no acuña generación —hacerlo
@@ -248,7 +246,6 @@ export function Empresas() {
     setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
-    setAviso('')
   }
 
   async function confirmarBaja() {
@@ -261,7 +258,6 @@ export function Empresas() {
     ocupadoRef.current = true
     setOcupado(fila.id)
     setError('')
-    setAviso('')
     try {
       try {
         await clienteDeOrganizacion.eliminarEmpresa(fila.id)
@@ -314,7 +310,6 @@ export function Empresas() {
       <Box titulo="Empresas" variante="inverse">
         <div ref={zonaDeAvisosRef} tabIndex={-1} style={{ outline: 'none' }}>
           {error && !baja && <div className="alert alert-danger">{error}</div>}
-          {aviso && <div className="alert alert-success">{aviso}</div>}
         </div>
 
         {baja && (

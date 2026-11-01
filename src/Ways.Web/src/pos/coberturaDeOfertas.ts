@@ -7,14 +7,17 @@
  *
  * Una oferta común cubre todas las unidades de la línea. Una "solo múltiplos" (`multiploDe` = N) de artículo, grupo o
  * categoría cubre `N × floor(unidades / N)` de su propia línea. Una de familia (`porFamilia`) cuenta los grupos sobre la
- * suma de las unidades de todas las líneas que la llevan y reparte las unidades cubiertas en el orden de las líneas: las
- * que quedan fuera de un grupo completo caen en las últimas. Cada unidad suma los descuentos unitarios de las ofertas
- * que la cubren, con el tope del precio original; las coberturas quedan anidadas (las unidades cubiertas son las
- * primeras de la línea).
+ * suma `U` de las unidades de todas las líneas que la llevan y reparte su descuento (`C × d`, con `C` las unidades de los
+ * grupos completos y `d` su descuento unitario en la primera de esas líneas) en proporción a las unidades de cada línea:
+ * cada una su parte truncada al peso y la última el resto, sin cubrir más unidades de las que tiene (si no, sigue hacia
+ * las anteriores). Cada unidad suma los descuentos unitarios de las ofertas que la cubren, con el tope del precio
+ * original; las coberturas quedan anidadas (las unidades cubiertas son las primeras de la línea) y la de una oferta de
+ * familia es su parte dividida por `d`, una fracción.
  *
  * Aritmética exacta, como el `decimal` del servidor: cada número entra por su representación decimal más corta y todo
  * se opera en `bigint` a una escala común; el resultado sale con todos sus decimales (sin redondear: el neto de la línea
- * se redondea una sola vez, al peso, en `calcularTotalesDeLinea`).
+ * se redondea una sola vez, al peso, en `calcularTotalesDeLinea`), salvo en una línea con una oferta de familia, que sale
+ * redondeada a seis decimales lejos de cero, igual que en el servidor.
  */
 import type { OfertaAplicada } from '../api/tipos'
 
@@ -39,34 +42,79 @@ export function descuentosDeLinea(lineas: readonly LineaConOfertas[]): number[] 
   const escala = escalaComun(
     lineas.flatMap((l) => [l.unidades, l.precioOriginal, ...l.aplicadas.flatMap((a) => [a.descuentoUnitario, a.multiploDe ?? 0])]),
   )
-  const restantesPorFamilia = unidadesCubiertasPorOfertaDeFamilia(lineas, escala)
+  const unidadDeEscala = 10n ** BigInt(escala)
+  const partesDeFamilia = partesDeOfertasDeFamilia(lineas, escala)
 
-  return lineas.map((linea) => {
+  return lineas.map((linea, l) => {
     const unidades = maximo(escalar(linea.unidades, escala), 0n)
-    const cubiertas = linea.aplicadas.map((aplicada) => {
-      if (aplicada.multiploDe == null) return unidades
-      if (aplicada.porFamilia) {
-        const restantes = restantesPorFamilia.get(aplicada.idOferta) ?? 0n
-        const cubiertasDeLaLinea = minimo(restantes, unidades)
-        restantesPorFamilia.set(aplicada.idOferta, restantes - cubiertasDeLaLinea)
-        return cubiertasDeLaLinea
-      }
-      return enGruposCompletos(unidades, escalar(aplicada.multiploDe, escala))
+    const coberturas = linea.aplicadas.map((aplicada): Cobertura => {
+      if (aplicada.multiploDe == null) return { numerador: unidades, denominador: unidadDeEscala }
+      if (aplicada.porFamilia) return partesDeFamilia.get(clave(l, aplicada.idOferta)) ?? { numerador: 0n, denominador: 1n }
+      return { numerador: enGruposCompletos(unidades, escalar(aplicada.multiploDe, escala)), denominador: unidadDeEscala }
     })
-    return desescalar(descuentoEscalonado(linea, cubiertas, escala), 2 * escala)
+    return descuentoEscalonado(linea, coberturas, escala)
   })
 }
 
-function unidadesCubiertasPorOfertaDeFamilia(lineas: readonly LineaConOfertas[], escala: number): Map<number, bigint> {
-  const porOferta = new Map<number, { multiplo: bigint; unidades: bigint }>()
-  for (const linea of lineas) {
+/** Unidades cubiertas como fracción exacta `numerador / denominador`, en unidades y sin escala. */
+type Cobertura = { numerador: bigint; denominador: bigint }
+
+const DECIMALES_CON_FAMILIA = 6
+
+function clave(linea: number, idOferta: number): string {
+  return `${linea}:${idOferta}`
+}
+
+/** La cobertura de cada oferta "solo múltiplos" de familia en cada línea que la lleva, por `linea:idOferta`. */
+function partesDeOfertasDeFamilia(lineas: readonly LineaConOfertas[], escala: number): Map<string, Cobertura> {
+  const porOferta = new Map<number, { multiplo: bigint; unitario: bigint; lineas: { linea: number; unidades: bigint }[] }>()
+  lineas.forEach((linea, l) => {
     for (const aplicada of linea.aplicadas) {
       if (aplicada.multiploDe == null || !aplicada.porFamilia) continue
-      const acumulado = porOferta.get(aplicada.idOferta) ?? { multiplo: escalar(aplicada.multiploDe, escala), unidades: 0n }
-      porOferta.set(aplicada.idOferta, { multiplo: acumulado.multiplo, unidades: acumulado.unidades + maximo(escalar(linea.unidades, escala), 0n) })
+      let oferta = porOferta.get(aplicada.idOferta)
+      if (!oferta) {
+        oferta = { multiplo: escalar(aplicada.multiploDe, escala), unitario: escalar(aplicada.descuentoUnitario, escala), lineas: [] }
+        porOferta.set(aplicada.idOferta, oferta)
+      }
+      oferta.lineas.push({ linea: l, unidades: maximo(escalar(linea.unidades, escala), 0n) })
     }
+  })
+
+  const unidadDeEscala = 10n ** BigInt(escala)
+  const partes = new Map<string, Cobertura>()
+  for (const [idOferta, { multiplo, unitario, lineas: deLaOferta }] of porOferta) {
+    const importes = repartir(
+      deLaOferta.map((x) => x.unidades),
+      multiplo,
+      unitario,
+      escala,
+    )
+    deLaOferta.forEach((x, k) => {
+      partes.set(
+        clave(x.linea, idOferta),
+        unitario > 0n ? { numerador: importes[k], denominador: unitario * unidadDeEscala } : { numerador: 0n, denominador: 1n },
+      )
+    })
   }
-  return new Map([...porOferta].map(([idOferta, { multiplo, unidades }]) => [idOferta, enGruposCompletos(unidades, multiplo)]))
+  return partes
+}
+
+/** Espejo de `CoberturaDeOfertas.Repartir`: el descuento de los grupos completos repartido por unidades, cada línea su
+ * parte truncada al peso y el resto a la última (y hacia atrás, sin pasar de lo que cubren sus unidades). Los importes
+ * salen a escala `2 × escala`. */
+function repartir(unidades: bigint[], multiplo: bigint, unitario: bigint, escala: number): bigint[] {
+  const total = unidades.reduce((a, b) => a + b, 0n)
+  const importe = unitario > 0n && total > 0n ? enGruposCompletos(total, multiplo) * unitario : 0n
+  const peso = 10n ** BigInt(2 * escala)
+  const importes = unidades.map((u) => (importe === 0n ? 0n : ((importe * u) / (total * peso)) * peso))
+
+  let resto = importe - importes.reduce((a, b) => a + b, 0n)
+  for (let k = importes.length - 1; k >= 0 && resto > 0n; k--) {
+    const agregado = minimo(resto, unidades[k] * unitario - importes[k])
+    importes[k] += agregado
+    resto -= agregado
+  }
+  return importes
 }
 
 /** `multiplo × floor(unidades / multiplo)`; las dos cantidades no negativas y a la misma escala. */
@@ -75,21 +123,30 @@ function enGruposCompletos(unidades: bigint, multiplo: bigint): bigint {
 }
 
 /** Recorre las coberturas de menor a mayor: cada tramo de unidades lleva la suma de los descuentos de las ofertas que lo
- * cubren, con el tope del precio original por unidad. Devuelve el descuento a escala `2 × escala`. */
-function descuentoEscalonado(linea: LineaConOfertas, cubiertas: bigint[], escala: number): bigint {
+ * cubren, con el tope del precio original por unidad. Las coberturas se llevan al producto de sus denominadores para
+ * ordenarlas y restarlas sin dividir. */
+function descuentoEscalonado(linea: LineaConOfertas, coberturas: Cobertura[], escala: number): number {
   const precioOriginal = escalar(linea.precioOriginal, escala)
-  const niveles = [...new Set(cubiertas.filter((c) => c > 0n))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const niveles = coberturas.map((c, i) => coberturas.reduce((nivel, otra, j) => (j === i ? nivel : nivel * otra.denominador), c.numerador))
+  const distintos = [...new Set(niveles.filter((c) => c > 0n))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   let descuento = 0n
   let anterior = 0n
-  for (const nivel of niveles) {
+  for (const nivel of distintos) {
     let unitario = 0n
-    cubiertas.forEach((c, i) => {
+    niveles.forEach((c, i) => {
       if (c >= nivel) unitario += escalar(linea.aplicadas[i].descuentoUnitario, escala)
     })
     descuento += (nivel - anterior) * acotar(unitario, precioOriginal)
     anterior = nivel
   }
-  return descuento
+
+  // El descuento vale `descuento / divisor`; sin oferta de familia el divisor es una potencia de diez.
+  const divisor = coberturas.reduce((producto, c) => producto * c.denominador, 1n) * 10n ** BigInt(escala)
+  if (linea.aplicadas.some((a) => a.multiploDe != null && a.porFamilia)) {
+    const factor = 10n ** BigInt(DECIMALES_CON_FAMILIA)
+    return desescalar((2n * descuento * factor + divisor) / (2n * divisor), DECIMALES_CON_FAMILIA)
+  }
+  return desescalar(descuento, escala * (coberturas.length + 1))
 }
 
 const PATRON_DE_NUMERO_DECIMAL = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i

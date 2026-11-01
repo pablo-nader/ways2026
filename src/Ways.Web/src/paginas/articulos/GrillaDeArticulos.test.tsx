@@ -223,14 +223,53 @@ describe('GrillaDeArticulos — columnas', () => {
     expect(celdaDe('Dado de baja')).not.toHaveTextContent('Online')
   })
 
-  it('la fila de "No hay artículos" abarca todas las columnas de la tabla', async () => {
+  it('la fila del estado vacío abarca todas las columnas de la tabla', async () => {
     mockearRutas(paginaFixture([]))
     renderGrilla()
 
-    const celda = (await screen.findByText('No hay artículos que coincidan con los filtros.')).closest('td')
+    const celda = (await screen.findByText('Todavía no hay artículos.')).closest('td')
     const filaDeTitulos = screen.getAllByRole('row')[0]
 
     expect(celda).toHaveAttribute('colspan', String(within(filaDeTitulos).getAllByRole('columnheader').length))
+  })
+
+  it('sin filtros y sin artículos dice que todavía no hay y no ofrece limpiar filtros', async () => {
+    mockearRutas(paginaFixture([]))
+    renderGrilla()
+
+    expect(await screen.findByText('Todavía no hay artículos.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay artículos que coincidan con los filtros.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Limpiar filtros' })).not.toBeInTheDocument()
+  })
+
+  it('con un filtro aplicado y sin resultados dice que no coinciden y "Limpiar filtros" los resetea', async () => {
+    mockearRutas(paginaFixture([]))
+    renderGrilla()
+    await screen.findByText('Todavía no hay artículos.')
+
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'false')
+    expect(await screen.findByText('No hay artículos que coincidan con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('Todavía no hay artículos.')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(await screen.findByText('Todavía no hay artículos.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por estado')).toHaveValue('')
+    expect(ultimaQuery()).not.toContain('activo=')
+  })
+
+  it('la fila de filtros guía con placeholders visibles y el código va atenuado', async () => {
+    mockearRutas(paginaFixture([filaFixture()]))
+    renderGrilla()
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila')
+
+    expect(screen.getByLabelText('Filtrar por código')).toHaveAttribute('placeholder', 'Código')
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveAttribute('placeholder', 'Nombre')
+    expect(screen.getByLabelText('Precio desde')).toHaveAttribute('placeholder', 'Desde')
+    expect(screen.getByLabelText('Precio hasta')).toHaveAttribute('placeholder', 'Hasta')
+    expect(within(fila).getByText('Articulo Uno')).toHaveClass('fw-semibold')
+    expect(within(fila).getByText('A0001')).toHaveClass('text-body-secondary')
   })
 
   it('precio null se muestra "—"', async () => {

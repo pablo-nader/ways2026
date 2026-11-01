@@ -56,7 +56,8 @@ export function calcularTotalesDeLinea(params: {
   unidadesConsumidasPorCombo?: number
   /** Importe de LÍNEA que el combo repartió a esas unidades (lista menos lo que cobra); `0` o ausente sin combo. */
   ahorroDeCombo?: number
-  /** Descuento de oferta de LÍNEA de las unidades fuera de combo, con el signo de `cantidad`; ausente usa el unitario. */
+  /** Descuento de oferta de LÍNEA de las unidades fuera de combo; se resta tal cual de `unidades × precio`, así que una cantidad
+   * negativa (devolución) exige pasarlo con su mismo signo. Ausente usa el unitario; `0` es un valor y no cae al unitario. */
   descuentoDeLinea?: number
 }): TotalesDeLinea {
   const consumidas = params.unidadesConsumidasPorCombo ?? 0

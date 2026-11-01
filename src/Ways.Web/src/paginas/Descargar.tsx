@@ -116,7 +116,7 @@ export function Descargar() {
               próxima operación.
             </li>
             <li>
-              Un equipo revocado sigue bloqueando la baja de su punto de venta, del tenant y del
+              Un equipo revocado sigue bloqueando la baja de su punto de venta, de la cuenta y del
               usuario que lo vinculó.
             </li>
           </ul>
