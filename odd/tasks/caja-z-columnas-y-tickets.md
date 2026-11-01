@@ -68,6 +68,12 @@ Strategy `auto-chain`, chain `stacked-to-main`. Forecast ~900 authored lines →
   FacturacionEspejoNoDobleConteo) 123 OK. Mutación: quitar `Estado == Emitido` del lector mata
   `ElHistoricoRepartePorCubo...`; quitar IgnoreQueryFilters del nombre de medio mata el test de medio dado de baja.
 
+- S1 judgment-day: round 1 CRITICAL confirmado (tipos.ts con campos requeridos sin fixtures web → tsc rojo);
+  fix 704c9452 devuelve tipos.ts al de main (los tipos van con S2); re-juicio A y B sin hallazgos →
+  `JUDGMENT: APPROVED`. Info no corregida: export del histórico carga todos los turnos sin lotes; `LineaDeResumen.nombre`
+  respeta la baja lógica (la línea desaparece igual); XLSX de detalle lista anulados sin estado; el ancla del turno
+  original de una NCX no tiene test que la mate.
+
 ## Next step
 
-T1 backend writer.
+PR de S1; T2 web en curso.
