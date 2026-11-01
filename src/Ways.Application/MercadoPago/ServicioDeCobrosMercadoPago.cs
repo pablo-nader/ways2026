@@ -33,10 +33,15 @@ namespace Ways.Application.MercadoPago;
 /// completo; recién después llama a <c>POST /v1/orders</c> y pasa la fila a <c>pendiente</c>. Si Mercado Pago creó la orden y el
 /// guardado posterior falló, la fila queda <c>creando</c>: el siguiente crear, consultar o cancelar del cobro reenvía la orden
 /// ORIGINAL armada con los valores guardados (no con la caja actual) y la misma clave, de modo que Mercado Pago devuelve la misma
-/// orden, y solo entonces rigen las reglas de siempre (mismo medio e importe devuelve el cobro; otro importe es 409). Un rechazo
-/// definitivo (400 o 422) de Mercado Pago a ese reenvío deja la fila <c>cancelado</c>: la orden no existe. El resto de los
-/// errores la dejan <c>creando</c> para el próximo reintento. Una orden en estado <c>created</c> sin <c>qr_data</c> es una
-/// respuesta inválida (502); una en estado terminal pasa por el mapeo de estados.
+/// orden, y solo entonces rigen las reglas de siempre (mismo medio e importe devuelve el cobro; otro importe es 409). Al completarse,
+/// <c>expira_en</c> pasa a ser ahora más la vigencia (el reenvío lleva una orden con su plazo completo). <b>Plazos de una fila
+/// <c>creando</c></b>, contados desde su reserva (<c>created_at</c>): mientras no pasó una vigencia se reenvía, y cualquier fallo (un
+/// 4xx incluido: no prueba que la orden no exista) la deja <c>creando</c>; desde una vigencia no se reenvía nunca más, porque podría
+/// crear una orden nueva y cobrable, y crear, consultar y cancelar responden 409 <c>cobro_mercadopago_en_curso</c>; desde dos
+/// vigencias más 2 minutos (cualquier orden que pudo crear un reenvío ya venció) la fila pasa a <c>expirado</c> sin llamar a Mercado
+/// Pago, y libera el número. Una orden en estado <c>created</c> sin <c>qr_data</c> es una respuesta inválida (502); una en estado
+/// terminal pasa por el mapeo de estados; una <c>processed</c> recuperada sin pago legible queda <c>pendiente</c> sin QR
+/// (<c>VerificandoPago</c>).
 ///
 /// <b>Locks</b> (<c>single-read-under-lock</c>), siempre en el orden punto de venta → cobro: crear toma el lock del punto de venta y,
 /// si hay un cobro vivo del número, el del cobro; consultar y cancelar toman el del cobro y, si el cobro está <c>creando</c> (hay
@@ -75,6 +80,8 @@ public class ServicioDeCobrosMercadoPago(
 
     private static readonly TimeSpan Vigencia = TimeSpan.FromMinutes(10);
 
+    private static readonly TimeSpan MargenDeAbandono = TimeSpan.FromMinutes(2);
+
     private const decimal ImporteMaximo = 9_999_999_999_999m;
 
     private const int LargoMaximoDeId = 64;
@@ -110,7 +117,7 @@ public class ServicioDeCobrosMercadoPago(
         }
 
         throw ErrorDominio.Conflicto(
-            CodigosDeErrorDeCobrosMercadoPago.EnCurso, "Esa venta tiene cobros con Mercado Pago en curso: reintentá en unos segundos.");
+            CodigosDeErrorDeCobrosMercadoPago.EnCurso, "Esa venta tiene un cobro con Mercado Pago en curso: consultá su estado antes de cobrar de nuevo.");
     }
 
     /// <summary>Devuelve la respuesta al dispositivo, o nulo si reservó una fila nueva (<c>creando</c>) que falta completar.</summary>
@@ -132,9 +139,10 @@ public class ServicioDeCobrosMercadoPago(
 
             if (vivo.Estado == EstadosDeCobroMercadoPago.Creando)
             {
-                await CompletarCreacionAsync(vivo, ct);
+                await ResolverCreandoAsync(vivo, ct);
             }
-            else if (vivo.Estado == EstadosDeCobroMercadoPago.Pendiente && reloj.Ahora >= vivo.ExpiraEn)
+
+            if (vivo.Estado == EstadosDeCobroMercadoPago.Pendiente && reloj.Ahora >= vivo.ExpiraEn)
             {
                 await RefrescarAsync(vivo, respetarIntervalo: false, ct);
             }
@@ -216,6 +224,34 @@ public class ServicioDeCobrosMercadoPago(
     }
 
     /// <summary>
+    /// Resuelve una fila <c>creando</c> según el instante en que se reservó (<c>created_at</c>). Dentro de <see cref="Vigencia"/> reenvía
+    /// la orden. Pasado ese plazo no la reenvía nunca más (un reenvío podría crear una orden nueva y cobrable) y responde 409 mientras
+    /// una orden creada por un reenvío anterior pueda seguir viva; cuando ya no puede, la fila se da por <c>expirado</c> sin llamar a
+    /// Mercado Pago y libera el número. Un 4xx no prueba que la orden no exista, por eso nunca cancela la fila. Quien la llama tiene el
+    /// lock del punto de venta y el del cobro y acaba de leer la fila.
+    /// </summary>
+    private async Task ResolverCreandoAsync(CobroMercadoPago cobro, CancellationToken ct)
+    {
+        var ahora = reloj.Ahora;
+        if (ahora >= cobro.CreatedAt + Vigencia + Vigencia + MargenDeAbandono)
+        {
+            cobro.Estado = EstadosDeCobroMercadoPago.Expirado;
+            cobro.UpdatedAt = ahora;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        if (ahora >= cobro.CreatedAt + Vigencia)
+        {
+            throw ErrorDominio.Conflicto(
+                CodigosDeErrorDeCobrosMercadoPago.EnCurso,
+                "Mercado Pago todavía está resolviendo este cobro: no se puede cancelar ni reenviar. Podés cobrar con otro medio de pago.");
+        }
+
+        await CompletarCreacionAsync(cobro, ct);
+    }
+
+    /// <summary>
     /// Pide a Mercado Pago la orden guardada en una fila <c>creando</c> (la original, con su clave: si ya existe, la devuelve) y
     /// aplica la respuesta. Quien la llama tiene el lock del punto de venta y el del cobro y acaba de leer la fila.
     /// </summary>
@@ -223,20 +259,8 @@ public class ServicioDeCobrosMercadoPago(
     {
         var cuerpo = ArmarOrden(cobro.ExternalReference, cobro.Importe, cobro.ExternalPosId, cobro.NumeroPreasignado);
 
-        OrdenDeMercadoPago orden;
-        try
-        {
-            orden = await api.EnviarAsync<OrdenDeMercadoPago>(
-                cobro.IdEmpresa, HttpMethod.Post, "/v1/orders", cuerpo, cobro.ClaveIdempotencia, ct);
-        }
-        catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago is 400 or 422)
-        {
-            // Rechazo definitivo: la orden no existe en Mercado Pago, así que la fila no puede quedar ocupando el número.
-            cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
-            cobro.UpdatedAt = reloj.Ahora;
-            await db.SaveChangesAsync(ct);
-            throw;
-        }
+        var orden = await api.EnviarAsync<OrdenDeMercadoPago>(
+            cobro.IdEmpresa, HttpMethod.Post, "/v1/orders", cuerpo, cobro.ClaveIdempotencia, ct);
 
         var id = orden.Id?.Trim();
         var qr = orden.TypeResponse?.QrData?.Trim();
@@ -249,6 +273,7 @@ public class ServicioDeCobrosMercadoPago(
 
         var ahora = reloj.Ahora;
         cobro.IdOrdenMercadoPago = id;
+        cobro.ExpiraEn = ahora + Vigencia;
         AplicarOrden(cobro, orden, ahora);
         if (cobro.Estado == EstadosDeCobroMercadoPago.Creando)
         {
@@ -345,7 +370,7 @@ public class ServicioDeCobrosMercadoPago(
                 var cobro = await LeerCobroAsync(idCobro, idPuntoVenta, ct);
                 if (cobro.Estado == EstadosDeCobroMercadoPago.Creando)
                 {
-                    await CompletarCreacionAsync(cobro, ct);
+                    await ResolverCreandoAsync(cobro, ct);
                 }
 
                 return await operacion(cobro);
@@ -446,7 +471,8 @@ public class ServicioDeCobrosMercadoPago(
         var pendiente = cobro.Estado == EstadosDeCobroMercadoPago.Pendiente;
         return new CobroDeMercadoPago(
             cobro.Id, cobro.Estado, pendiente ? cobro.QrData : null, cobro.ExpiraEn, cobro.Importe, cobro.ImportePagado,
-            cobro.Estado == EstadosDeCobroMercadoPago.Aprobado && cobro.ImportePagado is { } pagado && pagado != cobro.Importe);
+            cobro.Estado == EstadosDeCobroMercadoPago.Aprobado && cobro.ImportePagado is { } pagado && pagado != cobro.Importe,
+            pendiente && cobro.QrData is null);
     }
 
     private static void ValidarSolicitud(SolicitudDeCobroMercadoPago solicitud)

@@ -82,7 +82,7 @@ public class CobroMercadoPago : EntidadTenant
     /// </summary>
     public required string ClaveIdempotencia { get; set; }
 
-    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>); nulo solo mientras el cobro está <see cref="EstadosDeCobroMercadoPago.Creando"/> o si Mercado Pago rechazó la creación y quedó cancelado.</summary>
+    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>); nulo solo mientras el cobro está <see cref="EstadosDeCobroMercadoPago.Creando"/> o si la fila se abandonó sin que se confirmara ninguna orden y quedó <see cref="EstadosDeCobroMercadoPago.Expirado"/>.</summary>
     public string? IdOrdenMercadoPago { get; set; }
 
     /// <see cref="EstadosDeCobroMercadoPago"/>.

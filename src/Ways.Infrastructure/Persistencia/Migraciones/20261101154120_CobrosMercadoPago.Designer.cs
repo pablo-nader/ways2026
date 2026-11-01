@@ -3768,7 +3768,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
 
-                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'cancelado') OR id_orden_mercadopago IS NOT NULL");
+                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_tipo", "tipo IN ('qr', 'point')");
                         });

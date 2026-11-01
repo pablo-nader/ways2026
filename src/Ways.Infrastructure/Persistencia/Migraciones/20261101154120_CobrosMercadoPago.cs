@@ -60,7 +60,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     table.CheckConstraint("ck_cobros_mercadopago_importe_pagado", "importe_pagado IS NULL OR importe_pagado >= 0");
                     table.CheckConstraint("ck_cobros_mercadopago_intento", "intento >= 1");
                     table.CheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
-                    table.CheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'cancelado') OR id_orden_mercadopago IS NOT NULL");
+                    table.CheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
                     table.CheckConstraint("ck_cobros_mercadopago_tipo", "tipo IN ('qr', 'point')");
                     table.ForeignKey(
                         name: "fk_cobros_mercadopago_dispositivo",

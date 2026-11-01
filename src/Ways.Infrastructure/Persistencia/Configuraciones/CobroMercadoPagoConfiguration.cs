@@ -28,7 +28,7 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
             t.HasCheckConstraint(
                 "ck_cobros_mercadopago_aprobacion", "estado <> 'aprobado' OR fecha_aprobacion IS NOT NULL");
             t.HasCheckConstraint(
-                "ck_cobros_mercadopago_orden", "estado IN ('creando', 'cancelado') OR id_orden_mercadopago IS NOT NULL");
+                "ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_cobros_mercadopago");

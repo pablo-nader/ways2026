@@ -645,24 +645,156 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("cancelado", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
     }
 
-    // Clausula: el rechazo definitivo (400) de Mercado Pago al reenviar la orden deja la fila cancelada y libera el numero.
-    [Fact]
-    public async Task UnRechazoDefinitivoAlReenviarLaOrdenCancelaLaFilaYLiberaElNumero()
+    private static DateTimeOffset Instante(object? valor) => valor switch
     {
-        var (e, _) = await ConCommitPerdidoAsync("mp-cobro-commit-perdido-rechazo", 5046, 100m);
+        DateTime d => new DateTimeOffset(DateTime.SpecifyKind(d, DateTimeKind.Utc)),
+        DateTimeOffset o => o,
+        _ => throw new InvalidOperationException($"No es un instante: {valor}")
+    };
+
+    private static readonly TimeSpan VigenciaEsperada = TimeSpan.FromMinutes(10);
+
+    private async Task<DateTimeOffset> ReservadoEnAsync(Escenario e) =>
+        Instante(Assert.Single(await FilasAsync(e.IdPuntoVenta))["created_at"]);
+
+    // Clausula: R2/R3. Un 4xx (400 o 422) al reenviar dentro del plazo NO prueba que la orden no exista: la fila sigue creando y la
+    // orden original sigue siendo recuperable.
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    public async Task UnRechazo4xxAlReenviarDentroDelPlazoDejaLaFilaCreandoYLaOrdenSigueRecuperable(HttpStatusCode rechazo)
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync($"mp-cobro-4xx-{(int)rechazo}", 5046, 100m);
         e.Ordenes.Antes = p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders"
-            ? Json(HttpStatusCode.BadRequest, """{"error": "invalid_params", "message": "x"}""")
+            ? Json(rechazo, """{"error": "invalid_params", "message": "x"}""")
             : null;
 
         await AssertCodigoAsync(
             await CrearAsync(e, 5046, 100m), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.SolicitudRechazada);
-        Assert.Equal("cancelado", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
 
         e.Ordenes.Antes = null;
-        var nuevo = await CrearOkAsync(e, 5046, 100m);
+        var recuperado = await CrearOkAsync(e, 5046, 100m);
 
+        Assert.Equal(idCobro, recuperado.IdCobro);
+        Assert.Equal("pendiente", recuperado.Estado);
+        Assert.Single(e.Ordenes.OrdenPorClave);
+        Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: R1. Completar tarde una fila creando renueva expira_en: la orden reenviada nace con su plazo completo.
+    [Fact]
+    public async Task CompletarTardeUnaFilaCreandoRenuevaElPlazoDeExpiracion()
+    {
+        var (e, _) = await ConCommitPerdidoAsync("mp-cobro-plazo-fresco", 5060, 100m);
+        var reservado = await ReservadoEnAsync(e);
+        e.Reloj.Ahora = reservado + TimeSpan.FromMinutes(9);
+
+        var cobro = await CrearOkAsync(e, 5060, 100m);
+
+        var esperado = e.Reloj.Ahora + VigenciaEsperada;
+        Assert.Equal(esperado, cobro.ExpiraEn, TimeSpan.FromMilliseconds(1));
+        Assert.Equal(esperado, Instante(Assert.Single(await FilasAsync(e.IdPuntoVenta))["expira_en"]), TimeSpan.FromMilliseconds(1));
+        Assert.Empty(Lecturas(e));
+    }
+
+    // Clausula: R2. Hasta un instante antes de reservado + vigencia todavia se reenvia.
+    [Fact]
+    public async Task UnInstanteAntesDeLaVigenciaDeLaReservaTodaviaSeReenvia()
+    {
+        var (e, _) = await ConCommitPerdidoAsync("mp-cobro-ventana-dentro", 5061, 100m);
+        e.Reloj.Ahora = await ReservadoEnAsync(e) + VigenciaEsperada - TimeSpan.FromMilliseconds(1);
+
+        var cobro = await CrearOkAsync(e, 5061, 100m);
+
+        Assert.Equal("pendiente", cobro.Estado);
+        Assert.Equal(2, Creaciones(e).Count);
+    }
+
+    // Clausula: R2/R3. Desde reservado + vigencia no se reenvia nunca mas (podria crear una orden nueva y cobrable) y crear, consultar y
+    // cancelar responden 409 en curso, hasta el instante de abandono.
+    [Fact]
+    public async Task DesdeLaVigenciaDeLaReservaNoSeReenviaYCrearConsultarYCancelarSon409EnCurso()
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-ventana-fuera", 5062, 100m);
+        var reservado = await ReservadoEnAsync(e);
+        var pedidos = Pedidos(e).Count;
+
+        foreach (var instante in new[]
+        {
+            reservado + VigenciaEsperada,
+            reservado + VigenciaEsperada + TimeSpan.FromMinutes(5),
+            reservado + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(2) - TimeSpan.FromMilliseconds(1)
+        })
+        {
+            e.Reloj.Ahora = instante;
+            await AssertCodigoAsync(await CrearAsync(e, 5062, 100m), HttpStatusCode.Conflict, "cobro_mercadopago_en_curso");
+            await AssertCodigoAsync(await ConsultarAsync(e, idCobro), HttpStatusCode.Conflict, "cobro_mercadopago_en_curso");
+            await AssertCodigoAsync(await CancelarAsync(e, idCobro), HttpStatusCode.Conflict, "cobro_mercadopago_en_curso");
+        }
+
+        Assert.Equal(pedidos, Pedidos(e).Count);
+        Assert.Single(Creaciones(e));
+        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: R2. Desde reservado + 2 vigencias + 2 min cualquier orden que la fila pudo crear ya vencio: consultar o cancelar la da
+    // por expirada sin llamar a Mercado Pago y el numero vuelve a poder cobrarse (otro intento).
+    [Theory]
+    [InlineData("consultar")]
+    [InlineData("cancelar")]
+    public async Task ElInstanteDeAbandonoLaFilaCreandoExpiraSinLlamarAMercadoPagoYElNumeroSeCobraDeNuevo(string operacion)
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync($"mp-cobro-abandono-{operacion}", 5063, 100m);
+        e.Reloj.Ahora = await ReservadoEnAsync(e) + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(2);
+        var pedidos = Pedidos(e).Count;
+
+        var resuelto = await LeerAsync<CobroDeMercadoPago>(
+            operacion == "consultar" ? await ConsultarAsync(e, idCobro) : await CancelarAsync(e, idCobro));
+
+        Assert.Equal("expirado", resuelto.Estado);
+        Assert.Equal(pedidos, Pedidos(e).Count);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("expirado", fila["estado"]);
+
+        var nuevo = await CrearOkAsync(e, 5063, 100m);
+
+        Assert.NotEqual(idCobro, nuevo.IdCobro);
         Assert.Equal("pendiente", nuevo.Estado);
-        Assert.Equal(new[] { "cancelado", "pendiente" }, (await FilasAsync(e.IdPuntoVenta)).Select(f => (string)f["estado"]!).ToArray());
+        Assert.Equal(new[] { 1, 2 }, (await FilasAsync(e.IdPuntoVenta)).Select(f => (int)f["intento"]!).ToArray());
+    }
+
+    // Clausula: R2. Crear en el instante de abandono libera el numero y abre el siguiente intento en la misma llamada.
+    [Fact]
+    public async Task CrearEnElInstanteDeAbandonoExpiraLaFilaCreandoYAbreOtroIntento()
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-abandono-crear", 5064, 100m);
+        e.Reloj.Ahora = await ReservadoEnAsync(e) + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(2);
+
+        var nuevo = await CrearOkAsync(e, 5064, 100m);
+
+        Assert.NotEqual(idCobro, nuevo.IdCobro);
+        Assert.Equal("pendiente", nuevo.Estado);
+        Assert.Equal(new[] { "expirado", "pendiente" }, (await FilasAsync(e.IdPuntoVenta)).Select(f => (string)f["estado"]!).ToArray());
+        Assert.Equal(2, Creaciones(e).Count);
+        Assert.Equal(2, e.Ordenes.OrdenPorClave.Count);
+    }
+
+    // Clausula: sugerencia. Una orden processed recuperada sin pago legible queda pendiente sin QR y la respuesta lo dice.
+    [Fact]
+    public async Task UnaOrdenProcesadaRecuperadaSinPagoNiQrQuedaPendienteVerificandoElPago()
+    {
+        var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-verificando", 5065, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.SinPagos = true;
+        e.Ordenes.SinQr = true;
+
+        var cobro = await CrearOkAsync(e, 5065, 100m);
+
+        Assert.Equal(idCobro, cobro.IdCobro);
+        Assert.Equal("pendiente", cobro.Estado);
+        Assert.Null(cobro.QrData);
+        Assert.True(cobro.VerificandoPago);
     }
 
     // Clausula: single-read-under-lock. La rama de reuso relee el cobro despues de tomar el lock: si una cancelacion confirma entre la
@@ -872,7 +1004,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     [Fact]
-    public async Task UnCuerpoDeMercadoPagoSinIdOSinQrEsUn502YElRechazoDefinitivoCancelaLaFila()
+    public async Task UnCuerpoDeMercadoPagoSinIdOSinQrEsUn502YUnRechazo400TampocoCancelaLaFila()
     {
         var e = await PrepararAsync("mp-cobro-respuesta-invalida");
         e.Ordenes.Antes = p => p.Metodo == HttpMethod.Post && p.Uri.AbsolutePath == "/v1/orders"
@@ -889,7 +1021,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
             await CrearAsync(e, 5015, 100m), HttpStatusCode.BadGateway, CodigosDeErrorDeMercadoPago.SolicitudRechazada);
 
         var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
-        Assert.Equal("cancelado", fila["estado"]);
+        Assert.Equal("creando", fila["estado"]);
         Assert.Null(fila["id_orden_mercadopago"]);
     }
 
@@ -1039,6 +1171,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal("pendiente", consultado.Estado);
         Assert.NotNull(consultado.QrData);
+        Assert.False(consultado.VerificandoPago);
         Assert.Null(consultado.ImportePagado);
         var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
         Assert.Equal("pendiente", fila["estado"]);

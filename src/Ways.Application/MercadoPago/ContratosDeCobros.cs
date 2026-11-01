@@ -10,7 +10,9 @@ public sealed record SolicitudDeCobroMercadoPago(int IdMedioPago, long NumeroPre
 /// <summary>
 /// Un cobro tal como lo ve el dispositivo. <see cref="QrData"/> solo viaja mientras el cobro está pendiente. <see cref="ImporteDistinto"/>
 /// avisa que Mercado Pago aprobó un importe pagado distinto de <see cref="Importe"/> (<see cref="ImportePagado"/>): el cobro sigue
-/// aprobado y decide el cajero.
+/// aprobado y decide el cajero. <see cref="VerificandoPago"/> es verdadero cuando el cobro está pendiente pero no hay QR
+/// para mostrar (una orden ya procesada que se recuperó sin un pago legible): el dispositivo muestra "verificando el pago" en lugar
+/// de un QR y vuelve a consultar.
 /// </summary>
 public sealed record CobroDeMercadoPago(
     int IdCobro,
@@ -19,7 +21,8 @@ public sealed record CobroDeMercadoPago(
     DateTimeOffset ExpiraEn,
     decimal Importe,
     decimal? ImportePagado,
-    bool ImporteDistinto);
+    bool ImporteDistinto,
+    bool VerificandoPago);
 
 public static class CodigosDeErrorDeCobrosMercadoPago
 {
