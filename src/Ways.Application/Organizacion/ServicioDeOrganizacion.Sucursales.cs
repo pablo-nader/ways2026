@@ -231,14 +231,15 @@ public partial class ServicioDeOrganizacion
 
             if (origen is not null)
             {
-                // Los parámetros de la sucursal no son uso: acompañan a su última caja (ver más abajo).
+                // Los parámetros de la sucursal no son uso: acompañan a su última caja (ver más abajo). Tampoco su local de Mercado Pago:
+                // es un vínculo, no historia de negocio, y bloquearía mover la caja que justamente se reapunta a otro local al registrarla.
                 await ExigirSinUsoDeSucursalAsync(
                     origen,
                     descripcion => "No se puede mover la caja: su sucursal quedaría sin cajas y todavía tiene " +
                                    $"{descripcion}. Para unir dos sucursales con stock hace falta una fusión.",
                     "sucursal_en_uso",
                     ct,
-                    excluirParametros: true);
+                    excluirAcompanantes: true);
             }
 
             var momento = reloj.Ahora;
@@ -268,7 +269,7 @@ public partial class ServicioDeOrganizacion
 
     private Task ExigirSinUsoDeSucursalAsync(
         Sucursal sucursal, Func<string, string>? mensajeDeBloqueo, string codigo, CancellationToken ct,
-        bool excluirParametros = false) =>
+        bool excluirAcompanantes = false) =>
         ExigirSinUsoAsync(
             typeof(Sucursal),
             sucursal.CreatedAt,
@@ -283,7 +284,7 @@ public partial class ServicioDeOrganizacion
             ct,
             // Las cajas ya las respondió quien llama (vivas) o son las propias; acá solo el uso propio de la sucursal.
             soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta"
-                               && !(excluirParametros && rama.Tabla == "parametros"),
+                               && !(excluirAcompanantes && rama.Tabla is "parametros" or "locales_mercadopago"),
             mensajeDeBloqueo);
 
     private void RegistrarBajaDeSucursal(Sucursal sucursal, DateTimeOffset momento, bool porCascada)

@@ -28,6 +28,9 @@ public static class CodigosDeErrorDeMercadoPago
 
     /// <summary>Mercado Pago respondió 2xx con un cuerpo que no es el JSON esperado.</summary>
     public const string RespuestaInvalida = "mercadopago_respuesta_invalida";
+
+    /// <summary>La sucursal del punto de venta todavía no es un local de la cuenta de Mercado Pago conectada: se registra primero.</summary>
+    public const string LocalNoRegistrado = "mercadopago_local_no_registrado";
 }
 
 public interface IClienteOAuthMercadoPago

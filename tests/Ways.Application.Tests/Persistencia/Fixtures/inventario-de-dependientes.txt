@@ -7,6 +7,8 @@ Categoria | ofertas | id_categoria,id_tenant | marcado
 Empresa | acumulados_de_facturacion | id_empresa,id_tenant | sinmarca
 Empresa | areas | id_empresa,id_tenant | marcado
 Empresa | articulos_empresas | id_empresa,id_tenant | sinmarca
+Empresa | cajas_mercadopago via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | cajas_mercadopago | id_empresa,id_tenant | marcado
 Empresa | categorias | id_empresa,id_tenant | marcado
 Empresa | certificados_fiscales | id_empresa,id_tenant | marcado
 Empresa | clientes | id_empresa,id_tenant | marcado
@@ -82,6 +84,7 @@ Proveedor | movimientos_cuenta_corriente_proveedor | id_proveedor,id_tenant | si
 Proveedor | ordenes_compra | id_proveedor,id_tenant | marcado
 Proveedor | pagos | id_proveedor,id_tenant | marcado
 PuntoVenta | auditoria | id_punto_venta,id_tenant | excluido
+PuntoVenta | cajas_mercadopago | id_punto_venta,id_tenant | marcado
 PuntoVenta | comprobantes_compra | id_punto_venta,id_tenant | marcado
 PuntoVenta | comprobantes_venta | id_punto_venta,id_tenant | marcado
 PuntoVenta | dispositivos | id_punto_venta,id_tenant | marcado
@@ -99,6 +102,7 @@ PuntoVenta | presupuestos | id_punto_venta,id_tenant | marcado
 PuntoVenta | remitos | id_punto_venta,id_tenant | marcado
 PuntoVenta | reservas_numeracion | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | turnos_caja | id_punto_venta,id_tenant | marcado
+Sucursal | cajas_mercadopago via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
@@ -133,6 +137,7 @@ Tenant | arqueos_turno | id_tenant | sinmarca
 Tenant | articulos | id_tenant | marcado
 Tenant | articulos_empresas | id_tenant | sinmarca
 Tenant | auditoria | id_tenant | excluido
+Tenant | cajas_mercadopago | id_tenant | marcado
 Tenant | categorias | id_tenant | marcado
 Tenant | certificados_fiscales | id_tenant | marcado
 Tenant | clientes | id_tenant | marcado

@@ -202,6 +202,9 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<ConexionMercadoPago> ConexionesMercadoPago => Set<ConexionMercadoPago>();
 
     public DbSet<LocalMercadoPago> LocalesMercadoPago => Set<LocalMercadoPago>();
+
+    public DbSet<CajaMercadoPago> CajasMercadoPago => Set<CajaMercadoPago>();
+
     public DbSet<NumeracionFiscal> NumeracionesFiscales => Set<NumeracionFiscal>();
 
     // Facturación por medio de pago: la decisión por venta (operativa, expuesta en IWaysDbContext) y el
