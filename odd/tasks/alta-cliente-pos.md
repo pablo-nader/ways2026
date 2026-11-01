@@ -29,8 +29,8 @@ Hoy solo el Admin crea clientes (`POST /api/clientes` exige `GestionDeCatalogo`)
 
 ## Tareas
 
-- [ ] T1 — Backend: `POST /api/clientes/rapido` con defaults forzados y tests. Ruta: delegada (2+ archivos no triviales).
-- [ ] T2 — POS web: modal de alta rápida, selección y copia local, con tests. Ruta: delegada (2+ archivos no triviales).
+- [x] T1 — Backend: `POST /api/clientes/rapido` con defaults forzados y tests. Ruta: delegada (2+ archivos no triviales). Evidencia: build OK, Domain ValidadorDePagos 52 OK, Application.Tests 1637 OK, integración filtrada 23 OK. Commit `feat(clientes): alta rápida desde el POS…`.
+- [x] T2 — POS web: modal de alta rápida, selección y copia local, con tests. Ruta: delegada (2+ archivos no triviales). Evidencia: RED observado, tsc limpio, vitest completo 9352 OK, oxlint sin errores. Commit `feat(pos): botón Nuevo cliente…`.
 - [ ] T3 — Judgment-day, PR(s), release del POS pendiente del dueño.
 
 ## Criterios de aceptación
@@ -47,4 +47,6 @@ Hoy solo el Admin crea clientes (`POST /api/clientes` exige `GestionDeCatalogo`)
 
 ## Siguiente paso
 
-T1 y T2 en paralelo con contrato fijado.
+T3 en curso: judgment-day APPROVED (sin graves confirmados). PRs #595 (backend, base main, auto-merge) y #596 (web, apilada sobre `pnader/alta-cliente-pos-t1`; reapuntar a main cuando #595 mergee, nunca `--delete-branch` en #595). Falta release del POS (bump Ways.Desktop + tag pos-v*) con OK del dueño.
+
+Seguimientos (avisos del judgment-day): refresco de instantánea en vuelo puede pisar el cliente recién agregado; timeout tras commit puede duplicar el cliente al reintentar; lista default sin `OrderBy`/`Activo`; doc de `ServicioDeClientes` dice que las altas son solo Admin.
