@@ -43,7 +43,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Tasks
 
-- [ ] E3-T1 — Backend charges: `medios_pago.proveedor`; table `cobros_mercadopago`; device endpoints create / read (refresh
+- [x] E3-T1 — Backend charges: `medios_pago.proveedor`; table `cobros_mercadopago`; device endpoints create / read (refresh
   from Mercado Pago) / cancel a QR charge.
 - [ ] E3-T2 — Backend sale: `PagoDeVenta.IdCobroMercadoPago`; the sale validates and links the approved charge (unique).
 - [ ] E3-T3 — Web: the medio ABM shows `proveedor`; the POS charge modal with the on-screen QR, polling, cancel, auto close +
@@ -61,7 +61,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E3-T1 design and implementation.
+E3-T2: `PagoDeVenta.IdCobroMercadoPago` and the sale validating and linking the approved charge (unique). See "E3-T1 progress" for what T2 can rely on.
 
 ## E3-T1 design (2026-11-01)
 
@@ -91,3 +91,15 @@ Branch `pnader/mercadopago-e3-t1`, stacked on E2 T6. Backend only.
   - `POST /api/pos/mercadopago/cobros/{id}/cancelar`: `pendiente` -> `POST /v1/orders/{id}/cancel`; a 409 from Mercado Pago
     refreshes the order instead (it may have been paid in the meantime, then the answer is `aprobado`).
 - Mercado Pago 401/no connection reuse the E1 errors; `no_disponible` keeps the charge `pendiente`.
+
+## E3-T1 progress (2026-11-01)
+
+Done on `pnader/mercadopago-e3-t1`, commit `feat(mercadopago): el POS crea, consulta y cancela un cobro con QR dinámico` (the hash is in git log).
+
+- `medios_pago.proveedor` (migration `CobrosMercadoPago`): `ProveedorDeCobro.Resolver` (domain) is the single rule; ABM field `Proveedor` is a `CampoOpcional<string?>` (absent keeps, null/blank clears) and the listing returns it to every role; 400 `proveedor_cobro_invalido` / `proveedor_solo_electronico`; CHECKs `ck_medios_pago_proveedor` and `ck_medios_pago_proveedor_solo_electronico` translated to the same codes. The POS snapshot (`MedioPagoDeInstantanea`) does NOT carry it yet (T3 decides).
+- `cobros_mercadopago` model summary (docs/10 §7): id_cobro_mercadopago, id_tenant, id_empresa, id_punto_venta, id_dispositivo, id_medio_pago, numero_preasignado bigint, intento, tipo, importe numeric(18,2), external_reference, id_orden_mercadopago, estado, id_pago_mercadopago, referencia_pago_mercadopago bigint, importe_pagado, qr_data, expira_en, fecha_ultima_consulta, fecha_aprobacion, timestamps. Composite FKs to empresa, punto de venta, dispositivo and medio (all RESTRICT), RLS, partial unique `ux_cobros_mercadopago_vivo_numero` and unique `ux_cobros_mercadopago_intento` (both 23505 -> 409 `cobro_mercadopago_en_curso`). Golden inventory updated (6 lines, all `marcado`: a PV, empresa, medio or tenant with charges is "in use"). No audit rows: the table is itself the record of each attempt.
+- Endpoints (`OperacionDePos` + `RequiereDispositivo`, always 200): `POST /api/pos/mercadopago/cobros/`, `GET .../cobros/{idCobro}`, `POST .../cobros/{idCobro}/cancelar`; response `{idCobro, estado, qrData, expiraEn, importe, importePagado, importeDistinto}`, `qrData` only while pending.
+- Locks: creation takes `(id_punto_venta, 0x4D504351)`, GET/cancel take `(id_cobro, 0x4D504352)`; all held across the Mercado Pago call; non-retrying strategy; any `ErrorDominio` (401 reconnection, 409s, MP rejections) commits what was already saved before rethrowing.
+- Decisions beyond the design: a pending charge past `expira_en` is refreshed from Mercado Pago before deciding reuse/409 (it may have expired or been paid); `intento` is `max + 1` over all charges of the number; same-amount reuse also requires the same medio (otherwise 409 `cobro_mercadopago_en_curso`); cancelling an `aprobado` charge is 409 `cobro_mercadopago_ya_aprobado`, cancelling a cancelado/expirado/devuelto one returns it as is; an order status Ways does not know (`created`, `at_terminal`) leaves the charge pending; `reference_id` is read tolerantly (number or string) and never blocks approving.
+- Verification: build, `has-pending-model-changes` clean, Domain 2417, Application 1650, integration filter 359 (14 m). Mutation evidence: see the commit report (proveedor rule and CHECK, live-charge index, same-amount reuse, 2 s throttle, per-charge/per-PV locks, status mapping, cancel-409 refresh, device PV scoping, RLS).
+- Open: single-clause mutation of each of the three device-PV conjuncts survives by design (pre-check + locked read are redundant, a charge never changes PV); the tests kill them only together. Nothing here was exercised against the real Mercado Pago API.
