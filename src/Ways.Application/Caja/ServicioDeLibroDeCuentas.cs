@@ -11,8 +11,9 @@ namespace Ways.Application.Caja;
 /// medios sin cuenta, y el libro de una cuenta con su saldo de apertura y los totales del rango. Solo lee. La
 /// autorización (<c>LecturaDeReportes</c>: Supervisor y Admin) se aplica en la capa de API.
 ///
-/// El libro se ordena siempre por <c>Id</c> y nunca por <c>Fecha</c>, igual que el de efectivo: el significado de la cadena
-/// es el orden de inserción. El rango usa los mismos límites inclusivos de <see cref="ServicioDeTesoreria"/>
+/// El libro se ordena por <c>(Fecha, Id)</c>: es el orden de la cadena. Las filas que escriben el cierre y el ajuste
+/// nunca quedan con fecha anterior a la cola (<see cref="EscriturasDeCuentaDeTesoreria.FechaMonotona"/>), pero la reconstrucción del
+/// historial inserta filas con la fecha de cierre de turnos viejos y recalcula <c>inicio</c>/<c>final</c> de las posteriores. El rango usa los mismos límites inclusivos de <see cref="ServicioDeTesoreria"/>
 /// (<c>fecha &gt;= desde</c> y <c>fecha &lt;= hasta</c>, el día completo lo arma el cliente).
 /// </summary>
 public class ServicioDeLibroDeCuentas(IWaysDbContext db)
@@ -29,7 +30,7 @@ public class ServicioDeLibroDeCuentas(IWaysDbContext db)
             where c.IdEmpresa == idEmpresa
             let ultimo = db.MovimientosCuenta
                 .Where(m => m.IdCuentaTesoreria == c.Id)
-                .OrderByDescending(m => m.Id)
+                .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
                 .Select(m => new { m.Final, m.Fecha })
                 .FirstOrDefault()
             orderby c.Nombre, c.Id
@@ -71,7 +72,7 @@ public class ServicioDeLibroDeCuentas(IWaysDbContext db)
             where c.Id == idCuenta
             let ultimoFinal = db.MovimientosCuenta
                 .Where(m => m.IdCuentaTesoreria == c.Id)
-                .OrderByDescending(m => m.Id)
+                .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
                 .Select(m => (decimal?)m.Final)
                 .FirstOrDefault()
             select new { c.Nombre, c.Activo, c.SaldoInicial, SaldoActual = ultimoFinal ?? c.SaldoInicial })
@@ -98,7 +99,7 @@ public class ServicioDeLibroDeCuentas(IWaysDbContext db)
         {
             apertura = await db.MovimientosCuenta
                 .Where(m => m.IdCuentaTesoreria == idCuenta && m.Fecha < limite)
-                .OrderByDescending(m => m.Id)
+                .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
                 .Select(m => (decimal?)m.Final)
                 .FirstOrDefaultAsync(ct) ?? cuenta.SaldoInicial;
         }
@@ -111,7 +112,7 @@ public class ServicioDeLibroDeCuentas(IWaysDbContext db)
         var total = await enElRango.CountAsync(ct);
 
         var items = await (
-            from m in enElRango.OrderBy(m => m.Id).Skip((int)Math.Min((long)(pagina - 1) * tamanio, int.MaxValue)).Take(tamanio)
+            from m in enElRango.OrderBy(m => m.Fecha).ThenBy(m => m.Id).Skip((int)Math.Min((long)(pagina - 1) * tamanio, int.MaxValue)).Take(tamanio)
             select new MovimientoDeCuentaListado(
                 m.Id,
                 m.Fecha,

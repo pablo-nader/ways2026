@@ -27,8 +27,10 @@ namespace Ways.Application.Caja;
 /// Fechas monótonas: la <c>fecha</c> de toda fila que se agrega a una cuenta, de este escritor o del ajuste manual, es
 /// <c>max(hora propia, fecha del último movimiento de la cuenta)</c> (<see cref="FechaMonotona"/>), leída junto con el
 /// <c>final</c> bajo el lock. Cada escritor fija su hora antes de esperar ese lock, así que sin esto un cierre podía comitear un id
-/// mayor con una fecha anterior. Con la regla, para cada cuenta el orden por fecha (con empates) es el orden por id, y el libro por
-/// rango puede definir su saldo de apertura como el último movimiento anterior al rango. Las filas de un cierre para una misma
+/// mayor con una fecha anterior. Con la regla, para cada cuenta que solo tuvo estos escritores el orden por fecha (con empates) es el orden por id, y el libro por
+/// rango puede definir su saldo de apertura como el último movimiento anterior al rango. La reconstrucción del historial
+/// (<see cref="ServicioDeReconstruccionDeCuentas"/>) es el único escritor que inserta filas con fecha anterior a la cola: por eso la cadena
+/// se ordena por <c>(fecha, id)</c> y no solo por <c>id</c>, y la cola es la última fila en ese orden. Las filas de un cierre para una misma
 /// cuenta comparten la fecha resultante. La fila de la tesorería de efectivo conserva la hora del cierre. Consecuencia: si el último
 /// movimiento de una cuenta tiene fecha futura (reloj desfasado o una fila mal cargada), toda fila posterior de esa cuenta lleva esa
 /// fecha hasta que la hora real la alcance; se cura sola y no se detecta (la pantalla avisa si el ajuste cae fuera del rango mostrado).
@@ -45,7 +47,7 @@ public static class EscriturasDeCuentaDeTesoreria
     private sealed record MedioAcreditable(
         int IdMedioPago, string Nombre, int IdCuenta, decimal Bruto, PorcentajesDeCobro Porcentajes);
 
-    private sealed record CuentaBloqueada(decimal SaldoInicial);
+    internal sealed record CuentaBloqueada(decimal SaldoInicial);
 
     /// <summary>Saldo vigente de la cuenta y fecha de su último movimiento (<c>null</c> sin movimientos).</summary>
     public sealed record ColaDeCuenta(decimal Saldo, DateTimeOffset? Fecha);
@@ -92,23 +94,9 @@ public static class EscriturasDeCuentaDeTesoreria
                 var final = inicio + componente.Ingreso - componente.Egreso;
                 saldos[medio.IdCuenta] = final;
 
-                db.MovimientosCuenta.Add(new MovimientoCuenta
-                {
-                    IdTenant = idTenant,
-                    IdCuentaTesoreria = medio.IdCuenta,
-                    Fecha = fechas[medio.IdCuenta],
-                    Tipo = componente.Tipo,
-                    IdTurnoCaja = idTurnoCaja,
-                    IdMedioPago = medio.IdMedioPago,
-                    Concepto = Concepto(componente, medio.Nombre, idTurnoCaja),
-                    Inicio = inicio,
-                    Ingreso = componente.Ingreso,
-                    Egreso = componente.Egreso,
-                    Final = final,
-                    IdEmpleado = idEmpleado,
-                    BaseBruta = componente.BaseBruta,
-                    PorcentajeAplicado = componente.PorcentajeAplicado
-                });
+                db.MovimientosCuenta.Add(ArmarFila(
+                    idTenant, medio.IdCuenta, fechas[medio.IdCuenta], componente, idTurnoCaja, medio.IdMedioPago, medio.Nombre,
+                    inicio, idEmpleado));
             }
         }
 
@@ -130,12 +118,12 @@ public static class EscriturasDeCuentaDeTesoreria
             : null;
     }
 
-    private static async Task<ColaDeCuenta> LeerColaAsync(
+    internal static async Task<ColaDeCuenta> LeerColaAsync(
         IWaysDbContext db, int idTenant, int idCuenta, decimal saldoInicial, CancellationToken ct)
     {
         var ultimo = await db.MovimientosCuenta
             .Where(m => m.IdCuentaTesoreria == idCuenta && m.IdTenant == idTenant)
-            .OrderByDescending(m => m.Id)
+            .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
             .Select(m => new { m.Final, m.Fecha })
             .FirstOrDefaultAsync(ct);
 
@@ -148,6 +136,30 @@ public static class EscriturasDeCuentaDeTesoreria
     /// futuro, todas las filas siguientes llevan esa fecha hasta que la hora real la pase.</summary>
     public static DateTimeOffset FechaMonotona(DateTimeOffset candidata, DateTimeOffset? fechaDeLaCola) =>
         fechaDeLaCola is { } cola && cola > candidata ? cola : candidata;
+
+    /// <summary>Fila del libro para un componente del cobro de un turno: la arma tanto el cierre como la reconstrucción del
+    /// historial, así que las dos escriben el mismo concepto y el mismo snapshot. <c>Final</c> sale de <paramref name="inicio"/>
+    /// más la diferencia del componente.</summary>
+    internal static MovimientoCuenta ArmarFila(
+        int idTenant, int idCuenta, DateTimeOffset fecha, ComponenteDeMovimientoDeCuenta componente, int idTurnoCaja,
+        int idMedioPago, string nombreMedio, decimal inicio, int idEmpleado) =>
+        new()
+        {
+            IdTenant = idTenant,
+            IdCuentaTesoreria = idCuenta,
+            Fecha = fecha,
+            Tipo = componente.Tipo,
+            IdTurnoCaja = idTurnoCaja,
+            IdMedioPago = idMedioPago,
+            Concepto = Concepto(componente, nombreMedio, idTurnoCaja),
+            Inicio = inicio,
+            Ingreso = componente.Ingreso,
+            Egreso = componente.Egreso,
+            Final = inicio + componente.Ingreso - componente.Egreso,
+            IdEmpleado = idEmpleado,
+            BaseBruta = componente.BaseBruta,
+            PorcentajeAplicado = componente.PorcentajeAplicado
+        };
 
     private static string Concepto(ComponenteDeMovimientoDeCuenta componente, string medio, int idTurnoCaja)
     {
@@ -195,7 +207,7 @@ public static class EscriturasDeCuentaDeTesoreria
         return medios;
     }
 
-    private static async Task<Dictionary<int, CuentaBloqueada>> LeerYBloquearCuentasAsync(
+    internal static async Task<Dictionary<int, CuentaBloqueada>> LeerYBloquearCuentasAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int? idEmpresa, List<int> idsDeCuenta,
         CancellationToken ct)
     {

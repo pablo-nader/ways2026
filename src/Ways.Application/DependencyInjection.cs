@@ -220,6 +220,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeCuentasDeTesoreria>();
         services.AddScoped<ServicioDeLibroDeCuentas>();
         services.AddScoped<ServicioDeAjusteDeCuentaDeTesoreria>();
+        services.AddScoped<ServicioDeReconstruccionDeCuentas>();
 
         // stage-11-exportacion-reportes, Slice 9 (proposal decisión 10, droppable a Etapa 13):
         // existencias — LINQ puro sobre stock ⋈ articulos, sin dependencia de LectorDeSerieTemporal.

@@ -136,7 +136,7 @@ cuentas_tesoreria (           -- [catálogo por empresa: id_empresa NOT NULL] �
     activo, created_at, updated_at, deleted_at
 );
 
-movimientos_cuenta (          -- [operativa — libro append-only] encadenado por cuenta
+movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ordenado por (fecha, id)]
     id_movimiento_cuenta, id_cuenta_tesoreria, fecha,
     tipo tipo_movimiento_cuenta,             -- enum: cobro | comision | retencion_iibb | retencion_iva |
                                              -- retencion_ganancias | ajuste | transferencia | deposito | retiro
@@ -158,6 +158,11 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > parcial `ux_cuentas_tesoreria_nombre_empresa` `(id_tenant, id_empresa, nombre) WHERE deleted_at IS
 > NULL`, índices `ix_cuentas_tesoreria_tenant` e `ix_cuentas_tesoreria_empresa`. RLS estándar.
 >
+> **Orden de la cadena:** `(fecha, id)`. El cierre y el ajuste agregan al final (su fecha nunca es anterior a la cola), pero la
+> reconstrucción del historial (`POST /api/cuentas-tesoreria/reconstruccion`) inserta filas con la fecha de cierre de turnos viejos
+> y reescribe `inicio`/`final` de las filas posteriores de la cuenta; `ingreso` y `egreso` de cada fila no cambian, así que un ajuste
+> manual conserva su diferencia pero no el saldo objetivo que lo originó.
+>
 > `movimientos_cuenta`: `ck_movimientos_cuenta_cadena` (`final = inicio + ingreso − egreso`, igual
 > que la tesorería de efectivo), más dos CHECK que `movimientos_tesoreria` no tiene:
 > `ck_movimientos_cuenta_importes_no_negativos` (`ingreso` y `egreso` no negativos) y
@@ -165,8 +170,8 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > cero es válida). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
 > `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`; `fk_movimientos_cuenta_empleado`
 > es simple a `usuarios`, como en la tesorería de efectivo. Índices (ninguno implícito `IX_`): `ix_movimientos_cuenta_tenant`;
-> `ix_movimientos_cuenta_cuenta_id` `(id_cuenta_tesoreria, id_tenant, id_movimiento_cuenta)`, que
-> sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro;
+> `ix_movimientos_cuenta_cuenta_fecha_id` `(id_cuenta_tesoreria, id_tenant, fecha, id_movimiento_cuenta)`, que
+> sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro, que se ordenan por `(fecha, id)`;
 > `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago` e `ix_movimientos_cuenta_empleado`
 > como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
 > id_turno_caja, id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL AND tipo IN ('cobro',

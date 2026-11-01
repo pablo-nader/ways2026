@@ -926,8 +926,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdTurnoCaja", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_turno");
 
-                    b.HasIndex("IdCuentaTesoreria", "IdTenant", "Id")
-                        .HasDatabaseName("ix_movimientos_cuenta_cuenta_id");
+                    b.HasIndex("IdCuentaTesoreria", "IdTenant", "Fecha", "Id")
+                        .HasDatabaseName("ix_movimientos_cuenta_cuenta_fecha_id");
 
                     b.HasIndex("IdTenant", "IdTurnoCaja", "IdMedioPago", "Tipo")
                         .IsUnique()

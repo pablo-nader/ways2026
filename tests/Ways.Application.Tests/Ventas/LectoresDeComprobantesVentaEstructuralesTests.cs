@@ -76,6 +76,12 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
                 "db.ComprobantesVenta,")] =
                 (1, PorTurno),
+            [("Ways.Application/Caja/ServicioDeReconstruccionDeCuentas.cs",
+                "from p in db.Cobros")] =
+                (1, PorTurno),
+            [("Ways.Application/Caja/ServicioDeReconstruccionDeCuentas.cs",
+                "join c in db.ComprobantesVenta on p.IdComprobanteVenta equals c.Id")] =
+                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeRendicionDeDispositivos.cs",
                 "FROM comprobantes_venta cv")] =
                 (1, "Cuenta los comprobantes de la serie de un dispositivo por (punto de venta, tipo de ticket, rango de números): un espejo es de un tipo fiscal y numera por la serie fiscal."),
