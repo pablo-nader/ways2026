@@ -658,6 +658,52 @@ public class CuentasTesoreriaReconstruccionTests(WaysApiFixture fixture) : IClas
         Assert.Equal(((int?)posterior, Dia11, 1000m, 200m, 800m), (fila.IdPago, fila.Fecha, fila.Inicio, fila.Egreso, fila.Final));
     }
 
+    /// <summary>Un editor retiene el pago <c>FOR UPDATE</c> (como la edición y la baja) mientras corre la aplicación: el
+    /// <c>FOR KEY SHARE</c> de los pagos sin débitos la hace esperar, y al soltarlo con el pago dado de baja la aplicación lo ve
+    /// así y no lo debita; el otro pago del rango, sin editor, sí. Evidencia de mutación: quitar <c>FOR KEY SHARE OF p</c> de
+    /// <c>BloquearPagosSinDebitosAsync</c> hace fallar el plan (debita los dos pagos): la aplicación igual espera, en el chequeo de
+    /// la FK de la fila nueva, pero ya planeó con el pago vivo y escribe el débito viejo.</summary>
+    [Fact]
+    public async Task AplicarEsperaAlEditorDelPagoYNoDebitaElPagoQueElEditorDioDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(AplicarEsperaAlEditorDelPagoYNoDebitaElPagoQueElEditorDioDeBaja));
+        var cuenta = await CrearCuentaAsync(ctx, "Banco", saldoInicial: 1000m);
+        var transferencia = await CrearMedioAsync(ctx, "Transferencia B", idCuenta: null);
+        var editado = await PagoAsync(ctx, transferencia, 100m, Dia10);
+        var libre = await PagoAsync(ctx, transferencia, 200m, Dia10.AddHours(1));
+        await AsignarCuentaAsync(ctx, transferencia, cuenta);
+
+        Task<HttpResponseMessage> aplicacion;
+        await using (var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant))
+        await using (var transaccion = await conexion.BeginTransactionAsync())
+        {
+            await using (var lockDelEditor = new NpgsqlCommand(
+                $"SELECT id_pago FROM pagos WHERE id_pago = {editado} FOR UPDATE", conexion, transaccion))
+            {
+                Assert.Equal(editado, await lockDelEditor.ExecuteScalarAsync());
+            }
+
+            aplicacion = ctx.Admin.PostAsJsonAsync(RutaAplicar, Pedido(ctx, "2026-03-10", "2026-03-10"));
+            var primera = await Task.WhenAny(aplicacion, Task.Delay(1500));
+            Assert.False(ReferenceEquals(primera, aplicacion), "La aplicación no esperó al editor del pago.");
+
+            await using (var baja = new NpgsqlCommand(
+                $"UPDATE pagos SET deleted_at = now() WHERE id_pago = {editado}", conexion, transaccion))
+            {
+                Assert.Equal(1, await baja.ExecuteNonQueryAsync());
+            }
+
+            await transaccion.CommitAsync();
+        }
+
+        var plan = await LeerPlanAsync(await aplicacion);
+        Assert.Equal((0, 1, 1), (plan.Turnos, plan.Pagos, plan.Filas));
+        Assert.Equal([libre], plan.Debitos.Select(d => d.IdPago).ToArray());
+        var fila = Assert.Single(await LibroAsync(ctx, cuenta));
+        Assert.Equal(((int?)libre, 200m), (fila.IdPago, fila.Egreso));
+        Assert.Equal(800m, await SaldoDeLaCuentaAsync(ctx, cuenta));
+    }
+
     // ---- libro ----------------------------------------------------------------------------------------
 
     [Fact]

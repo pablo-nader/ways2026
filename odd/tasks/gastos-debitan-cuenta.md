@@ -103,6 +103,14 @@ digital baja el esperado del arqueo pero nunca debitó la cuenta (límite docume
 - 2026-11-01: T1 terminada (ver evidencia en la tarea).
 - 2026-11-01: T2 terminada (ver evidencia en la tarea).
 - 2026-11-01: T3 terminada (ver evidencia en la tarea).
+- 2026-11-01: seguimientos de revisión aprobados por el dueño. Web: el modal lista lo congelado por la conciliación
+  (`congeladas`, `debitosCongelados`, con `conciliadoHasta`) con y sin filas para escribir, y el estado vacío solo dice "no hay
+  nada pendiente" cuando tampoco hay nada congelado; RED 2 pruebas, luego las 3 suites web 128/128, `tsc` solo los 13 TS2882,
+  `lint` sin errores (se sumaron los dos campos al fixture de `paginas/CuentasTesoreria.test.tsx`). Integración: prueba nueva
+  `AplicarEsperaAlEditorDelPagoYNoDebitaElPagoQueElEditorDioDeBaja` para el `FOR KEY SHARE` de los pagos candidatos; integración
+  `CuentasTesoreriaReconstruccion` 20/20. Mutación: sin `FOR KEY SHARE OF p` la prueba falla en el plan (`(0, 2, 2)` en vez de
+  `(0, 1, 1)`: debita el pago dado de baja); la espera no la detecta porque el chequeo de la FK de la fila nueva también espera
+  al editor. Revertida desde copia: 20/20.
 
 ## Siguiente paso
 
