@@ -724,7 +724,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         {
             reservado + VigenciaEsperada,
             reservado + VigenciaEsperada + TimeSpan.FromMinutes(5),
-            reservado + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(2) - TimeSpan.FromMilliseconds(1)
+            reservado + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(5) - TimeSpan.FromMilliseconds(1)
         })
         {
             e.Reloj.Ahora = instante;
@@ -746,7 +746,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
     public async Task ElInstanteDeAbandonoLaFilaCreandoExpiraSinLlamarAMercadoPagoYElNumeroSeCobraDeNuevo(string operacion)
     {
         var (e, idCobro) = await ConCommitPerdidoAsync($"mp-cobro-abandono-{operacion}", 5063, 100m);
-        e.Reloj.Ahora = await ReservadoEnAsync(e) + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(2);
+        e.Reloj.Ahora = await ReservadoEnAsync(e) + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(5);
         var pedidos = Pedidos(e).Count;
 
         var resuelto = await LeerAsync<CobroDeMercadoPago>(
@@ -769,7 +769,7 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
     public async Task CrearEnElInstanteDeAbandonoExpiraLaFilaCreandoYAbreOtroIntento()
     {
         var (e, idCobro) = await ConCommitPerdidoAsync("mp-cobro-abandono-crear", 5064, 100m);
-        e.Reloj.Ahora = await ReservadoEnAsync(e) + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(2);
+        e.Reloj.Ahora = await ReservadoEnAsync(e) + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(5);
 
         var nuevo = await CrearOkAsync(e, 5064, 100m);
 

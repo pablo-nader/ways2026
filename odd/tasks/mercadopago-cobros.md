@@ -123,10 +123,20 @@ Both judges confirmed the round-1 fix introduced R1-R3. Same unshipped migration
 - R1 — completing a `creando` row sets `expira_en = ahora + 10 min` (the re-sent order carries a fresh `PT10M`); the normal expiry/refresh rule then runs on the just-completed row (create's `else if` became a second `if`).
 - R2 + R3 — the "400/422 -> cancelado" rule is gone: a 4xx is not proof that no order exists. New time rule from the reservation instant (`created_at`, `reservadoEn`), in `ResolverCreandoAsync`, used by create, GET and cancel under the same locks:
   - `ahora < reservadoEn + 10 min`: re-send; any failure (4xx, 5xx, timeout, invalid 2xx) keeps it `creando` and answers the error as before.
-  - `reservadoEn + 10 min <= ahora < reservadoEn + 22 min`: never re-sent (it could create a fresh payable order); create, GET and cancel answer 409 `cobro_mercadopago_en_curso` (charge being resolved, the cashier can use another medio).
-  - `ahora >= reservadoEn + 2*10 min + 2 min`: any order the row could have created has expired, so the row becomes `expirado` locally with no Mercado Pago call, freeing the number and the medio guard; create then opens the next `intento`.
+  - `reservadoEn + 10 min <= ahora < reservadoEn + 25 min`: never re-sent (it could create a fresh payable order); create, GET and cancel answer 409 `cobro_mercadopago_en_curso` (charge being resolved, the cashier can use another medio).
+  - `ahora >= reservadoEn + 2*10 min + 5 min (margin raised from 2 to 5 min after the final re-judgment: both judges suggested it for HTTP timeouts and clock skew)`: any order the row could have created has expired, so the row becomes `expirado` locally with no Mercado Pago call, freeing the number and the medio guard; create then opens the next `intento`.
   - `ck_cobros_mercadopago_orden` is now `estado IN ('creando','expirado') OR id_orden_mercadopago IS NOT NULL` (no `cancelado` without order is reachable); docs/10 part 07 and the entity comment updated.
 - Suggestion — `CobroDeMercadoPago.VerificandoPago` (`verificandoPago`) is true when `estado` is `pendiente` and `qrData` is null (a recovered `processed` order without a readable payment): E3-T3 shows "verificando el pago" instead of a QR. The loop-exhaustion 409 message is now neutral.
 - Tests (`MercadoPagoCobrosTests`, injected clock): 400/422 within the window keeps `creando` and stays recoverable; late completion renews `expira_en`; one instant before the window still re-sends; from the window on create/GET/cancel are 409 with no MP call (also one ms before the give-up instant); at the give-up instant GET/cancel/create expire the row without MP call and the number is charged again (`intento` 2); `verificandoPago` true/false.
 - Mutation evidence (one per run, each killed): removing the `expira_en` renewal, `>=` -> `>` on the re-send window, `>=` -> `>` on the give-up instant, `VerificandoPago` forced false.
 - Verification: build 0 errors, `has-pending-model-changes` clean, Domain 2417, Application 1650, integration filter 154 (3 m 35 s).
+
+## Judgment-day E3-T1 verdict
+
+- 2026-11-01: **APPROVED** after two fix rounds. Round 1 (both judges): approval without a readable paid amount, fragile
+  lost-commit retry, reuse branch not re-read under lock, medio without a live-charge guard; fixed in 9dbab484 (reserve-then-call
+  with a `creando` row, stored key and body). Re-judgment (both): stale expiry on late completion, `creando` rows stuck forever,
+  4xx taken as "no order"; fixed in 95337690 (time bands from `created_at`: re-send within one vigencia, 409 en curso until
+  2 vigencias + margin, then local `expirado`). Final re-judgment: both clean. Applied after it (both suggested): margin 2 -> 5 min.
+- Accepted (judge B, documented): a re-send whose response is lost leaves no order id; that order is not payable by a customer
+  because a dynamic QR exists only in the response Ways never showed, and it expires before the give-up instant.

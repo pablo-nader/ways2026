@@ -38,7 +38,7 @@ namespace Ways.Application.MercadoPago;
 /// <c>creando</c></b>, contados desde su reserva (<c>created_at</c>): mientras no pasó una vigencia se reenvía, y cualquier fallo (un
 /// 4xx incluido: no prueba que la orden no exista) la deja <c>creando</c>; desde una vigencia no se reenvía nunca más, porque podría
 /// crear una orden nueva y cobrable, y crear, consultar y cancelar responden 409 <c>cobro_mercadopago_en_curso</c>; desde dos
-/// vigencias más 2 minutos (cualquier orden que pudo crear un reenvío ya venció) la fila pasa a <c>expirado</c> sin llamar a Mercado
+/// vigencias más 5 minutos (cualquier orden que pudo crear un reenvío ya venció) la fila pasa a <c>expirado</c> sin llamar a Mercado
 /// Pago, y libera el número. Una orden en estado <c>created</c> sin <c>qr_data</c> es una respuesta inválida (502); una en estado
 /// terminal pasa por el mapeo de estados; una <c>processed</c> recuperada sin pago legible queda <c>pendiente</c> sin QR
 /// (<c>VerificandoPago</c>).
@@ -80,7 +80,7 @@ public class ServicioDeCobrosMercadoPago(
 
     private static readonly TimeSpan Vigencia = TimeSpan.FromMinutes(10);
 
-    private static readonly TimeSpan MargenDeAbandono = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MargenDeAbandono = TimeSpan.FromMinutes(5);
 
     private const decimal ImporteMaximo = 9_999_999_999_999m;
 
