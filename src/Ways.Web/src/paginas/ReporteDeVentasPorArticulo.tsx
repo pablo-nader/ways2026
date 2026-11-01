@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
@@ -21,10 +22,12 @@ import type {
   VentasPorArticulo,
 } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
+import { ModalTicketsDeArticulo } from '../componentes/ModalTicketsDeArticulo'
 import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { formatearImporte } from '../formato/importes'
 
@@ -59,6 +62,17 @@ function idODefecto(valor: string): number | null {
   return valor === '' ? null : Number(valor)
 }
 
+/** Parámetros de la URL que abren el modal de tickets de un artículo y, encima, el detalle de uno de ellos. */
+const PARAMETRO_ARTICULO = 'articulo'
+const PARAMETRO_TICKET = 'ticket'
+
+/** Un id válido de la URL es un entero positivo; cualquier otra cosa (ausente, texto, negativo) cuenta como ausente. */
+function idDeParametro(valor: string | null): number | null {
+  if (valor === null || !/^\d+$/.test(valor)) return null
+  const id = Number(valor)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
 /**
  * Cuánto y a cuánto se vendió de cada artículo en un rango, filtrable por área, grupo, categoría y artículo
  * (`Politicas.LecturaDeReportes`: Supervisor + Admin). Cada cambio de filtro lanza una consulta nueva gateada
@@ -87,6 +101,13 @@ export function ReporteDeVentasPorArticulo() {
   const [error, setError] = useState('')
   const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
+
+  const [parametros, setParametros] = useSearchParams()
+  const idArticuloAbierto = idDeParametro(parametros.get(PARAMETRO_ARTICULO))
+  // Un ticket sin artículo no tiene dónde mostrarse: se ignora.
+  const idTicketAbierto = idArticuloAbierto === null ? null : idDeParametro(parametros.get(PARAMETRO_TICKET))
+  /** Botón de la fila que abrió el modal: a él vuelve el foco al cerrarlo. */
+  const disparadorRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     let vigente = true
@@ -180,6 +201,47 @@ export function ReporteDeVentasPorArticulo() {
         .then((pagina) => pagina.items.map((a) => ({ id: a.id, etiqueta: `${a.codigoInterno} — ${a.nombre}` }))),
     [],
   )
+
+  function abrirTickets(idArticulo: number, disparador: HTMLElement) {
+    disparadorRef.current = disparador
+    setParametros((previos) => {
+      const siguientes = new URLSearchParams(previos)
+      siguientes.set(PARAMETRO_ARTICULO, String(idArticulo))
+      siguientes.delete(PARAMETRO_TICKET)
+      return siguientes
+    })
+  }
+
+  function abrirTicket(idComprobante: number) {
+    setParametros((previos) => {
+      const siguientes = new URLSearchParams(previos)
+      siguientes.set(PARAMETRO_TICKET, String(idComprobante))
+      return siguientes
+    })
+  }
+
+  function cerrarTicket() {
+    setParametros(
+      (previos) => {
+        const siguientes = new URLSearchParams(previos)
+        siguientes.delete(PARAMETRO_TICKET)
+        return siguientes
+      },
+      { replace: true },
+    )
+  }
+
+  function cerrarTickets() {
+    setParametros(
+      (previos) => {
+        const siguientes = new URLSearchParams(previos)
+        siguientes.delete(PARAMETRO_ARTICULO)
+        siguientes.delete(PARAMETRO_TICKET)
+        return siguientes
+      },
+      { replace: true },
+    )
+  }
 
   const puntosVentaDeLaEmpresa = puntosVenta.filter((pv) => pv.idEmpresa === idEmpresa)
   const articulosDelReporte = useMemo(() => datos?.articulos ?? [], [datos])
@@ -391,6 +453,9 @@ export function ReporteDeVentasPorArticulo() {
                       <EncabezadoOrdenable columna="total" orden={orden} onAlternar={alternar} className="text-end">
                         Total
                       </EncabezadoOrdenable>
+                      <th>
+                        <span className="visually-hidden">Tickets</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -411,11 +476,18 @@ export function ReporteDeVentasPorArticulo() {
                         </td>
                         <td className="text-end">{formatearCantidad(f.cantidad)}</td>
                         <td className="text-end">{formatearMoneda(f.total)}</td>
+                        <td>
+                          <BotonIcono
+                            icono="detalle"
+                            etiqueta={`Ver tickets de ${f.descripcion}`}
+                            onClick={(e) => abrirTickets(f.idArticulo, e.currentTarget)}
+                          />
+                        </td>
                       </tr>
                     ))}
                     {filas.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="text-center text-muted py-4">
+                        <td colSpan={8} className="text-center text-muted py-4">
                           No hay ventas de artículos que coincidan con los filtros.
                         </td>
                       </tr>
@@ -427,6 +499,7 @@ export function ReporteDeVentasPorArticulo() {
                         <td colSpan={5}>Total</td>
                         <td className="text-end">{formatearCantidad(datos.cantidadTotal)}</td>
                         <td className="text-end">{formatearMoneda(datos.total)}</td>
+                        <td />
                       </tr>
                     </tfoot>
                   )}
@@ -436,6 +509,19 @@ export function ReporteDeVentasPorArticulo() {
           </>
         )}
       </Box>
+
+      {idArticuloAbierto !== null && filtros !== null && (
+        <ModalTicketsDeArticulo
+          key={idArticuloAbierto}
+          idArticulo={idArticuloAbierto}
+          filtros={{ idEmpresa: filtros.idEmpresa, idPuntoVenta: filtros.idPuntoVenta, desde: filtros.desde, hasta: filtros.hasta }}
+          idTicket={idTicketAbierto}
+          onAbrirTicket={abrirTicket}
+          onCerrarTicket={cerrarTicket}
+          onCerrar={cerrarTickets}
+          focoDeReserva={disparadorRef}
+        />
+      )}
     </div>
   )
 }

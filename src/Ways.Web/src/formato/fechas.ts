@@ -84,3 +84,14 @@ export function dentroDeRango(iso: string, min?: string, max?: string): boolean 
 export function fechaHoraATexto(valor: string | Date): string {
   return new Date(valor).toLocaleString('es-AR', { hourCycle: 'h23' })
 }
+
+/** Fecha y hora `DD/MM/AAAA, HH:mm:ss` en la zona horaria de la empresa, que es la que usó el reporte para armar el
+ * período. Una zona que el navegador no reconoce cae a la hora local en vez de romper la tabla. */
+export function fechaHoraEnZonaATexto(valor: string, zonaHoraria: string): string {
+  const fecha = new Date(valor)
+  try {
+    return fecha.toLocaleString('es-AR', { hourCycle: 'h23', timeZone: zonaHoraria })
+  } catch {
+    return fecha.toLocaleString('es-AR', { hourCycle: 'h23' })
+  }
+}

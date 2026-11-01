@@ -38,7 +38,15 @@ POS shift screen.
   - Route and contract: `GET /api/reportes/ventas/por-articulo/{idArticulo:int}/tickets` (policy `LecturaDeReportes`), no pagination or cap.
   - Detail: `GET /api/ventas/{id}` is under `OperacionDePos` (Vendedor, Supervisor, Admin); no `RequiereDispositivo` on that route.
 
-- [ ] T2 — Web drill-down + sale detail modal + Vitest. Route: delegated (writer trigger). Branch `pnader/tickets-por-articulo-t2`, stacked on T1.
+- [x] T2 — Web drill-down + sale detail modal + Vitest. Route: delegated (writer trigger). Branch `pnader/tickets-por-articulo-t2`, stacked on T1.
+
+  Evidence T2 (2026-11-01):
+  - `npx tsc -b --noEmit` exit 0; `npm run lint` without new findings (the date helper moved to `formato/fechas.ts`).
+  - `npx vitest run` full suite: 306 files, 9385 tests passed. New: 12 in `ModalTicketsDeArticulo.test.tsx`, 6 in the report page test, 3 in `api/reportes.test.ts`.
+  - Mutation: removing the per-effect stale-response gate turns "una respuesta vieja del mismo artículo no pisa la de los filtros nuevos" red.
+  - Sale detail reuses the shared read-only `ModalDetalleDeVenta` (`componentes/DetalleDeVenta.tsx`); POS screens untouched.
+  - URL params `articulo` and `ticket`; the report filters are not in the URL (a shared link uses the default filters).
+  - Judgment-day T1 and T2: APPROVED in round one, no severe findings.
 
 ## Acceptance criteria
 
