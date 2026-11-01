@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { copiaDeFalloDeBaja } from '../api/bajas'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion, ETIQUETA_SIN_DUENIO } from '../api/organizacion'
-import { ROL } from '../api/tipos'
+import { puedeGestionarCatalogos, ROL } from '../api/tipos'
 import type { EmpresaListado, SucursalListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -19,6 +19,7 @@ import {
 } from '../componentes/grilla'
 import { ModalDeFusionDeSucursal, type FormularioDeFusion } from './organizacion/ModalDeFusionDeSucursal'
 import { aDireccionDeLaApi, aDireccionDelFormulario, DIRECCION_VACIA } from './organizacion/direccionDeSucursal'
+import { ModalDeMercadoPagoDeSucursal } from './organizacion/ModalDeMercadoPagoDeSucursal'
 import { ModalDeSucursal, type FormularioDeSucursal } from './organizacion/ModalDeSucursal'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -56,6 +57,8 @@ const CELDAS = ['id', 'empresa', 'nombre', 'cajas', null]
 export function Sucursales() {
   const { usuario } = useAuth()
   const esPlataforma = usuario?.rolId === ROL.Root
+  /** Mercado Pago es solo Admin (`GestionDeCatalogo` en la API): root entra a la pantalla pero no ve la acción. */
+  const puedeMercadoPago = !!usuario && puedeGestionarCatalogos(usuario.rolId)
 
   const [items, setItems] = useState<SucursalListado[]>([])
   const [cargando, setCargando] = useState(true)
@@ -74,6 +77,7 @@ export function Sucursales() {
   const [baja, setBaja] = useState<SucursalListado | null>(null)
   const [fusion, setFusion] = useState<FormularioDeFusion | null>(null)
   const [errorFusion, setErrorFusion] = useState('')
+  const [mercadoPago, setMercadoPago] = useState<SucursalListado | null>(null)
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
   const generacion = useRef(0)
@@ -361,6 +365,14 @@ export function Sucursales() {
               onCancelar={cerrarFormulario}
             />
           )}
+          {mercadoPago && puedeMercadoPago && (
+            <ModalDeMercadoPagoDeSucursal
+              key={mercadoPago.id}
+              sucursal={mercadoPago}
+              focoDeReserva={nuevoRef}
+              onCerrar={() => setMercadoPago(null)}
+            />
+          )}
           {fusion && (
             <ModalDeFusionDeSucursal
               valor={fusion}
@@ -434,6 +446,16 @@ export function Sucursales() {
                         >
                           Fusionar
                         </button>
+                        {puedeMercadoPago && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary me-1"
+                            onClick={() => setMercadoPago(s)}
+                            disabled={bloqueado}
+                          >
+                            Mercado Pago
+                          </button>
+                        )}
                         <BotonIcono
                           icono="eliminar"
                           onClick={(evento) => pedirBaja(s, evento.currentTarget)}

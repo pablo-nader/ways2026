@@ -58,7 +58,7 @@ QR charge) and E4 (Point charge) need to create orders. Builds on E1 (`odd/tasks
   under its sucursal's store; moving a PV to another sucursal re-homes the POS.
 - [x] T5 — Point: list the seller's terminals, assign one to a punto de venta (one per PV), switch it to PDV mode,
   with the instructions to bind it in the Mercado Pago app.
-- [ ] T6 — Web: Mercado Pago status per sucursal and per punto de venta in their screens.
+- [x] T6 — Web: Mercado Pago status per sucursal and per punto de venta in their screens.
 
 ## Delivery strategy
 
@@ -460,9 +460,31 @@ Branch `pnader/mercadopago-e2-t6`, stacked on T5. Web only (`src/Ways.Web`), Adm
 - react-async-state for every read (generation token) and write (full-window disabled, re-entrancy ref); colocated Vitest tests
   for the pure mapping helpers (labels of states and missing fields); component tests wait for data (web-test-data-gates).
 
+## T6 progress (2026-11-01)
+
+Commit `b7a885b8` on `pnader/mercadopago-e2-t6` (route: delegated writer). Web only.
+
+- `api/mercadoPago.ts`: `clienteDeLocalesMercadoPago` and `clienteDeCajasMercadoPago` (state, register, terminals list, assign, remove),
+  their types, Spanish copies for every new code (plus `mercadopago_no_conectada`, `requiere_reconexion`, `tokens_ilegibles`,
+  `respuesta_invalida`) and per-action 404 copies (sucursal vs punto de venta).
+- `organizacion/`: `ModalDeMercadoPagoDeSucursal`, `ModalDeMercadoPagoDePuntoVenta`, `estadosDeMercadoPago.ts` (labels, missing-field
+  labels, stale-assignment rule) and `useEscrituraUnica.ts` (synchronous re-entrancy ref + `ocupado`). Both screens got a "Mercado Pago"
+  row button visible only to Admin (`puedeGestionarCatalogos`); Root enters the screens but does not see it.
+- QR: image from `urlQr` plus "Abrir para imprimir" (`target="_blank" rel="noopener noreferrer"`); a `urlQr` that is not http(s) is not rendered.
+- Mutation evidence: re-entrancy guard removed -> 3 fail (sucursal register, caja register, terminal assign); generation checks removed
+  -> 2 fail (sucursal read + write), 3 fail (caja read, terminals, write); Admin gate forced true -> 2 fail (both screens); stale rule
+  forced false -> 2 fail (helper + modal warning). All restored.
+- Verification (src/Ways.Web): `tsc -b --noEmit` clean; oxlint no findings in touched files; vitest api/mercadoPago + Sucursales +
+  PuntosVenta + organizacion 11 files, 307 passed; `npm run build` ok.
+- Deviations: the register button is hidden (not only disabled) while the address has missing fields; "Registrada" offers no re-register
+  button (the server would accept it, nothing to sync). The address-incomplete 400 shows a copy and re-reads the state, whose
+  `camposFaltantes` provide the labels (the 400 itself only carries the machine text).
+- Open: no per-row status in the grids (by design); the QR host is whatever Mercado Pago returns (the back-office web has no CSP; the
+  desktop POS does not host these screens); POS bundle unaffected, no release needed.
+
 ## Next step
 
-T6 implementation (delegated writer).
+E2 complete; next E3 (dynamic QR charge).
 
 ## Judgment-day T1 verdict
 
@@ -482,3 +504,14 @@ T6 implementation (delegated writer).
   modal can overwrite an address saved meanwhile by another admin (no concurrency token, same as the name).
 - Info (one judge each): an over-long provincia answers `provincia_muy_largo` instead of `provincia_invalida`; the web and
   server provincia lists are duplicated by hand with no test tying them.
+
+## Judgment-day T6 verdict
+
+- 2026-11-01: **APPROVED** in round zero: no CRITICAL finding from either judge on b7a885b8. RDD is off.
+- Applied after the verdict (judge B warning, trivial): copies for `mercadopago_renovacion_rechazada` and
+  `mercadopago_credenciales_rechazadas`, with their cases in `mercadoPago.test.ts`.
+- Info (one judge each, not fixed): the caja modal does not re-read after a register failure caused by a server-side state
+  change; an `http:` QR url is accepted (mixed content, no `onError` fallback); a `registrada` caja without QR has no re-sync
+  action; the `desactualizada` copy omits the local re-registration cause; assign/remove stay enabled during a terminals refresh.
+
+E2 is complete with T6. Next: E3 (dynamic QR charge), doc `odd/tasks/mercadopago-cobros.md`.
