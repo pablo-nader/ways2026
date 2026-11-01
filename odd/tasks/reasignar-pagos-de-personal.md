@@ -42,7 +42,7 @@ forma de corregirlo: los pagos de sueldo no se editan ni se eliminan por separad
 ## Tareas
 
 - [x] T1 — Backend: servicio, endpoint, auditoría `pago.reasignacion`, tests unitarios e integración. Ruta: delegada (2+ archivos no triviales). Rama `pnader/reasignar-pago-personal-backend`. Hecha: commit 5a3a4f54.
-- [ ] T2 — Web: acción "Reasignar" en las filas de sueldo de Pagos, modal con el empleado destino, tests. Ruta: delegada. Rama `pnader/reasignar-pago-personal-web`, apilada sobre T1.
+- [x] T2 — Web: acción "Reasignar" en las filas de sueldo de Pagos, modal con el empleado destino, tests. Ruta: delegada. Rama `pnader/reasignar-pago-personal-web`, apilada sobre T1. Hecha: commits acbb0e78 y f8405a57.
 
 ## Verificación
 
@@ -53,3 +53,5 @@ forma de corregirlo: los pagos de sueldo no se editan ni se eliminan por separad
 
 - 2026-10-31: documento creado; T1 y T2 lanzadas en paralelo con el contrato fijo.
 - 2026-10-31: T1 hecha (commit 5a3a4f54). Evidencia: `dotnet build` 0 errores; `dotnet test tests/Ways.Domain.Tests` 2110 correctas; `dotnet test tests/Ways.Application.Tests` 1510 correctas (incluye `EscriturasSinReintentoEstructuralesTests` y `ServicioDeAuditoriaGuardTests`); integración `ReasignacionDePagoDePersonal|SuperficieDeAutorizacion|EscriturasSinReintento` 32 correctas. Mutaciones probadas y revertidas: invertir el signo del desplazamiento del origen y cambiar el 0 del destino sin asientos previos hacen fallar los tests de saldos. Ruta: delegada (escritor único; 2+ archivos no triviales). Sin etiqueta de `pago.reasignacion` en `EtiquetasDeAccion` ni en el catálogo web: queda para T2 (espejo en `tipos.ts`).
+- 2026-10-31: T2 hecha (commit acbb0e78). Evidencia: `npx vitest run` 8991 correctas; `npx tsc -b` sin errores.
+- 2026-10-31: judgment-day sobre T1+T2: APPROVED, sin hallazgos críticos. Las dos advertencias coincidentes se corrigieron (ba712710, f8405a57): etiqueta `pago.reasignacion` en `EtiquetasDeAccion` y en el catálogo web, y la fecha del modal con el formato local de la grilla. Tras el ajuste, la suite web completa dio 8990/8991; la falla es `GrillaDeItemsDeCompra.test.tsx`, ajena al cambio, y pasa sola (134/134). Sugerencias abiertas: el selector trae hasta 200 empleados y el botón "Reasignar" no nombra el pago en su nombre accesible.

@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Ofertas } from './Ofertas'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import type { ArticuloListado, FamiliaListado, GrupoListado, ListaPrecioListado, OfertaListado, PaginaDe } from '../api/tipos'
 
@@ -152,7 +153,7 @@ beforeEach(() => {
 
 describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
   it('con alcance Artículo (default) muestra el buscador de artículo y no los selects de grupo/categoría', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     expect(screen.getByLabelText('Buscar artículo')).toBeInTheDocument()
@@ -161,7 +162,7 @@ describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
   })
 
   it('cambiar el radio a Grupo hace aparecer el select de grupo y oculta el buscador de artículo', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Grupo' }))
@@ -171,7 +172,7 @@ describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
   })
 
   it('cambiar el radio a Categoría hace aparecer el select de categoría', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Categoría' }))
@@ -182,7 +183,7 @@ describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
 
 describe('Ofertas — alcance por familia', () => {
   async function abrirNuevaOferta() {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta de familia')
     await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
@@ -196,7 +197,7 @@ describe('Ofertas — alcance por familia', () => {
   }
 
   it('cambiar el radio a Familia hace aparecer el select de familia y oculta los otros alcances', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Familia' }))
@@ -256,7 +257,7 @@ describe('Ofertas — alcance por familia', () => {
         familiaFixture({ id: 9, nombre: 'Colores', cantidadArticulos: 0 }),
       ],
     })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await userEvent.click(screen.getByRole('radio', { name: 'Familia' }))
 
@@ -268,7 +269,7 @@ describe('Ofertas — alcance por familia', () => {
 
   it('si el listado de familias falla lo avisa y el resto de la pantalla sigue andando', async () => {
     mockearApiGet({ ofertas: [ofertaFixture({ id: 2, nombre: 'Oferta existente' })], familias: null })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
 
     expect(
       await screen.findByText(/No se pudieron cargar las familias: no hay familias para elegir hasta recargar la página\. Una oferta que ya apunta a una familia se muestra por su número y se puede guardar sin cambiarla\./),
@@ -284,7 +285,7 @@ describe('Ofertas — alcance por familia', () => {
         ofertaFixture({ id: 3, nombre: 'Sin cargar', idArticulo: null, idFamilia: 99 }),
       ],
     })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
 
     const filaConNombre = (await screen.findByText('Con nombre')).closest('tr')!
     await waitFor(() => expect(within(filaConNombre).getByText('Familia: Sabores')).toBeInTheDocument())
@@ -299,7 +300,7 @@ describe('Ofertas — alcance por familia', () => {
         ofertaFixture({ id: 3, nombre: 'Sin nombre', idArticulo: 358, nombreArticulo: null }),
       ],
     })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
 
     const filaConNombre = (await screen.findByText('Con nombre')).closest('tr')!
     expect(within(filaConNombre).getByText('Artículo: Alfajor maizena')).toBeInTheDocument()
@@ -311,7 +312,7 @@ describe('Ofertas — alcance por familia', () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idFamilia: 7 })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
     apiPutMock.mockResolvedValue(oferta)
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
     await screen.findByText('Familia: Sabores')
 
@@ -333,7 +334,7 @@ describe('Ofertas — alcance por familia', () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idFamilia: 7 })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta }, familias: null })
     apiPutMock.mockResolvedValue(oferta)
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
     await screen.findByText(/No se pudieron cargar las familias/)
 
@@ -351,7 +352,7 @@ describe('Ofertas — alcance por familia', () => {
 
 describe('Ofertas — radio de beneficio (visibleSi análogo)', () => {
   it('con beneficio Porcentaje (default) muestra el input de porcentaje y no los otros dos', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     expect(screen.getByLabelText('Porcentaje (%)')).toBeInTheDocument()
@@ -360,7 +361,7 @@ describe('Ofertas — radio de beneficio (visibleSi análogo)', () => {
   })
 
   it('cambiar el radio a Importe fijo hace aparecer ese input y oculta el de porcentaje', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Importe fijo por unidad' }))
@@ -370,7 +371,7 @@ describe('Ofertas — radio de beneficio (visibleSi análogo)', () => {
   })
 
   it('cambiar el radio a Precio unitario hace aparecer ese input', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Precio unitario' }))
@@ -382,7 +383,7 @@ describe('Ofertas — radio de beneficio (visibleSi análogo)', () => {
 describe('Ofertas — multi-select de listas', () => {
   it('sin marcar ninguna lista, el guardado envía idsListas vacío (aplica a todas)', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture())
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
@@ -400,7 +401,7 @@ describe('Ofertas — multi-select de listas', () => {
 
   it('marcar una lista la incluye en idsListas al guardar', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture())
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
@@ -419,7 +420,7 @@ describe('Ofertas — multi-select de listas', () => {
 
 describe('Ofertas — solo múltiplos de la cantidad mínima', () => {
   it('la casilla está deshabilitada sin cantidad mínima, se habilita con ella y se desmarca al vaciarla', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     const casilla = screen.getByLabelText('Solo múltiplos de la cantidad')
 
@@ -436,7 +437,7 @@ describe('Ofertas — solo múltiplos de la cantidad mínima', () => {
 
   it('al guardar manda soloMultiplos true junto con la cantidad mínima', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture())
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
@@ -453,7 +454,7 @@ describe('Ofertas — solo múltiplos de la cantidad mínima', () => {
 
   it('sin tocar la casilla manda soloMultiplos false', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture())
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
@@ -470,7 +471,7 @@ describe('Ofertas — solo múltiplos de la cantidad mínima', () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', cantidadMinima: 2, soloMultiplos: true })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
     apiPutMock.mockResolvedValue(oferta)
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
 
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
@@ -486,7 +487,7 @@ describe('Ofertas — solo múltiplos de la cantidad mínima', () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', cantidadMinima: 2, soloMultiplos: true })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
     apiPutMock.mockResolvedValue(oferta)
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
     await waitFor(() => expect(screen.getByLabelText('Cantidad mínima')).toHaveValue('2'))
@@ -511,7 +512,7 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
           resolverCreacion = resolve
         }),
     )
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
@@ -551,7 +552,7 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
           resolverCreacion = resolve
         }),
     )
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
 
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
@@ -587,7 +588,7 @@ describe('Ofertas — la baja se confirma en un modal', () => {
   async function pedirLaBaja() {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     mockearApiGet({ ofertas: [ofertaFixture({ id: 2, nombre: 'Oferta existente' })] })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
     const eliminar = screen.getByRole('button', { name: 'Eliminar' })
     await userEvent.click(eliminar)
@@ -646,7 +647,7 @@ describe('Ofertas — la baja se confirma en un modal', () => {
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/ofertas/2' ? new Promise<OfertaListado>((r) => (resolverDetalle = r)) : base(ruta),
     )
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/ofertas/2'))
@@ -683,7 +684,7 @@ describe('Ofertas — alta y edición en modal', () => {
 
   it('al entrar muestra solo la grilla: sin formulario ni diálogo', async () => {
     mockearApiGet({ ofertas: [ofertaFixture({ id: 2, nombre: 'Oferta existente' })] })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
 
     expect(await screen.findByText('Oferta existente')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -691,7 +692,7 @@ describe('Ofertas — alta y edición en modal', () => {
   })
 
   it('Agregar abre el modal "Nueva oferta" con el formulario vacío', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     const dialogo = screen.getByRole('dialog', { name: 'Nueva oferta' })
@@ -701,7 +702,7 @@ describe('Ofertas — alta y edición en modal', () => {
   it('Editar abre el modal "Editar oferta" con la oferta cargada', async () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idGrupo: 1 })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
 
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
@@ -712,7 +713,7 @@ describe('Ofertas — alta y edición en modal', () => {
   })
 
   it('Cancelar cierra el modal sin escribir nada', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
@@ -724,20 +725,21 @@ describe('Ofertas — alta y edición en modal', () => {
 
   it('un guardado exitoso cierra el modal, avisa en la pantalla y refresca el listado', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 }))
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await completarOfertaDeGrupo()
     const listadosAntes = apiGetMock.mock.calls.filter((c) => c[0] === '/ofertas').length
 
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Oferta "Oferta nueva" creada.')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Oferta "Oferta nueva" creada.')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(apiGetMock.mock.calls.filter((c) => c[0] === '/ofertas').length).toBe(listadosAntes + 1)
   })
 
   it('un error de validación se muestra dentro del modal, que sigue abierto', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
     await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
@@ -751,7 +753,7 @@ describe('Ofertas — alta y edición en modal', () => {
 
   it('un guardado que falla muestra el error dentro del modal, lo deja abierto y conserva lo escrito', async () => {
     apiPostMock.mockRejectedValue(new Error('boom'))
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await completarOfertaDeGrupo()
 
@@ -763,9 +765,9 @@ describe('Ofertas — alta y edición en modal', () => {
     expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
 
-  it('si el guardado salió bien pero el refresco falla, cierra el modal y lo avisa en la pantalla', async () => {
+  it('si el guardado salió bien pero el refresco falla, cierra el modal y lo avisa con un toast', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 }))
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await completarOfertaDeGrupo()
     const listadoOk = apiGetMock.getMockImplementation()!
@@ -775,9 +777,8 @@ describe('Ofertas — alta y edición en modal', () => {
 
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
 
-    expect(
-      await screen.findByText('La oferta se guardó, pero no se pudo actualizar el listado. Volvé a entrar para verla.'),
-    ).toBeInTheDocument()
+    const advertencia = await screen.findByText('La oferta se guardó, pero no se pudo actualizar el listado. Volvé a entrar para verla.')
+    expect(advertencia.closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -788,7 +789,7 @@ describe('Ofertas — alta y edición en modal', () => {
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/ofertas/2' ? Promise.reject(new Error('boom')) : base(ruta),
     )
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
 
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
@@ -809,7 +810,7 @@ describe('Ofertas — error y foco del modal', () => {
 
   it('un guardado rechazado expone el error como alerta adentro del diálogo', async () => {
     apiPostMock.mockRejectedValue(new Error('boom'))
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await completarOfertaDeGrupo()
 
@@ -827,7 +828,7 @@ describe('Ofertas — error y foco del modal', () => {
       value: scrollIntoViewMock,
     })
     try {
-      render(<Ofertas />)
+      render(<><Ofertas /><Toaster /></>)
       await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
       await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
       await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
@@ -846,7 +847,7 @@ describe('Ofertas — error y foco del modal', () => {
   })
 
   it('al abrir, el foco queda en el primer campo y no en la ×', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
@@ -867,7 +868,7 @@ describe('Ofertas — error y foco del modal', () => {
           })
     })
     apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 }))
-    const { container } = render(<Ofertas />)
+    const { container } = render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await completarOfertaDeGrupo()
 
@@ -885,7 +886,7 @@ describe('Ofertas — error y foco del modal', () => {
   })
 
   it('cancelar devuelve el foco al botón que abrió el modal', async () => {
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
 
     const abrir = await screen.findByRole('button', { name: 'Agregar' })
     await userEvent.click(abrir)
@@ -910,7 +911,7 @@ describe('Ofertas — disponible online', () => {
    */
   it('una oferta nueva arranca con "Disponible online" marcado y el alta manda disponibleOnline: true', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, idArticulo: null, idGrupo: 1 }))
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     expect(screen.getByRole('checkbox', { name: 'Disponible online' })).toBeChecked()
     await completarOfertaDeGrupo()
@@ -923,7 +924,7 @@ describe('Ofertas — disponible online', () => {
 
   it('desmarcarlo en el alta manda disponibleOnline: false sin tocar "Activa"', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, idArticulo: null, idGrupo: 1 }))
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await completarOfertaDeGrupo()
     await userEvent.click(screen.getByRole('checkbox', { name: 'Disponible online' }))
@@ -938,7 +939,7 @@ describe('Ofertas — disponible online', () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idGrupo: 1, disponibleOnline: false })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
     apiPutMock.mockResolvedValue(oferta)
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Editar oferta' })
@@ -954,7 +955,7 @@ describe('Ofertas — disponible online', () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idGrupo: 1, disponibleOnline: false })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
     apiPutMock.mockResolvedValue(oferta)
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Oferta existente')
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Editar oferta' })
@@ -978,7 +979,7 @@ describe('Ofertas — disponible online', () => {
         ofertaFixture({ id: 3, nombre: 'Dada de baja', disponibleOnline: true, activo: false }),
       ],
     })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('En la tienda')
     const columnas = screen
       .getAllByRole('columnheader')
@@ -1005,7 +1006,7 @@ describe('Ofertas — disponible online', () => {
       codigo: 'disponible_online_requerido',
     })
     apiPostMock.mockRejectedValue(rechazo)
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await completarOfertaDeGrupo()
 
@@ -1069,7 +1070,7 @@ describe('Ofertas — filtros por columna y orden', () => {
   it('ordena cada columna por su valor: prioridad como número, beneficio por tipo y monto, y el tercer clic vuelve al original', async () => {
     mockearApiGet({ ofertas: ENTREGADAS })
     const usuario = userEvent.setup()
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
     // El alcance se rotula con el catálogo: se espera al dato (el grupo) y no a la fila, que se rinde antes.
     await screen.findByText('Grupo: Bebidas')
@@ -1113,7 +1114,7 @@ describe('Ofertas — filtros por columna y orden', () => {
   it('filtra cada columna de datos, con selectores para acumulable, estado y online, y combina los filtros con Y', async () => {
     mockearApiGet({ ofertas: ENTREGADAS })
     const usuario = userEvent.setup()
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
 
     await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'ALF')
@@ -1152,7 +1153,7 @@ describe('Ofertas — filtros por columna y orden', () => {
   it('"Limpiar filtros" restaura las filas; sin coincidencias el estado vacío lo dice y sin ofertas dice otra cosa', async () => {
     mockearApiGet({ ofertas: ENTREGADAS })
     const usuario = userEvent.setup()
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
 
     expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
@@ -1168,14 +1169,14 @@ describe('Ofertas — filtros por columna y orden', () => {
 
   it('sin ofertas dice que no hay', async () => {
     mockearApiGet({ ofertas: [] })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
 
     expect(await screen.findByText('No hay ofertas cargadas.')).toBeInTheDocument()
   })
 
   it('la fila de filtros tiene una celda por encabezado', async () => {
     mockearApiGet({ ofertas: ENTREGADAS })
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
 
     const filas = screen.getAllByRole('row')
@@ -1187,7 +1188,7 @@ describe('Ofertas — filtros por columna y orden', () => {
   it('el filtro por alcance usa el nombre del grupo del catálogo, no su id', async () => {
     mockearApiGet({ ofertas: ENTREGADAS })
     const usuario = userEvent.setup()
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
     await screen.findByText('Grupo: Bebidas')
 
@@ -1212,7 +1213,7 @@ describe('Ofertas — filtros por columna y orden', () => {
     })
     apiDeleteMock.mockResolvedValue(undefined)
     const usuario = userEvent.setup()
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
 
     const filtro = screen.getByLabelText('Filtrar por nombre')
@@ -1250,7 +1251,7 @@ describe('Ofertas — filtros por columna y orden', () => {
     })
     apiPostMock.mockResolvedValue(nueva)
     const usuario = userEvent.setup()
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
 
     await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
@@ -1274,7 +1275,7 @@ describe('Ofertas — filtros por columna y orden', () => {
     let resolverBaja!: () => void
     apiDeleteMock.mockReturnValue(new Promise<void>((resolver) => (resolverBaja = resolver)))
     const usuario = userEvent.setup()
-    render(<Ofertas />)
+    render(<><Ofertas /><Toaster /></>)
     await screen.findByText('Zeta oferta')
 
     await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')

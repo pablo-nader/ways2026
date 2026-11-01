@@ -20,6 +20,8 @@ import { clienteDeCompras, filtrosDeComprasVacios } from '../api/compras'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeProveedores } from '../api/proveedores'
 import { ErrorApi } from '../api/cliente'
+import { esResultadoIncierto } from '../api/cuentasTesoreria'
+import { COPIA_RESULTADO_INCIERTO } from '../api/bajas'
 import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
   AreaListado,
@@ -44,6 +46,7 @@ import { ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { formatearImporte } from '../formato/importes'
 import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
 import { ModalDeAltaDePago } from './pagos/ModalDeAltaDePago'
+import { ModalDeReasignacionDePago } from './pagos/ModalDeReasignacionDePago'
 import { areaPorDefecto } from './utilidadesPagosDelTurno'
 import { errorDeLineasDePago, textoDeMediosDelPago } from '../api/lineasDePago'
 import { CampoFecha } from '../componentes/CampoFecha'
@@ -131,6 +134,9 @@ export function Pagos() {
   const [eliminando, setEliminando] = useState(false)
   const [errorBaja, setErrorBaja] = useState('')
   const escribiendoRef = useRef(false)
+  const [reasignacion, setReasignacion] = useState<PagoDeAdministracionListado | null>(null)
+  const [reasignando, setReasignando] = useState(false)
+  const [errorReasignacion, setErrorReasignacion] = useState('')
 
   // ---- stage-gasto-a-compra (PR4): picker "Vincular a compra" para un pago sin compra ligada --
   const [pickerPagoId, setPickerPagoId] = useState<number | null>(null)
@@ -398,6 +404,50 @@ export function Pagos() {
     }
   }
 
+  function abrirReasignacion(pago: PagoDeAdministracionListado) {
+    if (ocupadoEscribiendo()) return
+    setAviso('')
+    setErrorReasignacion('')
+    setReasignacion(pago)
+  }
+
+  function cancelarReasignacion() {
+    if (escribiendoRef.current) return
+    setReasignacion(null)
+    setErrorReasignacion('')
+  }
+
+  async function confirmarReasignacion(idPersonal: number) {
+    if (!reasignacion || ocupadoEscribiendo()) return
+
+    const idPago = reasignacion.id
+    escribiendoRef.current = true
+    setReasignando(true)
+    setErrorReasignacion('')
+
+    // regla 3: un refresco del listado anterior a esta escritura queda obsoleto.
+    generacionRef.current += 1
+
+    try {
+      try {
+        const respuesta = await clienteDePagosDeAdministracion.reasignarPersonal(idPago, idPersonal)
+        setAviso(`Pago reasignado: ${respuesta.concepto}.`)
+      } catch (e) {
+        if (!esResultadoIncierto(e)) {
+          setErrorReasignacion(e instanceof ErrorApi && e.message.trim() ? e.message : 'No se pudo reasignar el pago.')
+          return
+        }
+        setAviso(COPIA_RESULTADO_INCIERTO)
+      }
+
+      setReasignacion(null)
+      await cargar()
+    } finally {
+      escribiendoRef.current = false
+      setReasignando(false)
+    }
+  }
+
   function pedirBaja(pago: PagoDeAdministracionListado, disparador: HTMLElement | null) {
     if (ocupadoEscribiendo()) return
     setDisparadorDeLaBaja(disparador)
@@ -463,6 +513,8 @@ export function Pagos() {
     vinculando ||
     pickerPagoId !== null ||
     guardandoEdicion ||
+    reasignando ||
+    reasignacion !== null ||
     eliminando ||
     edicion !== null ||
     baja !== null ||
@@ -676,13 +728,21 @@ export function Pagos() {
                           <Link to={`/compras/${g.idComprobanteCompra}`}>
                             Compra #{g.idComprobanteCompra}
                           </Link>
+                        ) : esPagoOriginadoEnPersonal(g) ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-primary"
+                            disabled={filasBloqueadas}
+                            onClick={() => abrirReasignacion(g)}
+                          >
+                            Reasignar
+                          </button>
                         ) : (
                           <div className="d-flex gap-1">
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-primary"
-                              disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
-                              title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
+                              disabled={filasBloqueadas}
                               onClick={() => abrirPicker(g)}
                             >
                               Vincular a compra
@@ -690,8 +750,7 @@ export function Pagos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-secondary"
-                              disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
-                              title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
+                              disabled={filasBloqueadas}
                               onClick={() => navigate(`/compras/nueva?desdePago=${g.id}`)}
                             >
                               Crear compra
@@ -810,6 +869,17 @@ export function Pagos() {
           </div>
         )}
       </Box>
+
+      {reasignacion && (
+        <ModalDeReasignacionDePago
+          key={reasignacion.id}
+          pago={reasignacion}
+          guardando={reasignando}
+          error={errorReasignacion}
+          onConfirmar={(idPersonal) => void confirmarReasignacion(idPersonal)}
+          onCancelar={cancelarReasignacion}
+        />
+      )}
 
       {edicion && (
         <ModalDeEdicionDePago
