@@ -208,6 +208,23 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void CajaDeMercadoPagoDiceLaOperacionYLosIdsSinNingunToken()
+    {
+        var momento = DateTimeOffset.UtcNow;
+        var payload = PayloadDeAuditoria.CajaDeMercadoPago("adopcion", 77, 555, 888, "WAYSPV7", momento);
+
+        AsumirConstruible(AccionAuditada.PuntoVentaMercadoPago, payload);
+        Assert.Null(payload.Anterior);
+        Assert.Equal("adopcion", payload.Nuevo["operacion"]);
+        Assert.Equal(77L, payload.Nuevo["id_usuario_mercadopago"]);
+        Assert.Equal(555L, payload.Nuevo["id_store_mercadopago"]);
+        Assert.Equal(888L, payload.Nuevo["id_pos_mercadopago"]);
+        Assert.Equal("WAYSPV7", payload.Nuevo["external_id"]);
+        Assert.Equal(momento, payload.Nuevo["fecha_sincronizacion"]);
+        Assert.DoesNotContain(payload.Nuevo.Keys, k => k.Contains("token", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void LocalDeMercadoPagoDiceLaOperacionYLosIdsSinNingunToken()
     {
         var momento = DateTimeOffset.UtcNow;

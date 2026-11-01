@@ -460,3 +460,52 @@ locales_mercadopago (         -- [operativa por empresa: id_tenant + id_empresa 
 > **Sin verificar contra la API real:** la forma del cuerpo y de la respuesta (`id`, `external_id`, `{paging, results}` de la búsqueda),
 > qué caracteres acepta cada campo, el nombre de provincia que espera Mercado Pago para la Ciudad Autónoma de Buenos Aires y qué responde
 > un `PUT` a un local borrado en Mercado Pago.
+
+### Cajas de Mercado Pago (puntos de venta)
+
+```sql
+cajas_mercadopago (           -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una por punto de venta y cuenta de Mercado Pago
+    id_caja_mercadopago, id_tenant, id_empresa,
+    id_punto_venta,                          -- FK compuesta (id_punto_venta, id_tenant) sobre la clave alterna de puntos_venta; la empresa la fija el servicio al leer el punto de venta
+    id_local_mercadopago,                    -- FK compuesta (id_local_mercadopago, id_empresa, id_tenant) a locales_mercadopago: el local del que cuelga la caja
+    id_usuario_mercadopago bigint,           -- user_id del vendedor dueño de la caja; NO es FK (la conexión puede desconectarse y la fila queda de historia)
+    id_pos_mercadopago bigint,               -- id numérico que Mercado Pago asignó a la caja (POS)
+    external_id varchar(40),                 -- 'WAYSPV' + id_punto_venta: letras y dígitos, estable, único por vendedor
+    url_qr varchar(500) NULL,                -- imagen del QR estático (qr.image o qr_response.image), si Mercado Pago la devolvió
+    fecha_registro, fecha_sincronizacion,    -- esta última es la de la LECTURA del punto de venta, no la del fin de la llamada
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_cajas_mercadopago_tenant` (simple), `fk_cajas_mercadopago_empresa` (compuesta `(id_empresa, id_tenant)`),
+> `fk_cajas_mercadopago_punto_venta` (compuesta `(id_punto_venta, id_tenant)`, sobre la clave alterna existente) y `fk_cajas_mercadopago_local`; todas RESTRICT. Para la última se agregó la clave alterna
+> `ak_locales_mercadopago_id_local_id_empresa_id_tenant`
+> (sobre `locales_mercadopago`; no se agregó ninguna a `puntos_venta`: una clave alterna con la empresa obliga a toda alta de punto de venta a conocerla antes del `SaveChanges`). CHECK `ck_cajas_mercadopago_external_id` (no vacío). Único `ux_cajas_mercadopago_punto_venta_usuario`
+> `(id_punto_venta, id_usuario_mercadopago)`: una fila por punto de venta y cuenta; si la empresa se reconecta con otra cuenta el punto de
+> venta se registra de nuevo y la fila anterior queda de historia. `ManejadorDeErrores` traduce su 23505 a 409 `mercadopago_caja_duplicada`
+> (solo lo alcanza una escritura que no pase por el servicio, que serializa con un lock por punto de venta). Índices de soporte:
+> `ix_cajas_mercadopago_tenant`, `_empresa`, `_punto_venta` y `_local`. RLS estándar. Efecto: como toda FK del modelo, un punto de venta
+> con una caja registrada cuenta como en uso y no se da de baja (409 `punto_venta_en_uso`), y lo mismo la empresa y el tenant
+> (`inventario-de-dependientes.txt`). **Mover el punto de venta a otra sucursal no se bloquea** (la FK no pasa por la sucursal): lo deja
+> `desactualizada` y registrarlo de nuevo lo reapunta. Por eso, al mover la última caja de una sucursal, el local de Mercado Pago de esa
+> sucursal no cuenta como uso que impida la baja en cascada de la sucursal (queda como historia, igual que sus parámetros).
+>
+> **Endpoints (solo Admin).** `GET /api/puntos-venta/{id}/mercadopago` devuelve `{ estado, idPosMercadoPago, idStoreMercadoPago, externalId,
+> urlQr, fechaRegistro, fechaSincronizacion }` con `estado` en `sin_conexion`, `local_no_registrado` (la sucursal actual del punto de venta
+> todavía no es un local de la cuenta), `no_registrada`, `registrada` o `desactualizada` (el punto de venta se editó o cambió de sucursal
+> después de `fecha_sincronizacion`, o su sucursal ya tiene otro local que el de la fila). `POST` del mismo recurso la registra. Orden: 404 del
+> punto de venta, 400 `nombre_invalido_para_mercadopago` (el nombre no tiene ningún carácter admitido), 409 `mercadopago_no_conectada` o
+> `mercadopago_requiere_reconexion`, 409 `mercadopago_local_no_registrado`. Bajo un `pg_advisory_xact_lock` por punto de venta que se mantiene
+> durante las llamadas a Mercado Pago: con vínculo para la cuenta actual, `PUT /pos/{id}` con el nombre actual y el `store_id` del local de la
+> sucursal actual (así se reapunta una caja movida); si Mercado Pago contesta 404 (la caja se borró), se busca por `external_id` y se adopta o se
+> crea de nuevo. Sin vínculo, primero `GET /pos?external_id=` y, si hay una caja con ese `external_id` (un alta cuyo guardado se perdió), se
+> adopta y se actualiza; si no, `POST /pos` con `{name, external_id, store_id, fixed_amount: false}`. Toda llamada que no es GET lleva
+> `X-Idempotency-Key` (≤ 64): la del alta lleva la huella del cuerpo; la de la actualización, la caja de destino, la huella del cuerpo y el
+> `updated_at` del punto de venta, así que reintentar el mismo intento repite la clave y A → B → A no. Después se guarda o actualiza la fila y se
+> registra `pv.mercadopago` (operación `alta`, `adopcion` o `actualizacion`, ids de Mercado Pago, nunca un token). El nombre se limpia como el de
+> los locales y se corta a 45. El rechazo de Mercado Pago sale como 502 `mercadopago_solicitud_rechazada`, un 401 deja la conexión en
+> `requiere_reconexion` (409) y la caída o el tiempo agotado son 503 `mercadopago_no_disponible`.
+> **Sin verificar contra la API real** (forma tomada de la referencia): la ruta `/pos` (la ficha de hechos del programa habla de `/v2/pos`), la
+> forma del cuerpo y de la respuesta (`id`, `external_id`, `store_id`, `qr.image` o `qr_response.image`, `{paging, results}` de la búsqueda), qué
+> caracteres acepta `name`, qué responde un `PUT` a una caja borrada y si un alta con un `external_id` repetido responde 409 `pos_already_exists`
+> (hoy sale como 502: la búsqueda previa lo evita salvo carrera con otra instancia).

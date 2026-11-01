@@ -204,6 +204,11 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_locales_mercadopago_sucursal_usuario" } =>
                 (StatusCodes.Status409Conflict, "La sucursal ya está registrada en esa cuenta de Mercado Pago.", "mercadopago_local_duplicado"),
 
+            // Backstop del vínculo de un punto de venta con su caja de Mercado Pago: el lock por punto de venta serializa los registros,
+            // así que solo lo alcanza una escritura que no pase por `ServicioDeCajasMercadoPago`. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_cajas_mercadopago_punto_venta_usuario" } =>
+                (StatusCodes.Status409Conflict, "El punto de venta ya está registrado en esa cuenta de Mercado Pago.", "mercadopago_caja_duplicada"),
+
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
             // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas

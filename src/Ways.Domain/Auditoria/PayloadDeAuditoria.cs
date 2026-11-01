@@ -379,6 +379,24 @@ public static class PayloadDeAuditoria
                 ["fecha_sincronizacion"] = fechaSincronizacion
             });
 
+    /// <summary><c>pv.mercadopago</c>. Sin estado previo; <c>{operacion, id_usuario_mercadopago, id_store_mercadopago, id_pos_mercadopago,
+    /// external_id, fecha_sincronizacion}</c>. <paramref name="operacion"/> es <c>alta</c>, <c>adopcion</c> o <c>actualizacion</c>.
+    /// Nunca lleva un token.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        CajaDeMercadoPago(
+            string operacion, long idUsuarioMercadoPago, long idStoreMercadoPago, long idPosMercadoPago, string externalId,
+            DateTimeOffset fechaSincronizacion) => (
+            null,
+            new Dictionary<string, object?>
+            {
+                ["operacion"] = operacion,
+                ["id_usuario_mercadopago"] = idUsuarioMercadoPago,
+                ["id_store_mercadopago"] = idStoreMercadoPago,
+                ["id_pos_mercadopago"] = idPosMercadoPago,
+                ["external_id"] = externalId,
+                ["fecha_sincronizacion"] = fechaSincronizacion
+            });
+
     private static Dictionary<string, object?> ConDireccion(
         Dictionary<string, object?> campos, DireccionDeSucursal direccion)
     {

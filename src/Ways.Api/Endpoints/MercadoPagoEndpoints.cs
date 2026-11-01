@@ -110,6 +110,25 @@ public static class MercadoPagoEndpoints
             "con los datos actuales. 404 sucursal inexistente, 400 direccion_incompleta_para_mercadopago, 409 " +
             "mercadopago_no_conectada|mercadopago_requiere_reconexion, 502 mercadopago_solicitud_rechazada, 503 mercadopago_no_disponible.");
 
+        var cajas = app.MapGroup("/api/puntos-venta/{idPuntoVenta:int}/mercadopago")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        cajas.MapGet("/", (ServicioDeCajasMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.ObtenerAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Estado del punto de venta como caja de Mercado Pago en la cuenta conectada a su empresa: sin_conexion, " +
+            "local_no_registrado, no_registrada, registrada o desactualizada. 404 si el punto de venta no existe.");
+
+        cajas.MapPost("/", (ServicioDeCajasMercadoPago servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.RegistrarAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Registra el punto de venta como caja de Mercado Pago bajo el local de su sucursal, adopta la que ya exista con su " +
+            "external_id o actualiza la existente (también la reapunta al local de la sucursal actual si el punto de venta se movió). " +
+            "404 punto de venta inexistente, 400 nombre_invalido_para_mercadopago, 409 mercadopago_no_conectada|" +
+            "mercadopago_requiere_reconexion|mercadopago_local_no_registrado, 502 mercadopago_solicitud_rechazada, " +
+            "503 mercadopago_no_disponible.");
+
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,
             string? code,

@@ -176,6 +176,11 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// (alta, adopción de un local ya existente o actualización) y los ids de Mercado Pago, nunca un token.</summary>
     public static readonly AccionAuditada SucursalMercadoPago = new("sucursal.mercadopago", "sucursal");
 
+    /// <summary>Registro o actualización de un punto de venta como caja (<i>POS</i>) de Mercado Pago
+    /// (<c>POST /api/puntos-venta/{id}/mercadopago</c>). El <c>id_entidad</c> es el punto de venta; el payload dice la operación
+    /// (alta, adopción de una caja ya existente o actualización) y los ids de Mercado Pago, nunca un token.</summary>
+    public static readonly AccionAuditada PuntoVentaMercadoPago = new("pv.mercadopago", "punto_venta");
+
     /// <summary>Edición de una compra confirmada (<c>PUT /api/compras/{id}</c>) — <c>Compras/ServicioDeCompras.cs</c>. El
     /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
     public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
@@ -234,6 +239,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         SucursalBaja,
         PuntoVentaSucursal,
         SucursalFusion,
-        SucursalMercadoPago
+        SucursalMercadoPago,
+        PuntoVentaMercadoPago
     ];
 }

@@ -21,6 +21,10 @@ public class LocalMercadoPagoConfiguration : IEntityTypeConfiguration<LocalMerca
 
         builder.HasKey(l => l.Id).HasName("pk_locales_mercadopago");
 
+        // Destino de la FK compuesta de cajas_mercadopago: la base rechaza una caja colgada del local de otra empresa.
+        builder.HasAlternateKey(l => new { l.Id, l.IdEmpresa, l.IdTenant })
+            .HasName("ak_locales_mercadopago_id_local_id_empresa_id_tenant");
+
         builder.Property(l => l.Id)
             .HasColumnName("id_local_mercadopago")
             .UseIdentityByDefaultColumn();
