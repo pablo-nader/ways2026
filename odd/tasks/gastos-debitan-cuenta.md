@@ -75,8 +75,15 @@ digital baja el esperado del arqueo pero nunca debitó la cuenta (límite docume
     `dotnet test tests/Ways.Application.Tests` 1638/1638; integración `CuentasTesoreriaReconstruccion|PagosDebitanCuenta|
     LibroDeTesoreria|Conciliacion` 79/79 (3 pruebas nuevas). Mutaciones: quitar el filtro "sin filas `pago`" del planeo →
     rojo `UnPagoYaDebitadoUnoSinCuenta…`; `congelado = false` en los débitos → rojo `UnPagoConFechaIgualALaMarca…`.
-- [ ] T3 — Web: el modal de reconstrucción muestra los débitos y su efecto por cuenta; tests.
-  Ruta: delegada.
+- [x] T3 — Web: el modal de reconstrucción muestra los débitos y su efecto por cuenta; tests.
+  Ruta: delegada (superficie ampliada por el coordinador a `paginas/CuentasTesoreria.tsx` y su prueba).
+  - `cuentasTesoreria.ts`: `'Pago'` en `TipoDeComponenteDeReconstruccion`, tipo `DebitoDeReconstruccion`, campos `pagos`, `debitos`,
+    `debitosCongelados`; helper `origenesDeReconstruccion` ("2 turnos y 1 pago").
+  - Modal: tabla "Débitos de pagos" (fecha, `#id · concepto`, medio, cuenta, importe), la de acreditaciones solo si hay; resumen,
+    éxito y estado vacío nombran turnos y pagos; `hayAlgoParaEscribir` sigue siendo `filas > 0`. El aviso de la página usa el helper.
+  - Evidencia (2026-11-01): RED 5 pruebas antes de implementar; `npx vitest run src/componentes/ModalDeReconstruccionDeCuentas.test.tsx
+    src/api src/paginas/CuentasTesoreria.test.tsx` 1999/1999; `npx tsc -b --noEmit` solo los 13 TS2882 conocidos; `npm run lint`
+    sin errores.
 
 ## Criterios de aceptación
 
@@ -94,10 +101,9 @@ digital baja el esperado del arqueo pero nunca debitó la cuenta (límite docume
 
 - 2026-11-01: diagnóstico confirmado en main; diseño cerrado.
 - 2026-11-01: T1 terminada (ver evidencia en la tarea).
-- 2026-11-01: T2 terminada (ver evidencia en la tarea). T3 escrita sin commit: falta ampliar la superficie a la página.
+- 2026-11-01: T2 terminada (ver evidencia en la tarea).
+- 2026-11-01: T3 terminada (ver evidencia en la tarea).
 
 ## Siguiente paso
 
-T3. La página `src/Ways.Web/src/paginas/CuentasTesoreria.tsx` arma su propio aviso ("Historial reconstruido: N filas de M
-turnos.") y su prueba usa un plan sin `pagos`/`debitos`/`debitosCongelados`: hay que pasar el aviso a
-`origenesDeReconstruccion` y completar el plan de la prueba.
+Revisión (judgment-day) de T2 y T3 y PRs apilados.

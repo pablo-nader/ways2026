@@ -7,6 +7,7 @@ import {
   aSolicitudDeAjuste,
   aEdicion,
   claveDeReconstruccion,
+  origenesDeReconstruccion,
   clienteDeReconstruccion,
   descuentosDeAcreditacion,
   errorAlReconstruir,
@@ -492,8 +493,29 @@ describe('ajuste manual del saldo — reglas puras', () => {
 describe('reconstrucción histórica', () => {
   const solicitud = { idEmpresa: 3, desde: '2026-10-01', hasta: '2026-10-31' }
 
+  it('origenesDeReconstruccion nombra turnos y pagos con su plural y, sin pagos, solo los turnos', () => {
+    expect(origenesDeReconstruccion(1, 0)).toBe('1 turno')
+    expect(origenesDeReconstruccion(2, 0)).toBe('2 turnos')
+    expect(origenesDeReconstruccion(0, 1)).toBe('1 pago')
+    expect(origenesDeReconstruccion(0, 3)).toBe('3 pagos')
+    expect(origenesDeReconstruccion(1, 1)).toBe('1 turno y 1 pago')
+    expect(origenesDeReconstruccion(2, 5)).toBe('2 turnos y 5 pagos')
+    expect(origenesDeReconstruccion(0, 0)).toBe('0 turnos')
+  })
+
   it('la vista previa y la aplicación postean la solicitud tal cual a su ruta y devuelven el plan', async () => {
-    const plan = { idEmpresa: 3, desde: '2026-10-01', hasta: '2026-10-31', turnos: 0, filas: 0, acreditaciones: [], cuentas: [] }
+    const plan = {
+      idEmpresa: 3,
+      desde: '2026-10-01',
+      hasta: '2026-10-31',
+      turnos: 0,
+      pagos: 0,
+      filas: 0,
+      acreditaciones: [],
+      debitos: [],
+      cuentas: [],
+      debitosCongelados: [],
+    }
     apiPostMock.mockResolvedValue(plan)
 
     await expect(clienteDeReconstruccion.vistaPrevia(solicitud)).resolves.toBe(plan)

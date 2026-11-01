@@ -61,6 +61,7 @@ function plan(sobrescribir: Partial<PlanDeReconstruccion> = {}): PlanDeReconstru
     desde: '2026-10-01',
     hasta: '2026-10-31',
     turnos: 1,
+    pagos: 0,
     filas: 3,
     acreditaciones: [
       {
@@ -79,12 +80,34 @@ function plan(sobrescribir: Partial<PlanDeReconstruccion> = {}): PlanDeReconstru
         ],
       },
     ],
+    debitos: [],
     cuentas: [{ idCuentaTesoreria: 9, nombre: 'Cuenta MP', filas: 3, neto: 950, saldoAntes: 100, saldoDespues: 1050 }],
+    debitosCongelados: [],
     ...sobrescribir,
   }
 }
 
 const planVacio = () => plan({ turnos: 0, filas: 0, acreditaciones: [], cuentas: [] })
+
+const debito = {
+  idPago: 77,
+  fecha: '2026-10-07T15:00:00Z',
+  categoria: 'Servicios' as const,
+  concepto: 'Luz',
+  idMedioPago: 5,
+  nombreMedio: 'Transferencia',
+  idCuentaTesoreria: 9,
+  nombreCuenta: 'Cuenta MP',
+  importe: 300,
+}
+
+const planConDebito = () =>
+  plan({
+    pagos: 1,
+    filas: 4,
+    debitos: [debito],
+    cuentas: [{ idCuentaTesoreria: 9, nombre: 'Cuenta MP', filas: 4, neto: 650, saldoAntes: 100, saldoDespues: 750 }],
+  })
 
 function montar(empresas: EmpresaListado[] = [empresa(1, 'Comercio SA')]) {
   const onCerrar = vi.fn()
@@ -115,6 +138,7 @@ describe('ModalDeReconstruccionDeCuentas', () => {
     expect(botonConfirmar()).toBeDisabled()
     expect(screen.getByText(/porcentajes de comisión y retenciones que tiene cada medio hoy/i)).toBeInTheDocument()
     expect(screen.getByText(/el día en que se cerró el turno/i)).toBeInTheDocument()
+    expect(screen.getByText(/pagos hechos con esos medios que todavía no la debitaron/i)).toBeInTheDocument()
   })
 
   it('con varias empresas pide elegir y no calcula sin empresa', async () => {
@@ -152,6 +176,49 @@ describe('ModalDeReconstruccionDeCuentas', () => {
     expect(botonConfirmar()).toBeEnabled()
   })
 
+  it('la vista previa muestra los débitos de pagos, los cuenta en el resumen y en el efecto por cuenta', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(planConDebito())
+    montar()
+
+    await usuario.click(botonVistaPrevia())
+
+    const debitos = await screen.findByRole('table', { name: 'Débitos de pagos' })
+    const fila = within(debitos).getByText('#77 · Luz').closest('tr') as HTMLElement
+    expect(within(fila).getByText('Transferencia')).toBeInTheDocument()
+    expect(within(fila).getByText('Cuenta MP')).toBeInTheDocument()
+    expect(fila.textContent).toContain('300')
+    expect(screen.getByText(/de 1 turno y 1 pago\./)).toBeInTheDocument()
+
+    const cuentas = screen.getByRole('table', { name: 'Efecto por cuenta' })
+    const filaCuenta = within(cuentas).getByText('Cuenta MP').closest('tr') as HTMLElement
+    expect(filaCuenta.textContent).toContain('650')
+    expect(filaCuenta.textContent).toContain('750')
+    expect(botonConfirmar()).toBeEnabled()
+  })
+
+  it('con solo débitos de pagos no muestra la tabla de acreditaciones y deja confirmar', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(
+      plan({
+        turnos: 0,
+        pagos: 1,
+        filas: 1,
+        acreditaciones: [],
+        debitos: [debito],
+        cuentas: [{ idCuentaTesoreria: 9, nombre: 'Cuenta MP', filas: 1, neto: -300, saldoAntes: 100, saldoDespues: -200 }],
+      }),
+    )
+    montar()
+
+    await usuario.click(botonVistaPrevia())
+
+    await screen.findByRole('table', { name: 'Débitos de pagos' })
+    expect(screen.queryByRole('table', { name: 'Acreditaciones' })).not.toBeInTheDocument()
+    expect(screen.getByText(/de 1 pago\./)).toBeInTheDocument()
+    expect(botonConfirmar()).toBeEnabled()
+  })
+
   it('sin nada pendiente muestra el mensaje vacío y no deja confirmar', async () => {
     const usuario = userEvent.setup()
     apiPostMock.mockResolvedValue(planVacio())
@@ -159,7 +226,8 @@ describe('ModalDeReconstruccionDeCuentas', () => {
 
     await usuario.click(botonVistaPrevia())
 
-    expect(await screen.findByText('No hay turnos sin acreditar en ese rango.')).toBeInTheDocument()
+    expect(await screen.findByText('No hay turnos sin acreditar ni pagos sin debitar en ese rango.')).toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Débitos de pagos' })).not.toBeInTheDocument()
     expect(botonConfirmar()).toBeDisabled()
   })
 
@@ -219,7 +287,7 @@ describe('ModalDeReconstruccionDeCuentas', () => {
       escritura.resolver(plan())
     })
 
-    expect(await screen.findByRole('status')).toHaveTextContent('se escribieron 3 filas de 1 turno')
+    expect(await screen.findByRole('status')).toHaveTextContent('se escribieron 3 filas de 1 turno.')
     expect(onReconstruido).toHaveBeenCalledTimes(1)
     expect(onReconstruido).toHaveBeenCalledWith(plan())
     expect(screen.getAllByRole('button', { name: 'Cerrar' })).toHaveLength(2)

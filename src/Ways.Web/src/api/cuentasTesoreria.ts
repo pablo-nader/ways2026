@@ -5,7 +5,7 @@
  */
 import { api, ErrorApi } from './cliente'
 import { CODIGO_RESULTADO_INCIERTO, COPIA_RESULTADO_INCIERTO } from './bajas'
-import type { EmpresaListado, MovimientoDeCuentaListado } from './tipos'
+import type { CategoriaPago, EmpresaListado, MovimientoDeCuentaListado } from './tipos'
 
 /** Fila del listado. `saldoActual` y `saldoInicialEditable` los calcula el servidor. */
 export type CuentaTesoreriaListado = {
@@ -411,6 +411,7 @@ export type TipoDeComponenteDeReconstruccion =
   | 'Transferencia'
   | 'Deposito'
   | 'Retiro'
+  | 'Pago'
 
 export type ComponenteDeReconstruccion = {
   tipo: TipoDeComponenteDeReconstruccion
@@ -431,6 +432,20 @@ export type AcreditacionDeReconstruccion = {
   componentes: ComponenteDeReconstruccion[]
 }
 
+/** Débito que se escribiría (o se escribió) por un pago sin filas en la cuenta, fechado con la fecha del pago. */
+export type DebitoDeReconstruccion = {
+  idPago: number
+  fecha: string
+  categoria: CategoriaPago
+  concepto: string
+  idMedioPago: number
+  nombreMedio: string
+  idCuentaTesoreria: number
+  nombreCuenta: string
+  /** Lo que sale de la cuenta. */
+  importe: number
+}
+
 export type CuentaDeReconstruccion = {
   idCuentaTesoreria: number
   nombre: string
@@ -445,9 +460,14 @@ export type PlanDeReconstruccion = {
   desde: string
   hasta: string
   turnos: number
+  pagos: number
+  /** Filas de cierre de las acreditaciones más una por débito. */
   filas: number
   acreditaciones: AcreditacionDeReconstruccion[]
+  debitos: DebitoDeReconstruccion[]
   cuentas: CuentaDeReconstruccion[]
+  /** Débitos de pagos con fecha a la marca de conciliación o antes: no se escriben. */
+  debitosCongelados: DebitoDeReconstruccion[]
 }
 
 /** `desde` y `hasta` son `yyyy-MM-dd`, ambos inclusivos, en la zona horaria de la empresa. */
@@ -492,6 +512,15 @@ export function validarRangoDeReconstruccion(idEmpresa: string, desde: string, h
 }
 
 /** Clave de lo que el usuario ve en los campos: la vista previa solo vale para la clave con la que se pidió. */
+/** "1 turno", "3 pagos", "2 turnos y 1 pago": de dónde salen las filas; sin pagos nombra solo los turnos. */
+export function origenesDeReconstruccion(turnos: number, pagos: number): string {
+  const deTurnos = `${turnos} ${turnos === 1 ? 'turno' : 'turnos'}`
+  const dePagos = `${pagos} ${pagos === 1 ? 'pago' : 'pagos'}`
+  if (pagos === 0) return deTurnos
+  if (turnos === 0) return dePagos
+  return `${deTurnos} y ${dePagos}`
+}
+
 export function claveDeReconstruccion(idEmpresa: string, desde: string, hasta: string): string {
   return `${idEmpresa}|${desde}|${hasta}`
 }
