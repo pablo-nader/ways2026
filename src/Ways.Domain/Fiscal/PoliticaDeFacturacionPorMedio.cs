@@ -69,14 +69,23 @@ public static class PoliticaDeFacturacionPorMedio
         }
 
         var facturar = motivo != MotivoDeFacturacion.NoRequerida;
-        var aportes = medios
+        return new DecisionDeFacturacion(facturar, motivo, AportesDe(medios, facturar));
+    }
+
+    /// <summary>Los aportes de la regla 4 para un ticket cuya decisión ya se conoce: cada medio devenga su porcentaje y,
+    /// si el ticket se factura, se debita su importe.</summary>
+    public static IReadOnlyList<AporteDeSaldo> Aportes(IReadOnlyList<PagoDeTicket> pagos, bool facturar)
+    {
+        ArgumentNullException.ThrowIfNull(pagos);
+        return AportesDe(Agregar(pagos), facturar);
+    }
+
+    private static List<AporteDeSaldo> AportesDe(IEnumerable<PagoDeTicket> medios, bool facturar) =>
+        medios
             .Select(m => new AporteDeSaldo(
                 m.IdMedioPago,
                 m.Importe * m.Porcentaje / 100m - (facturar ? m.Importe : 0m)))
             .ToList();
-
-        return new DecisionDeFacturacion(facturar, motivo, aportes);
-    }
 
     /// <summary>Aportes opuestos a los registrados: aplicarlos deshace exactamente lo aplicado.</summary>
     public static IReadOnlyList<AporteDeSaldo> Revertir(IEnumerable<AporteDeSaldo> aportes)

@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneTreintaYSeisEntradas()
+    public void TieneTreintaYSieteEntradas()
     {
-        Assert.Equal(36, AccionAuditada.Todas.Count);
+        Assert.Equal(37, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -102,7 +102,8 @@ public partial class AccionAuditadaTests
             ("sucursal.edicion", "sucursal"),
             ("sucursal.baja", "sucursal"),
             ("pv.sucursal", "punto_venta"),
-            ("sucursal.fusion", "sucursal")
+            ("sucursal.fusion", "sucursal"),
+            ("venta.medios", "comprobante_venta")
         ];
 
         var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));

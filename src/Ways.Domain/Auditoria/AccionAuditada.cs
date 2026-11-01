@@ -184,6 +184,10 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// recibo.</summary>
     public static readonly AccionAuditada CobroDesaplicacion = new("cobro.desaplicacion", "comprobante_venta");
 
+    /// <summary>Cambio de los medios de pago de una venta ya emitida — <c>Ventas/ServicioDeCambioDeMedios.cs</c>, desde la caja o
+    /// desde administración. <c>valor_anterior</c> y <c>valor_nuevo</c> llevan los cobros vivos antes y después.</summary>
+    public static readonly AccionAuditada VentaCambioDeMedios = new("venta.medios", "comprobante_venta");
+
     /// <summary>Las 30 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
@@ -228,6 +232,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         SucursalEdicion,
         SucursalBaja,
         PuntoVentaSucursal,
-        SucursalFusion
+        SucursalFusion,
+        VentaCambioDeMedios
     ];
 }

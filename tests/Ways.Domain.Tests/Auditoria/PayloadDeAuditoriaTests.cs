@@ -133,6 +133,22 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void CambioDeMediosDeVentaEsConstruibleYLlevaLosCobrosDeAntesYDeDespues()
+    {
+        var payload = PayloadDeAuditoria.CambioDeMediosDeVenta(
+            [new CobroDeVenta(1, Domain.Catalogos.ComportamientoMedioPago.Efectivo, 1000m, 200m, null)],
+            [new CobroDeVenta(2, Domain.Catalogos.ComportamientoMedioPago.Electronico, 800m, 0m, "OP-1")],
+            idTurnoRecalculado: 7);
+
+        AsumirConstruible(AccionAuditada.VentaCambioDeMedios, payload);
+        var nuevo = Assert.Single(Assert.IsType<List<Dictionary<string, object?>>>(payload.Nuevo["cobros"]));
+        Assert.Equal(2, nuevo["id_medio_pago"]);
+        Assert.Equal("OP-1", nuevo["referencia"]);
+        Assert.Equal(7, payload.Nuevo["id_turno_recalculado"]);
+        Assert.Equal(200m, Assert.Single(Assert.IsType<List<Dictionary<string, object?>>>(payload.Anterior!["cobros"]))["vuelto"]);
+    }
+
+    [Fact]
     public void AjusteDeStockEsConstruible() =>
         AsumirConstruible(
             AccionAuditada.StockAjuste,

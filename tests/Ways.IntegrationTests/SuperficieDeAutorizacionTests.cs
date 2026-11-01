@@ -58,6 +58,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // y que el propio GET "/api/ventas/{id:int}" del mismo grupo) — corrige el literal sin
         // restricción que este allowlist traía adelantado desde Slice 1.
         ("POST", "/api/ventas/{id:int}/anulacion"),
+        // Cambio de medios de una venta del turno abierto desde la caja: mismo criterio que la anulación (un Vendedor corrige lo
+        // que cobró). Su prueba positiva por rol es CambioDeMediosDeVentaTests.UnVendedorCambiaElMedioDeUnaVentaDelTurnoAbiertoYQuedaAuditado.
+        ("PUT", "/api/ventas/{id:int}/medios"),
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva de bloque offline —
         // mismo grupo /api/ventas, mismo criterio que "/api/ventas/" (OperacionDePos, sin
         // GestionDeCatalogo apilado: un Vendedor/cajero de dispositivo tiene que poder pedir su
