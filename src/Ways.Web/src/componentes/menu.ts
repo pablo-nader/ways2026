@@ -83,6 +83,8 @@ const MODELO: EntradaDelModelo[] = [
           enlace(puedeVerReportes, 'Tablero', '/tablero'),
           enlace(puedeVerReportes, 'Histórico de cajas', '/caja/historico'),
           enlace(puedeVerReportes, 'Tesorería', '/caja/tesoreria'),
+          enlace(puedeVerReportes, 'Listado de ventas', '/caja/ventas'),
+          enlace(puedeVerReportes, 'Retiros', '/caja/retiros'),
           // Configuración de las cuentas digitales de la tesorería: admin-only como el resto del ABM
           // (Politicas.GestionDeCatalogo, también para leer).
           enlace(puedeGestionarCatalogos, 'Cuentas de tesorería', '/caja/cuentas-tesoreria'),
