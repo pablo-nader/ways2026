@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Remito } from './Remito'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type { ClienteListado, ComprobanteEmitido, EstadoRemito, PuntoVentaListado, RemitoDetalle } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -157,8 +158,25 @@ function renderPantalla(id: string | number = 30) {
       <Routes>
         <Route path="/remitos/:id" element={<Remito />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
+
+/** Un fallo de escritura queda en un banner junto a la acción: ni es un toast ni hay uno con su texto. */
+async function bannerPersistente(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -366,7 +384,7 @@ describe('Remito — Anular pide confirmación en un modal', () => {
     const dialogo = await abrirConfirmacion()
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
 
-    expect(await screen.findByText('Remito anulado.')).toBeInTheDocument()
+    await toastDeExito('Remito anulado.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument())
   })
@@ -461,6 +479,7 @@ describe('Remito — crear borrador', () => {
           <Route path="/remitos/nuevo" element={<Remito />} />
           <Route path="/remitos/:id" element={<Remito />} />
         </Routes>
+        <Toaster />
       </MemoryRouter>,
     )
 
@@ -526,7 +545,7 @@ describe('Remito — cantidad según la unidad de venta', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }))
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
-    await screen.findByText('Borrador guardado.')
+    await toastDeExito('Borrador guardado.')
     await waitFor(() => expect(apiGetMock.mock.calls.filter((c) => c[0] === '/remitos/30')).toHaveLength(2))
     await act(async () => {})
 
@@ -590,6 +609,7 @@ describe('Remito — cantidad según la unidad de venta', () => {
           <Route path="/remitos/nuevo" element={<Remito />} />
           <Route path="/remitos/:id" element={<Remito />} />
         </Routes>
+        <Toaster />
       </MemoryRouter>,
     )
     const puntoVenta = await screen.findByLabelText('Punto de venta')
@@ -610,6 +630,28 @@ describe('Remito — cantidad según la unidad de venta', () => {
   })
 })
 
+describe('Remito — resultado de las escrituras', () => {
+  it('emitir avisa con un toast de éxito', async () => {
+    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(borradorFixture()) : undefined))
+    apiPostMock.mockResolvedValue(borradorFixture())
+
+    renderPantalla()
+    await userEvent.click(await screen.findByRole('button', { name: 'Emitir' }))
+
+    await toastDeExito('Remito emitido — stock actualizado.')
+  })
+
+  it('un fallo incierto al emitir queda en un banner persistente junto a la acción', async () => {
+    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(borradorFixture()) : undefined))
+    apiPostMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'No sabemos si el remito se emitió.'))
+
+    renderPantalla()
+    await userEvent.click(await screen.findByRole('button', { name: 'Emitir' }))
+
+    await bannerPersistente('No sabemos si el remito se emitió.')
+  })
+})
+
 describe('Remito — artículos no disponibles a la venta', () => {
   function renderNuevo() {
     return render(
@@ -618,6 +660,7 @@ describe('Remito — artículos no disponibles a la venta', () => {
           <Route path="/remitos/nuevo" element={<Remito />} />
           <Route path="/remitos/:id" element={<Remito />} />
         </Routes>
+        <Toaster />
       </MemoryRouter>,
     )
   }

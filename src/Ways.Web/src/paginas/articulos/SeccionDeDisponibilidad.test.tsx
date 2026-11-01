@@ -6,6 +6,7 @@ import { ErrorApi } from '../../api/cliente'
 import { ROL, type ArticuloListado, type UsuarioAutenticado } from '../../api/tipos'
 import { AuthContext } from '../../auth/AuthContext'
 import { Modal } from '../../componentes/Modal'
+import { Toaster } from '../../toasts/Toaster'
 
 // Sección "Venta y tienda online" del formulario de artículo: los dos interruptores y la imagen escriben por su cuenta.
 
@@ -64,8 +65,17 @@ function montar({
         alDeEscribir={alDeEscribir}
         alCambiar={alCambiar}
       />
+      <Toaster />
     </AuthContext.Provider>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 function diferida<T>() {
@@ -169,7 +179,7 @@ describe('SeccionDeDisponibilidad — interruptores', () => {
 
     await usuario.click(screen.getByRole('switch', { name: VENTA }))
 
-    expect(await screen.findByText('El artículo quedó fuera de la venta.')).toBeInTheDocument()
+    await toastDeExito('El artículo quedó fuera de la venta.')
     expect(apiPutMock).toHaveBeenCalledTimes(1)
     expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: false, disponibleOnline: false })
     expect(screen.getByRole('switch', { name: VENTA })).not.toBeChecked()
@@ -185,7 +195,7 @@ describe('SeccionDeDisponibilidad — interruptores', () => {
 
     await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
-    expect(await screen.findByText('El artículo quedó disponible en la tienda online.')).toBeInTheDocument()
+    await toastDeExito('El artículo quedó disponible en la tienda online.')
     expect(apiPutMock).toHaveBeenCalledTimes(1)
     expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: false, disponibleOnline: true })
     expect(screen.getByRole('switch', { name: ONLINE })).toBeChecked()
@@ -200,7 +210,7 @@ describe('SeccionDeDisponibilidad — interruptores', () => {
 
     await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
-    expect(await screen.findByText('El artículo quedó fuera de la tienda online.')).toBeInTheDocument()
+    await toastDeExito('El artículo quedó fuera de la tienda online.')
     expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: true, disponibleOnline: false })
     expect(screen.getByRole('switch', { name: ONLINE })).not.toBeChecked()
   })
@@ -212,7 +222,7 @@ describe('SeccionDeDisponibilidad — interruptores', () => {
 
     await usuario.click(screen.getByRole('switch', { name: VENTA }))
 
-    expect(await screen.findByText('El artículo quedó disponible a la venta.')).toBeInTheDocument()
+    await toastDeExito('El artículo quedó disponible a la venta.')
     expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: true, disponibleOnline: true })
   })
 
@@ -335,7 +345,7 @@ describe('SeccionDeDisponibilidad — interruptores', () => {
 
     await usuario.upload(screen.getByLabelText('Subir una imagen'), imagen())
 
-    expect(await screen.findByText('Se subió la imagen.')).toBeInTheDocument()
+    await toastDeExito('Se subió la imagen.')
     expect(screen.getByRole('switch', { name: VENTA })).not.toHaveFocus()
     expect(screen.getByRole('switch', { name: ONLINE })).not.toHaveFocus()
   })
@@ -491,7 +501,7 @@ describe('SeccionDeDisponibilidad — imagen', () => {
 
     await usuario.upload(screen.getByLabelText('Subir una imagen'), archivo)
 
-    expect(await screen.findByText('Se subió la imagen.')).toBeInTheDocument()
+    await toastDeExito('Se subió la imagen.')
     expect(apiPutBinarioMock).toHaveBeenCalledTimes(1)
     expect(apiPutBinarioMock).toHaveBeenCalledWith(RUTA_IMAGEN, archivo)
     expect(apiPutMock).not.toHaveBeenCalled()
@@ -674,7 +684,7 @@ describe('SeccionDeDisponibilidad — quitar la imagen', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar imagen' }))
 
-    expect(await screen.findByText('Se quitó la imagen.')).toBeInTheDocument()
+    await toastDeExito('Se quitó la imagen.')
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
     expect(apiDeleteMock).toHaveBeenCalledWith(RUTA_IMAGEN)
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -777,7 +787,7 @@ describe('SeccionDeDisponibilidad — la puerta de "Quitar imagen" deja inerte t
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar imagen' }))
 
-    expect(await screen.findByText('Se quitó la imagen.')).toBeInTheDocument()
+    await toastDeExito('Se quitó la imagen.')
     await waitFor(() => expect(saldo()).toBe(0))
   })
 
@@ -823,6 +833,7 @@ describe('SeccionDeDisponibilidad — dentro del modal del artículo', () => {
             alCambiar={alCambiar}
           />
         </Modal>
+        <Toaster />
       </AuthContext.Provider>,
     )
 
@@ -866,7 +877,7 @@ describe('SeccionDeDisponibilidad — dentro del modal del artículo', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar imagen' }))
 
-    expect(await screen.findByText('Se quitó la imagen.')).toBeInTheDocument()
+    await toastDeExito('Se quitó la imagen.')
     expect(screen.queryByRole('button', { name: 'Quitar imagen' })).not.toBeInTheDocument()
     expect(screen.getByText('Venta y tienda online')).toHaveFocus()
   })
@@ -896,19 +907,6 @@ describe('SeccionDeDisponibilidad — cada acción borra lo que dijo la anterior
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('cambiar la disponibilidad borra el aviso de éxito de la subida anterior', async () => {
-    const usuario = userEvent.setup()
-    apiPutBinarioMock.mockResolvedValue({ idArticulo: 7, tieneImagen: true, imagenVersion: 1 })
-    apiPutMock.mockReturnValue(new Promise(() => {}))
-    montar()
-    await usuario.upload(screen.getByLabelText('Subir una imagen'), imagen())
-    expect(await screen.findByText('Se subió la imagen.')).toBeInTheDocument()
-
-    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
-
-    expect(screen.queryByText('Se subió la imagen.')).not.toBeInTheDocument()
-  })
-
   it('elegir un archivo inválido borra el rechazo del interruptor', async () => {
     const usuario = userEvent.setup({ applyAccept: false })
     apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
@@ -920,18 +918,6 @@ describe('SeccionDeDisponibilidad — cada acción borra lo que dijo la anterior
 
     expect(screen.queryByText('No tenés permiso para cambiar la disponibilidad.')).not.toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('La imagen tiene que ser PNG, JPG o WebP.')
-  })
-
-  it('abrir la puerta borra el aviso de éxito de una acción anterior', async () => {
-    const usuario = userEvent.setup()
-    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: true, disponibleOnline: false })
-    montar({ tieneImagen: true })
-    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
-    expect(await screen.findByText('El artículo quedó fuera de la tienda online.')).toBeInTheDocument()
-
-    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
-
-    expect(screen.queryByText('El artículo quedó fuera de la tienda online.')).not.toBeInTheDocument()
   })
 
   it('cambiar un interruptor borra el rechazo que dejó el otro', async () => {

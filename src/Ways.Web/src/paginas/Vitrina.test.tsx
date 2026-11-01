@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Vitrina } from './Vitrina'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
+import { Toaster } from '../toasts/Toaster'
 import type { EmpresaListado, ListaPrecioListado, SitioPublico, VitrinaAdmin, VitrinaEdicion } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 
@@ -152,10 +153,26 @@ function prepararMundo(parcial: Partial<Mundo> = {}) {
   return mundo
 }
 
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
+
+/** La relectura fallida tras una escritura que sí salió bien queda en un banner persistente. */
+async function bannerDeRefrescoFallido() {
+  const aviso = await screen.findByText('No se pudo actualizar la vista. Recargá la pantalla.')
+  expect(aviso.closest('.alert-warning')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText('No se pudo actualizar la vista. Recargá la pantalla.')).toHaveLength(1)
+}
+
 function montar(parcial: Partial<Mundo> = {}, envolver = (nodo: React.ReactElement) => nodo) {
   const mundo = prepararMundo(parcial)
 
-  return { mundo, ...render(envolver(<Vitrina />)) }
+  return { mundo, ...render(envolver(<><Vitrina /><Toaster /></>)) }
 }
 
 /** La pantalla lee el rol de `AuthContext` (sin proveedor se comporta como Admin del tenant). */
@@ -252,7 +269,7 @@ describe('Vitrina — lectura', () => {
 
   it('si fallan las empresas lo dice', async () => {
     apiGetMock.mockRejectedValue(new ErrorApi(500, 'error_interno', 'Falló la carga.'))
-    render(<Vitrina />)
+    render(<><Vitrina /><Toaster /></>)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Falló la carga.')
   })
@@ -263,7 +280,7 @@ describe('Vitrina — lectura', () => {
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === RUTA_VITRINA ? Promise.reject(new ErrorApi(500, 'error_interno', 'boom')) : original(ruta),
     )
-    render(<Vitrina />)
+    render(<><Vitrina /><Toaster /></>)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo cargar la vitrina. Probá de nuevo.')
     expect(screen.queryByText(/listado/)).not.toBeInTheDocument()
@@ -282,7 +299,7 @@ describe('Vitrina — lectura', () => {
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === RUTA_VITRINA ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'x')) : original(ruta),
     )
-    render(<Vitrina />)
+    render(<><Vitrina /><Toaster /></>)
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'No se pudo cargar la vitrina. La empresa ya no existe. Actualizá la pantalla.',
@@ -305,7 +322,7 @@ describe('Vitrina — lectura', () => {
 
       return new Promise<VitrinaAdmin>((resolver) => pendientes.set(id, resolver))
     })
-    render(<Vitrina />)
+    render(<><Vitrina /><Toaster /></>)
 
     await elegirEmpresa(usuario, 4)
     await waitFor(() => expect(pendientes.has(4)).toBe(true))
@@ -395,7 +412,7 @@ describe('Vitrina — guardado', () => {
     await usuario.click(screen.getByLabelText('Publicada'))
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(apiPutMock).toHaveBeenCalledWith(RUTA_VITRINA, {
       publicada: true,
       tagline: 'Siempre cerca',
@@ -564,7 +581,7 @@ describe('Vitrina — logo', () => {
       expect(screen.getByRole('img', { name: 'Logo actual' })).toHaveAttribute('src', '/api/empresas/4/vitrina/logo?v=101'),
     )
     expect(apiPutBinarioMock).toHaveBeenCalledWith(RUTA_LOGO, archivo)
-    expect(screen.getByText('Se subió el logo.')).toBeInTheDocument()
+    await toastDeExito('Se subió el logo.')
     expect(screen.getByLabelText('Slogan')).toHaveValue('Siempre cerca sin guardar')
     expect(apiPutMock).not.toHaveBeenCalled()
   })
@@ -716,7 +733,7 @@ describe('Vitrina — logo', () => {
     await waitFor(() => expect(screen.queryByRole('img', { name: 'Logo actual' })).not.toBeInTheDocument())
     expect(apiDeleteMock).toHaveBeenCalledWith(RUTA_LOGO)
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(screen.getByText('Se quitó el logo.')).toBeInTheDocument()
+    await toastDeExito('Se quitó el logo.')
     expect(screen.getByLabelText('Slogan')).toHaveValue('Siempre cerca sin guardar')
   })
 
@@ -790,9 +807,8 @@ describe('Vitrina — logo', () => {
     await usuario.click(screen.getByRole('button', { name: 'Quitar logo' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar logo' }))
 
-    expect(
-      await screen.findByText('Se quitó el logo, pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+    await toastDeExito('Se quitó el logo.')
+    await bannerDeRefrescoFallido()
     expect(screen.queryByText(/No se pudo quitar/)).not.toBeInTheDocument()
   })
 })
@@ -817,7 +833,7 @@ describe('Vitrina — eliminar', () => {
     expect(screen.getByLabelText('Publicada')).not.toBeChecked()
     expect(screen.queryByRole('button', { name: 'Eliminar vitrina' })).not.toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(screen.getByText('Se eliminó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se eliminó la vitrina.')
   })
 
   it('si la baja commiteó pero la relectura falla, no se informa como fallida', async () => {
@@ -832,9 +848,8 @@ describe('Vitrina — eliminar', () => {
     await usuario.click(screen.getByRole('button', { name: 'Eliminar vitrina' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar eliminación' }))
 
-    expect(
-      await screen.findByText('Se eliminó la vitrina, pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+    await toastDeExito('Se eliminó la vitrina.')
+    await bannerDeRefrescoFallido()
     expect(screen.queryByText(/No se pudo eliminar/)).not.toBeInTheDocument()
   })
 
@@ -898,7 +913,7 @@ describe('Vitrina — enlace a la página', () => {
     prepararMundo()
     const original = apiGetMock.getMockImplementation()!
     apiGetMock.mockImplementation((ruta: string) => (ruta === '/publico/sitio' ? sitio.promesa : original(ruta)))
-    render(<Vitrina />)
+    render(<><Vitrina /><Toaster /></>)
     await esperarFormulario()
 
     expect(screen.queryByText(/se ve bajo el dominio propio del comercio/)).not.toBeInTheDocument()
@@ -974,7 +989,7 @@ describe('Vitrina — el error de una relectura fallida no sobrevive a una escri
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(screen.queryByText(ERROR_DE_LECTURA)).not.toBeInTheDocument()
   })
 
@@ -990,7 +1005,7 @@ describe('Vitrina — el error de una relectura fallida no sobrevive a una escri
 
     await usuario.upload(screen.getByLabelText('Reemplazar el logo'), archivoDeLogo())
 
-    expect(await screen.findByText('Se subió el logo.')).toBeInTheDocument()
+    await toastDeExito('Se subió el logo.')
     expect(screen.queryByText(ERROR_DE_LECTURA)).not.toBeInTheDocument()
   })
 
@@ -1007,9 +1022,8 @@ describe('Vitrina — el error de una relectura fallida no sobrevive a una escri
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar logo' }))
 
-    expect(
-      await screen.findByText('Se quitó el logo, pero no se pudo actualizar la vista. Recargá la pantalla.'),
-    ).toBeInTheDocument()
+    await toastDeExito('Se quitó el logo.')
+    await bannerDeRefrescoFallido()
     expect(screen.queryByText(ERROR_DE_LECTURA)).not.toBeInTheDocument()
   })
 })
@@ -1094,7 +1108,7 @@ describe('Vitrina — cambios sin guardar al elegir otra empresa', () => {
   it('después de guardar ya no hay cambios que perder', async () => {
     const usuario = await conCambiosSinGuardar()
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
 
     await elegirEmpresa(usuario, 5)
 
@@ -1144,7 +1158,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
     await usuario.selectOptions(selector, '2')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(apiPutMock).toHaveBeenCalledTimes(1)
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: 2 })
     expect(mundo.vitrinas[4].idListaPrecio).toBe(2)
@@ -1159,7 +1173,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
     await usuario.selectOptions(selector, '')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: null })
   })
 
@@ -1218,7 +1232,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: 9 })
   })
 
@@ -1234,7 +1248,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
     await usuario.selectOptions(selector, '')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(apiPutMock.mock.calls[1][1]).toMatchObject({ idListaPrecio: null })
     expect(mundo.vitrinas[4].idListaPrecio).toBeNull()
   })
@@ -1256,7 +1270,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: 2 })
   })
 
@@ -1268,7 +1282,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
     await usuario.selectOptions(screen.getByLabelText('Lista de precios de la tienda'), '')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    await toastDeExito('Se guardó la vitrina.')
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: null })
   })
 
@@ -1290,7 +1304,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
 
       await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-      expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+      await toastDeExito('Se guardó la vitrina.')
       expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: 2 })
     })
 
@@ -1366,19 +1380,6 @@ describe('Vitrina — accesibilidad', () => {
 })
 
 describe('Vitrina — cada acción borra lo que dijo la anterior', () => {
-  it('guardar borra el aviso de éxito de una subida anterior', async () => {
-    const usuario = userEvent.setup()
-    montar()
-    await esperarFormulario()
-    await usuario.upload(screen.getByLabelText('Reemplazar el logo'), archivoDeLogo())
-    expect(await screen.findByText('Se subió el logo.')).toBeInTheDocument()
-
-    apiPutMock.mockReturnValue(new Promise(() => {}))
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
-
-    expect(screen.queryByText('Se subió el logo.')).not.toBeInTheDocument()
-  })
-
   it('subir un logo borra el rechazo de un guardado anterior', async () => {
     const usuario = userEvent.setup()
     montar()
@@ -1405,19 +1406,6 @@ describe('Vitrina — cada acción borra lo que dijo la anterior', () => {
 
     expect(screen.queryByText(/Otra empresa de este comercio/)).not.toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('El logo no puede pesar más de 1 MB.')
-  })
-
-  it('abrir la puerta de eliminar borra el aviso de éxito de una acción anterior', async () => {
-    const usuario = userEvent.setup()
-    montar()
-    await esperarFormulario()
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
-
-    await usuario.click(screen.getByRole('button', { name: 'Eliminar vitrina' }))
-
-    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
-    expect(screen.queryByText('Se guardó la vitrina.')).not.toBeInTheDocument()
   })
 
   it('reintentar la baja borra el rechazo anterior', async () => {
@@ -1449,20 +1437,24 @@ describe('Vitrina — cada acción borra lo que dijo la anterior', () => {
     expect(screen.queryByText('No se puede.')).not.toBeInTheDocument()
   })
 
-  it('elegir otra empresa borra el aviso aunque su vitrina siga pendiente', async () => {
+  it('elegir otra empresa borra el banner de refresco fallido aunque su vitrina siga pendiente', async () => {
     const usuario = userEvent.setup()
     montar({ empresas: [empresaNorte, empresaEste] })
     await elegirEmpresa(usuario, 4)
     await esperarFormulario()
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
-    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
     const original = apiGetMock.getMockImplementation()!
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta === '/empresas/5/vitrina' ? new Promise(() => {}) : original(ruta),
-    )
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas/4/vitrina') return Promise.reject(new ErrorApi(500, 'error_interno', 'boom'))
+      if (ruta === '/empresas/5/vitrina') return new Promise(() => {})
+
+      return original(ruta)
+    })
+    await usuario.click(screen.getByRole('button', { name: 'Quitar logo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar logo' }))
+    await bannerDeRefrescoFallido()
 
     await elegirEmpresa(usuario, 5)
 
-    expect(screen.queryByText('Se guardó la vitrina.')).not.toBeInTheDocument()
+    expect(screen.queryByText('No se pudo actualizar la vista. Recargá la pantalla.')).not.toBeInTheDocument()
   })
 })

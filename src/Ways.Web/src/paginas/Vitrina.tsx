@@ -34,8 +34,9 @@ import { AuthContext } from '../auth/AuthContext'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { toast } from '../toasts/toasts'
 
-const COLA_DEL_REFRESCO_FALLIDO = 'pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_DE_REFRESCO_FALLIDO = 'No se pudo actualizar la vista. Recargá la pantalla.'
 const COPIA_COLOR_INVALIDO = 'Usá el formato #rrggbb, por ejemplo #f7991c.'
 const COPIA_LISTAS_NO_CARGARON =
   'No se pudieron cargar las listas de precios: solo podés conservar la lista actual o volver a la lista por defecto.'
@@ -93,7 +94,8 @@ export function Vitrina() {
   const [errorDeLogo, setErrorDeLogo] = useState('')
   /** Rechazo de lo que se confirma en la puerta (quitar el logo o eliminar la vitrina). */
   const [errorDeAccion, setErrorDeAccion] = useState('')
-  const [aviso, setAviso] = useState('')
+  /** La escritura salió bien pero la relectura posterior falló: la vista puede estar desactualizada. */
+  const [avisoDeRefrescoFallido, setAvisoDeRefrescoFallido] = useState('')
 
   const [ocupado, setOcupado] = useState(false)
   /** Solo para el texto de los botones: la inercia la gobierna `ocupado`. */
@@ -138,7 +140,7 @@ export function Vitrina() {
     setRechazoDeGuardado(null)
     setErrorDeLogo('')
     setErrorDeAccion('')
-    setAviso('')
+    setAvisoDeRefrescoFallido('')
   }
 
   const elegirEmpresa = useCallback(
@@ -147,7 +149,7 @@ export function Vitrina() {
       setRechazoDeGuardado(null)
       setErrorDeLogo('')
       setErrorDeAccion('')
-      setAviso('')
+      setAvisoDeRefrescoFallido('')
       setErrorDeLectura('')
       setEmpresaPendiente(null)
       setIdEmpresa(valor)
@@ -211,11 +213,11 @@ export function Vitrina() {
    * reporta como fallida (regla 6). */
   async function refrescarTrasEscribir(id: number, frase: string, reiniciarBorrador: boolean) {
     setErrorDeLectura('')
-    setAviso(`${frase}.`)
+    toast.exito(`${frase}.`)
     try {
       await cargarVitrina(id, ++generacionVitrina.current, { propagar: true, reiniciarBorrador })
     } catch {
-      setAviso(`${frase}, ${COLA_DEL_REFRESCO_FALLIDO}`)
+      setAvisoDeRefrescoFallido(AVISO_DE_REFRESCO_FALLIDO)
     }
   }
 
@@ -256,7 +258,7 @@ export function Vitrina() {
       setVitrina(guardada)
       setBorrador(aBorrador(guardada))
       setErrorDeLectura('')
-      setAviso('Se guardó la vitrina.')
+      toast.exito('Se guardó la vitrina.')
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
@@ -297,7 +299,7 @@ export function Vitrina() {
       // refresca con eso. El borrador no se toca.
       setVitrina(actualizada)
       setErrorDeLectura('')
-      setAviso('Se subió el logo.')
+      toast.exito('Se subió el logo.')
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
@@ -414,9 +416,9 @@ export function Vitrina() {
             {errorDeAccion}
           </div>
         )}
-        {aviso && (
-          <div className="alert alert-success" role="status">
-            {aviso}
+        {avisoDeRefrescoFallido && (
+          <div className="alert alert-warning" role="alert">
+            {avisoDeRefrescoFallido}
           </div>
         )}
 
