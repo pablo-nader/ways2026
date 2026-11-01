@@ -57,6 +57,7 @@ import {
   type FormularioDeHoras,
   type FormularioDePago,
 } from './cuentaDePersonalFormularios'
+import { pluralizar } from '../formato/pluralizar'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -586,7 +587,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {cuenta.pagina} de {totalDePaginas} — {cuenta.total} movimiento(s)
+                Página {cuenta.pagina} de {totalDePaginas} — {pluralizar(cuenta.total, 'movimiento')}
               </span>
               <div className="d-flex gap-2">
                 <button type="button" className="btn btn-sm btn-outline-secondary" disabled={cuenta.pagina <= 1 || cargandoCuenta || bloqueado} onClick={() => cambiarFiltros({ pagina: cuenta.pagina - 1 }, false)}>

@@ -551,7 +551,7 @@ export function Personal() {
                 pagina={pagina.pagina}
                 tamanio={pagina.tamanio}
                 total={pagina.total}
-                unidad="persona(s)"
+                unidad="persona"
                 deshabilitado={cargando || bloqueado}
                 onCambiarPagina={padron.cambiarPagina}
                 onCambiarTamanio={padron.cambiarTamanio}

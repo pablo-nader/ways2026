@@ -10,6 +10,7 @@ import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { ModalDetalleDeTurno } from '../componentes/ModalDetalleDeTurno'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { fechaHoraATexto } from '../formato/fechas'
+import { pluralizar } from '../formato/pluralizar'
 
 const TAMANIO_DE_PAGINA = 10
 
@@ -172,7 +173,7 @@ export function CierresDeCaja({ alReimprimir }: Props) {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {datos.pagina} de {totalPaginas} — {datos.total} cierre(s)
+                Página {datos.pagina} de {totalPaginas} — {pluralizar(datos.total, 'cierre')}
               </span>
               <div className="d-flex gap-2">
                 <button

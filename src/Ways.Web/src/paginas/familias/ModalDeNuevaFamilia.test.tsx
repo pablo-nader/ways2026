@@ -890,3 +890,54 @@ describe('ModalDeNuevaFamilia — crear', () => {
     expect(screen.queryByText(/Detalle de la familia/)).not.toBeInTheDocument()
   })
 })
+
+
+describe('ModalDeNuevaFamilia — permite desglosar costo', () => {
+  it('ofrece la casilla apagada, con su ayuda', () => {
+    montar()
+
+    const casilla = screen.getByRole('checkbox', { name: 'Permite desglosar costo' })
+    expect(casilla).not.toBeChecked()
+    expect(casilla).toHaveAccessibleDescription('Cada artículo puede tener su propio costo de lista e impuesto interno; el costo nominal es el mismo para todos.')
+  })
+
+  it('encendida, la previsualización y el alta mandan la marca', async () => {
+    montar()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+    await armarYPrevisualizar()
+
+    expect(apiPostMock).toHaveBeenCalledWith('/familias/previsualizacion', { idArticuloReferencia: 31, idsArticulos: [32, 33], permiteDesglosarCosto: true })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Crear familia' }))
+
+    await screen.findByText(/Detalle de la familia 7/)
+    expect(apiPostMock).toHaveBeenCalledWith('/familias', {
+      nombre: 'Sabores',
+      idArticuloReferencia: 31,
+      idsArticulos: [32, 33],
+      permiteDesglosarCosto: true,
+    })
+  })
+
+  it('cambiar la casilla descarta la previsualización: los campos que se alinean ya no son los mismos', async () => {
+    montar()
+    await armarYPrevisualizar()
+    expect(screen.getByRole('button', { name: 'Crear familia' })).toBeEnabled()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+
+    expect(screen.queryByRole('heading', { name: 'A0032 — Frutilla' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Crear familia' })).toBeDisabled()
+  })
+
+  it('encendida, la explicación saca la composición del costo de los campos compartidos', async () => {
+    montar()
+    const explicacion = screen.getByText(/Todos los artículos de la familia toman del artículo de referencia/)
+    expect(explicacion).toHaveTextContent('impuestos internos')
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+
+    expect(explicacion).not.toHaveTextContent(/campos compartidos \(.*impuestos internos/)
+    expect(explicacion).toHaveTextContent('la composición del costo')
+  })
+})

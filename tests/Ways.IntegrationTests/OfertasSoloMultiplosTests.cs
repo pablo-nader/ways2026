@@ -190,6 +190,43 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(11250m, (await VenderAsync(ctx, 11250m, (comun, 3m))).Total);
     }
 
+    /// <summary>Entre no acumulables de la misma prioridad gana la que más descuento de línea da: a 3 unidades la común de
+    /// 3800 (600 contra 500), a 4 la "solo múltiplos" (1000 contra 800). La instantánea lleva los escalones de los dos
+    /// lados del cruce.</summary>
+    [Fact]
+    public async Task ConUnaComunEnCompetenciaGanaLaQueMasDescuentoDeLineaDaEnLaVentaYEnLaInstantanea()
+    {
+        async Task<(Escenario Ctx, int Articulo, int IdEstricta, int IdComun)> PrepararAsync(ModoPuntoVenta modo)
+        {
+            var ctx = await apoyo.PrepararAsync(
+                $"{nameof(ConUnaComunEnCompetenciaGanaLaQueMasDescuentoDeLineaDaEnLaVentaYEnLaInstantanea)}-{modo}", modo);
+            var articulo = await apoyo.ArticuloAsync(ctx, "articulo", 4000m);
+            var idEstricta = await CrearOfertaAsync(ctx, CuerpoDeOferta(articulo, true));
+            var idComun = await CrearOfertaAsync(ctx, new
+            {
+                nombre = "Comun", idArticulo = articulo, precioUnitario = 3800m, prioridad = 0, acumulable = false,
+                activo = true, idsListas = Array.Empty<int>()
+            });
+            return (ctx, articulo, idEstricta, idComun);
+        }
+
+        var web = await PrepararAsync(ModoPuntoVenta.Web);
+        foreach (var (cantidad, total, idOferta) in new[] { (3m, 11400m, web.IdComun), (4m, 15000m, web.IdEstricta) })
+        {
+            var venta = await VenderAsync(web.Ctx, total, (web.Articulo, cantidad));
+            var item = Assert.Single(await apoyo.ItemsAsync(web.Ctx, venta.Id));
+            Assert.Equal((total, (int?)idOferta), (item.Total, item.IdOferta));
+        }
+
+        var escritorio = await PrepararAsync(ModoPuntoVenta.Escritorio);
+        var v2 = JsonSerializer.Deserialize<InstantaneaDePos>(
+            await InstantaneaAsync(escritorio.Ctx, "/api/pos/instantanea?version=2"), OpcionesJson)!;
+        var precio = Assert.Single(Assert.Single(v2.Articulos, a => a.IdArticulo == escritorio.Articulo).PreciosPorLista);
+        Assert.Equal(
+            [(2m, 4000m, (int?)escritorio.IdEstricta), (2.501m, 3800m, null), (4m, 4000m, escritorio.IdEstricta)],
+            precio.Escalones!.Take(3).Select(e => (e.CantidadDesde, e.PrecioFinal, e.AplicadasCompletas?.Single().IdOferta)));
+    }
+
     [Fact]
     public async Task LaOfertaDeFamiliaCuentaLosGruposSobreElDocumentoYElRestoCaeEnLaUltimaLinea()
     {

@@ -22,6 +22,7 @@ import {
   nombreDelEmpleado,
   nombreDelMedio,
 } from './cuentas'
+import { pluralizar } from '../../formato/pluralizar'
 
 const TAMANIO_DE_PAGINA = 25
 const RUTA_ABM_DE_CUENTAS = '/caja/cuentas-tesoreria'
@@ -397,7 +398,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
 
                   <div className="d-flex justify-content-between align-items-center">
                     <span className="small text-muted">
-                      Página {libro.pagina} de {totalPaginas} — {libro.total} movimiento(s)
+                      Página {libro.pagina} de {totalPaginas} — {pluralizar(libro.total, 'movimiento')}
                     </span>
                     <div className="d-flex gap-2">
                       <button

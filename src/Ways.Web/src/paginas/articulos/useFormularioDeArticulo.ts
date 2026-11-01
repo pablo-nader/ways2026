@@ -7,11 +7,15 @@ import type { AlcanceDeFamilia, ArticuloListado } from '../../api/tipos'
 import {
   AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON,
   AVISO_DE_FAMILIA_CAMBIO,
+  avisoDeNominalDistintoDeFamilia,
   avisoDeValoresDistintos,
+  cambioDeNominalDeDatos,
   camposCompartidosModificados,
   camposNombradosEnMensaje,
+  CODIGO_NOMINAL_DISTINTO_DE_FAMILIA,
   CODIGOS_DE_CONFLICTO_DE_ALTA,
   contextoDeAlcance,
+  desglosaCostoLaFamilia,
   familiaDelArticulo,
   mensajeDeAlta,
   mensajeDeEdicion,
@@ -19,6 +23,7 @@ import {
   rechazoDeLaFamiliaNuevaEnElAlta,
   valoresDeFamiliaAFormulario,
   type AccionesDeFamiliaDelFormulario,
+  type CambioDeNominal,
   type EstadoDeUnionAFamilia,
 } from './familia'
 import { aAlta, aEdicion, aFormulario, formularioVacio, type ErrorDeTecla, type Formulario } from './FormularioArticulo'
@@ -32,8 +37,10 @@ import { useFamiliasDelFormulario } from './useFamiliasDelFormulario'
 /** La pregunta de alcance abierta al guardar la edición de un miembro de una familia (doc 10 §3): `contexto` es
  * con lo que se abre (la familia conocida o el texto del servidor) y `campos`, las etiquetas de los campos
  * compartidos que cambian. Se abre antes de escribir lo que pregunta; al elegir un alcance sigue abierta, con sus
- * respuestas inertes, mientras dura el PUT, y la respuesta del PUT la cierra mientras el modal siga siendo el que preguntó. */
-export type DecisionDeAlcance = { contexto: string; campos: string[] }
+ * respuestas inertes, mientras dura el PUT, y la respuesta del PUT la cierra mientras el modal siga siendo el que preguntó.
+ * `cambioDeNominal` viene del servidor y solo existe en una familia que desglosa el costo: ahí la composición es propia y
+ * lo que se replica a la familia es el costo nominal nuevo. */
+export type DecisionDeAlcance = { contexto: string; campos: string[]; cambioDeNominal: CambioDeNominal | null }
 
 /** Lo que un alta precarga: campos del formulario y, aparte, el código con el que el proveedor habitual conoce al
  * artículo (que no es un campo del artículo y por eso viaja por su cuenta). */
@@ -281,13 +288,15 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
 
     const original = formularioOriginalRef.current
     if (formulario.id !== null && formulario.idFamilia !== '' && original !== null) {
-      const campos = camposCompartidosModificados(original, formulario)
+      const desglosa = desglosaCostoLaFamilia(formulario.idFamilia, familias.detalle)
+      const campos = camposCompartidosModificados(original, formulario, desglosa)
       if (campos.length > 0) {
         setErrorGuardado('')
         setAvisoGuardado('')
         setDecisionDeAlcance({
           contexto: contextoDeAlcance(familiaDelArticulo(formulario.idFamilia, familias.detalle)),
           campos: campos.map((campo) => campo.etiqueta),
+          cambioDeNominal: null,
         })
         return
       }
@@ -396,6 +405,12 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
         }
       }
 
+      if (enviado.id === null && enviado.idFamilia !== '' && e.estado === 409 && e.codigo === CODIGO_NOMINAL_DISTINTO_DE_FAMILIA) {
+        // La familia sigue siendo la misma y el formulario conserva lo tipeado: solo hay que corregir la composición.
+        setErrorGuardado(avisoDeNominalDistintoDeFamilia(e.datos, e.message))
+        return null
+      }
+
       if (enviado.id === null && enviado.idFamilia !== '') {
         const idFamilia = enviado.idFamilia
         const rechazoDeLaFamilia = e.estado === 409 && (CODIGOS_DE_CONFLICTO_DE_ALTA as readonly string[]).includes(e.codigo)
@@ -409,9 +424,21 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
           // servidor, que nombra la familia y cuántos artículos tiene. Si la pantalla no ve ningún campo compartido
           // cambiado, lo que el servidor ve distinto es lo que ella tiene desactualizado: preguntar ofrecería escribir
           // esos valores viejos en toda la familia, así que se recarga el artículo.
-          const campos = camposCompartidosModificados(formularioOriginalRef.current ?? enviado, enviado)
-          if (campos.length === 0) return () => recargarArticuloDesactualizado(idArticulo, AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON)
-          setDecisionDeAlcance({ contexto: e.message, campos: campos.map((campo) => campo.etiqueta) })
+          //
+          // En una familia que desglosa el costo el servidor adjunta el cambio de nominal: es lo que hay que decidir aunque
+          // la pantalla no vea ningún campo compartido cambiado (la composición es propia), y su texto ya trae los dos
+          // importes, que la pregunta muestra aparte; el contexto es entonces la familia conocida.
+          const desglosa = desglosaCostoLaFamilia(enviado.idFamilia, familias.detalle)
+          const cambioDeNominal = cambioDeNominalDeDatos(e.datos)
+          const campos = camposCompartidosModificados(formularioOriginalRef.current ?? enviado, enviado, desglosa)
+          if (campos.length === 0 && cambioDeNominal === null) {
+            return () => recargarArticuloDesactualizado(idArticulo, AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON)
+          }
+          const contexto =
+            cambioDeNominal !== null && enviado.idFamilia !== ''
+              ? contextoDeAlcance(familiaDelArticulo(enviado.idFamilia, familias.detalle))
+              : e.message
+          setDecisionDeAlcance({ contexto, campos: campos.map((campo) => campo.etiqueta), cambioDeNominal })
           return null
         }
         if (e.codigo === 'familia_cambio') return () => recargarArticuloDesactualizado(idArticulo)

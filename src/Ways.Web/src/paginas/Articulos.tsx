@@ -12,7 +12,7 @@ import { ModalDeArticulo } from './articulos/ModalDeArticulo'
 import { PreguntaDeAlcance } from './articulos/PreguntaDeAlcance'
 import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
 import { useFormularioDeArticulo } from './articulos/useFormularioDeArticulo'
-import { BotonIcono } from '../componentes/BotonIcono'
+import { Icono } from '../componentes/BotonIcono'
 
 const MENSAJE_ID_INVALIDO = 'No se especificó un artículo válido.'
 
@@ -286,13 +286,16 @@ export function Articulos() {
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <BotonIcono
-        icono="agregar"
+      <button
+        type="button"
         ref={refBotonNuevo}
-        className="text-nowrap"
+        className="btn btn-primary btn-sm text-nowrap d-inline-flex align-items-center gap-1"
         disabled={ocupado}
         onClick={irACrear}
-      />
+      >
+        <Icono icono="agregar" />
+        Nuevo artículo
+      </button>
     </nav>
   )
 
@@ -327,6 +330,7 @@ export function Articulos() {
           <PreguntaDeAlcance
             contexto={articulo.decisionDeAlcance.contexto}
             cambios={articulo.decisionDeAlcance.campos}
+            cambioDeNominal={articulo.decisionDeAlcance.cambioDeNominal}
             ocupado={ocupado}
             onElegir={articulo.elegirAlcance}
             onCancelar={articulo.cancelarAlcance}
@@ -351,6 +355,8 @@ export function Articulos() {
       {bajaPendiente !== null && (
         <ConfirmacionDeBaja
           titulo={`el artículo "${bajaPendiente.fila.nombre}"`}
+          nota="Deja de aparecer en la tienda online y, en cada caja, desde su próxima sincronización. Las ventas registradas no cambian."
+          etiquetaConfirmar="Dar de baja"
           ocupado={eliminando}
           disparador={bajaPendiente.disparador}
           error={errorDeBaja || null}

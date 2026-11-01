@@ -11,7 +11,7 @@ function montar(sobrescribir: Partial<Parameters<typeof PaginadorDePadron>[0]> =
       pagina={2}
       tamanio={25}
       total={60}
-      unidad="cliente(s)"
+      unidad="cliente"
       deshabilitado={false}
       onCambiarPagina={onCambiarPagina}
       onCambiarTamanio={onCambiarTamanio}
@@ -26,7 +26,7 @@ describe('PaginadorDePadron', () => {
   it('muestra la página, la última y el total', () => {
     montar()
 
-    expect(screen.getByText('Página 2 de 3 — 60 cliente(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 2 de 3 — 60 clientes')).toBeInTheDocument()
   })
 
   it('Anterior y Siguiente piden una página menos o más', async () => {
@@ -54,8 +54,18 @@ describe('PaginadorDePadron', () => {
   it('un conjunto vacío es la página 1 de 1', () => {
     montar({ pagina: 1, total: 0 })
 
-    expect(screen.getByText('Página 1 de 1 — 0 cliente(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 1 de 1 — 0 clientes')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
+  })
+
+  it('con un solo elemento usa el singular', () => {
+    montar({ pagina: 1, total: 1 })
+    expect(screen.getByText('Página 1 de 1 — 1 cliente')).toBeInTheDocument()
+  })
+
+  it('usa el plural explícito de las excepciones', () => {
+    montar({ pagina: 1, total: 2, unidad: 'orden', unidadPlural: 'órdenes' })
+    expect(screen.getByText('Página 1 de 1 — 2 órdenes')).toBeInTheDocument()
   })
 
   it('el tamaño de página ofrece 25, 50 y 100 y avisa el elegido', async () => {

@@ -20,6 +20,7 @@ import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { pluralizar } from '../formato/pluralizar'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -251,7 +252,7 @@ export function HistoricoDeCajas() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} turno(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'turno')}
               </span>
               <div className="d-flex gap-2">
                 <button

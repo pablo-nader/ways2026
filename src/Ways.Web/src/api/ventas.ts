@@ -126,6 +126,7 @@ export function previaDeLinea(
     // reconstruye con esa misma identidad.
     precioOriginal: resultado.precioOriginal ?? resultado.precioFinal + resultado.descuentoUnitario,
     descuentoUnitario: resultado.descuentoUnitario,
+    descuentoDeLinea: resultado.descuentoDeLinea,
     porcentaje: linea.ajusteManualPorcentaje,
     combo: resultado.combo,
   })

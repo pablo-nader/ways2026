@@ -3,6 +3,7 @@ import type { FamiliaDetalle, ListaPrecioListado } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 import { Modal } from '../../componentes/Modal'
+import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
 import { VistaDePrevisualizacion } from '../familias/VistaDePrevisualizacion'
 import type { NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaFamilia } from './AltaRapidaFamilia'
@@ -10,6 +11,8 @@ import {
   advertenciaDeUnion,
   AVISO_DE_CAMBIOS_SIN_GUARDAR_EN_FAMILIA,
   AVISO_DE_UNION_DESACTUALIZADA,
+  AYUDA_DE_ALTA_CON_DESGLOSE,
+  AYUDA_DE_MIEMBRO_CON_DESGLOSE,
   CAMPOS_PROPIOS,
   describirEstadoDePrecios,
   etiquetaDeFamilia,
@@ -174,7 +177,7 @@ function EleccionDeFamilia({
 
   return (
     <div className="mb-3">
-      <strong className="text-muted small text-uppercase">Familia</strong>
+      <TituloDeSeccion>Familia</TituloDeSeccion>
       {familia.errorOpciones && <div className="alert alert-warning py-1 px-2 small mt-2">{familia.errorOpciones}</div>}
 
       <div className="row g-3 mt-0">
@@ -417,6 +420,7 @@ function FamiliaElegida({
         El artículo toma de la familia "{detalle.nombre}" los campos marcados "(de la familia)" y los precios de cada lista; no se pueden
         cambiar acá. Son propios del artículo: {CAMPOS_PROPIOS}.
       </p>
+      {detalle.permiteDesglosarCosto === true && <p className="small mb-2">{AYUDA_DE_ALTA_CON_DESGLOSE}</p>}
       <PreciosDeLaFamilia detalle={detalle} listasPrecio={listasPrecio} />
     </div>
   )
@@ -473,7 +477,7 @@ function PertenenciaAFamilia({
 
   return (
     <div className="mb-3">
-      <strong className="text-muted small text-uppercase">Familia</strong>
+      <TituloDeSeccion>Familia</TituloDeSeccion>
       <div className="d-flex flex-wrap align-items-center gap-2 mt-2">
         <span className="badge text-bg-info">{etiquetaDeFamilia(pertenencia)}</span>
         <button
@@ -487,8 +491,9 @@ function PertenenciaAFamilia({
       </div>
       {familia.error && <div className="alert alert-warning py-1 px-2 small mt-2">{familia.error}</div>}
       <div className="form-text">
-        Los campos compartidos y los precios son iguales en toda la familia: al cambiarlos se pregunta si el cambio llega a todos los
-        artículos o solo a este.
+        {familia.detalle?.id === idFamilia && familia.detalle.permiteDesglosarCosto === true
+          ? AYUDA_DE_MIEMBRO_CON_DESGLOSE
+          : 'Los campos compartidos y los precios son iguales en toda la familia: al cambiarlos se pregunta si el cambio llega a todos los artículos o solo a este.'}
       </div>
 
       {confirmandoSalida && (
