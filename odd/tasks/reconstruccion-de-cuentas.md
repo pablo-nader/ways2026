@@ -39,7 +39,7 @@ no hay ajustes manuales en las cuentas (2026-10-31).
 - [x] **R1 — Backend.** Commit `ca43a8a0`, PR #582, judgment-day APPROVED (dos jueces sin hallazgos). Orden `(fecha, id)` en lectores del libro y de la cola; reconstructor puro de la cadena;
   servicio con vista previa y aplicación; endpoints Admin; tests unitarios + integración. Ruta: delegada (escritor
   único, 2+ archivos no triviales).
-- [x] **R2 — Web (sin commitear).** Modal en `CuentasTesoreria.tsx` con empresa, rango, vista previa y confirmación; cliente API;
+- [x] **R2 — Web.** Commit `71958f5b`, PR #584 apilado sobre #582, judgment-day APPROVED (solo WARNING/SUGGESTION). Modal en `CuentasTesoreria.tsx` con empresa, rango, vista previa y confirmación; cliente API;
   tests Vitest. Ruta: delegada.
 
 ## Criterios de aceptación
@@ -61,5 +61,8 @@ no hay ajustes manuales en las cuentas (2026-10-31).
 
 ## Siguiente paso
 
-Judgment-day de R2 y PR apilado sobre #582. Después, que el dueño corra la vista previa en producción con el rango
-desde que cargó las primeras ventas.
+Al mergear #582, reapuntar #584 a `main` y activarle auto-merge. Después, que el dueño corra la vista previa en
+producción con el rango desde las primeras ventas.
+
+Seguimientos informativos de R2: releer saldos tras un resultado incierto (5xx/409); rango por defecto en la zona de la
+empresa; el test de respuesta vieja no mata la guarda de generación; dos botones "Cerrar" en el estado de éxito.
