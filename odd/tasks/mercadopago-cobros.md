@@ -57,7 +57,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
   account.
   - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
-  - [ ] E6-T2 — Back-office web screen.
+  - [x] E6-T2 — Back-office web screen (commit 9cda93a5).
 - [ ] E7 — Withdrawals/payouts from the report into treasury.
 
 ## Delivery strategy
@@ -66,7 +66,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E6-T2: back-office web screen (Tesorería → "Conciliación Mercado Pago": upload, summary, rows with filters, cobros sin venta / pagos sin verificar lists, confirm candidates) over the E6-T1 endpoints. E6-T1 awaits its judgment-day before the PR.
+E7: Mercado Pago movements into treasury (fee-difference adjustment and withdrawals proposals, apply/discard; design in "E7 design"). E6-T2 awaits its judgment-day before the PR.
 
 ## E3-T1 design (2026-11-01)
 
@@ -682,3 +682,19 @@ Branch `pnader/mercadopago-e7`, stacked on E6-T2. Backend + web.
   scoping/roles.
 - E6-T2 note from E6-T1: the upload must send the header `X-Ways-Origen: web` (CSRF guard) and the result codes include `duplicada`,
   `ya_conciliado` and `invalida`; rows carry `aplicadaAlCobro`, and `ya_conciliado` rows carry the stored fee/net for comparison.
+
+## E6-T2 progress (2026-11-02)
+
+- Commit 9cda93a5 `feat(web): pantalla de conciliación de Mercado Pago`. Page `paginas/ConciliacionMercadoPago.tsx` (+ parts in
+  `paginas/tesoreria/`: `SeccionImportar`, `SeccionConciliaciones`, `SeccionParaRevisar`, `TablaDeFilasDeConciliacion`,
+  `DialogoDeConfirmacionDeFila`, `useLectura`), client and pure helpers `api/conciliacionMercadoPago.ts`, `api.postFormulario` in
+  `api/cliente.ts` (FormData without a forced Content-Type), route and menu entry.
+- Route `/caja/conciliacion-mercadopago` (not `/tesoreria/...`): hangs from `/caja` like the other treasury pages, so no new first
+  segment in the server route list; menu entry in Reportes, `puedeVerReportes` (Supervisor and Admin read; upload/confirm Admin only,
+  the Supervisor does not see the Importar tab or the Confirmar buttons).
+- Not shown: the real fee against the medio's estimated `comision_porcentaje` (no contract field exposes it; the summary shows the
+  real fee and net as the server reports them).
+- Mutation evidence (one per run, then restored): role gating `esAdmin = true` fails 2 Supervisor tests; header `{}` fails the api
+  and page header tests; removing `ocupadoRef` from `subir` fails the double-click upload test; from `confirmar` fails the
+  double-click confirm test; ungating `useLectura` fails the stale-empresa test.
+- Verification: tsc clean, oxlint clean on touched files, 211 tests pass (api, page, menu, Tesoreria, cliente), `npm run build` ok.
