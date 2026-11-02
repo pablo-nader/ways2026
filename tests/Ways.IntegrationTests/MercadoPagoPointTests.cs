@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Ways.Application.MercadoPago;
+using static Ways.IntegrationTests.ApoyoDeMercadoPago;
 
 namespace Ways.IntegrationTests;
 
@@ -379,6 +380,119 @@ public partial class MercadoPagoCobrosTests
         e.Ordenes.Estados[idOrden] = "processed";
         e.Reloj.Ahora = e.Reloj.Ahora.AddMinutes(16);
 
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
+
+        Assert.Equal("fallido", consultado.Estado);
+        Assert.Equal(lecturas, Lecturas(e).Count);
+    }
+
+    private const string TerminalOcupadaJson = """{"errors":[{"code":"already_queued_order_for_terminal","message":"terminal ocupada"}]}""";
+
+    private static bool EsCreacion(PedidoRegistrado pedido) => pedido.Metodo == HttpMethod.Post && pedido.Uri.AbsolutePath == "/v1/orders";
+
+    // Clausula: el 409 de terminal ocupada cancela la fila SOLO en el primer envio (el de la llamada que la reservo). En un reenvio de una
+    // fila que quedo creando tras una respuesta perdida pudo haber una orden creada: la fila sigue creando, retiene el numero y las
+    // bandas de tiempo de E3 la liberan.
+    [Fact]
+    public async Task UnReenvioDeUnaFilaCreandoQueRecibeTerminalOcupadaLaDejaCreandoYLasBandasDeTiempoLaLiberan()
+    {
+        var (e, medio) = await PrepararPointAsync("mp-point-ocupada-reenvio");
+        e.Ordenes.Antes = pedido => EsCreacion(pedido)
+            ? Json(HttpStatusCode.BadRequest, """{"error": "invalid_params", "message": "x"}""")
+            : null;
+        await CrearAsync(e, 6040, 100m, medio);
+        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+        var idCobro = (int)Assert.Single(await FilasAsync(e.IdPuntoVenta))["id_cobro_mercadopago"]!;
+        var reservado = await ReservadoEnAsync(e);
+
+        e.Ordenes.Antes = pedido => EsCreacion(pedido) ? Json(HttpStatusCode.Conflict, TerminalOcupadaJson) : null;
+        await AssertCodigoAsync(await CrearAsync(e, 6040, 100m, medio), HttpStatusCode.Conflict, "mercadopago_terminal_ocupada");
+
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("creando", fila["estado"]);
+        Assert.Null(fila["id_orden_mercadopago"]);
+
+        e.Reloj.Ahora = reservado + VigenciaEsperada;
+        await AssertCodigoAsync(await CrearAsync(e, 6040, 100m, medio), HttpStatusCode.Conflict, "cobro_mercadopago_en_curso");
+        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+
+        e.Reloj.Ahora = reservado + VigenciaEsperada + VigenciaEsperada + TimeSpan.FromMinutes(5);
+        e.Ordenes.Antes = null;
+        var nuevo = await CrearPointOkAsync(e, medio, 6040, 100m);
+
+        Assert.NotEqual(idCobro, nuevo.IdCobro);
+        Assert.Equal(["expirado", "pendiente"], (await FilasAsync(e.IdPuntoVenta)).Select(f => (string)f["estado"]!));
+    }
+
+    // Clausula: un fallido releido dentro de su ventana que recibe un error de Mercado Pago (5xx, 404 antes del plazo) devuelve el estado
+    // guardado: la vigilancia es un extra y no rompe la consulta del rechazo.
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task UnPointFallidoQueNoSePuedeRelerSeDevuelveTalCualEnConsultarApartarYElAviso(HttpStatusCode error)
+    {
+        var (e, _, fallido, idOrden) = await PrepararFallidoAsync("mp-point-fallido-error-" + (int)error, 6041);
+        e.Ordenes.Antes = pedido => pedido.Metodo == HttpMethod.Get ? Json(error, """{"error": "x", "message": "x"}""") : null;
+        var lecturas = Lecturas(e).Count;
+
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
+        Assert.Equal("fallido", consultado.Estado);
+        Assert.True(Lecturas(e).Count > lecturas, "el fallido tenia que intentar releerse");
+
+        var aviso = await AvisarAsync(ClienteDelWebhook(e), idOrden, FirmaValida(e, idOrden));
+        Assert.Equal(HttpStatusCode.OK, aviso.StatusCode);
+
+        var apartado = await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, fallido.IdCobro));
+        Assert.Equal("fallido", apartado.Estado);
+        Assert.Equal("fallido", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: un fallido que Mercado Pago informa procesado sin un pago legible sigue vigilado pasada la ventana normal (hasta 24 h desde
+    // la reserva) y aparece en cobros-sin-venta con pagoInformadoSinDatos; cuando el pago se vuelve legible pasa a sin_venta.
+    [Fact]
+    public async Task UnPointFallidoConPagoInformadoSinDatosSeSigueVigilandoYSeListaParaLaConciliacion()
+    {
+        var (e, _, fallido, idOrden) = await PrepararFallidoAsync("mp-point-fallido-sin-datos", 6042);
+        e.Ordenes.Estados[idOrden] = "processed";
+        e.Ordenes.SinPagos = true;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        var informado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
+        Assert.Equal("fallido", informado.Estado);
+        Assert.NotNull(Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_procesada_mercadopago"]);
+
+        e.Reloj.Ahora = e.Reloj.Ahora.AddMinutes(16);
+        var lecturas = Lecturas(e).Count;
+        await ConsultarAsync(e, fallido.IdCobro);
+        Assert.True(Lecturas(e).Count > lecturas, "pasada la ventana normal, un fallido con pago informado sigue leyendose");
+
+        var lista = await LeerAsync<List<CobroSinVentaListado>>(await e.Ctx.Admin.GetAsync($"{RutaSinVenta}?idEmpresa={e.Ctx.IdEmpresa}"));
+        var listado = Assert.Single(lista);
+        Assert.Equal(fallido.IdCobro, listado.IdCobro);
+        Assert.True(listado.PagoInformadoSinDatos);
+        Assert.Null(listado.IdPagoMercadoPago);
+
+        e.Ordenes.SinPagos = false;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddMinutes(1);
+        var legible = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
+        Assert.Equal("sin_venta", legible.Estado);
+        var despues = await LeerAsync<List<CobroSinVentaListado>>(await e.Ctx.Admin.GetAsync($"{RutaSinVenta}?idEmpresa={e.Ctx.IdEmpresa}"));
+        Assert.False(Assert.Single(despues).PagoInformadoSinDatos);
+    }
+
+    // Clausula: la vigilancia de un fallido con pago informado sin datos tiene tope de 24 h desde la reserva.
+    [Fact]
+    public async Task UnPointFallidoConPagoInformadoSinDatosDejaDeVigilarsePasadas24HorasDeLaReserva()
+    {
+        var (e, _, fallido, idOrden) = await PrepararFallidoAsync("mp-point-fallido-sin-datos-tope", 6043);
+        var reservado = await ReservadoEnAsync(e);
+        e.Ordenes.Estados[idOrden] = "processed";
+        e.Ordenes.SinPagos = true;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        await ConsultarAsync(e, fallido.IdCobro);
+
+        e.Reloj.Ahora = reservado + TimeSpan.FromHours(24);
+        var lecturas = Lecturas(e).Count;
         var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
 
         Assert.Equal("fallido", consultado.Estado);

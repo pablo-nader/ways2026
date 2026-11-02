@@ -101,6 +101,9 @@ public class ServicioDeCobrosMercadoPago(
 
     private static readonly TimeSpan MargenDeAbandono = TimeSpan.FromMinutes(5);
 
+    /// <summary>Un fallido con pago informado sin datos legibles se sigue leyendo hasta este plazo desde la reserva.</summary>
+    private static readonly TimeSpan TopeDeVigilanciaConPagoInformado = TimeSpan.FromHours(24);
+
     private const decimal ImporteMaximo = 9_999_999_999_999m;
 
     private const int LargoMaximoDeId = 64;
@@ -127,24 +130,29 @@ public class ServicioDeCobrosMercadoPago(
 
         // Cada vuelta es una transacción bajo el lock del punto de venta. Reservar la fila confirma y termina la vuelta sin respuesta:
         // la siguiente la encuentra creando, reenvía la orden y aplica las reglas del cobro vivo.
+        int? reservadoEnEstaLlamada = null;
         for (var vuelta = 0; vuelta < MaximoDeVueltasAlCrear; vuelta++)
         {
-            var respuesta = await EnLockAsync(
+            var (respuesta, idReservado) = await EnLockAsync(
                 idPuntoVenta, ClaveDeLockDeCobrosDelPuntoVenta,
-                () => CrearBajoLockAsync(solicitud, puntoVenta, idDispositivo, idTenant, ct), ct);
+                () => CrearBajoLockAsync(solicitud, puntoVenta, idDispositivo, idTenant, reservadoEnEstaLlamada, ct), ct);
             if (respuesta is not null)
             {
                 return respuesta;
             }
+
+            reservadoEnEstaLlamada ??= idReservado;
         }
 
         throw ErrorDominio.Conflicto(
             CodigosDeErrorDeCobrosMercadoPago.EnCurso, "Esa venta tiene un cobro con Mercado Pago en curso: consultá su estado antes de cobrar de nuevo.");
     }
 
-    /// <summary>Devuelve la respuesta al dispositivo, o nulo si reservó una fila nueva (<c>creando</c>) que falta completar.</summary>
-    private async Task<CobroDeMercadoPago?> CrearBajoLockAsync(
-        SolicitudDeCobroMercadoPago solicitud, PuntoVenta puntoVenta, int idDispositivo, int idTenant, CancellationToken ct)
+    /// <summary>Devuelve la respuesta al dispositivo, o sin respuesta y con el id si reservó una fila nueva (<c>creando</c>) que falta
+    /// completar. <paramref name="reservadoEnEstaLlamada"/> es la fila que reservó una vuelta anterior de esta misma llamada: su primer envío.</summary>
+    private async Task<(CobroDeMercadoPago? Respuesta, int? IdReservado)> CrearBajoLockAsync(
+        SolicitudDeCobroMercadoPago solicitud, PuntoVenta puntoVenta, int idDispositivo, int idTenant, int? reservadoEnEstaLlamada,
+        CancellationToken ct)
     {
         db.ChangeTracker.Clear();
 
@@ -161,7 +169,7 @@ public class ServicioDeCobrosMercadoPago(
 
             if (vivo.Estado == EstadosDeCobroMercadoPago.Creando)
             {
-                await ResolverCreandoAsync(vivo, ct);
+                await ResolverCreandoAsync(vivo, vivo.Id == reservadoEnEstaLlamada, ct);
             }
 
             if (vivo.Estado == EstadosDeCobroMercadoPago.Pendiente && reloj.Ahora >= vivo.ExpiraEn)
@@ -179,7 +187,7 @@ public class ServicioDeCobrosMercadoPago(
             {
                 if (vivo.IdMedioPago == solicitud.IdMedioPago && vivo.Importe == solicitud.Importe)
                 {
-                    return Mapear(vivo);
+                    return (Mapear(vivo), null);
                 }
 
                 throw ErrorDominio.Conflicto(
@@ -231,7 +239,7 @@ public class ServicioDeCobrosMercadoPago(
         var cuerpo = ArmarOrden(tipo, externalReference, solicitud.Importe, caja.ExternalId, idTerminal, solicitud.NumeroPreasignado);
         var ahora = reloj.Ahora;
 
-        db.CobrosMercadoPago.Add(new CobroMercadoPago
+        var nuevo = new CobroMercadoPago
         {
             IdTenant = idTenant,
             IdEmpresa = puntoVenta.IdEmpresa,
@@ -250,10 +258,11 @@ public class ServicioDeCobrosMercadoPago(
             ExpiraEn = ahora + Vigencia,
             CreatedAt = ahora,
             UpdatedAt = ahora
-        });
+        };
+        db.CobrosMercadoPago.Add(nuevo);
         await db.SaveChangesAsync(ct);
 
-        return null;
+        return (null, nuevo.Id);
     }
 
     /// <summary>
@@ -263,7 +272,7 @@ public class ServicioDeCobrosMercadoPago(
     /// Mercado Pago y libera el número. Un 4xx no prueba que la orden no exista, por eso nunca cancela la fila (salvo el 409 exacto de terminal ocupada de Point, que rechaza la creación). Quien la llama tiene el
     /// lock del punto de venta y el del cobro y acaba de leer la fila.
     /// </summary>
-    private async Task ResolverCreandoAsync(CobroMercadoPago cobro, CancellationToken ct)
+    private async Task ResolverCreandoAsync(CobroMercadoPago cobro, bool primerEnvio, CancellationToken ct)
     {
         var ahora = reloj.Ahora;
         if (ahora >= cobro.CreatedAt + Vigencia + Vigencia + MargenDeAbandono)
@@ -281,14 +290,14 @@ public class ServicioDeCobrosMercadoPago(
                 "Mercado Pago todavía está resolviendo este cobro: no se puede cancelar ni reenviar. Podés cobrar con otro medio de pago.");
         }
 
-        await CompletarCreacionAsync(cobro, ct);
+        await CompletarCreacionAsync(cobro, primerEnvio, ct);
     }
 
     /// <summary>
     /// Pide a Mercado Pago la orden guardada en una fila <c>creando</c> (la original, con su clave: si ya existe, la devuelve) y
     /// aplica la respuesta. Quien la llama tiene el lock del punto de venta y el del cobro y acaba de leer la fila.
     /// </summary>
-    private async Task CompletarCreacionAsync(CobroMercadoPago cobro, CancellationToken ct)
+    private async Task CompletarCreacionAsync(CobroMercadoPago cobro, bool primerEnvio, CancellationToken ct)
     {
         var esPoint = cobro.Tipo == TiposDeCobroMercadoPago.Point;
         var cuerpo = ArmarOrden(
@@ -302,8 +311,16 @@ public class ServicioDeCobrosMercadoPago(
         }
         catch (ErrorDeApiMercadoPago error) when (esPoint && error.EstadoMercadoPago == 409 && error.CodigoMercadoPago == CodigoDeTerminalOcupada)
         {
-            // Este código exacto es un rechazo de la creación (el reenvío idempotente de una orden ya creada devuelve la orden, no este
-            // 409): la fila no es una orden posible. Se cancela, libera el número y el POS ya no la ve viva.
+            // En el primer envío de la fila no hay orden anterior: el 409 rechaza la creación, se cancela y se libera el número. En un
+            // reenvío pudo haber una orden creada cuya respuesta se perdió, y Mercado Pago puede mirar la cola de la terminal antes de
+            // reconocer la clave: la fila sigue creando (retiene el número) y las bandas de tiempo la liberan.
+            if (!primerEnvio)
+            {
+                throw ErrorDominio.Conflicto(
+                    CodigosDeErrorDeCobrosMercadoPago.TerminalOcupada,
+                    "La terminal tiene otra orden esperando: terminá o cancelá ese cobro en la terminal y probá de nuevo.");
+            }
+
             var ahoraOcupada = reloj.Ahora;
             cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
             cobro.SituacionTerminal = null;
@@ -452,12 +469,14 @@ public class ServicioDeCobrosMercadoPago(
 
         return await db.CobrosMercadoPago
             .AsNoTracking()
-            .Where(c => c.IdEmpresa == idEmpresa && c.Estado == EstadosDeCobroMercadoPago.SinVenta)
-            .OrderByDescending(c => c.FechaApartado)
+            .Where(c => c.IdEmpresa == idEmpresa
+                && (c.Estado == EstadosDeCobroMercadoPago.SinVenta
+                    || (c.Estado == EstadosDeCobroMercadoPago.Fallido && c.FechaProcesadaMercadoPago != null)))
+            .OrderByDescending(c => c.FechaApartado ?? c.FechaProcesadaMercadoPago)
             .ThenByDescending(c => c.Id)
             .Select(c => new CobroSinVentaListado(
                 c.Id, c.IdPuntoVenta, c.IdMedioPago, c.NumeroPreasignado, c.Importe, c.ImportePagado, c.IdPagoMercadoPago,
-                c.IdOrdenMercadoPago, c.FechaAprobacion, c.FechaApartado))
+                c.IdOrdenMercadoPago, c.FechaAprobacion, c.FechaApartado, c.Estado == EstadosDeCobroMercadoPago.Fallido))
             .ToListAsync(ct);
     }
 
@@ -556,7 +575,7 @@ public class ServicioDeCobrosMercadoPago(
                 var cobro = await LeerCobroAsync(idCobro, idPuntoVenta, ct);
                 if (cobro.Estado == EstadosDeCobroMercadoPago.Creando)
                 {
-                    await ResolverCreandoAsync(cobro, ct);
+                    await ResolverCreandoAsync(cobro, primerEnvio: false, ct);
                 }
 
                 return await operacion(cobro);
@@ -582,7 +601,9 @@ public class ServicioDeCobrosMercadoPago(
     /// </summary>
     private bool SeSigueVigilando(CobroMercadoPago cobro) =>
         cobro.Estado == EstadosDeCobroMercadoPago.Pendiente
-        || (cobro.Estado == EstadosDeCobroMercadoPago.Fallido && reloj.Ahora < cobro.ExpiraEn + MargenDeAbandono);
+        || (cobro.Estado == EstadosDeCobroMercadoPago.Fallido
+            && (reloj.Ahora < cobro.ExpiraEn + MargenDeAbandono
+                || (cobro.FechaProcesadaMercadoPago is not null && reloj.Ahora < cobro.CreatedAt + TopeDeVigilanciaConPagoInformado)));
 
     /// <summary><c>FOR UPDATE</c> de la fila del cobro, antes de leerla: es el lock con que la venta liga el cobro aprobado.</summary>
     private async Task BloquearFilaAsync(int idCobro, CancellationToken ct) =>
@@ -605,6 +626,14 @@ public class ServicioDeCobrosMercadoPago(
         {
             orden = await api.EnviarAsync<OrdenDeMercadoPago>(
                 cobro.IdEmpresa, HttpMethod.Get, $"/v1/orders/{Uri.EscapeDataString(cobro.IdOrdenMercadoPago!)}", ct: ct);
+        }
+        catch (ErrorDominio error) when (cobro.Estado == EstadosDeCobroMercadoPago.Fallido && !ct.IsCancellationRequested)
+        {
+            // La vigilancia de un fallido es un extra: un error de Mercado Pago o de la red no puede romper la consulta del rechazo.
+            log.LogWarning(
+                "No se pudo releer la orden {IdOrden} del cobro fallido {IdCobro} ({Codigo}): se devuelve el estado guardado.",
+                cobro.IdOrdenMercadoPago, cobro.Id, error.Codigo);
+            return;
         }
         catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404 && ahora >= cobro.ExpiraEn)
         {

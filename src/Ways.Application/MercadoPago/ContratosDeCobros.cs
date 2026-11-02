@@ -51,7 +51,8 @@ public sealed record CobroSinVentaListado(
     string? IdPagoMercadoPago,
     string? IdOrdenMercadoPago,
     DateTimeOffset? FechaAprobacion,
-    DateTimeOffset? FechaApartado);
+    DateTimeOffset? FechaApartado,
+    bool PagoInformadoSinDatos = false);
 
 public static class CodigosDeErrorDeCobrosMercadoPago
 {
