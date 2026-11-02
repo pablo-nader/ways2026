@@ -644,3 +644,41 @@ Fix commit 7119f1bf for the confirmed findings (C1-C5); the migration 2026110205
   release date; mutation: the 4-field key fails the installments test). Final re-judgment: both clean (doc comment fixed).
 - Accepted: a charge already reconciled by an earlier file is never re-applied (`ya_conciliado`, stored values shown); the confirm
   reads the sale state without locking it (small window, the payment row is locked).
+
+## E6-T2 design (2026-11-02) — reconciliation screen
+
+Branch `pnader/mercadopago-e6-t2`, stacked on E6-T1. Web only (back office), Admin uploads/confirms, Supervisor reads.
+
+- New page "Conciliación Mercado Pago" under Tesorería (route `/tesoreria/conciliacion-mercadopago`, nav entry next to the treasury
+  pages; same role gating pattern as other treasury pages), with an empresa selector like the other treasury screens.
+- Tabs/sections:
+  1. **Importar**: file input (CSV, ≤ 10 MB, client-side size check), upload with progress/disabled state, result summary (period,
+     counts per result, totals: gross, real fee, net; real fee vs the medio's estimated `comision_porcentaje` when available), and the
+     invalid rows (line + reason). Duplicate file → the 409 message.
+  2. **Conciliaciones**: list of uploads (date, period, file, counts) → detail with the rows table (filters by `resultado`, paging),
+     each row: date, SOURCE_ID, external reference, type, amount, fee, net, result badge, linked charge/sale when any.
+  3. **Para revisar**: `cobros-sin-venta` (E3-T3b/E4: charges with money and no sale, including `pagoInformadoSinDatos`) and
+     `pagos-sin-verificar` (E5: date range, `idsCobroEnConflicto` shown as a warning), plus the manual-approval candidates of the latest
+     reconciliation with a "Confirmar" action (Admin; confirmation dialog stating the amounts and dates; 409 copies).
+- api client `src/Ways.Web/src/api/conciliacionMercadoPago.ts` with the exact contracts; Spanish copies for every code.
+- react-async-state for reads (generation tokens) and writes (re-entrancy ref, full-window disabled); colocated Vitest for helpers;
+  RTL tests: upload success/409/invalid rows, filters, confirm flow, role gating (Supervisor cannot upload/confirm).
+
+## E7 design (2026-11-02) — Mercado Pago movements into treasury
+
+Branch `pnader/mercadopago-e7`, stacked on E6-T2. Backend + web.
+
+- Context: treasury accounts exist per empresa (memory "cuentas-de-tesoreria" / "libro-de-tesoreria"): the close credits net of the
+  medio's estimated commission and withholdings; manual adjustments exist. E7 does not change those rules; it adds proposals from the
+  reconciliation.
+- From a reconciliation (E6-T1 rows): (1) **fee difference**: for `conciliado` rows, the difference between the real fee
+  (`comision_real`) and the estimated one already applied for that sale's payment → a proposed treasury adjustment on the Mercado
+  Pago medio's treasury account (one per reconciliation, aggregated, with the detail); (2) **retiros** (`WITHDRAWAL`/`PAYOUT` rows) →
+  a proposed transfer from the Mercado Pago treasury account to a bank account chosen by the Admin. Nothing is posted automatically:
+  `POST /api/mercadopago/conciliaciones/{id}/movimientos/{idPropuesta}/aplicar` (Admin) posts the movement through the existing
+  treasury writers (manual adjustment / transfer), idempotent per proposal (UNIQUE), audited; `descartar` marks it ignored.
+- Web: a "Movimientos a tesorería" section in the reconciliation detail listing the proposals with apply/discard.
+- Tests: proposal computation (fee difference sign, aggregation, retiros), apply idempotency and race, treasury ledger effect,
+  scoping/roles.
+- E6-T2 note from E6-T1: the upload must send the header `X-Ways-Origen: web` (CSRF guard) and the result codes include `duplicada`,
+  `ya_conciliado` and `invalida`; rows carry `aplicadaAlCobro`, and `ya_conciliado` rows carry the stored fee/net for comparison.
