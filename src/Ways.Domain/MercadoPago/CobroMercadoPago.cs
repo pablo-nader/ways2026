@@ -154,4 +154,16 @@ public class CobroMercadoPago : EntidadTenant
     /// <summary>La venta que este cobro aprobado pagó (E3-T2); nulo hasta que una venta lo liga. Único: un cobro paga a lo sumo una venta.
     /// Anular la venta lo deja ligado (el dinero entró; su devolución es de la conciliación).</summary>
     public int? IdComprobanteVenta { get; set; }
+
+    /// <summary>La comisión real (con IVA) que el reporte de transacciones de Mercado Pago informó para este cobro (E6); nulo hasta conciliarlo.</summary>
+    public decimal? ComisionReal { get; set; }
+
+    /// <summary>El neto real que Mercado Pago acredita por este cobro (<c>SETTLEMENT_NET_AMOUNT</c>); nulo hasta conciliarlo.</summary>
+    public decimal? NetoReal { get; set; }
+
+    /// <summary>Cuándo Mercado Pago libera el dinero (<c>MONEY_RELEASE_DATE</c>); nulo hasta conciliarlo o si el reporte no lo trae.</summary>
+    public DateTimeOffset? FechaLiberacion { get; set; }
+
+    /// <summary>La fila del reporte que concilió este cobro (<c>filas_conciliacion_mercadopago</c>); la primera que lo concilia gana.</summary>
+    public int? IdFilaConciliacion { get; set; }
 }

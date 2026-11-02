@@ -67,7 +67,7 @@ public class EscritoresDePagosDeVentaEstructuralTests
             conCobro);
     }
 
-    private static readonly Regex FijaLaVerificacion = new(@"(?<!string\? )\bVerificacionMercadoPago\s*=(?!=)",RegexOptions.Compiled);
+    private static readonly Regex FijaLaVerificacion = new(@"(?<!string\? )\bVerificacionMercadoPago\s*=(?!=)|SetProperty\(\s*\w+\s*=>\s*\w+\.VerificacionMercadoPago\b", RegexOptions.Compiled);
 
     internal static IReadOnlyList<string> ArchivosQueFijanLaVerificacion(IReadOnlyDictionary<string, string> fuentes) =>
         [.. fuentes
@@ -77,9 +77,12 @@ public class EscritoresDePagosDeVentaEstructuralTests
 
     // E5: la marca del pago (mercadopago | sin_verificar) la fija la venta desde el cobro o la aprobación manual y nadie más: ni el
     // cambio de medios, ni la facturación de remitos, ni los recibos pueden escribirla (un recibo o un remito nunca respalda un pago).
+    // E6: la conciliación es el único otro escritor, y solo para pasar un pago sin_verificar a verificado_manualmente cuando un Admin
+    // lo confirma contra una fila del reporte de Mercado Pago.
     [Fact]
-    public void SoloLaVentaFijaLaVerificacionDelPago() =>
-        Assert.Equal(["ServicioDeVentas.cs"], ArchivosQueFijanLaVerificacion(FuentesDeLaAplicacion()));
+    public void SoloLaVentaYLaConfirmacionDeLaConciliacionFijanLaVerificacionDelPago() =>
+        Assert.Equal(
+            ["ServicioDeConciliacionMercadoPago.cs", "ServicioDeVentas.cs"], ArchivosQueFijanLaVerificacion(FuentesDeLaAplicacion()));
 
     [Fact]
     public void LaClasificacionDeLaVerificacionDetectaUnaAsignacionYNoUnaComparacion()

@@ -22,6 +22,9 @@ public static class MercadoPagoEndpoints
 
     private const int LimiteDelCuerpoDelWebhook = 16 * 1024;
 
+    /// <summary>Lo que el multipart suma al archivo (límites, encabezados de parte) dentro del tope del cuerpo de la subida de un reporte.</summary>
+    private const int MargenDelMultipart = 64 * 1024;
+
     /// <summary>Pantalla del back office donde el Admin ve y administra las empresas; vuelve acá con
     /// <c>#mercadopago=&lt;completar|cancelado&gt;&amp;empresa=&lt;id&gt;</c>.</summary>
     public const string RutaDeRetorno = "/organizacion/empresas";
@@ -212,6 +215,50 @@ public static class MercadoPagoEndpoints
                 "rango es mayor). limite (por defecto 200, máximo 500) acota las filas; truncado indica que había más. Cada fila trae " +
                 "idsCobroEnConflicto (ascendente, vacío si no hubo) con todos los cobros de Mercado Pago del mismo número que chocaron con la venta. 404 si la empresa no existe en el tenant.");
 
+        var conciliaciones = app.MapGroup("/api/mercadopago/conciliaciones")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.LecturaDeReportes);
+
+        conciliaciones.MapPost("/", async (
+            HttpContext contexto, ServicioDeConciliacionMercadoPago servicio, int idEmpresa, CancellationToken ct) =>
+        {
+            var (nombre, contenido) = await LeerArchivoAsync(contexto.Request, ct);
+            return Results.Ok(await servicio.ImportarAsync(idEmpresa, nombre, contenido, ct));
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Admin: sube el reporte de transacciones de Mercado Pago (CSV, multipart, campo archivo, hasta 10 MB) de una empresa. Lee las " +
+            "columnas por nombre, cotea cada fila con los cobros de la empresa y guarda la conciliación con el resultado de cada fila " +
+            "(conciliado, sin_venta, importe_distinto, sin_cobro_en_ways, devolucion, contracargo, retiro) y, en los cobros conciliados, la " +
+            "comisión y el neto reales. Las filas ilegibles quedan como invalida con su línea y su motivo. 404 empresa inexistente, 400 " +
+            "conciliacion_archivo_requerido|conciliacion_reporte_invalido, 413 conciliacion_archivo_demasiado_grande, 409 " +
+            "conciliacion_ya_importada (mismo archivo en la misma empresa).");
+
+        conciliaciones.MapGet("/", (ServicioDeConciliacionMercadoPago servicio, int idEmpresa, CancellationToken ct) =>
+            servicio.ListarAsync(idEmpresa, ct))
+        .WithSummary(
+            "Supervisor y Admin: las 100 conciliaciones más recientes de una empresa con su resumen por resultado. idEmpresa es obligatorio. " +
+            "404 si la empresa no existe en el tenant.");
+
+        conciliaciones.MapGet("/{idConciliacion:int}", (
+            ServicioDeConciliacionMercadoPago servicio, int idConciliacion, string? resultado, int? pagina, int? tamano, CancellationToken ct) =>
+            servicio.ObtenerAsync(idConciliacion, resultado, pagina, tamano, ct))
+        .WithSummary(
+            "Supervisor y Admin: una conciliación con su resumen y una página de sus filas por línea del archivo (pagina desde 1, tamano de 1 " +
+            "a 500, por defecto 100), opcionalmente solo las de un resultado. Cada fila sin_cobro_en_ways sin confirmar trae sus candidatos " +
+            "(pagos de venta sin verificar con el mismo importe, a un día y de la misma caja). 404 conciliacion inexistente, 400 " +
+            "conciliacion_resultado_invalido|conciliacion_paginacion_invalida.");
+
+        conciliaciones.MapPost("/{idConciliacion:int}/filas/{idFila:int}/confirmar", (
+            ServicioDeConciliacionMercadoPago servicio, int idConciliacion, int idFila, SolicitudDeConfirmacionDeFila solicitud, CancellationToken ct) =>
+            servicio.ConfirmarAsync(idConciliacion, idFila, solicitud, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Admin: confirma una fila sin_cobro_en_ways contra un pago de venta sin verificar (idCobro, el de pagos-sin-verificar) de la " +
+            "misma empresa: el pago pasa a verificado_manualmente y la acción queda auditada. 404 si la conciliación, la fila o el pago no " +
+            "existen, 400 conciliacion_pago_invalido, 409 conciliacion_fila_no_confirmable|conciliacion_fila_ya_confirmada|" +
+            "conciliacion_pago_ya_verificado|conciliacion_pago_no_esta_sin_verificar.");
+
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,
             string? code,
@@ -268,6 +315,59 @@ public static class MercadoPagoEndpoints
             "401 mercadopago_firma_invalida, 503 mercadopago_no_configurado.");
 
         return app;
+    }
+
+    /// <summary>El archivo del campo <c>archivo</c> de un multipart, acotado: el cuerpo entero no pasa de 10 MB más el encabezado del multipart
+    /// (413 <c>conciliacion_archivo_demasiado_grande</c>) y sin ese campo es 400 <c>conciliacion_archivo_requerido</c>. Se lee a mano y no
+    /// con <c>IFormFile</c>: no hace falta antiforgery porque la cookie de sesión es <c>SameSite=Lax</c> y nunca viaja en un POST de otro sitio.</summary>
+    private static async Task<(string? Nombre, byte[] Contenido)> LeerArchivoAsync(HttpRequest solicitud, CancellationToken ct)
+    {
+        var requerido = new ErrorDominio(
+            CodigosDeErrorDeConciliacion.ArchivoRequerido, "Subí el reporte como multipart/form-data en el campo archivo.", StatusCodes.Status400BadRequest);
+        var demasiadoGrande = new ErrorDominio(
+            CodigosDeErrorDeConciliacion.ArchivoDemasiadoGrande,
+            $"El archivo supera los {ServicioDeConciliacionMercadoPago.TamanoMaximoDelArchivo / (1024 * 1024)} MB.",
+            StatusCodes.Status413PayloadTooLarge);
+
+        if (!solicitud.HasFormContentType)
+        {
+            throw requerido;
+        }
+
+        if (solicitud.ContentLength > ServicioDeConciliacionMercadoPago.TamanoMaximoDelArchivo + MargenDelMultipart)
+        {
+            throw demasiadoGrande;
+        }
+
+        if (solicitud.HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limite)
+        {
+            limite.MaxRequestBodySize = ServicioDeConciliacionMercadoPago.TamanoMaximoDelArchivo + MargenDelMultipart;
+        }
+
+        IFormCollection formulario;
+        try
+        {
+            formulario = await solicitud.ReadFormAsync(ct);
+        }
+        catch (BadHttpRequestException e) when (e.StatusCode == StatusCodes.Status413PayloadTooLarge)
+        {
+            throw demasiadoGrande;
+        }
+        catch (Exception e) when (e is InvalidDataException or BadHttpRequestException or IOException)
+        {
+            throw requerido;
+        }
+
+        var archivo = formulario.Files.GetFile("archivo") ?? throw requerido;
+        if (archivo.Length > ServicioDeConciliacionMercadoPago.TamanoMaximoDelArchivo)
+        {
+            throw demasiadoGrande;
+        }
+
+        await using var flujo = archivo.OpenReadStream();
+        using var memoria = new MemoryStream();
+        await flujo.CopyToAsync(memoria, ct);
+        return (archivo.FileName, memoria.ToArray());
     }
 
     /// <summary>El <c>type</c> del cuerpo JSON, solo cuando la URL no lo trae. Se invoca únicamente después de una firma válida, y el

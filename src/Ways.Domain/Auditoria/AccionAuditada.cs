@@ -110,6 +110,14 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// cobros en conflicto, nunca credenciales.</summary>
     public static readonly AccionAuditada VentaMercadoPagoDobleCobro = new("venta.mercadopagodoblecobro", "comprobante_venta");
 
+    /// <summary>E6: <c>MercadoPago/ServicioDeConciliacionMercadoPago.cs</c> — el Admin importó un reporte de transacciones de Mercado Pago.
+    /// <c>id_entidad</c> es la conciliación; lleva la empresa, la huella, el período y las cantidades por resultado, nunca el contenido.</summary>
+    public static readonly AccionAuditada ConciliacionImportacion = new("conciliacion.importacion", "conciliacion_mercadopago");
+
+    /// <summary>E6: el Admin confirmó una fila del reporte sin cobro en Ways contra un pago de venta sin verificar, que pasó a
+    /// <c>verificado_manualmente</c>. <c>id_entidad</c> es la conciliación; lleva la fila, el pago, la venta y el importe.</summary>
+    public static readonly AccionAuditada ConciliacionConfirmacion = new("conciliacion.confirmacion", "conciliacion_mercadopago");
+
     /// <summary>Cierre de turno forzado por encima de la guarda de rendición de dispositivos —
     /// <c>Caja/ServicioDeTurnos.cs</c>, los DOS modos de cierre. Se escribe SIEMPRE que
     /// <c>ForzarSinRendicion</c> viene en true, incluso si la guarda no encontró nada pendiente: el
@@ -250,6 +258,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         VentaDiscrepanciaDePrecio,
         VentaAprobacionManualMercadoPago,
         VentaMercadoPagoDobleCobro,
+        ConciliacionImportacion,
+        ConciliacionConfirmacion,
         CierreForzadoSinRendicion,
         VentaExcedioLimiteSinValidar,
         PagoEdicion,
