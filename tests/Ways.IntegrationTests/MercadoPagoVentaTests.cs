@@ -1148,8 +1148,23 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     private const string RutaSinVerificar = "/api/mercadopago/pagos-sin-verificar";
 
+    private static string Dia(int desplazamiento)
+    {
+        var zona = TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(ParametroConocido.ZonaHoraria.ValorPorDefecto)!);
+        var hoy = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zona).DateTime);
+        return hoy.AddDays(desplazamiento).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+
+    private static string UrlSinVerificar(int idEmpresa, string? desde = null, string? hasta = null, int? limite = null) =>
+        $"{RutaSinVerificar}?idEmpresa={idEmpresa}&desde={desde ?? Dia(-2)}&hasta={hasta ?? Dia(2)}"
+        + (limite is null ? string.Empty : $"&limite={limite}");
+
+    private static async Task<PagosSinVerificarListado> ListarSinVerificarAsync(
+        HttpClient cliente, int idEmpresa, string? desde = null, string? hasta = null, int? limite = null) =>
+        await LeerAsync<PagosSinVerificarListado>(await cliente.GetAsync(UrlSinVerificar(idEmpresa, desde, hasta, limite)));
+
     // Clausula: el listado es de Supervisor y Admin (Vendedor y dispositivo reciben 403), solo trae pagos sin_verificar vivos de la
-    // empresa pedida, y se acota por fecha de la venta.
+    // empresa pedida, y se acota por dia (inclusivo).
     [Fact]
     public async Task ElListadoDePagosSinVerificarEsDeSupervisorYAdminPorEmpresaYSoloListaLosSinVerificar()
     {
@@ -1173,9 +1188,9 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         foreach (var cliente in new[] { e.Ctx.Admin, e.Ctx.Supervisor })
         {
-            var lista = await LeerAsync<List<PagoSinVerificarListado>>(
-                await cliente.GetAsync($"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}"));
-            var fila = Assert.Single(lista);
+            var lista = await ListarSinVerificarAsync(cliente, e.Ctx.IdEmpresa);
+            var fila = Assert.Single(lista.Items);
+            Assert.False(lista.Truncado);
             Assert.Equal(manual.Id, fila.IdComprobanteVenta);
             Assert.Equal(manual.NumeroVisible, fila.NumeroVisible);
             Assert.Equal(e.IdPuntoVenta, fila.IdPuntoVenta);
@@ -1183,24 +1198,111 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
             Assert.Equal(PrecioDelArticulo, fila.Importe);
             Assert.Equal("OP-9", fila.Referencia);
             Assert.False(fila.Anulada);
+            Assert.Null(fila.IdCobroEnConflicto);
             Assert.False(string.IsNullOrEmpty(fila.Empleado));
         }
 
-        var deLaOtra = await LeerAsync<List<PagoSinVerificarListado>>(
-            await e.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={idOtraEmpresa}"));
-        Assert.Equal(deLaOtraEmpresa.Id, Assert.Single(deLaOtra).IdComprobanteVenta);
+        var deLaOtra = await ListarSinVerificarAsync(e.Ctx.Admin, idOtraEmpresa);
+        Assert.Equal(deLaOtraEmpresa.Id, Assert.Single(deLaOtra.Items).IdComprobanteVenta);
 
-        var futuro = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(1).ToString("O", CultureInfo.InvariantCulture));
-        var pasado = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(-1).ToString("O", CultureInfo.InvariantCulture));
-        Assert.Empty(await LeerAsync<List<PagoSinVerificarListado>>(
-            await e.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}&desde={futuro}")));
-        Assert.Empty(await LeerAsync<List<PagoSinVerificarListado>>(
-            await e.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}&hasta={pasado}")));
-        Assert.Single(await LeerAsync<List<PagoSinVerificarListado>>(
-            await e.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}&desde={pasado}&hasta={futuro}")));
+        Assert.Empty((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, desde: Dia(1), hasta: Dia(3))).Items);
+        Assert.Empty((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, desde: Dia(-3), hasta: Dia(-1))).Items);
 
-        Assert.Equal(HttpStatusCode.Forbidden, (await e.Ctx.Vendedor.GetAsync($"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await e.Cajero.GetAsync($"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await e.Ctx.Vendedor.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await e.Cajero.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa))).StatusCode);
+    }
+
+    // Clausula: desde y hasta son dias de la empresa, inclusivos: una venta a las 23:30 locales del dia `hasta` entra, una a las 00:10 del
+    // dia siguiente no; una a las 00:10 locales del dia `desde` entra y una a las 23:50 del dia anterior no.
+    [Fact]
+    public async Task ElListadoAcotaPorDiaDeLaEmpresaConLosDosExtremosInclusivos()
+    {
+        var e = await PrepararAsync("mp-sin-verificar-dias");
+        var zona = TimeZoneInfo.FindSystemTimeZoneById(
+            JsonSerializer.Deserialize<string>(ParametroConocido.ZonaHoraria.ValorPorDefecto)!);
+        var dia = new DateOnly(2026, 3, 10);
+
+        DateTimeOffset Local(DateOnly fecha, int hora, int minuto)
+        {
+            var local = fecha.ToDateTime(new TimeOnly(hora, minuto), DateTimeKind.Unspecified);
+            return new DateTimeOffset(local, zona.GetUtcOffset(local)).ToUniversalTime();
+        }
+
+        var antes = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e))), HttpStatusCode.Created);
+        var primeroDelDia = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde + 1, PagoManual(e))), HttpStatusCode.Created);
+        var ultimoDelDia = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde + 2, PagoManual(e))), HttpStatusCode.Created);
+        var despues = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde + 3, PagoManual(e))), HttpStatusCode.Created);
+        foreach (var (venta, fecha) in new[]
+        {
+            (antes, Local(dia.AddDays(-1), 23, 50)), (primeroDelDia, Local(dia, 0, 10)),
+            (ultimoDelDia, Local(dia, 23, 30)), (despues, Local(dia.AddDays(1), 0, 10))
+        })
+        {
+            await EjecutarAsync("UPDATE comprobantes_venta SET fecha = $1 WHERE id_comprobante_venta = $2", fecha, venta.Id);
+        }
+
+        var del = await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, desde: "2026-03-10", hasta: "2026-03-10");
+        Assert.Equal(new[] { ultimoDelDia.Id, primeroDelDia.Id }, del.Items.Select(f => f.IdComprobanteVenta));
+
+        var hastaElDiaAnterior = await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, desde: "2026-03-09", hasta: "2026-03-09");
+        Assert.Equal(antes.Id, Assert.Single(hastaElDiaAnterior.Items).IdComprobanteVenta);
+
+        var todo = await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, desde: "2026-03-09", hasta: "2026-03-11");
+        Assert.Equal(
+            new[] { despues.Id, ultimoDelDia.Id, primeroDelDia.Id, antes.Id }, todo.Items.Select(f => f.IdComprobanteVenta));
+    }
+
+    // Clausula: el rango es obligatorio, hasta no precede a desde y no supera 366 dias.
+    [Fact]
+    public async Task ElListadoExigeElRangoYLoAcotaA366Dias()
+    {
+        var e = await PrepararAsync("mp-sin-verificar-rango");
+        var url = $"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}";
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await e.Ctx.Admin.GetAsync(url)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await e.Ctx.Admin.GetAsync($"{url}&desde=2026-03-01")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await e.Ctx.Admin.GetAsync($"{url}&hasta=2026-03-01")).StatusCode);
+        await AssertCodigoAsync(
+            await e.Ctx.Admin.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa, "2026-03-02", "2026-03-01")),
+            HttpStatusCode.BadRequest, "rango_invalido");
+        await AssertCodigoAsync(
+            await e.Ctx.Admin.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa, "2025-01-01", "2026-01-03")),
+            HttpStatusCode.BadRequest, "rango_demasiado_amplio");
+        Assert.Equal(
+            HttpStatusCode.OK, (await e.Ctx.Admin.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa, "2025-01-01", "2026-01-02"))).StatusCode);
+    }
+
+    // Clausula: limite (200 por defecto, maximo 500), lo mas nuevo primero, y `truncado` avisa que quedaron filas afuera.
+    [Fact]
+    public async Task ElListadoRespetaElLimiteLoOrdenaDelMasNuevoAlMasViejoYAvisaCuandoTrunca()
+    {
+        var e = await PrepararAsync("mp-sin-verificar-limite");
+        var ids = new List<int>();
+        for (var i = 0; i < 3; i++)
+        {
+            ids.Add((await LeerAsync<ComprobanteEmitido>(
+                await VenderAsync(e, Venta(e, e.Desde + i, PagoManual(e))), HttpStatusCode.Created)).Id);
+        }
+
+        var dos = await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, limite: 2);
+        var tres = await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, limite: 3);
+        var porDefecto = await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa);
+
+        Assert.True(dos.Truncado);
+        Assert.Equal(new[] { ids[2], ids[1] }, dos.Items.Select(f => f.IdComprobanteVenta));
+        Assert.False(tres.Truncado);
+        Assert.Equal(new[] { ids[2], ids[1], ids[0] }, tres.Items.Select(f => f.IdComprobanteVenta));
+        Assert.False(porDefecto.Truncado);
+        Assert.Equal(3, porDefecto.Items.Count);
+        await AssertCodigoAsync(
+            await e.Ctx.Admin.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa, limite: 0)), HttpStatusCode.BadRequest, "limite_invalido");
+        await AssertCodigoAsync(
+            await e.Ctx.Admin.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa, limite: 501)), HttpStatusCode.BadRequest, "limite_invalido");
+        Assert.Equal(HttpStatusCode.OK, (await e.Ctx.Admin.GetAsync(UrlSinVerificar(e.Ctx.IdEmpresa, limite: 500))).StatusCode);
     }
 
     // Clausula: una empresa de otro tenant es 404 y los pagos de otro tenant no aparecen por RLS.
@@ -1212,11 +1314,9 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await LeerAsync<ComprobanteEmitido>(await VenderAsync(b, Venta(b, b.Desde, PagoManual(b))), HttpStatusCode.Created);
 
         await AssertCodigoAsync(
-            await a.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={b.Ctx.IdEmpresa}"), HttpStatusCode.NotFound, "no_encontrado");
-        Assert.Empty(await LeerAsync<List<PagoSinVerificarListado>>(
-            await a.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={a.Ctx.IdEmpresa}")));
-        Assert.Single(await LeerAsync<List<PagoSinVerificarListado>>(
-            await b.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={b.Ctx.IdEmpresa}")));
+            await a.Ctx.Admin.GetAsync(UrlSinVerificar(b.Ctx.IdEmpresa)), HttpStatusCode.NotFound, "no_encontrado");
+        Assert.Empty((await ListarSinVerificarAsync(a.Ctx.Admin, a.Ctx.IdEmpresa)).Items);
+        Assert.Single((await ListarSinVerificarAsync(b.Ctx.Admin, b.Ctx.IdEmpresa)).Items);
     }
 
     // Clausula: un pago de una venta anulada sigue en el listado, marcado como anulada.
@@ -1228,10 +1328,135 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
             await VenderAsync(e, Venta(e, e.Desde, PagoManual(e))), HttpStatusCode.Created);
         await EjecutarAsync("UPDATE comprobantes_venta SET estado = 'anulado'::estado_comprobante WHERE id_comprobante_venta = $1", emitido.Id);
 
-        var fila = Assert.Single(await LeerAsync<List<PagoSinVerificarListado>>(
-            await e.Ctx.Admin.GetAsync($"{RutaSinVerificar}?idEmpresa={e.Ctx.IdEmpresa}")));
+        var fila = Assert.Single((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
 
         Assert.True(fila.Anulada);
+    }
+
+    // ---- E5 (judgment-day ronda 1): la aprobacion manual frente a los cobros del mismo numero -----------------------------------
+
+    private async Task<List<Dictionary<string, object?>>> AuditoriaDeLaVentaAsync(int idVenta, string accion) =>
+        await ConsultarAsync(
+            "SELECT valor_nuevo::text AS valor FROM auditoria WHERE accion = $1 AND entidad = 'comprobante_venta' AND id_entidad = $2",
+            accion, idVenta);
+
+    private static JsonElement Payload(Dictionary<string, object?> fila) => JsonDocument.Parse((string)fila["valor"]!).RootElement;
+
+    // Clausula: el dinero ya entro por Mercado Pago (cobro aprobado del mismo numero, medio e importe): la aprobacion manual liga ese
+    // cobro en lugar de registrar el pago dos veces; el pago es `mercadopago`, la referencia sale del pago de Mercado Pago, la venta
+    // queda fuera de la lista de sin verificar y el rastro dice que ligo el cobro y no hay aviso de doble cobro.
+    [Fact]
+    public async Task UnaAprobacionManualLigaElCobroAprobadoDelMismoNumeroEnLugarDeRegistrarElPagoDosVeces()
+    {
+        var e = await PrepararAsync("mp-venta-manual-liga");
+        var cobro = await CobroAprobadoAsync(e, e.Desde);
+
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-tipeada"))), HttpStatusCode.Created);
+
+        var pagoEmitido = Assert.Single(emitido.Pagos);
+        Assert.Equal(cobro.IdCobro, pagoEmitido.IdCobroMercadoPago);
+        Assert.Equal("mercadopago", pagoEmitido.VerificacionMercadoPago);
+        Assert.Equal(emitido.Id, await VentaLigadaAsync(cobro.IdCobro));
+        var pago = Assert.Single(await PagosDeLaVentaAsync(emitido.Id));
+        Assert.Equal(cobro.IdCobro, pago["id_cobro_mercadopago"]);
+        Assert.Equal("mercadopago", pago["verificacion_mercadopago"]);
+        Assert.Equal($"PAY{Assert.Single(e.Ordenes.Estados).Key}", pago["referencia"]);
+        Assert.Empty((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
+
+        var rastro = Payload(Assert.Single(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.aprobacionmanualmercadopago")));
+        Assert.Equal(cobro.IdCobro, rastro.GetProperty("id_cobro_mercadopago_ligado").GetInt32());
+        Assert.Empty(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro"));
+    }
+
+    // Clausula: el reenvio de esa misma venta devuelve el comprobante: no liga dos veces ni audita dos veces.
+    [Fact]
+    public async Task ElReenvioDeUnaAprobacionManualQueLigoUnCobroNoLigaNiAuditaDeNuevo()
+    {
+        var e = await PrepararAsync("mp-venta-manual-liga-reenvio");
+        var cobro = await CobroAprobadoAsync(e, e.Desde);
+        var solicitud = Venta(e, e.Desde, PagoManual(e, "OP-tipeada"));
+        var primera = await LeerAsync<ComprobanteEmitido>(await VenderAsync(e, solicitud), HttpStatusCode.Created);
+
+        var segunda = await LeerAsync<ComprobanteEmitido>(await VenderAsync(e, solicitud), HttpStatusCode.Created);
+
+        Assert.Equal(primera.Id, segunda.Id);
+        Assert.Equal(1, await CantidadDeVentasAsync(e));
+        Assert.Equal(primera.Id, await VentaLigadaAsync(cobro.IdCobro));
+        Assert.Single(await PagosDeLaVentaAsync(primera.Id));
+        Assert.Single(await AuditoriaDeLaVentaAsync(primera.Id, "venta.aprobacionmanualmercadopago"));
+        Assert.Empty(await AuditoriaDeLaVentaAsync(primera.Id, "venta.mercadopagodoblecobro"));
+    }
+
+    // Clausula: un cobro aprobado con OTRO importe (o un cobro vivo todavia pendiente) no se liga: la venta se acepta sin verificar, el
+    // cobro queda libre, se audita el doble cobro con su id y el listado lo senala en idCobroEnConflicto.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnaAprobacionManualConUnCobroEnConflictoSeAceptaSinVerificarYAuditaElDobleCobro(bool aprobadoConOtroImporte)
+    {
+        var e = await PrepararAsync($"mp-venta-manual-conflicto-{aprobadoConOtroImporte}");
+        var cobro = aprobadoConOtroImporte
+            ? await CobroAprobadoAsync(e, e.Desde, importe: 50m)
+            : await CobroPendienteAsync(e, e.Desde);
+
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-1"))), HttpStatusCode.Created);
+
+        var pagoEmitido = Assert.Single(emitido.Pagos);
+        Assert.Null(pagoEmitido.IdCobroMercadoPago);
+        Assert.Equal("sin_verificar", pagoEmitido.VerificacionMercadoPago);
+        Assert.Null(await VentaLigadaAsync(cobro.IdCobro));
+        var aviso = Payload(Assert.Single(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro")));
+        Assert.Equal(new[] { cobro.IdCobro }, aviso.GetProperty("ids_cobro_mercadopago").EnumerateArray().Select(i => i.GetInt32()));
+        Assert.DoesNotContain("token", aviso.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        var fila = Assert.Single((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
+        Assert.Equal(cobro.IdCobro, fila.IdCobroEnConflicto);
+
+        var reenvio = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-1"))), HttpStatusCode.Created);
+        Assert.Equal(emitido.Id, reenvio.Id);
+        Assert.Single(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro"));
+        Assert.Single(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.aprobacionmanualmercadopago"));
+    }
+
+    // Clausula: un cobro cancelado del mismo numero no choca con nada (no ocupa el numero ni trae dinero).
+    [Fact]
+    public async Task UnCobroCanceladoDelMismoNumeroNoGeneraAvisoDeDobleCobro()
+    {
+        var e = await PrepararAsync("mp-venta-manual-cancelado");
+        await InsertarCobroNoVivoAsync(e, e.Desde, 1);
+
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e))), HttpStatusCode.Created);
+
+        Assert.Empty(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro"));
+        var fila = Assert.Single((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
+        Assert.Null(fila.IdCobroEnConflicto);
+    }
+
+    // Clausula: toda aprobacion manual deja un rastro con la venta, el punto de venta, el importe, la referencia y el dispositivo.
+    [Fact]
+    public async Task TodaAprobacionManualDejaSuRastroDeAuditoria()
+    {
+        var e = await PrepararAsync("mp-venta-manual-auditoria");
+
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-77"))), HttpStatusCode.Created);
+
+        var filas = await ConsultarAsync(
+            "SELECT id_punto_venta, valor_nuevo::text AS valor FROM auditoria WHERE accion = 'venta.aprobacionmanualmercadopago' " +
+            "AND id_entidad = $1", emitido.Id);
+        var fila = Assert.Single(filas);
+        Assert.Equal(e.IdPuntoVenta, fila["id_punto_venta"]);
+        var rastro = Payload(fila);
+        Assert.Equal(emitido.NumeroVisible, rastro.GetProperty("numero_visible").GetString());
+        Assert.Equal(e.IdMedio, rastro.GetProperty("id_medio_pago").GetInt32());
+        Assert.Equal(PrecioDelArticulo, rastro.GetProperty("importe").GetDecimal());
+        Assert.Equal("OP-77", rastro.GetProperty("referencia").GetString());
+        Assert.Equal(e.IdDispositivo, rastro.GetProperty("id_dispositivo").GetInt32());
+        Assert.Equal(JsonValueKind.Null, rastro.GetProperty("id_cobro_mercadopago_ligado").ValueKind);
+        Assert.Empty(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro"));
     }
 
     // ---- E5: respaldos de la base ------------------------------------------------------------------------------------------------

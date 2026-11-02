@@ -8,6 +8,7 @@ import {
   sanarReservaYaVendida,
   type ReservaDeCobroEnPos,
 } from './cobrarConMercadoPago'
+import { MENSAJE_SIN_CONEXION_PARA_COBRAR, MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO } from './cobroMercadoPago'
 import type { ResultadoDelCobro } from './ModalDeCobroMercadoPago'
 import type { ReservaLeida } from './reservaDeCobro'
 
@@ -563,6 +564,15 @@ describe('cobros aprobados sin venta ofrecen apartarse', () => {
 
       expect(resultado).toMatchObject({ tipo: 'detenido' })
       expect(resultado).not.toHaveProperty('aprobableAMano')
+    })
+
+    it('el aviso sin conexión sugiere aprobar a mano solo cuando el botón se ofrece', async () => {
+      const ofrecido = await cobrarConMercadoPago({ ...armar().deps, enLinea: false }, PAGO)
+      const conCobroVivo = await cobrarConMercadoPago({ ...armar({ previa: enCurso() }).deps, enLinea: false }, PAGO)
+
+      expect(ofrecido).toMatchObject({ mensaje: MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO })
+      expect(conCobroVivo).toMatchObject({ mensaje: MENSAJE_SIN_CONEXION_PARA_COBRAR })
+      expect((conCobroVivo as { mensaje: string }).mensaje).not.toMatch(/a mano/)
     })
 
     it.each([

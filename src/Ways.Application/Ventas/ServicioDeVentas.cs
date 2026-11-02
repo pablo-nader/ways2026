@@ -614,7 +614,8 @@ public class ServicioDeVentas(
             if (solicitud.NumeroPreasignado is not null)
             {
                 ExigirMismoContenido(
-                    existente, plan, solicitud.ImporteEnvio, await LeerCobrosOriginalesReemplazadosAsync(existente.Id, ct));
+                    existente, plan, solicitud.ImporteEnvio, await LeerCobrosOriginalesReemplazadosAsync(existente.Id, ct),
+                    await LaAprobacionManualLigoUnCobroAsync(existente, plan, ct));
             }
 
             return existente;
@@ -745,7 +746,7 @@ public class ServicioDeVentas(
     /// Compara contra los propios items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(
         ComprobanteEmitido existente, PlanDeVenta plan, decimal? importeEnvioDelDispositivo,
-        IReadOnlyList<PagoParaIdentidad> cobrosOriginalesReemplazados)
+        IReadOnlyList<PagoParaIdentidad> cobrosOriginalesReemplazados, bool aprobacionManualLigoUnCobro = false)
     {
         var lineasExistentes = existente.Items
             .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, ImporteTipeado: i.PorImporte ? i.PrecioUnitario : (decimal?)null))
@@ -785,7 +786,8 @@ public class ServicioDeVentas(
         // mandó el dispositivo: su reenvío coincide con los cobros originales, los que el cambio dio de baja.
         var pagosOriginales = Ordenados(cobrosOriginalesReemplazados);
         var mismosPagos = pagosExistentes.SequenceEqual(pagosSolicitados)
-            || (pagosOriginales.Count > 0 && pagosOriginales.SequenceEqual(pagosSolicitados));
+            || (pagosOriginales.Count > 0 && pagosOriginales.SequenceEqual(pagosSolicitados))
+            || (aprobacionManualLigoUnCobro && SonElMismoPagoSalvoElCobroLigado(pagosExistentes, pagosSolicitados));
 
         // El total queda AFUERA de esta comparación a propósito: es server-derived
         // (servicioDeOfertas.ResolverAsync lo recalcula en cada request, a precio/oferta del
@@ -861,6 +863,46 @@ public class ServicioDeVentas(
     /// el cobro de Mercado Pago y si se aprobó a mano.</summary>
     private readonly record struct PagoParaIdentidad(
         int IdMedioPago, decimal Importe, string? Referencia, int? IdCobroMercadoPago, bool ManualSinVerificar);
+
+    /// <summary>¿La venta ya emitida nació de una aprobación manual a la que el servidor le ligó el cobro aprobado del mismo número? Solo
+    /// se pregunta (una consulta a la auditoría) cuando el reenvío pide una aprobación manual y la venta guardada tiene un pago con
+    /// cobro: el rastro <see cref="AccionAuditada.VentaAprobacionManualMercadoPago"/> con <c>id_cobro_mercadopago_ligado</c> es lo que la
+    /// distingue de una venta cobrada con un cobro explícito, que reenviada como aprobación manual sigue siendo otro contenido.</summary>
+    private async Task<bool> LaAprobacionManualLigoUnCobroAsync(ComprobanteEmitido existente, PlanDeVenta plan, CancellationToken ct)
+    {
+        if (!plan.Pagos.Any(p => p.AprobacionManualSinVerificar) || !existente.Pagos.Any(p => p.IdCobroMercadoPago is not null))
+        {
+            return false;
+        }
+
+        var accion = AccionAuditada.VentaAprobacionManualMercadoPago;
+        var rastros = await db.Auditoria
+            .AsNoTracking()
+            .Where(a => a.Accion == accion.Accion && a.Entidad == accion.Entidad && a.IdEntidad == existente.Id)
+            .Select(a => a.ValorNuevo)
+            .ToListAsync(ct);
+
+        return rastros.Any(valor =>
+        {
+            using var documento = System.Text.Json.JsonDocument.Parse(valor);
+            return documento.RootElement.TryGetProperty("id_cobro_mercadopago_ligado", out var ligado)
+                && ligado.ValueKind == System.Text.Json.JsonValueKind.Number;
+        });
+    }
+
+    /// <summary>El reenvío de una venta cuya aprobación manual el servidor convirtió en pago con cobro: el pedido sigue diciendo "aprobación
+    /// manual" y la venta guardada tiene el cobro. Se tratan como el mismo pago comparando medio e importe, sin la referencia que tipeó el
+    /// cajero (la venta guardó la del pago de Mercado Pago).</summary>
+    private static bool SonElMismoPagoSalvoElCobroLigado(
+        IReadOnlyList<PagoParaIdentidad> existentes, IReadOnlyList<PagoParaIdentidad> solicitados)
+    {
+        static PagoParaIdentidad ComoManual(PagoParaIdentidad p) =>
+            p with { Referencia = null, IdCobroMercadoPago = null, ManualSinVerificar = true };
+
+        // Un pedido con otro cobro explícito sigue siendo otra transacción: solo el pago pedido como manual se equipara al ligado.
+        return Ordenados(existentes.Select(p => p.IdCobroMercadoPago is not null || p.ManualSinVerificar ? ComoManual(p) : p))
+            .SequenceEqual(Ordenados(solicitados.Select(p => p.ManualSinVerificar ? ComoManual(p) : p)));
+    }
 
     private static List<PagoParaIdentidad> Ordenados(IEnumerable<PagoParaIdentidad> pagos) =>
         pagos
@@ -1486,7 +1528,7 @@ public class ServicioDeVentas(
     /// <summary>Bloquea y valida los cobros de Mercado Pago que nombran los pagos del plan (<see cref="EscriturasDeCobroMercadoPago"/>).
     /// Vacío, sin tocar la base, si ningún pago trae cobro. Un pago con cobro solo existe en una venta con número preasignado
     /// (<c>ReglaDeCobroEnVenta.ExigirFormaDelPago</c>), y ese número es el que el cobro tiene que traer.</summary>
-    private static async Task<IReadOnlyDictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>> ReservarCobrosDeMercadoPagoAsync(
+    private static async Task<CobrosDeLaVenta> ReservarCobrosDeMercadoPagoAsync(
         DbConnection conexion, DbTransaction? transaccion, PlanDeVenta plan, long numero, CancellationToken ct)
     {
         var pedidos = plan.Pagos
@@ -1494,11 +1536,54 @@ public class ServicioDeVentas(
             .Select(p => (p.IdCobroMercadoPago!.Value, p.IdMedioPago, p.Importe))
             .ToList();
 
-        return pedidos.Count == 0
+        var reservados = pedidos.Count == 0
             ? new Dictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>()
-            : await EscriturasDeCobroMercadoPago.ReservarYValidarAsync(
-                conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, pedidos, ct);
+            : new Dictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>(
+                await EscriturasDeCobroMercadoPago.ReservarYValidarAsync(
+                    conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, pedidos, ct));
+
+        var manuales = plan.Pagos
+            .Select((p, indice) => (Pago: p, Indice: indice))
+            .Where(x => x.Pago.AprobacionManualSinVerificar)
+            .Select(x => new PagoManualPedido(x.Indice, x.Pago.IdMedioPago, x.Pago.Importe))
+            .ToList();
+
+        if (manuales.Count == 0)
+        {
+            return new CobrosDeLaVenta(plan, reservados, [], []);
+        }
+
+        // Una aprobación manual no mira el cobro que el dispositivo no conoce, pero el servidor sí: bajo el lock de los cobros del número,
+        // si el dinero ya entró por Mercado Pago la venta liga ese cobro en lugar de registrarlo dos veces, y cualquier otro cobro del
+        // número queda en conflicto para auditarlo.
+        var delNumero = await EscriturasDeCobroMercadoPago.LeerDelNumeroBloqueadoAsync(
+            conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, ct);
+        var resolucion = ReglaDeCobroEnVenta.ResolverAprobacionManual(delNumero, manuales, reservados.Keys.ToList());
+
+        var planResuelto = plan;
+        if (resolucion.IdCobroALigar is { } idCobro && resolucion.IndiceDelPagoALigar is { } indice)
+        {
+            reservados[idCobro] = new EscriturasDeCobroMercadoPago.CobroReservado(
+                idCobro, delNumero.First(c => c.IdCobro == idCobro).IdPagoMercadoPago!);
+
+            var pagos = plan.Pagos.ToList();
+            pagos[indice] = pagos[indice] with { IdCobroMercadoPago = idCobro, AprobacionManualSinVerificar = false };
+            planResuelto = plan with { Pagos = pagos };
+        }
+
+        return new CobrosDeLaVenta(
+            planResuelto, reservados, resolucion.IdsEnConflicto,
+            manuales.Select(m => (m.Indice, Ligado: m.Indice == resolucion.IndiceDelPagoALigar ? resolucion.IdCobroALigar : null)).ToList());
     }
+
+    /// <summary>Los cobros de Mercado Pago de la venta ya resueltos: el plan (con la aprobación manual que ligó un cobro aprobado convertida
+    /// en pago con cobro), los cobros reservados, los cobros del número en conflicto con una aprobación manual y cada aprobación manual
+    /// pedida con el cobro que ligó, si ligó alguno.</summary>
+    private sealed record CobrosDeLaVenta(
+        PlanDeVenta Plan,
+        IReadOnlyDictionary<int, EscriturasDeCobroMercadoPago.CobroReservado> Reservados,
+        IReadOnlyList<int> IdsEnConflicto,
+        IReadOnlyList<(int Indice, int? Ligado)> Manuales);
 
     /// <summary>Guard de turno (design decisión 4; Slice 5 task 5.3) — <c>FOR SHARE OF t</c>
     /// contra el turno del comprobante, ANTES del UPDATE atómico de <see cref="MarcarAnuladoAsync"/>:
@@ -1750,7 +1835,9 @@ public class ServicioDeVentas(
         // comprobante (fail-fast: una venta que va a fallar no escribe nada, y de todos modos la atomicidad la revierte). Dos ventas del
         // mismo cobro se serializan acá; la segunda lo ve ligado y responde cobro_mercadopago_ya_usado. Sin pagos con cobro son CERO
         // statements extra.
-        var cobrosDeMercadoPago = await ReservarCobrosDeMercadoPagoAsync(conexion, transaccionCruda, plan, numero, ct);
+        var cobrosResueltos = await ReservarCobrosDeMercadoPagoAsync(conexion, transaccionCruda, plan, numero, ct);
+        plan = cobrosResueltos.Plan;
+        var cobrosDeMercadoPago = cobrosResueltos.Reservados;
 
         // 2. Comprobante.
         var comprobante = new ComprobanteVenta
@@ -1839,6 +1926,44 @@ public class ServicioDeVentas(
         db.Cobros.AddRange(pagosEntidad);
 
         await db.SaveChangesAsync(ct);
+
+        // 4.4. E5: rastro de cada aprobación manual de Mercado Pago (quién, cuánto, con qué referencia y desde qué dispositivo) y del
+        // choque con un cobro del mismo número. Nunca un bloqueo: la venta ya se cobró en el dispositivo.
+        foreach (var (indice, ligado) in cobrosResueltos.Manuales)
+        {
+            var pago = plan.Pagos[indice];
+            await servicioDeAuditoria.RegistrarAsync(
+                conexion, transaccionCruda,
+                new RegistroDeAuditoria(
+                    plan.IdTenant, plan.IdPuntoVenta, AccionAuditada.VentaAprobacionManualMercadoPago, comprobante.Id,
+                    valorAnterior: null,
+                    valorNuevo: new Dictionary<string, object?>
+                    {
+                        ["numero_visible"] = NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
+                        ["id_medio_pago"] = pago.IdMedioPago,
+                        ["importe"] = pago.Importe,
+                        ["referencia"] = pago.Referencia,
+                        ["id_dispositivo"] = contexto.IdDispositivo,
+                        ["id_cobro_mercadopago_ligado"] = ligado
+                    }),
+                ct);
+        }
+
+        if (cobrosResueltos.IdsEnConflicto.Count > 0)
+        {
+            await servicioDeAuditoria.RegistrarAsync(
+                conexion, transaccionCruda,
+                new RegistroDeAuditoria(
+                    plan.IdTenant, plan.IdPuntoVenta, AccionAuditada.VentaMercadoPagoDobleCobro, comprobante.Id,
+                    valorAnterior: null,
+                    valorNuevo: new Dictionary<string, object?>
+                    {
+                        ["numero_visible"] = NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
+                        ["ids_cobro_mercadopago"] = cobrosResueltos.IdsEnConflicto.ToList(),
+                        ["id_dispositivo"] = contexto.IdDispositivo
+                    }),
+                ct);
+        }
 
         // 4.5. stage-pos-venta-offline-backend: rastro auditable (nunca un bloqueo, nunca una
         // recomputación silenciosa del comprobante) de cada línea offline cuyo precio congelado

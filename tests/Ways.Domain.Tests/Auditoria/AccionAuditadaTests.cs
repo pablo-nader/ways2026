@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneCuarentaYDosEntradas()
+    public void TieneCuarentaYCuatroEntradas()
     {
-        Assert.Equal(42, AccionAuditada.Todas.Count);
+        Assert.Equal(44, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -85,6 +85,8 @@ public partial class AccionAuditadaTests
             ("pv.baja", "punto_venta"),
             ("pv.modo", "punto_venta"),
             ("venta.discrepancia", "comprobante_venta"),
+            ("venta.aprobacionmanualmercadopago", "comprobante_venta"),
+            ("venta.mercadopagodoblecobro", "comprobante_venta"),
             ("caja.forzado", "turno_caja"),
             ("venta.sobrelimite", "comprobante_venta"),
             ("pago.edicion", "pago"),

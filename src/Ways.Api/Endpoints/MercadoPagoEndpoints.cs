@@ -202,12 +202,15 @@ public static class MercadoPagoEndpoints
         app.MapGroup("/api/mercadopago/pagos-sin-verificar")
             .WithTags("Mercado Pago")
             .RequireAuthorization(Politicas.LecturaDeReportes)
-            .MapGet("/", (ServicioDeCobrosMercadoPago servicio, int idEmpresa, DateTimeOffset? desde, DateTimeOffset? hasta, CancellationToken ct) =>
-                servicio.ListarPagosSinVerificarAsync(idEmpresa, desde, hasta, ct))
+            .MapGet("/", (
+                ServicioDeCobrosMercadoPago servicio, int idEmpresa, DateOnly desde, DateOnly hasta, int? limite, CancellationToken ct) =>
+                servicio.ListarPagosSinVerificarAsync(idEmpresa, desde, hasta, limite, ct))
             .WithSummary(
                 "Supervisor y Admin: los pagos de venta aprobados a mano sin red (sin_verificar) de una empresa, del más reciente al más " +
-                "antiguo; el cajero los dio por pagados y la conciliación los coteja. idEmpresa es obligatorio; desde y hasta (opcionales, " +
-                "inclusivos) acotan la fecha de la venta. 404 si la empresa no existe en el tenant.");
+                "antiguo; el cajero los dio por pagados y la conciliación los coteja. idEmpresa, desde y hasta son obligatorios; desde y " +
+                "hasta son días (yyyy-MM-dd) inclusivos en la zona horaria de la empresa, de hasta 366 días (400 si hasta < desde o el " +
+                "rango es mayor). limite (por defecto 200, máximo 500) acota las filas; truncado indica que había más. Cada fila trae " +
+                "idCobroEnConflicto cuando la venta chocó con otro cobro de Mercado Pago del mismo número. 404 si la empresa no existe en el tenant.");
 
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,

@@ -8,6 +8,9 @@ import {
   habilitaAprobacionManual,
   INTERVALO_DE_CONSULTA_MS,
   INTERVALO_TRAS_FALLO_MS,
+  MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL,
+  MENSAJE_SIN_CONEXION_PARA_COBRAR,
+  MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO,
   medioConCobroIntegrado,
   planDeCobroMercadoPago,
   segundosParaExpirar,
@@ -176,6 +179,18 @@ describe('cuenta regresiva', () => {
     expect(formatearCuentaRegresiva(600)).toBe('10:00')
     expect(formatearCuentaRegresiva(65)).toBe('01:05')
     expect(formatearCuentaRegresiva(0)).toBe('00:00')
+  })
+})
+
+describe('mensajes de la aprobación manual', () => {
+  it('el aviso sin conexión solo sugiere aprobar a mano en la variante que acompaña al botón', () => {
+    expect(MENSAJE_SIN_CONEXION_PARA_COBRAR).not.toMatch(/a mano/)
+    expect(MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO).toMatch(/aprobalo a mano/)
+  })
+
+  it('sin copia local dice que no se guardó nada y no promete la cola', () => {
+    expect(MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL).toMatch(/no se guardó nada/)
+    expect(MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL).not.toMatch(/cola/)
   })
 })
 

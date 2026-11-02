@@ -6,10 +6,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
+using Ways.Application.Parametros;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.MercadoPago;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Reportes;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.MercadoPago;
@@ -84,7 +87,7 @@ namespace Ways.Application.MercadoPago;
 /// </summary>
 public class ServicioDeCobrosMercadoPago(
     IWaysDbContext db, IClienteApiMercadoPago api, IRelojDelSistema reloj, IContextoDeUsuario contexto,
-    ILogger<ServicioDeCobrosMercadoPago> log)
+    ILogger<ServicioDeCobrosMercadoPago> log, ServicioDeParametros parametros)
 {
     /// <summary>Segunda clave del <c>pg_advisory_xact_lock(int, int)</c> por punto de venta; la primera es el id del punto de venta.</summary>
     public const int ClaveDeLockDeCobrosDelPuntoVenta = 0x4D504351;
@@ -481,25 +484,46 @@ public class ServicioDeCobrosMercadoPago(
             .ToListAsync(ct);
     }
 
+    /// <summary>Tope de filas de <see cref="ListarPagosSinVerificarAsync"/> cuando el pedido no trae <c>limite</c>.</summary>
+    public const int LimitePorDefectoDePagosSinVerificar = 200;
+
+    /// <summary>Máximo <c>limite</c> que admite <see cref="ListarPagosSinVerificarAsync"/>.</summary>
+    public const int LimiteMaximoDePagosSinVerificar = 500;
+
     /// <summary>Los pagos de venta aprobados a mano sin verificar (<c>verificacion_mercadopago = sin_verificar</c>) de una empresa, del más
-    /// reciente al más antiguo, para que la conciliación los coteje. <paramref name="desde"/> y <paramref name="hasta"/> acotan la fecha de
-    /// la venta (ambos inclusivos, opcionales). El alcance de empresa sale del punto de venta de la venta.</summary>
-    public async Task<IReadOnlyList<PagoSinVerificarListado>> ListarPagosSinVerificarAsync(
-        int idEmpresa, DateTimeOffset? desde, DateTimeOffset? hasta, CancellationToken ct = default)
+    /// reciente al más antiguo, para que la conciliación los coteje. <paramref name="desde"/> y <paramref name="hasta"/> son días
+    /// (ambos obligatorios e inclusivos) en la zona horaria de la empresa, de hasta 366 días (<see cref="RangoDeReporte"/>: 400
+    /// <c>rango_invalido</c> / <c>rango_demasiado_amplio</c>). Devuelve a lo sumo <paramref name="limite"/> filas (por defecto
+    /// <see cref="LimitePorDefectoDePagosSinVerificar"/>, máximo <see cref="LimiteMaximoDePagosSinVerificar"/>) y avisa si quedaron más
+    /// afuera. El alcance de empresa sale del punto de venta de la venta; cada fila trae el cobro de Mercado Pago del mismo número con el
+    /// que chocó, si la venta lo auditó.</summary>
+    public async Task<PagosSinVerificarListado> ListarPagosSinVerificarAsync(
+        int idEmpresa, DateOnly desde, DateOnly hasta, int? limite = null, CancellationToken ct = default)
     {
+        var tope = limite ?? LimitePorDefectoDePagosSinVerificar;
+        if (tope < 1 || tope > LimiteMaximoDePagosSinVerificar)
+        {
+            throw new ErrorDominio(
+                "limite_invalido", $"El límite tiene que estar entre 1 y {LimiteMaximoDePagosSinVerificar}.", 400);
+        }
+
         if (!await db.Empresas.AnyAsync(e => e.Id == idEmpresa, ct))
         {
             throw ErrorDominio.NoEncontrado($"No existe la empresa {idEmpresa}.");
         }
+
+        var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, null, ct);
+        var zona = TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+        var desdeUtc = rango.DesdeUtc;
+        var hastaUtcExclusivo = rango.HastaUtcExclusivo;
 
         var filas = await (
                 from p in db.Cobros.AsNoTracking()
                 where p.VerificacionMercadoPago == VerificacionDePagoMercadoPago.SinVerificar && p.DeletedAt == null
                 join c in db.ComprobantesVenta.AsNoTracking().SinEspejosFiscales() on p.IdComprobanteVenta equals c.Id
                 join pv in db.PuntosVenta.IgnoreQueryFilters(["BajaLogica"]) on c.IdPuntoVenta equals pv.Id
-                where pv.IdEmpresa == idEmpresa
-                    && (desde == null || c.Fecha >= desde)
-                    && (hasta == null || c.Fecha <= hasta)
+                where pv.IdEmpresa == idEmpresa && c.Fecha >= desdeUtc && c.Fecha < hastaUtcExclusivo
                 orderby c.Fecha descending, p.Id descending
                 select new
                 {
@@ -515,13 +539,60 @@ public class ServicioDeCobrosMercadoPago(
                     Empleado = db.Usuarios.Where(u => u.Id == c.IdEmpleado).Select(u => u.NombreUsuario).FirstOrDefault(),
                     Anulada = c.Estado == EstadoComprobante.Anulado
                 })
+            .Take(tope + 1)
             .ToListAsync(ct);
 
-        return filas
-            .Select(f => new PagoSinVerificarListado(
-                f.Id, f.IdComprobanteVenta, NumeroDeComprobante.Formatear(f.IdPuntoVenta, f.Numero), f.IdPuntoVenta, f.Fecha,
-                f.IdMedioPago, f.Importe, f.Referencia, f.IdEmpleado, f.Empleado, f.Anulada))
-            .ToList();
+        var truncado = filas.Count > tope;
+        if (truncado)
+        {
+            filas.RemoveAt(filas.Count - 1);
+        }
+
+        var enConflicto = await CobrosEnConflictoDeLasVentasAsync(filas.Select(f => f.IdComprobanteVenta).Distinct().ToList(), ct);
+
+        return new PagosSinVerificarListado(
+            filas
+                .Select(f => new PagoSinVerificarListado(
+                    f.Id, f.IdComprobanteVenta, NumeroDeComprobante.Formatear(f.IdPuntoVenta, f.Numero), f.IdPuntoVenta, f.Fecha,
+                    f.IdMedioPago, f.Importe, f.Referencia, f.IdEmpleado, f.Empleado, f.Anulada,
+                    enConflicto.TryGetValue(f.IdComprobanteVenta, out var idCobro) ? idCobro : null))
+                .ToList(),
+            truncado);
+    }
+
+    /// <summary>El primer cobro (el de menor id) que la venta auditó como en conflicto con su aprobación manual
+    /// (<see cref="AccionAuditada.VentaMercadoPagoDobleCobro"/>), por venta; las ventas sin aviso no figuran.</summary>
+    private async Task<Dictionary<int, int>> CobrosEnConflictoDeLasVentasAsync(IReadOnlyList<int> idsDeVenta, CancellationToken ct)
+    {
+        var resultado = new Dictionary<int, int>();
+        if (idsDeVenta.Count == 0)
+        {
+            return resultado;
+        }
+
+        var accion = AccionAuditada.VentaMercadoPagoDobleCobro;
+        var avisos = await db.Auditoria
+            .AsNoTracking()
+            .Where(a => a.Accion == accion.Accion && a.Entidad == accion.Entidad && idsDeVenta.Contains(a.IdEntidad))
+            .Select(a => new { a.IdEntidad, a.ValorNuevo })
+            .ToListAsync(ct);
+
+        foreach (var aviso in avisos)
+        {
+            using var documento = JsonDocument.Parse(aviso.ValorNuevo);
+            if (!documento.RootElement.TryGetProperty("ids_cobro_mercadopago", out var ids) || ids.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            var menor = ids.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.Number).Select(i => i.GetInt32()).DefaultIfEmpty(0).Min();
+            if (menor > 0 && (!resultado.TryGetValue(aviso.IdEntidad, out var actual) || menor < actual))
+            {
+                resultado[aviso.IdEntidad] = menor;
+            }
+        }
+
+        return resultado;
     }
 
     /// <summary>

@@ -43,6 +43,39 @@ internal static class EscriturasDeCobroMercadoPago
         return reservados;
     }
 
+    /// <summary>Bloquea (<c>FOR UPDATE</c>, en orden ascendente de id) y lee, una sola vez, todos los cobros del número de venta, para que una
+    /// aprobación manual sepa si el dinero ya entró por Mercado Pago. Solo corre si la venta trae una aprobación manual.</summary>
+    internal static async Task<IReadOnlyList<CobroDelNumero>> LeerDelNumeroBloqueadoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPuntoVenta, long numeroPreasignado, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_cobro_mercadopago, id_medio_pago, estado, importe_pagado, id_pago_mercadopago, id_comprobante_venta, " +
+            "fecha_procesada_mercadopago IS NOT NULL OR id_pago_mercadopago IS NOT NULL " +
+            "FROM cobros_mercadopago WHERE id_tenant = $1 AND id_punto_venta = $2 AND numero_preasignado = $3 " +
+            "ORDER BY id_cobro_mercadopago FOR UPDATE";
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, numeroPreasignado);
+
+        var cobros = new List<CobroDelNumero>();
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        while (await lector.ReadAsync(ct))
+        {
+            cobros.Add(new CobroDelNumero(
+                lector.GetInt32(0),
+                lector.GetInt32(1),
+                lector.GetString(2),
+                lector.IsDBNull(3) ? null : lector.GetDecimal(3),
+                lector.IsDBNull(4) ? null : lector.GetString(4),
+                lector.IsDBNull(5) ? null : lector.GetInt32(5),
+                lector.GetBoolean(6)));
+        }
+
+        return cobros;
+    }
+
     /// <summary>Liga cada cobro a la venta ya insertada. El <c>WHERE</c> repite que siga sin venta: bajo el lock ya lo comprobó
     /// <see cref="ReservarYValidarAsync"/>, así que una fila que no cambia es un invariante roto y no un caso de negocio.</summary>
     internal static async Task LigarAsync(

@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO } from '../pos/cobroMercadoPago'
 import { TIEMPO_LIMITE_DE_RED_MS } from '../pos/tiempoLimite'
 import { reiniciarLotesDeFacturacionParaTests } from '../pos/loteDeFacturacion'
 import { Pos } from './Pos'
@@ -12030,6 +12031,7 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
 
         expect(await screen.findByText(/Mercado Pago necesita conexión/)).toBeInTheDocument()
         expect(botonOfrecido()).not.toBeInTheDocument()
+        expect(screen.queryByText(/aprobalo a mano/)).not.toBeInTheDocument()
       } finally {
         sinRed.mockRestore()
       }
@@ -12055,6 +12057,42 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
         expect(await screen.findByText(/Hay un cobro de Mercado Pago sin resolver en este dispositivo/, { selector: '.alert' })).toBeInTheDocument()
         expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
         expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, idCobro: 31 })
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('si el cajero cambia el importe con el diálogo abierto, confirmar no encola nada y lo explica', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await cobrarSinRed()
+        await userEvent.click(await screen.findByRole('button', { name: 'Aprobar a mano (sin verificar)' }))
+        const dialogo = await dialogoDeAprobacion()
+
+        fireEvent.change(screen.getByLabelText(`Importe de ${medioMercadoPago.nombre} (fila 1)`), { target: { value: '30' } })
+        await userEvent.click(within(dialogo).getByRole('button', { name: 'Aprobar a mano' }))
+
+        expect(await screen.findByText(MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO, { selector: '.alert' })).toBeInTheDocument()
+        expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+        expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
+        expect(botonOfrecido()).not.toBeInTheDocument()
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('sin cambios en las filas, confirmar encola el importe que mostró el diálogo', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await cobrarSinRed()
+        await userEvent.click(await screen.findByRole('button', { name: 'Aprobar a mano (sin verificar)' }))
+        const dialogo = await dialogoDeAprobacion()
+        expect(within(dialogo).getByText(/Vas a dar por pagados/)).toHaveTextContent('100')
+
+        await userEvent.click(within(dialogo).getByRole('button', { name: 'Aprobar a mano' }))
+
+        expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+        expect((await leerOutbox(crearAlmacenIndexedDb()))[0].solicitud.pagos?.[0]).toMatchObject({ importe: 100 })
       } finally {
         sinRed.mockRestore()
       }

@@ -100,6 +100,16 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// pendiente de docs/10-modelo-de-datos.md §9.2 (repricing al sincronizar).</summary>
     public static readonly AccionAuditada VentaDiscrepanciaDePrecio = new("venta.discrepancia", "comprobante_venta");
 
+    /// <summary>E5: <c>Ventas/ServicioDeVentas.cs</c> — el cajero aprobó a mano, sin red, un pago de Mercado Pago que queda sin verificar.
+    /// Una fila por pago aprobado a mano: la venta, el medio, el importe, la referencia y el dispositivo; si el servidor halló el cobro ya
+    /// aprobado del mismo número lo ligó (<c>id_cobro_mercadopago_ligado</c>) y el pago no quedó sin verificar.</summary>
+    public static readonly AccionAuditada VentaAprobacionManualMercadoPago = new("venta.aprobacionmanualmercadopago", "comprobante_venta");
+
+    /// <summary>E5: una venta con aprobación manual cuyo número tiene otro cobro de Mercado Pago (vivo, aprobado y libre, apartado o
+    /// fallido con pago) que no pudo ligar: el dinero puede haber entrado dos veces y la conciliación lo resuelve. Lleva los ids de los
+    /// cobros en conflicto, nunca credenciales.</summary>
+    public static readonly AccionAuditada VentaMercadoPagoDobleCobro = new("venta.mercadopagodoblecobro", "comprobante_venta");
+
     /// <summary>Cierre de turno forzado por encima de la guarda de rendición de dispositivos —
     /// <c>Caja/ServicioDeTurnos.cs</c>, los DOS modos de cierre. Se escribe SIEMPRE que
     /// <c>ForzarSinRendicion</c> viene en true, incluso si la guarda no encontró nada pendiente: el
@@ -238,6 +248,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         PuntoVentaBaja,
         PuntoVentaModo,
         VentaDiscrepanciaDePrecio,
+        VentaAprobacionManualMercadoPago,
+        VentaMercadoPagoDobleCobro,
         CierreForzadoSinRendicion,
         VentaExcedioLimiteSinValidar,
         PagoEdicion,

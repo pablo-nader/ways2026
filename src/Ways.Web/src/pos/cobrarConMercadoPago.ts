@@ -10,6 +10,7 @@ import {
   habilitaAprobacionManual,
   indicacionDeCobroAprobado,
   MENSAJE_SIN_CONEXION_PARA_COBRAR,
+  MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO,
   mensajeDeImporteDistinto,
   TEXTO_POR_CIERRE_SIN_APROBAR,
   vistaDelCobro,
@@ -248,7 +249,11 @@ export async function cobrarConMercadoPago(
 
   // Sin red no se crea ningún cobro. Aprobar a mano solo se ofrece si el dispositivo no tiene un cobro vivo: ese cobro pudo quedar
   // pagado y aprobar a mano la venta lo cobraría dos veces.
-  if (!deps.enLinea) return detenido(MENSAJE_SIN_CONEXION_PARA_COBRAR, undefined, (await reserva.leerReservaDeCobro()) === null)
+  if (!deps.enLinea) {
+    return (await reserva.leerReservaDeCobro()) === null
+      ? detenido(MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO, undefined, true)
+      : detenido(MENSAJE_SIN_CONEXION_PARA_COBRAR)
+  }
 
   // Un cobro apartado que el servidor todavía tiene aprobado seguiría ocupando su número: primero se sincroniza y, si no se puede, no se cobra.
   if ((await reserva.sincronizarApartados()) > 0) return detenido(MENSAJE_CON_APARTADOS_SIN_SINCRONIZAR)

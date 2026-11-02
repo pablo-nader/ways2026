@@ -18,14 +18,22 @@ export const INTERVALO_DE_CONSULTA_MS = 2_000
 export const INTERVALO_TRAS_FALLO_MS = 5_000
 
 export const MENSAJE_SIN_CONEXION_PARA_COBRAR =
+  'Mercado Pago necesita conexión: sin conexión no se puede cobrar con QR ni con la terminal Point. Cobrá con otro medio.'
+
+/** Lo mismo cuando el botón "Aprobar a mano (sin verificar)" se ofrece (no hay un cobro vivo en este dispositivo): la sugerencia solo
+ * aparece junto al botón que la hace posible. */
+export const MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO =
   'Mercado Pago necesita conexión: sin conexión no se puede cobrar con QR ni con la terminal Point. Cobrá con otro medio o, si el cliente ya pagó, aprobalo a mano (queda sin verificar).'
 
 /** Por qué no se ofrece aprobar a mano mientras haya un cobro de Mercado Pago sin resolver en este dispositivo. */
 export const MENSAJE_APROBACION_MANUAL_CON_COBRO_VIVO =
   'Hay un cobro de Mercado Pago sin resolver en este dispositivo: retomalo, cancelalo o apartalo antes de aprobar a mano, para no cobrar dos veces.'
 
+export const MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO =
+  'Los pagos cambiaron mientras confirmabas: no se aprobó ni se guardó nada. Revisá el cobro y volvé a aprobar a mano.'
+
 export const MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL =
-  'Para aprobar a mano hace falta la copia local de este dispositivo con los precios de la venta: la venta se guarda en la cola y se envía cuando hay conexión.'
+  'Para aprobar a mano hace falta la copia local de este dispositivo con los precios de la venta, y no la tiene: no se guardó nada. Cobrá con otro medio o esperá a tener conexión.'
 
 /**
  * Cuándo un fallo al crear el cobro habilita aprobar a mano: Mercado Pago no responde (`mercadopago_no_disponible`) o no hay red hacia el

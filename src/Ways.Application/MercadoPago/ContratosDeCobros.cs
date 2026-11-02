@@ -69,7 +69,12 @@ public sealed record PagoSinVerificarListado(
     string? Referencia,
     int IdEmpleado,
     string? Empleado,
-    bool Anulada);
+    bool Anulada,
+    int? IdCobroEnConflicto = null);
+
+/// <summary>La lista de pagos sin verificar de un rango: <see cref="Truncado"/> avisa que había más filas que el límite pedido (las más
+/// recientes vienen primero).</summary>
+public sealed record PagosSinVerificarListado(IReadOnlyList<PagoSinVerificarListado> Items, bool Truncado);
 
 public static class CodigosDeErrorDeCobrosMercadoPago
 {

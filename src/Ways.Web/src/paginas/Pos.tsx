@@ -159,6 +159,7 @@ import {
   indicacionDeCobroAprobado,
   MENSAJE_APROBACION_MANUAL_CON_COBRO_VIVO,
   MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL,
+  MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO,
   MENSAJE_DE_VARIOS_COBROS,
   planDeCobroMercadoPago,
   TEXTO_POR_CIERRE_SIN_APROBAR,
@@ -925,6 +926,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [filasPago, setFilasPago] = useState<FilaPago[]>(
     () => borradorInicial?.filasPago ?? [filaPagoInicial(proximaFilaPagoIdRef.current++, null)],
   )
+  // Espejo de `filasPago` para `aprobarAMano`: al volver de la confirmación sabe si el cajero cambió los pagos con el diálogo abierto.
+  const filasPagoRef = useRef(filasPago)
+  useEffect(() => {
+    filasPagoRef.current = filasPago
+  }, [filasPago])
 
   // react-async-state regla 9: mientras el checkout está en vuelo, TODO lo que podría
   // superponerse (escaneo, edición de carrito, cliente, filas de pago) queda
@@ -3864,6 +3870,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         nombreDelMedio: medioPorId[plan.pago.idMedioPago]?.nombre ?? `Medio #${plan.pago.idMedioPago}`,
       })
       if (confirmada === null) return
+      // El diálogo mostró el importe de estas filas y `cobrar` encola las de este render: si cambiaron mientras tanto, lo confirmado
+      // ya no es lo que se encolaría.
+      if (filasPagoRef.current !== filasPago) {
+        setAprobacionManualOfrecida(null)
+        setErrorCobro(MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO)
+        return
+      }
       await cobrar({ aprobacionManual: confirmada })
     } finally {
       aprobandoAManoRef.current = false
