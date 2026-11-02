@@ -807,3 +807,24 @@ in place (Designer and snapshot too; `has-pending-model-changes` clean).
   web: tsc clean, 160 tests (api, page, tesoreria), `npm run build` ok.
 - Mutation (one per run, restored with identical content): reopen guard disabled fails 2 tests; cancel of a pendiente (branch disabled) fails 1; cancel of an aplicada (branch disabled) fails 1; a descartada treated as
   pendiente fails 1; same-file exclusion removed fails 1; duplicate reversion allowed (`Add || true`) fails 1; spread keyed by `IdCobroMercadoPago` fails the new domain test.
+
+## Judgment-day E7 verdict
+
+- 2026-11-02: **APPROVED** after two fix rounds, no CRITICAL left. Round 1 (both; CRITICAL): a withdrawal in two overlapping reports
+  was proposed twice; plus origin account, per-payment rounding, annulled sales, audit count, stale selection; fixed in dd110a0a.
+  Re-judgment (both): discard irreversible, WITHDRAWAL_CANCEL ignored; fixed in 0cae189f (reabrir, cancel handling, OpenAPI).
+- Final re-judgment, WARNINGs confirmed by both, taken as slice **E7b** (own judgment-day): a cancel imported BEFORE its withdrawal is
+  not remembered, so the later withdrawal is proposed as a normal pending retiro; reopening a retiro discarded "cancelado por Mercado
+  Pago" erases that mark. Money moves only on an explicit Admin apply. Suggestions: a retiro_cancelado apply does not check the
+  accounts are active; a Payout row with a cancel in the same file is created and discarded in the same pass.
+
+## E7b design (2026-11-02)
+
+- A cancel row is remembered: the generator looks for WITHDRAWAL_CANCEL rows of the empresa (stored in `filas_conciliacion_mercadopago`
+  from any reconciliation) with the retiro's SOURCE_ID; a retiro with a known cancel is created already `descartada` with motivo
+  "cancelado por Mercado Pago".
+- New column `cancelado_por_mercadopago boolean NOT NULL DEFAULT false` on the proposal, set whenever a cancel is known (auto-discard,
+  created discarded, or reversion created); it survives reopen. Reopening a proposal with that flag → 409
+  `propuesta_cancelada_por_mercadopago` (the Admin can still post a manual treasury adjustment if needed).
+- The same-file exclusion covers Withdrawal and Payout rows.
+- Applying a `retiro_cancelado` documents that inactive accounts are accepted (it undoes a prior movement); deleted accounts keep the 409.
