@@ -14,6 +14,7 @@ import {
   mediosDisponibles,
   nombreDeMedio,
   puedeAnular,
+  puedeCambiarMedios,
   puedeReimprimir,
   puedeReimprimirFactura,
   puedeReimprimirNotaDeCredito,
@@ -172,6 +173,15 @@ describe('puedeAnular', () => {
   it('Root nunca opera el POS — mismo criterio que Politicas.OperacionDePos', () => {
     const venta = ventaFixture({ estado: 'Emitido' })
     expect(puedeAnular(venta, ROL.Root)).toBe(false)
+  })
+})
+
+describe('puedeCambiarMedios', () => {
+  it('solo una venta Emitida y a quien opera el POS', () => {
+    expect(puedeCambiarMedios(ventaFixture({ estado: 'Emitido' }), ROL.Vendedor)).toBe(true)
+    expect(puedeCambiarMedios(ventaFixture({ estado: 'Emitido' }), ROL.Admin)).toBe(true)
+    expect(puedeCambiarMedios(ventaFixture({ estado: 'Anulado' }), ROL.Vendedor)).toBe(false)
+    expect(puedeCambiarMedios(ventaFixture({ estado: 'Emitido' }), ROL.Root)).toBe(false)
   })
 })
 
