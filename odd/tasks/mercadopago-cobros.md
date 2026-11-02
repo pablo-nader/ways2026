@@ -56,6 +56,8 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 - [x] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
   account.
+  - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
+  - [ ] E6-T2 — Back-office web screen.
 - [ ] E7 — Withdrawals/payouts from the report into treasury.
 
 ## Delivery strategy
@@ -64,7 +66,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E6: reconciliation (import the release report, match charges and the `sin_verificar` payments listed by `GET /api/mercadopago/pagos-sin-verificar`, real fees, net to the treasury account; `verificado_manualmente` is reserved for it). E5 is built and awaits its own judgment-day before the PR; E4, E3-T4 and E3-T3b are already approved. Pending before it ships to the cajas: the POS bundle of E3-T3/E4 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress). Nothing of E4 was exercised against the real Mercado Pago API or a real terminal.
+E6-T2: back-office web screen (Tesorería → "Conciliación Mercado Pago": upload, summary, rows with filters, cobros sin venta / pagos sin verificar lists, confirm candidates) over the E6-T1 endpoints. E6-T1 awaits its judgment-day before the PR.
 
 ## E3-T1 design (2026-11-01)
 
@@ -573,3 +575,72 @@ Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-p
 
 - 2026-11-02: **APPROVED**. Scoped re-judgment of option (b) (9364eda2) and the column widening (d472225f): both judges confirm the frozen
   finding resolved, no CRITICAL or WARNING; suggestions applied (doc states the residual same-number-other-tipo limit; widening recorded).
+
+## E6 design (2026-11-02) — reconciliation from the settlement report
+
+Branch `pnader/mercadopago-e6`, stacked on E5. Backend + back-office web.
+
+Facts (2026-11-02, MP report docs, .co/.mx mirrors; AR pages not retrievable): the "Reporte de todas las transacciones"
+(`settlement_report`) has one row per payment/installment with `SOURCE_ID` (MP transaction id, e.g. the payment), `EXTERNAL_REFERENCE`
+(the order's external reference), `TRANSACTION_TYPE` (SETTLEMENT, REFUND, CHARGEBACK, DISPUTE, WITHDRAWAL, WITHDRAWAL_CANCEL, PAYOUT),
+`TRANSACTION_AMOUNT`, `FEE_AMOUNT` (VAT included), `SETTLEMENT_NET_AMOUNT`, `TRANSACTION_DATE`, `SETTLEMENT_DATE`,
+`MONEY_RELEASE_DATE`, `EXTERNAL_POS_ID`, `EXTERNAL_STORE_ID`, `ORDER_ID`. The report API (`/v1/account/settlement_report`) has
+unverified pieces (file name in the list, OAuth seller token access), so E6 starts with a file upload; fetching through the API is a
+later step once tried against a real account.
+
+Decision (orchestrator, 2026-11-02): reconciliation by uploaded CSV first.
+
+- `POST /api/mercadopago/conciliaciones?idEmpresa=` (Admin; multipart CSV ≤ 10 MB): parses the settlement report by header name
+  (comma or semicolon; tolerant to extra/missing optional columns; required: SOURCE_ID, TRANSACTION_TYPE, TRANSACTION_AMOUNT,
+  TRANSACTION_DATE; EXTERNAL_REFERENCE, FEE_AMOUNT, SETTLEMENT_NET_AMOUNT, MONEY_RELEASE_DATE, EXTERNAL_POS_ID optional; numbers with
+  "." decimals; dates ISO with offset). Stored as `conciliaciones_mercadopago` (header: empresa, file hash UNIQUE per empresa to reject
+  a re-upload, period from/to, uploaded by/at, counts) + `filas_conciliacion_mercadopago` (each parsed row + its match result).
+- Matching per SETTLEMENT row (in this order): (1) `EXTERNAL_REFERENCE` = a charge's `external_reference` of that empresa; (2)
+  `SOURCE_ID` = a charge's `referencia_pago_mercadopago` (numeric) or `id_pago_mercadopago`. Result: `conciliado` (charge `aprobado`
+  linked to a sale, amount equal) — store fee and net on the charge (`comision_real`, `neto_real`, `fecha_liberacion`); `sin_venta`
+  (charge `sin_venta`/`fallido` with payment) — flagged for the supervisor; `importe_distinto`; `sin_cobro_en_ways` (no charge: a
+  payment received outside Ways or a manual approval). Manual approvals (`sin_verificar` sale payments, E5) get candidate matches
+  among `sin_cobro_en_ways` rows by same empresa, amount, and `TRANSACTION_DATE` within ±1 day of the sale (and the same
+  `EXTERNAL_POS_ID` when present); a candidate is never applied automatically: the Admin confirms it, which sets the payment's
+  `verificacion_mercadopago = verificado_manualmente` and links the row.
+- REFUND/CHARGEBACK rows: matched to the charge like a payment and shown as `devolucion` / `contracargo` (no automatic sale change).
+- WITHDRAWAL/PAYOUT rows: listed as `retiro` (E7 turns them into treasury movements).
+- Web (back office, Tesorería → "Conciliación Mercado Pago", Admin/Supervisor read, Admin upload/confirm): upload the CSV, see the
+  summary (counts and totals per result, real fees vs estimated), the rows with filters, the "cobros sin venta" and "pagos sin
+  verificar" lists (E3-T3b / E5 endpoints), and confirm manual-approval candidates.
+- Tests: parser (headers, separators, decimals, dates, missing optional columns, bad rows reported not thrown), matching order,
+  duplicate upload rejected, confirm candidate, tenant/empresa scoping; web: upload flow, filters, confirm.
+- Slices: **E6-T1** backend (tables, parser, matching, upload/list/confirm endpoints, real fee/net on the charge; the column
+  `verificacion_mercadopago` already admits `verificado_manualmente`); **E6-T2** back-office web screen.
+
+## E6-T1 progress (2026-11-02)
+
+- Built exactly as designed: tables `conciliaciones_mercadopago` / `filas_conciliacion_mercadopago` (RLS, composite FKs, UNIQUE (id_empresa, hash) -> 409 `conciliacion_ya_importada`, partial UNIQUE on the confirmed payment -> 409 `conciliacion_pago_ya_verificado`), charge columns `comision_real`, `neto_real`, `fecha_liberacion`, `id_fila_conciliacion` (CHECK: values only with the row). Pure `LectorDeReporteMercadoPago` and `ConciliadorMercadoPago` in Domain; `ServicioDeConciliacionMercadoPago`; endpoints POST/GET list/GET detail/POST confirmar. docs/10 part 07 + index updated.
+- Decisions to confirm: a matched charge that is approved but not linked to a sale (or pending/cancelled/expired) is `sin_venta`; a charge already reconciled, or repeated in the same file, keeps the FIRST row (installments with several rows per payment store only the first); fee stored as reported (sign kept); unknown TRANSACTION_TYPE or more than 2 decimals make the row `invalida`; confirm does not re-enforce amount/date/caja (only same empresa); candidate window is 24 h inclusive; annulled sales are not candidates; more than 1000 invalid rows rejects the file.
+- Guards touched: inventory golden (+5 lines), `AccionAuditada` (+2, count 46), `EscritoresDePagosDeVentaEstructuralTests` (the confirmation is the second writer of `verificacion_mercadopago`; regex now also sees `SetProperty`), `LectoresDeComprobantesVentaEstructuralesTests` (2 entries), `SuperficieDeAutorizacionTests` (new walker for the 4 routes).
+- Verification: build 0 errors; no pending model changes; Domain 2593 pass; Application 1660 pass; integration filter (MercadoPago|UpDownUp|Cobertura|AislamientoDeTenant|SuperficieDeAutorizacion) 486 pass before the last service tweak, then the 20 new tests + AislamientoDeTenant/Superficie/UpDownUp/Cobertura (49) pass.
+- Mutation evidence (each reverted): parser separator, >2 decimals, date without zone, required column, dropped bad row, reference-before-SOURCE_ID, importe check, +-1 day window, POS id; integration: empresa scoping, fila already confirmed, pago of another empresa, 23505 translation, auto-apply of candidates, removing RLS (AislamientoDeTenant red). Lock removal alone and pre-check removal alone survive because the guarded UPDATE / unique index cover them; removing lock + guard fails the same-row race test 3/3.
+- Open: no real Mercado Pago report was tried (column names from docs); T2 web; E7 treasury movements from `retiro` rows and real fee into the treasury.
+
+
+## Judgment-day E6-T1 round 1 (2026-11-02)
+
+Fix commit 7119f1bf for the confirmed findings (C1-C5); the migration 20261102050935 was edited in place (only the `resultado` CHECK gains `ya_conciliado` and `duplicada`; no pending model changes).
+
+- C1: `POST /api/mercadopago/conciliaciones` requires `X-Ways-Origen: web` (a plain HTML form cannot send it and a cross-origin `fetch` needs a preflight the API's CORS never grants) and same origin (`Sec-Fetch-Site` `same-origin|none`, or, when the browser sends none, `Origin` equal to the request's scheme+host); else 403 `solicitud_no_permitida`. The comment no longer claims SameSite=Lax protects (a sibling subdomain is same-site). E6-T2's web client must send the header.
+- C2: SETTLEMENT rows of one charge are summed (`comision_real` = sum of |FEE_AMOUNT|, always positive; `neto_real` = sum of SETTLEMENT_NET_AMOUNT as reported; `fecha_liberacion` = latest; `id_fila_conciliacion` = first row). Exact repeat (SOURCE_ID, TRANSACTION_TYPE, TRANSACTION_AMOUNT, TRANSACTION_DATE) -> `duplicada`; charge reconciled by an earlier file -> `ya_conciliado` (detail shows `comisionGuardada`/`netoGuardado`). The row DTO has `aplicadaAlCobro` (true only for `conciliado`). Summary totals: counts include every row, amounts exclude `duplicada` and `ya_conciliado` (decision: other results such as `sin_venta` keep their amounts because they are information, not double counting). Row `comision` keeps the report sign; docs/10 and the entity say so.
+- C3: confirm rejects an annulled sale (409 `venta_anulada`) and a payment whose importe differs from the row's (409 `importe_distinto`); the audit row records the row's importe/fecha_transaccion/source_id and the payment's importe plus the sale date (the payment has no date of its own).
+- C4: the reader streams from a `TextReader` (bytes via `StreamReader`, no decoded copy) and stops at `MaximoDeFilas + 1` records or `MaximoDeInvalidas + 1` unreadable rows with the same 400; unit tests prove the early stops against an endless reader.
+- C5: the matched charges are read once with `FROM ... FOR UPDATE ORDER BY id` right after the empresa advisory lock (lock order: conciliation advisory -> charge rows; the import takes no charge advisory, so a webhook only waits on the row, no cycle with advisory PV -> advisory charge -> row).
+- Verification: build 0 errors; no pending model changes; Domain 2598 pass; Application 1660 pass; integration (31 conciliation tests + SuperficieDeAutorizacion + AislamientoDeTenant + UpDownUp + Cobertura) 60 pass; whole `MercadoPagoVentaTests` class 96 pass. The orchestrator's `MercadoPagoConciliacion` name filter matches nothing (the tests are a partial of `MercadoPagoVentaTests`), so the conciliation methods were filtered by name. The 34-minute full MercadoPago filter was not run.
+- Mutation evidence (each reverted, diff hash identical before/after): header check, Origin comparison, Sec-Fetch-Site check, sum -> first row, Math.Abs removal, duplicate detection, ya_conciliado swap, annulled check, importe check, `FOR UPDATE` removal, `MaximoDeFilas` stop, `MaximoDeInvalidas` stop; each turned red exactly the tests that claim it.
+
+## Judgment-day E6-T1 verdict
+
+- 2026-11-02: **APPROVED** after two fix rounds. Round 1 (both judges): CSRF from a same-site sibling on the multipart upload,
+  installments storing only the first fee, confirm without importe/annulled checks; judge A: the parser materialized everything
+  before the caps and charges were read without a lock; judge B: unnormalized fee sign; fixed in 7119f1bf. Re-judgment (both): the
+  duplicate key collapsed genuine installments sharing amount and transaction date; fixed in edef985c (key includes fee, net and
+  release date; mutation: the 4-field key fails the installments test). Final re-judgment: both clean (doc comment fixed).
+- Accepted: a charge already reconciled by an earlier file is never re-applied (`ya_conciliado`, stored values shown); the confirm
+  reads the sale state without locking it (small window, the payment row is locked).

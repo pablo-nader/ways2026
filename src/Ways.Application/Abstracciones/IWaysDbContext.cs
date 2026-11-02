@@ -188,6 +188,11 @@ public interface IWaysDbContext
 
     DbSet<CobroMercadoPago> CobrosMercadoPago { get; }
 
+    // Reportes de transacciones de Mercado Pago importados (E6) y sus filas con el resultado del cotejo.
+    DbSet<ConciliacionMercadoPago> ConciliacionesMercadoPago { get; }
+
+    DbSet<FilaConciliacionMercadoPago> FilasConciliacionMercadoPago { get; }
+
     // Decisión de facturar una venta (facturación por medio de pago). El acumulado por medio y mes NO se
     // expone: su único escritor es un upsert crudo, como numeraciones_fiscales.
     DbSet<FacturacionDeVenta> FacturacionesDeVenta { get; }

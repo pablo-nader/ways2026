@@ -157,6 +157,15 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs",
                 "var items = await db.ItemsComprobanteVenta.AsNoTracking()")] =
                 (1, PorId),
+            [("Ways.Application/MercadoPago/ServicioDeConciliacionMercadoPago.cs",
+                "var pago = await db.Cobros.FirstOrDefaultAsync(p => p.Id == solicitud.IdCobro && p.DeletedAt == null, ct);")] =
+                (1, "Lectura de UN pago por id para confirmarlo: la venta del pago se lee en la misma operación con SinEspejosFiscales y la de un espejo es un 404."),
+            [("Ways.Application/MercadoPago/ServicioDeConciliacionMercadoPago.cs",
+                "$\"SELECT 1 FROM cobros WHERE id_cobro = {solicitud.IdCobro} FOR UPDATE\", ct);")] =
+                (1, "Lock de UN pago por id, antes de leerlo: no lee ni lista ventas."),
+            [("Ways.Application/MercadoPago/ServicioDeConciliacionMercadoPago.cs",
+                "var pagoActualizado = await db.Cobros")] =
+                (1, "Actualiza UN pago por id y solo si sigue sin verificar: no lee ni lista ventas."),
             [("Ways.Application/Reportes/ServicioDeLibroIva.cs",
                 "var consulta = db.ComprobantesVenta")] =
                 (1, LibroIva),

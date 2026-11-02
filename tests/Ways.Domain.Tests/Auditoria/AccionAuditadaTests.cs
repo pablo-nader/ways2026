@@ -18,6 +18,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente. Las cuatro de sucursales (<c>sucursal.alta|edicion|baja</c> y <c>pv.sucursal</c>) las agregó el ABM de sucursales; <c>sucursal.fusion</c>, la fusión de sucursales; <c>sucursal.mercadopago</c>, el registro de la sucursal como local de Mercado Pago; <c>pv.mercadopago</c>, el del punto de venta como caja; <c>pv.terminalmercadopago</c>, la asignación de su terminal Point.
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// <c>compra.edicion</c> la agregó la edición de una compra confirmada.
+/// <c>conciliacion.importacion</c> y <c>conciliacion.confirmacion</c> las agregó la conciliación con el reporte de Mercado Pago (E6).
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
 /// bajos en el dominio.
 /// </summary>
@@ -27,9 +28,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneCuarentaYCuatroEntradas()
+    public void TieneCuarentaYSeisEntradas()
     {
-        Assert.Equal(44, AccionAuditada.Todas.Count);
+        Assert.Equal(46, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -87,6 +88,8 @@ public partial class AccionAuditadaTests
             ("venta.discrepancia", "comprobante_venta"),
             ("venta.aprobacionmanualmercadopago", "comprobante_venta"),
             ("venta.mercadopagodoblecobro", "comprobante_venta"),
+            ("conciliacion.importacion", "conciliacion_mercadopago"),
+            ("conciliacion.confirmacion", "conciliacion_mercadopago"),
             ("caja.forzado", "turno_caja"),
             ("venta.sobrelimite", "comprobante_venta"),
             ("pago.edicion", "pago"),

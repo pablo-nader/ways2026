@@ -36,7 +36,7 @@ namespace Ways.IntegrationTests;
 /// traducción; y que el cambio de medios y los recibos no puedan tocar ni agregar un pago de Mercado Pago.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public partial class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string Ruta = "/api/pos/mercadopago/cobros";
     private const string PasswordCajero = "una-contraseña-de-cajero";

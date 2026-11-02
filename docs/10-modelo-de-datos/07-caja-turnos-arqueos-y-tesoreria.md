@@ -580,6 +580,10 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
     fecha_apartado NULL,                     -- cuándo el dispositivo apartó el cobro aprobado (estado sin_venta); nulo en cualquier otro estado
     fecha_procesada_mercadopago NULL,        -- la primera vez que Mercado Pago informó la orden processed sin un pago legible (importe o id); no se borra
     id_comprobante_venta NULL,               -- la venta que este cobro aprobado pagó (E3-T2); FK compuesta (id_comprobante_venta, id_tenant)
+    comision_real numeric(18,2) NULL,        -- E6: comisión real (con IVA) = suma de los VALORES ABSOLUTOS de FEE_AMOUNT de todas las filas SETTLEMENT del archivo que conciliaron el cobro (siempre positiva; el reporte la informa negativa); nulo hasta conciliarlo
+    neto_real numeric(18,2) NULL,            -- E6: neto real = suma de SETTLEMENT_NET_AMOUNT de esas filas, tal como vienen (con su signo)
+    fecha_liberacion NULL,                   -- E6: la MONEY_RELEASE_DATE más tardía de esas filas
+    id_fila_conciliacion NULL,               -- E6: la primera fila (por línea) del reporte que concilió el cobro (un cobro se concilia una sola vez: otro archivo lo ve ya_conciliado); FK compuesta (id_fila_conciliacion, id_tenant) a filas_conciliacion_mercadopago; CHECK ck_cobros_mercadopago_conciliacion: comision_real, neto_real y fecha_liberacion solo con la fila
     created_at, updated_at, deleted_at
 )
 ```
@@ -623,3 +627,66 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
 > **Cobro con la terminal Point (E4).** Un medio con proveedor `mercadopago_point` cobra por el mismo `POST /api/pos/mercadopago/cobros` con las mismas reglas (reservar y después llamar, plazos, un cobro vivo por número, apartar, webhook). La caja del punto de venta tiene que tener terminal asignada (`cajas_mercadopago.id_terminal_point`) o es 409 `mercadopago_caja_sin_terminal`; la orden es `type: "point"` con `total_amount`, `transactions.payments[{amount}]`, `config.point.{terminal_id, print_on_terminal: "no_ticket"}` y `expiration_time` `PT10M` (sin QR ni items) y la fila guarda `tipo = 'point'` y la terminal pedida (sin `qr_data`). Un 409 `already_queued_order_for_terminal` de Mercado Pago es 409 `mercadopago_terminal_ocupada` (la fila sigue `creando` y el siguiente crear reenvía la misma orden con la misma clave). Mapeo de la orden Point: `created` -> `pendiente`; `at_terminal` -> `pendiente` con `enTerminal`; `action_required` -> `pendiente` con `revisarTerminal`; `processed` -> las reglas de siempre (importe e id legibles) -> `aprobado`; `failed` -> `fallido` (no es vivo: libera el número y el medio, y el siguiente cobro del número es otro intento); `canceled`, `expired` y `refunded` como en el QR. Cancelar solo vale con la orden `created`: con la situación en la terminal (o si Mercado Pago contesta 409 y la lectura la ubica ahí) es 409 `mercadopago_cancelar_en_la_terminal` y el cajero cancela en la terminal; el refresco lo refleja como `cancelado`. La respuesta del cobro agrega `tipo`, `idTerminal`, `enTerminal` y `revisarTerminal`; un cobro Point nunca trae `qrData` y `verificandoPago` solo es verdadero si el pago se informó sin datos legibles.
 
 > **Guarda del medio.** Cambiar el `proveedor` de un medio (a nulo o a otro), sacarlo de `Electronico` o desactivarlo es 409 `medio_con_cobros_mercadopago_vivos` mientras tenga cobros `creando` o `pendiente` (los aprobados quedan como historia). La edición toma `FOR UPDATE` del medio y la reserva de un cobro `FOR KEY SHARE`, así que no se cruzan.
+
+### Conciliación con el reporte de Mercado Pago (E6)
+
+```sql
+conciliaciones_mercadopago (   -- [operativa por empresa: id_tenant + id_empresa NOT NULL] un reporte de transacciones subido por un Admin
+    id_conciliacion_mercadopago, id_tenant, id_empresa,    -- FK compuesta (id_empresa, id_tenant) a empresas
+    hash_archivo varchar(64),                -- SHA-256 hex de los bytes del archivo (CHECK ck_conciliaciones_mercadopago_hash: 64 caracteres)
+    nombre_archivo varchar(255) NULL,
+    fecha_desde NULL, fecha_hasta NULL,      -- mínimo y máximo TRANSACTION_DATE de las filas leídas (CHECK _periodo: desde <= hasta)
+    id_usuario,                              -- FK a usuarios (el Admin que subió el archivo)
+    cantidad_filas integer, cantidad_invalidas integer,   -- todas las filas del archivo y las que no se pudieron leer (CHECK _cantidades)
+    created_at, updated_at, deleted_at
+)
+
+filas_conciliacion_mercadopago (   -- [operativa por empresa: id_tenant + id_empresa NOT NULL] cada fila del reporte con su resultado
+    id_fila_conciliacion_mercadopago, id_tenant, id_empresa,
+    id_conciliacion_mercadopago,             -- FK compuesta (id_conciliacion_mercadopago, id_tenant)
+    numero_linea integer,                    -- línea del archivo donde empieza el registro (el encabezado es la 1; CHECK _linea: >= 2)
+    resultado varchar(20),                   -- 'conciliado' | 'ya_conciliado' | 'duplicada' | 'sin_venta' | 'importe_distinto' | 'sin_cobro_en_ways' | 'devolucion' | 'contracargo' | 'retiro' | 'invalida' (CHECK _resultado); comision y neto de la fila van tal como vienen del reporte (con su signo)
+    source_id varchar(64) NULL, external_reference varchar(128) NULL, tipo_transaccion varchar(20) NULL,   -- SOURCE_ID, EXTERNAL_REFERENCE, TRANSACTION_TYPE
+    importe numeric(18,2) NULL,              -- TRANSACTION_AMOUNT
+    comision numeric(18,2) NULL,             -- FEE_AMOUNT tal como viene (con IVA, con su signo)
+    neto numeric(18,2) NULL,                 -- SETTLEMENT_NET_AMOUNT
+    fecha_transaccion NULL, fecha_liberacion NULL,   -- TRANSACTION_DATE, MONEY_RELEASE_DATE
+    external_pos_id varchar(80) NULL,
+    motivo varchar(300) NULL,                -- solo las 'invalida': por qué no se pudo leer (CHECK _datos: invalida = motivo y sin datos; las demás con source_id, tipo, importe y fecha)
+    id_cobro_mercadopago NULL,               -- el cobro de Ways con el que se cotejó (FK compuesta); lo llevan las conciliadas, las sin venta, las de importe distinto y las devoluciones/contracargos que lo nombran
+    id_cobro NULL,                           -- el pago de venta sin verificar (cobros.id_cobro) que un Admin confirmó contra una fila 'sin_cobro_en_ways' (FK compuesta; CHECK _confirmada)
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_conciliaciones_mercadopago_tenant|_empresa|_usuario` y `fk_filas_conciliacion_mercadopago_tenant|_empresa|_conciliacion|_cobro_mp|_cobro`
+> (compuestas con `id_tenant` salvo tenant y usuario, RESTRICT, sobre claves alternas `ak_conciliaciones_mercadopago_id_id_tenant` y
+> `ak_filas_conciliacion_mercadopago_id_id_tenant`); la FK `fk_cobros_mercadopago_fila_conciliacion` va del cobro a la fila. RLS por tenant en las dos tablas
+> (`HabilitarRlsDeTenant`). Único `ux_conciliaciones_mercadopago_archivo` `(id_empresa, hash_archivo)`: el mismo archivo no se importa dos veces en la misma
+> empresa (la importación toma un lock por empresa y lo mira antes de escribir; el 23505 es 409 `conciliacion_ya_importada` en `ManejadorDeErrores`). Único
+> parcial `ux_filas_conciliacion_mercadopago_cobro` `(id_cobro, id_tenant) WHERE id_cobro IS NOT NULL`: un pago sin verificar se confirma contra a lo sumo una fila
+> (23505 → 409 `conciliacion_pago_ya_verificado`; la confirmación toma la fila y el pago con `FOR UPDATE`, así que solo lo alcanza una escritura que se salte
+> esos locks). Único `ux_filas_conciliacion_mercadopago_linea` `(id_conciliacion_mercadopago, numero_linea)` sin traducción: solo la importación escribe filas, numeradas
+> por línea dentro de una transacción que ya chequeó el archivo. Índices de soporte `ix_conciliaciones_mercadopago_tenant|_usuario`,
+> `ix_filas_conciliacion_mercadopago_tenant|_empresa|_cobro_mp|_resultado` y `ix_cobros_mercadopago_fila_conciliacion`.
+>
+> **Importar (E6-T1).** `POST /api/mercadopago/conciliaciones?idEmpresa=` (Admin, multipart, campo `archivo`, hasta 10 MB; exige el encabezado `X-Ways-Origen: web` y una petición del mismo origen — `Sec-Fetch-Site` `same-origin|none` o `Origin` igual al scheme y host propios —, si no 403 `solicitud_no_permitida`: la cookie `SameSite=Lax` viaja en el POST de un formulario de un subdominio hermano) lee el CSV del "Reporte de todas las
+> transacciones" por nombre de columna (coma o punto y coma; obligatorias `SOURCE_ID`, `TRANSACTION_TYPE`, `TRANSACTION_AMOUNT`, `TRANSACTION_DATE`; opcionales
+> `EXTERNAL_REFERENCE`, `FEE_AMOUNT`, `SETTLEMENT_NET_AMOUNT`, `MONEY_RELEASE_DATE`, `EXTERNAL_POS_ID`; números con "." y hasta dos decimales; fechas ISO con zona) y
+> cotea cada fila con los cobros de la empresa: primero `EXTERNAL_REFERENCE` contra `external_reference`, después `SOURCE_ID` contra `referencia_pago_mercadopago`
+> o `id_pago_mercadopago`. `SETTLEMENT`: cobro aprobado y ligado a una venta por el mismo importe (`importe_pagado` o, si falta, `importe`) → `conciliado` (se guardan
+> `comision_real` (suma de los valores absolutos de `FEE_AMOUNT` de todas las filas del cobro), `neto_real` (suma de `SETTLEMENT_NET_AMOUNT`), `fecha_liberacion` (la más tardía) e
+> `id_fila_conciliacion` (la primera fila) en el cobro; las cuotas de un mismo pago llegan como varias filas y se suman); una fila idéntica a otra del archivo (mismos `SOURCE_ID`,
+> `TRANSACTION_TYPE`, `TRANSACTION_AMOUNT` y `TRANSACTION_DATE`) → `duplicada` (no se suma); un cobro que un archivo anterior ya conciliaba → `ya_conciliado` (no se aplica; el
+> detalle muestra la comisión y el neto guardados para compararlos); los totales del resumen no cuentan esas dos clases de fila. Los cobros que nombran las filas se leen con
+> `FOR UPDATE` (ascendente por id) después del lock de la empresa; con otro importe → `importe_distinto`; cobro apartado, fallido, pendiente, aprobado sin venta, etc. → `sin_venta`; sin cobro →
+> `sin_cobro_en_ways`. `REFUND` → `devolucion`; `CHARGEBACK` y `DISPUTE` → `contracargo` (se ligan al cobro, que no se modifica); `WITHDRAWAL`, `WITHDRAWAL_CANCEL` y
+> `PAYOUT` → `retiro` (los toma la tesorería en E7). Una fila ilegible o de un `TRANSACTION_TYPE` desconocido no rechaza el archivo: queda `invalida` con línea y motivo
+> (más de 1000, o ninguna válida, sí lo rechazan). Todo en una transacción; auditoría `conciliacion.importacion`.
+>
+> **Confirmar.** `POST /api/mercadopago/conciliaciones/{id}/filas/{idFila}/confirmar` `{idCobro}` (Admin) une una fila `sin_cobro_en_ways` con un pago de venta
+> `sin_verificar` de la misma empresa: el pago pasa a `verificado_manualmente`, la fila guarda `id_cobro` y se audita `conciliacion.confirmacion`. 404 primero (conciliación,
+> fila, pago de la empresa); 409 `conciliacion_fila_no_confirmable|conciliacion_fila_ya_confirmada|conciliacion_pago_ya_verificado|conciliacion_pago_no_esta_sin_verificar|venta_anulada|importe_distinto`
+> (el importe del pago tiene que ser el de la fila; la fecha y la caja las decide el Admin). La auditoría guarda el importe y la fecha de la fila, su `SOURCE_ID`, el importe del pago y la fecha de su venta.
+> El detalle (`GET …/{id}`) sugiere para cada fila sin cobro sin confirmar los pagos sin verificar de la empresa con el mismo importe, a no más de 24 horas de la venta y, si la fila trae
+> `EXTERNAL_POS_ID`, de la caja con ese `external_id`; las ventas anuladas no cuentan. La sugerencia nunca se aplica sola.

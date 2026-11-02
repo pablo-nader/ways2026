@@ -39,6 +39,9 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
                 "ck_cobros_mercadopago_situacion_terminal",
                 "situacion_terminal IS NULL OR (tipo = 'point' AND estado = 'pendiente' AND situacion_terminal IN ('en_terminal', 'revisar_terminal'))");
             t.HasCheckConstraint(
+                "ck_cobros_mercadopago_conciliacion",
+                "id_fila_conciliacion IS NOT NULL OR (comision_real IS NULL AND neto_real IS NULL AND fecha_liberacion IS NULL)");
+            t.HasCheckConstraint(
                 "ck_cobros_mercadopago_sin_venta",
                 "estado <> 'sin_venta' OR (fecha_apartado IS NOT NULL AND id_comprobante_venta IS NULL AND id_pago_mercadopago IS NOT NULL)");
         });
@@ -77,6 +80,11 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
 
         builder.Property(c => c.IdComprobanteVenta).HasColumnName("id_comprobante_venta");
 
+        builder.Property(c => c.ComisionReal).HasColumnName("comision_real").HasColumnType("numeric(18,2)");
+        builder.Property(c => c.NetoReal).HasColumnName("neto_real").HasColumnType("numeric(18,2)");
+        builder.Property(c => c.FechaLiberacion).HasColumnName("fecha_liberacion");
+        builder.Property(c => c.IdFilaConciliacion).HasColumnName("id_fila_conciliacion");
+
         // La venta (más el tenant) referencia al cobro desde cobros.id_cobro_mercadopago.
         builder.HasAlternateKey(c => new { c.Id, c.IdTenant }).HasName("ak_cobros_mercadopago_id_id_tenant");
 
@@ -90,6 +98,7 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
         builder.HasIndex(c => new { c.IdEmpresa, c.IdTenant }).HasDatabaseName("ix_cobros_mercadopago_empresa");
         builder.HasIndex(c => new { c.IdDispositivo, c.IdTenant }).HasDatabaseName("ix_cobros_mercadopago_dispositivo");
         builder.HasIndex(c => new { c.IdMedioPago, c.IdTenant }).HasDatabaseName("ix_cobros_mercadopago_medio_pago");
+        builder.HasIndex(c => new { c.IdFilaConciliacion, c.IdTenant }).HasDatabaseName("ix_cobros_mercadopago_fila_conciliacion");
 
         // A lo sumo un cobro vivo por número de venta: el que se está creando, el que espera el pago o el ya aprobado.
         builder.HasIndex(c => new { c.IdPuntoVenta, c.NumeroPreasignado })
@@ -120,6 +129,14 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
             .HasForeignKey(c => new { c.IdComprobanteVenta, c.IdTenant })
             .HasPrincipalKey(v => new { v.Id, v.IdTenant })
             .HasConstraintName("fk_cobros_mercadopago_comprobante_venta")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // La fila del reporte que concilió el cobro (E6); la fila a su vez apunta al cobro con el que se cotejó.
+        builder.HasOne<FilaConciliacionMercadoPago>()
+            .WithMany()
+            .HasForeignKey(c => new { c.IdFilaConciliacion, c.IdTenant })
+            .HasPrincipalKey(f => new { f.Id, f.IdTenant })
+            .HasConstraintName("fk_cobros_mercadopago_fila_conciliacion")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Tenant>()

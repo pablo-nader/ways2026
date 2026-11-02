@@ -220,6 +220,17 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_orden" } =>
                 (StatusCodes.Status409Conflict, "Esa orden de Mercado Pago ya pertenece a otro cobro.", "cobro_mercadopago_orden_duplicada"),
 
+            // Backstop de la importación de un reporte de Mercado Pago (E6): el lock por empresa serializa las subidas y la segunda ve el
+            // archivo ya importado (409 antes de escribir), así que solo lo alcanza una escritura que no pase por
+            // `ServicioDeConciliacionMercadoPago`. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_conciliaciones_mercadopago_archivo" } =>
+                (StatusCodes.Status409Conflict, "Ese archivo ya se importó en esta empresa.", "conciliacion_ya_importada"),
+
+            // Backstop de la confirmación de una fila del reporte (E6): la confirmación toma la fila y el pago con FOR UPDATE y rechaza un
+            // pago ya verificado, así que solo lo alcanza una escritura que se salte esos locks. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_filas_conciliacion_mercadopago_cobro" } =>
+                (StatusCodes.Status409Conflict, "El pago ya se verificó contra otra fila del reporte.", "conciliacion_pago_ya_verificado"),
+
             // Backstop del vínculo entre una venta y su cobro de Mercado Pago: la venta toma el cobro con FOR UPDATE y rechaza uno ya
             // ligado, así que solo lo alcanza una escritura que se salte ese lock. Por nombre exacto, antes de ClasificarUnicidad.
             { SqlState: "23505", ConstraintName: "ux_cobros_mercadopago_comprobante_venta" } =>

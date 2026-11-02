@@ -419,6 +419,50 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
     }
 
     /// <summary>
+    /// Conciliación con el reporte de Mercado Pago (E6): subir el archivo y confirmar una fila escriben y son de Admin
+    /// (<see cref="Politicas.GestionDeCatalogo"/> apilada sobre la lectura del grupo, así que no necesitan entrar al allowlist); el
+    /// listado y el detalle son de Supervisor y Admin (<see cref="Politicas.LecturaDeReportes"/>). Un 403 observable no prueba que
+    /// la declaración exista: este walker sí. Los positivos por rol real están en <c>MercadoPagoVentaTests</c>
+    /// (<c>ConfirmarYSubirSonSoloDelAdmin</c>, <c>UnReporteConciliaElCobroLigado…</c>).
+    /// </summary>
+    private static readonly (string Metodo, string Ruta, string[] PoliciesExigidas)[] RutasDeConciliacionDeMercadoPago =
+    [
+        ("POST", "/api/mercadopago/conciliaciones/", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo]),
+        ("GET", "/api/mercadopago/conciliaciones/", [Politicas.LecturaDeReportes]),
+        ("GET", "/api/mercadopago/conciliaciones/{idConciliacion:int}", [Politicas.LecturaDeReportes]),
+        ("POST", "/api/mercadopago/conciliaciones/{idConciliacion:int}/filas/{idFila:int}/confirmar", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo])
+    ];
+
+    [Fact]
+    public void LasRutasDeConciliacionDeMercadoPagoApilanLaPolicyDeSuRol()
+    {
+        var fuente = fixture.Services.GetRequiredService<EndpointDataSource>();
+
+        foreach (var (metodo, ruta, exigidas) in RutasDeConciliacionDeMercadoPago)
+        {
+            var endpoint = fuente.Endpoints
+                .OfType<RouteEndpoint>()
+                .SingleOrDefault(e =>
+                    string.Equals(e.RoutePattern.RawText, ruta, StringComparison.Ordinal)
+                    && e.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(metodo) == true);
+
+            Assert.True(endpoint is not null, $"No existe el endpoint {metodo} {ruta}.");
+
+            var policies = endpoint!.Metadata
+                .GetOrderedMetadata<IAuthorizeData>()
+                .Select(dato => dato.Policy)
+                .ToList();
+
+            foreach (var exigida in exigidas)
+            {
+                Assert.True(
+                    policies.Contains(exigida, StringComparer.Ordinal),
+                    $"{metodo} {ruta} no apila {exigida}; apila [{string.Join(", ", policies)}].");
+            }
+        }
+    }
+
+    /// <summary>
     /// WARNING real (judgment-day, Judge A): el guard de arriba salta explícitamente todo
     /// endpoint GET (<c>metodos.Contains("GET")</c>) — quedaba ciego a un grupo GET sin
     /// <c>RequireAuthorization</c> (el caso real: <c>/api/catalogos-fiscales</c>, que caía al
