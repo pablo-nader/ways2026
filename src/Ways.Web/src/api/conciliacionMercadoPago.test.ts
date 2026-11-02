@@ -287,6 +287,7 @@ describe('mensajeDeErrorDeConciliacion', () => {
     [409, 'conciliacion_pago_ya_verificado', 'ya fue verificado'],
     [409, 'venta_anulada', 'anulada'],
     [409, 'importe_distinto', 'no coincide'],
+    [409, 'propuesta_cancelada_por_mercadopago', 'Mercado Pago canceló'],
   ])('%i %s tiene copia propia', (estado, codigo, fragmento) => {
     const mensaje = mensajeDeErrorDeConciliacion(api(estado, codigo), 'subida')
 

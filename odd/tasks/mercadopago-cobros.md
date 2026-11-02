@@ -59,14 +59,11 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
   - [x] E6-T2 — Back-office web screen (commit 9cda93a5).
 - [x] E7 — Withdrawals/payouts from the report into treasury (commit 43ba5d2e).
+- [x] E7b — A withdrawal cancel is remembered across reports and its mark survives reopen (flag `cancelado_por_mercadopago`).
 
 ## Delivery strategy
 
 `ask-on-risk`, standing chain `stacked-to-main`, one PR per task through judgment-day.
-
-## Next step
-
-Program complete; production setup pending (owner).
 
 ## E3-T1 design (2026-11-01)
 
@@ -828,3 +825,45 @@ in place (Designer and snapshot too; `has-pending-model-changes` clean).
   `propuesta_cancelada_por_mercadopago` (the Admin can still post a manual treasury adjustment if needed).
 - The same-file exclusion covers Withdrawal and Payout rows.
 - Applying a `retiro_cancelado` documents that inactive accounts are accepted (it undoes a prior movement); deleted accounts keep the 409.
+
+## E7b progress (2026-11-02)
+
+- New migration `CanceladoPorMercadoPagoEnPropuestas`: `propuestas_tesoreria_mercadopago.cancelado_por_mercadopago boolean NOT NULL DEFAULT false`; backfill
+  under `SET LOCAL app.acceso = 'plataforma'` marks reversions, retiros discarded with motivo "cancelado por Mercado Pago" and applied retiros that have a reversion in
+  the same empresa; tested over `ways_app` (2 tests in `MercadoPagoPropuestasCanceladasMigracionTests`). The snapshot was edited by hand (only the new property): the generated one dropped the
+  `ux_..._retiro` index, a known EF quirk for two indexes on the same columns.
+- Generator: a retiro whose SOURCE_ID has a `WITHDRAWAL_CANCEL` row in another conciliacion of the empresa is created `descartada` (motivo, user, audit) with the flag; the flag is set in every
+  cancel branch (pending discard, applied original + reversion, manually discarded); same-file exclusion now covers Withdrawal and Payout. Counts: born-discarded retiros go to
+  `RetirosDescartadosPorCancelacion`, not to created nor to `RetirosYaPropuestos`.
+- Reopen: 409 `propuesta_cancelada_por_mercadopago` after the state check; DTO `canceladoPorMercadoPago`; web badge "Cancelado por Mercado Pago", no "Reabrir", copy for the 409.
+- retiro_cancelado apply accepts inactive accounts (documented in the service and docs/10, covered by a test); deleted accounts keep the 409.
+- Verification: build 0 errors; no pending model changes; Domain 2610, Application 1660; integration (whole `MercadoPagoVentaTests` + MercadoPagoMigracion + new migration tests + Tesoreria +
+  SuperficieDeAutorizacion + UpDownUp + AislamientoDeTenant) 331 pass; web tsc clean, 163 tests (api, page, tesoreria), `npm run build` ok.
+- Mutation (one per run, restored with identical hash): cross-report cancel lookup disabled fails 1; reopen guard disabled fails 4; Payout exclusion reverted to Withdrawal-only fails 1;
+  backfill `SET LOCAL` removed fails the `ways_app` test (the StartsWith guard).
+- Deviation: `src/Ways.Web/src/paginas/ConciliacionMercadoPago.test.tsx` was also edited (fixture needs the new field; reopen tests updated), outside the listed surface but required by the verification command.
+
+## Veredicto judgment-day E7b (2026-11-02)
+
+- Ronda 1: jueces A y B confirmaron F1 (índices sin nombre colapsados), F2 (backfill sin filas WITHDRAWAL_CANCEL) y F3 (falta índice de búsqueda de cancelaciones); todos WARNING.
+- Corrección e86ddc91; re-juicio acotado de A y B: F1, F2 y F3 resueltos, sin hallazgos nuevos.
+- **JUDGMENT: APPROVED ✅**
+- Límites conocidos: el backfill no audita los descartes; la reversión se prueba con la conexión dueña; toma la fila de cancelación de menor id.
+
+## Judgment-day E7b round 1 fixes (2026-11-02)
+
+- F1 (index identity collapse): both partial unique indexes on `{IdTenant, IdEmpresa, ClaveOrigen}` are declared with the named `HasIndex(..., name)` overload; the E7b Designer and the
+  snapshot now carry both (`HasIndex(new[] {...}, "ux_..._retiro")` and `..._retiro_cancelado`). The E7 migration was not touched. Evidence: `dotnet ef migrations add Probe` after the
+  fix yields an EMPTY Up/Down (before the fix it wanted to create `ux_..._retiro`); the probe files were deleted by hand because `migrations remove` needs a database and none was listening.
+- F2 (backfill gap): `SqlDeBackfill` now consults `filas_conciliacion_mercadopago` (`WITHDRAWAL_CANCEL`, same tenant and empresa, `source_id = clave_origen`, any conciliacion): a pending
+  retiro with a cancel row is discarded (motivo "cancelado por Mercado Pago", `fecha_resolucion = now()`, no user: the resolution CHECK only needs the date), an applied retiro with
+  a cancel row and no reversion gets a pending `retiro_cancelado` (first cancel row, accounts and amount of the retiro, flagged, `ON CONFLICT DO NOTHING`), and every retiro with a
+  cancel row is flagged. Still under `SET LOCAL app.acceso = 'plataforma'`, idempotent. Remaining limitation: no audit records are written for the discards (SQL cannot reach the audit service).
+  Tests (`MercadoPagoPropuestasCanceladasMigracionTests`, 4 pass): hand-discarded 9005 flagged, pending 9006 discarded + flagged, 9003 (only a WITHDRAWAL row) and 9004 (cancel in another empresa)
+  untouched; reversion created once with the retiro's accounts (owner connection with FKs off, since parents are not seeded). Mutation: `SET LOCAL` removed fails the `ways_app` test.
+- F3 (missing index): `ix_filas_conciliacion_mercadopago_cancelaciones` on `(id_empresa, tipo_transaccion, source_id)`, added to the E7b migration (Up/Down), Designer and snapshot.
+- Verification: build 0 errors; Application.Tests 1660 pass; migration tests 4 pass; `MercadoPagoVentaTests` + `AislamientoDeTenant` + `UpDownUp` pass.
+
+## Next step
+
+Program complete; production setup pending (owner).

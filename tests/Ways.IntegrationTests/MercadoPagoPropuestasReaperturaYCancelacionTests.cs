@@ -99,7 +99,8 @@ public partial class MercadoPagoVentaTests
     }
 
     // Clausula (rama pendiente): un WITHDRAWAL_CANCEL de un retiro pendiente lo descarta con el motivo "cancelado por Mercado Pago", queda auditado, no
-    // mueve dinero, la cancelacion no propone nada y se cuenta; el retiro descartado no se aplica y el Admin lo puede reabrir.
+    // mueve dinero, la cancelacion no propone nada y se cuenta; el retiro descartado no se aplica, queda marcado como cancelado por Mercado Pago y
+    // el Admin ya no lo puede reabrir (la marca no se borra).
     [Fact]
     public async Task LaCancelacionDeUnRetiroPendienteLoDescartaSinMoverDinero()
     {
@@ -116,15 +117,18 @@ public partial class MercadoPagoVentaTests
         var descartado = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id));
         Assert.Equal("descartada", descartado.Estado);
         Assert.Equal("cancelado por Mercado Pago", descartado.Motivo);
+        Assert.True(descartado.CanceladoPorMercadoPago);
         Assert.NotNull(descartado.ResueltaEl);
         Assert.Equal(1, await ConcAuditoriasAsync("conciliacion.propuestadescartada", retiro.Id));
         Assert.Equal(0L, await PropCantidadDeFilasAsync(e.Ctx.IdCuenta));
         await AssertCodigoAsync(
             await PropAplicarAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id, e.Ctx.IdCuenta), HttpStatusCode.Conflict, "propuesta_descartada");
 
-        var reabierto = await LeerAsync<PropuestaDeTesoreria>(await PropReabrirAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id));
-        Assert.Equal("pendiente", reabierto.Estado);
-        Assert.Null(reabierto.Motivo);
+        await AssertCodigoAsync(
+            await PropReabrirAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id), HttpStatusCode.Conflict, "propuesta_cancelada_por_mercadopago");
+        var intacto = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id));
+        Assert.Equal(("descartada", true), (intacto.Estado, intacto.CanceladoPorMercadoPago));
+        Assert.Equal(0, await ConcAuditoriasAsync("conciliacion.propuestareabierta", retiro.Id));
     }
 
     // Clausula (rama aplicada): un WITHDRAWAL_CANCEL de un retiro aplicado propone una reversion (retiro_cancelado) entre las MISMAS dos cuentas, con el
@@ -150,7 +154,9 @@ public partial class MercadoPagoVentaTests
         Assert.Equal("pendiente", reversion.Estado);
         Assert.Equal(40m, reversion.Importe);
         Assert.Equal((e.Ctx.IdCuenta, idBanco, "9321"), (reversion.IdCuentaOrigen!.Value, reversion.IdCuentaDestino!.Value, reversion.SourceId));
-        Assert.Equal("aplicada", Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id)).Estado);
+        Assert.True(reversion.CanceladoPorMercadoPago);
+        var original = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id));
+        Assert.Equal(("aplicada", true), (original.Estado, original.CanceladoPorMercadoPago));
         Assert.Equal(-40m, await PropSaldoAsync(e.Ctx.IdCuenta));
 
         await AssertCodigoAsync(
@@ -204,6 +210,9 @@ public partial class MercadoPagoVentaTests
         var intacto = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id));
         Assert.Equal("descartada", intacto.Estado);
         Assert.Null(intacto.Motivo);
+        Assert.True(intacto.CanceladoPorMercadoPago);
+        await AssertCodigoAsync(
+            await PropReabrirAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id), HttpStatusCode.Conflict, "propuesta_cancelada_por_mercadopago");
         Assert.Equal(1, await ConcAuditoriasAsync("conciliacion.propuestadescartada", retiro.Id));
         Assert.Equal(0L, await PropCantidadDeFilasAsync(e.Ctx.IdCuenta));
     }
@@ -222,5 +231,100 @@ public partial class MercadoPagoVentaTests
         Assert.Equal(1, importada.RetirosCancelados);
         Assert.Equal(0, importada.RetirosYaPropuestos);
         Assert.Equal("9342", Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id)).SourceId);
+    }
+
+    // Clausula (mismo archivo, payout): la exclusion del retiro cancelado en el mismo archivo tambien cubre una fila PAYOUT, que no se propone para
+    // descartarla en el mismo paso.
+    [Fact]
+    public async Task UnPayoutYSuCancelacionEnElMismoArchivoNoProponenNada()
+    {
+        var e = await PrepararAsync("mp-prop-cancel-payout");
+        await PropMedioConCuentaAsync(e);
+
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9351", "PAYOUT", "-40.00"), PropFila("9351", "WITHDRAWAL_CANCEL", "40.00")));
+
+        Assert.Equal(1, importada.RetirosCancelados);
+        Assert.Equal(0, importada.RetirosYaPropuestos);
+        Assert.Empty(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
+        Assert.Equal(0L, (long)(await ConsultarAsync(
+            "SELECT count(*) AS n FROM propuestas_tesoreria_mercadopago WHERE id_empresa = $1 AND clave_origen = '9351'", e.Ctx.IdEmpresa)).Single()["n"]!);
+    }
+
+    // Clausula (cancelacion recordada): una cancelacion importada en un reporte ANTERIOR hace que el retiro que llega despues en otro reporte nazca
+    // descartado, con el motivo, la marca, la auditoria y sin mover dinero; no se reabre ni se aplica; un retiro sin cancelacion del mismo reporte
+    // sigue pendiente. Cubre un PAYOUT con la misma regla.
+    [Fact]
+    public async Task UnRetiroQueLlegaDespuesDeSuCancelacionNaceDescartadoYNoSePuedeReabrir()
+    {
+        var e = await PrepararAsync("mp-prop-cancel-recordada");
+        await PropMedioConCuentaAsync(e);
+        var primera = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9361", "WITHDRAWAL_CANCEL", "40.00"), PropFila("9363", "WITHDRAWAL_CANCEL", "5.00")));
+        Assert.Equal(2, primera.RetirosCancelados);
+
+        var segunda = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa,
+            Reporte(PropFila("9361", "WITHDRAWAL", "-40.00"), PropFila("9362", "WITHDRAWAL", "-7.00"), PropFila("9363", "PAYOUT", "-5.00")));
+
+        Assert.Equal(0, segunda.RetirosYaPropuestos);
+        var propuestas = await PropListarAsync(e.Ctx.Admin, segunda.Conciliacion.Id);
+        Assert.Equal(3, propuestas.Count);
+        foreach (var cancelado in propuestas.Where(p => p.SourceId is "9361" or "9363"))
+        {
+            Assert.Equal(("descartada", "cancelado por Mercado Pago", true), (cancelado.Estado, cancelado.Motivo, cancelado.CanceladoPorMercadoPago));
+            Assert.NotNull(cancelado.ResueltaEl);
+            Assert.Equal(1, await ConcAuditoriasAsync("conciliacion.propuestadescartada", cancelado.Id));
+            await AssertCodigoAsync(
+                await PropReabrirAsync(e.Ctx.Admin, segunda.Conciliacion.Id, cancelado.Id), HttpStatusCode.Conflict, "propuesta_cancelada_por_mercadopago");
+            await AssertCodigoAsync(
+                await PropAplicarAsync(e.Ctx.Admin, segunda.Conciliacion.Id, cancelado.Id, e.Ctx.IdCuenta), HttpStatusCode.Conflict, "propuesta_descartada");
+        }
+
+        var normal = Assert.Single(propuestas, p => p.SourceId == "9362");
+        Assert.Equal(("pendiente", false), (normal.Estado, normal.CanceladoPorMercadoPago));
+        Assert.Equal(0L, await PropCantidadDeFilasAsync(e.Ctx.IdCuenta));
+    }
+
+    // Clausula (reabierto y luego cancelado): un retiro que el Admin descarto y reabrio (sin marca) y despues cancela Mercado Pago vuelve a descartarse,
+    // ahora con la marca, y ya no se reabre.
+    [Fact]
+    public async Task UnRetiroReabiertoQueDespuesCancelaMercadoPagoSeDescartaConLaMarca()
+    {
+        var e = await PrepararAsync("mp-prop-cancel-reabierto");
+        await PropMedioConCuentaAsync(e);
+        var primera = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9371", "WITHDRAWAL", "-40.00")));
+        var retiro = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id));
+        await LeerAsync<PropuestaDeTesoreria>(await PropDescartarAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id));
+        var reabierto = await LeerAsync<PropuestaDeTesoreria>(await PropReabrirAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id));
+        Assert.False(reabierto.CanceladoPorMercadoPago);
+
+        await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9371", "WITHDRAWAL_CANCEL", "40.00")));
+
+        var descartado = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id));
+        Assert.Equal(("descartada", true), (descartado.Estado, descartado.CanceladoPorMercadoPago));
+        await AssertCodigoAsync(
+            await PropReabrirAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id), HttpStatusCode.Conflict, "propuesta_cancelada_por_mercadopago");
+    }
+
+    // Clausula (cuentas inactivas): aplicar la reversion de un retiro cancelado acepta cuentas inactivas (deshace un movimiento que esas cuentas ya tuvieron).
+    [Fact]
+    public async Task AplicarLaReversionAceptaCuentasInactivas()
+    {
+        var e = await PrepararAsync("mp-prop-cancel-inactivas");
+        await PropMedioConCuentaAsync(e);
+        var idBanco = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Banco");
+        var primera = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9381", "WITHDRAWAL", "-40.00")));
+        var retiro = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id));
+        await LeerAsync<PropuestaDeTesoreria>(await PropAplicarAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiro.Id, idBanco));
+        var segunda = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9381", "WITHDRAWAL_CANCEL", "40.00")));
+        var reversion = Assert.Single(await PropListarAsync(e.Ctx.Admin, segunda.Conciliacion.Id));
+
+        await EjecutarAsync("UPDATE cuentas_tesoreria SET activo = false WHERE id_cuenta_tesoreria = ANY($1)", new[] { e.Ctx.IdCuenta, idBanco });
+        var aplicada = await LeerAsync<PropuestaDeTesoreria>(await PropAplicarAsync(e.Ctx.Admin, segunda.Conciliacion.Id, reversion.Id));
+
+        Assert.Equal("aplicada", aplicada.Estado);
+        Assert.Equal(0m, await PropSaldoAsync(e.Ctx.IdCuenta));
+        Assert.Equal(0m, await PropSaldoAsync(idBanco));
     }
 }

@@ -53,7 +53,7 @@ const mensajeDeLectura = (e: unknown) => mensajeDeErrorDeConciliacion(e, 'lectur
 
 /**
  * "Movimientos a tesorería": lo que la conciliación propone escribir en la tesorería (la diferencia de comisión, los retiros del reporte y la reversión
- * de los que Mercado Pago canceló). Una propuesta descartada se puede reabrir.
+ * de los que Mercado Pago canceló). Una propuesta descartada se puede reabrir, salvo la que Mercado Pago canceló.
  * Nada se escribe hasta que el Admin aplica; aplicar un retiro pide la cuenta que lo recibe. Las lecturas pasan por `useLectura`; las
  * escrituras son del padre, que las confirma en un diálogo y deja inerte la pantalla mientras están en vuelo.
  */
@@ -179,6 +179,7 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                       </td>
                       <td>
                         <span className={`badge ${claseDeEstadoDePropuesta(p.estado)}`}>{etiquetaDeEstadoDePropuesta(p.estado)}</span>
+                        {p.canceladoPorMercadoPago && <span className="badge text-bg-warning ms-1">Cancelado por Mercado Pago</span>}
                       </td>
                       {puedeResolver && (
                         <td>
@@ -254,7 +255,7 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                               </button>
                             </>
                           )}
-                          {p.estado === 'descartada' && (
+                          {p.estado === 'descartada' && !p.canceladoPorMercadoPago && (
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-primary"

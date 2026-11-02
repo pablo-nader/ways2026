@@ -66,6 +66,7 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
         builder.Property(p => p.IdUsuarioResolucion).HasColumnName("id_usuario_resolucion");
         builder.Property(p => p.FechaResolucion).HasColumnName("fecha_resolucion");
         builder.Property(p => p.MotivoResolucion).HasColumnName("motivo_resolucion").HasMaxLength(120);
+        builder.Property(p => p.CanceladoPorMercadoPago).HasColumnName("cancelado_por_mercadopago").HasDefaultValue(false).IsRequired();
 
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
@@ -88,16 +89,15 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
             .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_origen")
             .IsUnique();
 
+        // Los dos índices únicos comparten propiedades: se declaran con nombre para que EF no los confunda en uno solo.
         // Un retiro se propone una sola vez por empresa, aunque dos reportes de rangos que se pisan lo traigan: su clave es el SOURCE_ID de
         // Mercado Pago y vale para toda propuesta de la empresa, pendiente, aplicada o descartada. Respalda la carrera de dos importaciones.
-        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.ClaveOrigen })
-            .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro")
+        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.ClaveOrigen }, "ux_propuestas_tesoreria_mercadopago_retiro")
             .HasFilter("tipo = 'retiro'")
             .IsUnique();
 
         // Lo mismo para la reversión de un retiro cancelado: una por operación y empresa, aunque dos reportes que se pisan traigan la cancelación.
-        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.ClaveOrigen })
-            .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro_cancelado")
+        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.ClaveOrigen }, "ux_propuestas_tesoreria_mercadopago_retiro_cancelado")
             .HasFilter("tipo = 'retiro_cancelado'")
             .IsUnique();
 
