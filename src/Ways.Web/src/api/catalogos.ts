@@ -247,11 +247,15 @@ export function cuentaDelFormulario(
   }
 }
 
-/** El proveedor que se ofrece en el formulario; Point queda oculto hasta que exista su cobro (E4). */
-export const PROVEEDORES_DE_COBRO_OFRECIDOS = [{ valor: 'mercadopago_qr', etiqueta: 'Mercado Pago QR' }]
+/** Los proveedores de cobro que se ofrecen en el formulario del medio. */
+export const PROVEEDORES_DE_COBRO_OFRECIDOS = [
+  { valor: 'mercadopago_qr', etiqueta: 'Mercado Pago QR' },
+  { valor: 'mercadopago_point', etiqueta: 'Mercado Pago Point' },
+]
 
 const AYUDA_DEL_PROVEEDOR =
   'Con Mercado Pago QR el POS muestra un QR al cobrar y cierra la venta cuando el pago se aprueba, sin pedir una referencia a mano. ' +
+  'Con Mercado Pago Point el cliente paga en la terminal asignada a la caja y la venta se cierra igual. ' +
   'Sin integración, el cajero carga la referencia como siempre.'
 
 /** Un medio no electrónico manda siempre null: el servidor rechaza el proveedor ahí y el formulario no puede arrastrar el que

@@ -143,8 +143,11 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 var id = ordenes.OrdenPorClave.GetOrAdd(clave, _ => $"ORD{Interlocked.Increment(ref _siguienteOrden):D6}");
                 ordenes.Estados.TryAdd(id, "created");
                 using var cuerpo = JsonDocument.Parse(pedido.Cuerpo);
-                ordenes.Totales[id] = decimal.Parse(
-                    cuerpo.RootElement.GetProperty("total_amount").GetString()!, CultureInfo.InvariantCulture);
+                // El QR lleva total_amount; la orden Point no (solo transactions.payments[{amount}]).
+                var textoDelTotal = cuerpo.RootElement.TryGetProperty("total_amount", out var total)
+                    ? total.GetString()!
+                    : cuerpo.RootElement.GetProperty("transactions").GetProperty("payments")[0].GetProperty("amount").GetString()!;
+                ordenes.Totales[id] = decimal.Parse(textoDelTotal, CultureInfo.InvariantCulture);
                 return Json(HttpStatusCode.Created, JsonDeOrden(ordenes, id));
             }
 

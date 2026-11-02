@@ -11529,6 +11529,10 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
       verificandoPago: false,
       pagoInformadoSinDatos: false,
       usadoEnVenta: false,
+      tipo: 'qr',
+      idTerminal: null,
+      enTerminal: false,
+      revisarTerminal: false,
       ...sobrescribir,
     }
   }
@@ -12173,6 +12177,93 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
 
       expect(await screen.findByText(/ajustá la fila de Mercado Pago a \$\s?90,00/, { selector: '.alert' })).toBeInTheDocument()
       expect(screen.queryByRole('alertdialog', { name: 'Cobro de Mercado Pago aprobado' })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('con la terminal Point', () => {
+    const medioPoint = medioFixture({
+      id: 5,
+      nombre: 'Mercado Pago Point',
+      comportamiento: 'Electronico',
+      admiteVuelto: false,
+      requiereReferencia: true,
+      proveedor: 'mercadopago_point',
+    })
+    const TERMINAL = 'PAX_A910__SMARTPOS1234567890'
+
+    const cobroPoint = (sobrescribir: Partial<CobroMercadoPago> = {}) =>
+      cobroDeServidor({ tipo: 'point', idTerminal: TERMINAL, qrData: null, ...sobrescribir })
+
+    beforeEach(() => {
+      servidor.crear.mockReset().mockResolvedValue(cobroPoint())
+      servidor.leer.mockReset().mockResolvedValue(cobroPoint())
+      mockearApiGet((ruta) => {
+        if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioMercadoPago, medioPoint])
+        if (ruta.startsWith(RUTA_COBROS)) return servidor.leer()
+        return undefined
+      })
+    })
+
+    async function cobrarConPoint(props: ComponentProps<typeof Pos> = {}) {
+      await prepararAlmacenConBloque()
+      await montar(props)
+      await cargarLineaYMedio(medioPoint.nombre)
+      await userEvent.click(botonCobrar())
+    }
+
+    it('un medio Point no pide referencia, crea el cobro con él y muestra la terminal sin QR ni "Imprimir QR"', async () => {
+      await cobrarConPoint()
+
+      expect(await screen.findByText(`Cobrando en la terminal ${TERMINAL}…`)).toBeInTheDocument()
+      expect(crearCobroLlamadas()[0][1]).toEqual({ idMedioPago: medioPoint.id, numeroPreasignado: 500, importe: 100 })
+      expect(qrEnPantalla()).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Imprimir QR' })).not.toBeInTheDocument()
+      expect(screen.queryByLabelText(`Referencia de ${medioPoint.nombre} (fila 1)`)).not.toBeInTheDocument()
+      expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, estado: 'en_curso', idCobro: 31 })
+    })
+
+    it('"revisar la terminal" cambia el texto del modal', async () => {
+      servidor.leer.mockResolvedValue(cobroPoint({ revisarTerminal: true }))
+      await cobrarConPoint()
+
+      expect(await screen.findByText('Revisá el resultado en la terminal.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cancelar cobro' })).toBeDisabled()
+    })
+
+    it('aprobado en la terminal: encola la venta una vez con el número reservado y el cobro', async () => {
+      const alEmitir = vi.fn()
+      await cobrarConPoint({ alEmitir })
+      await screen.findByText(`Cobrando en la terminal ${TERMINAL}…`)
+
+      servidor.leer.mockResolvedValue(cobroPoint({ estado: 'aprobado', importePagado: 100 }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].numeroPreasignado).toBe(500)
+      expect(outbox[0].solicitud.pagos).toEqual([{ idMedioPago: medioPoint.id, importe: 100, referencia: null, vuelto: 0, idCobroMercadoPago: 31 }])
+      expect(alEmitir).toHaveBeenCalledTimes(1)
+    })
+
+    it('rechazado en la terminal: vuelve al pago con el motivo, no consume el número y el reintento usa el mismo', async () => {
+      await cobrarConPoint()
+      await screen.findByText(`Cobrando en la terminal ${TERMINAL}…`)
+
+      servidor.leer.mockResolvedValue(cobroPoint({ estado: 'fallido' }))
+
+      expect(await screen.findByText('El pago fue rechazado en la terminal: probá de nuevo u otro medio.')).toBeInTheDocument()
+      await waitFor(() => expect(botonCobrar()).toBeEnabled())
+      expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toBeNull()
+      expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
+
+      servidor.crear.mockResolvedValue(cobroPoint({ idCobro: 32 }))
+      servidor.leer.mockResolvedValue(cobroPoint({ idCobro: 32 }))
+      await userEvent.click(botonCobrar())
+
+      await screen.findByText(`Cobrando en la terminal ${TERMINAL}…`)
+      expect(crearCobroLlamadas().map(([, cuerpo]) => (cuerpo as { numeroPreasignado: number }).numeroPreasignado)).toEqual([500, 500])
     })
   })
 })

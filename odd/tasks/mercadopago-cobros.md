@@ -33,7 +33,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   {id, status, status_detail, amount, paid_amount, reference_id, payment_method}`. A rejected QR payment is not exposed: the
   order stays `created`.
 - Cancel `POST /v1/orders/{id}/cancel` (idempotency key) only while `created`, else 409. Refund `POST /v1/orders/{id}/refund`.
-- Point: `type:"point"`, `transactions.payments[{amount}]`, `config.point.{terminal_id, print_on_terminal}`; statuses add
+- Point: `type:"point"` (no `total_amount`), `transactions.payments[{amount}]`, `config.point.{terminal_id, print_on_terminal}`; statuses add
   `at_terminal`, `action_required`, `failed`; 409 `already_queued_order_for_terminal`.
 - Webhook: per application (panel), topic `order`; header `x-signature: ts=…,v1=<hex>`; manifest
   `id:{data.id};request-id:{x-request-id};ts:{ts};` HMAC-SHA256 with the app's secret; answer 200 within 22 s; then GET the order.
@@ -52,7 +52,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   back office, cierre de turno y cobros con Mercado Pago bloqueados mientras haya un apartado sin sincronizar, `reponerBloque` bajo
   el candado de la reserva.
 - [x] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
-- [ ] E4 — Point: same charge with `type:"point"` on the PV's terminal.
+- [x] E4 — Point: same charge with `type:"point"` on the PV's terminal.
 - [ ] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
   account.
@@ -64,7 +64,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E4: Point (same charge with `type:"point"` on the PV's terminal). E3-T4 is built and awaits its own judgment-day before the PR; E3-T3b is already approved. Pending before it ships to the cajas: the POS bundle of E3-T3 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress).
+E5: offline manual approval flagged `sin_verificar`, carried in the offline queue (Point and QR charges both need it; the POS shows "Mercado Pago necesita conexión" until then). E4 is built and awaits its own judgment-day before the PR; E3-T4 and E3-T3b are already approved. Pending before it ships to the cajas: the POS bundle of E3-T3/E4 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress). Nothing of E4 was exercised against the real Mercado Pago API or a real terminal.
 
 ## E3-T1 design (2026-11-01)
 
@@ -397,3 +397,74 @@ Fix commit `fix(mercadopago): el webhook respeta el intervalo de consulta y no l
 - Owner configuration for production: MP Developers -> Webhooks: URL `https://aipos.site/api/integraciones/mercadopago/webhook`,
   topic "Order (Mercado Pago)", copy the secret; EasyPanel: `Ways__MercadoPago__SecretoWebhook=<secret>`. Until then the endpoint
   answers 503 and polling keeps working.
+
+## E4 design (2026-11-01) — Point charges
+
+Branch `pnader/mercadopago-e4`, stacked on E3-T4. Backend + POS + medios ABM. One slice (the flow reuses E3 end to end).
+
+- Medio `proveedor = mercadopago_point` (already allowed by the CHECK; the ABM select shows "Mercado Pago Point").
+- Create (`POST /api/pos/mercadopago/cobros`, same endpoint and the same reserve-then-call / time-band rules): when the medio is
+  Point, the PV's caja must have an assigned terminal (`cajas_mercadopago.id_terminal_point`, E2-T5) else 409
+  `mercadopago_caja_sin_terminal`; the order is `type:"point"`, `external_reference` as today, `transactions.payments[{amount}]`,
+  `config.point.{terminal_id, print_on_terminal:"no_ticket"}` (Ways prints the ticket), `expiration_time:"PT10M"`; row `tipo =
+  point`, no `qr_data`. 409 `already_queued_order_for_terminal` -> 409 `mercadopago_terminal_ocupada` (another order is waiting on
+  that terminal).
+- Status mapping for Point orders (verified facts): `created`/`at_terminal` -> `pendiente` (flag `enTerminal` when at_terminal);
+  `action_required` -> `pendiente` with `revisarTerminal: true` ("check the result on the terminal"); `processed` -> E3 rules
+  (readable amount + payment id) -> `aprobado`; `failed` -> new state `fallido` (not live; the cashier may retry, a new intento);
+  `canceled` -> `cancelado`; `expired` -> `expirado`; `refunded` -> `devuelto`.
+- Cancel: only while the order is `created` (Mercado Pago rule); `at_terminal` -> 409 `mercadopago_cancelar_en_la_terminal`
+  ("cancelalo en la terminal"); the refresh then reflects `canceled` when the cashier cancels there.
+- POS: the same `cobrarConMercadoPago` flow; for Point the modal shows "Cobrando en la terminal {id}…", no QR, no "Imprimir QR";
+  `revisarTerminal` shows "Revisá el resultado en la terminal"; `fallido` returns to the payment step with "El pago fue rechazado en
+  la terminal: probá de nuevo u otro medio" and the number stays reserved for the retry (peek, never consumed).
+- Webhook (E3-T4) and apartar (E3-T3b) apply unchanged.
+- Tests: create without terminal 409; terminal busy 409; each status mapping; cancel at_terminal 409; fallido then retry with a new
+  intento; POS modal texts per state; ABM select.
+
+## E4 progress (2026-11-01)
+
+Done on `pnader/mercadopago-e4`, commit `feat(mercadopago): cobro con la terminal Point que cierra la venta` (`7fb475e3`). Own judgment-day pending. Migration `CobroMercadoPagoPoint`.
+
+- Model summary (docs/10 part 07): `cobros_mercadopago.id_terminal_point varchar(80) NULL` (the caja's terminal as requested; a retry re-sends the same one), `situacion_terminal varchar(20) NULL` (`en_terminal` | `revisar_terminal`, only a pending Point), estado CHECK gains `fallido`, new CHECKs `ck_cobros_mercadopago_terminal` (`(tipo = 'point') = (id_terminal_point IS NOT NULL)`) and `ck_cobros_mercadopago_situacion_terminal`. No CHECK assumed `qr_data` for every created charge, so none changed. `Down` converts `fallido` rows to `cancelado` under the platform GUC.
+- Create: the medio's `proveedor` (read again under the medio's `FOR KEY SHARE`) decides `tipo`; Point needs `cajas_mercadopago.id_terminal_point` (409 `mercadopago_caja_sin_terminal`, no reservation, no call). Body: `type:"point"`, `external_reference`, `expiration_time` PT10M, `transactions.payments[{amount}]`, `config.point.{terminal_id, print_on_terminal:"no_ticket"}`; same reserve-then-call, time bands and idempotency key (hash of the body). A 2xx Point order needs an id but no `type_response`. 409 `already_queued_order_for_terminal` -> 409 `mercadopago_terminal_ocupada`; the row becomes `cancelado` without an order and the number is free (see judgment-day round 1).
+- Status mapping (`AplicarOrden`): `created` -> pendiente; `at_terminal` -> pendiente + `situacion_terminal = en_terminal` (response `enTerminal`); `action_required` -> pendiente + `revisar_terminal` (`revisarTerminal`); `processed` -> E3 rules; `failed` (Point only) -> `fallido`, not live, frees the number and the medio guard (`EsVivo` unchanged) but keeps being read until its deadline + margin (see judgment-day round 1); canceled/expired/refunded as before. The situation is cleared on every non-pending outcome (and in the 404-expiry branch, which does not go through `AplicarOrden`). `verificandoPago` for Point is only true with the payment informed without data (no QR to wait for).
+- Cancel: `CancelarPendienteAsync` rejects with 409 `mercadopago_cancelar_en_la_terminal` when the last read puts a Point order in the terminal, before calling Mercado Pago; if the order moved after the last read, Mercado Pago's own 409 refreshes the charge and the same 409 is answered. Apartar of a pending Point charge in the terminal answers that 409 too (it shares the cancel step).
+- Response contract: `CobroDeMercadoPago` gains `Tipo`, `IdTerminal`, `EnTerminal`, `RevisarTerminal` (TS twin updated; fixtures too).
+- POS: `medioConCobroIntegrado` covers Point; `vistaDelCobro` has `cobrando_en_terminal` ("Cobrando en la terminal {id}…", countdown, cancel disabled once in the terminal with "Para cancelarlo, hacelo en la terminal.") and `revisar_terminal` ("Revisá el resultado en la terminal."); no QR and no "Imprimir QR" for Point; `fallido` is a `sin_aprobar` state with "El pago fue rechazado en la terminal: probá de nuevo u otro medio." and releases the reservation exactly like cancelado/expirado: the number was only peeked (never consumed), so the retry takes the same number. Error copies for the three new codes. ABM select "Mercado Pago Point" (backend ABM already accepted it).
+- Tests: `MercadoPagoPointTests.cs` (partial of `MercadoPagoCobrosTests`: body, QR intact, no terminal 409, busy 409 + same-key retry, other 409 is 502, status mappings and situations, finals clear the situation, processed approval, failed on QR ignored, fallido frees the number (intento 2), fallido final, cancel created/at_terminal/409-at-terminal, cancelled-at-terminal refresh, 404 expiry clears the situation, CHECKs, lost commit keeps the original terminal, webhook, apartar); the old test that expected a Point medio to be invalid became "cobrar con Mercado Pago". Domain: `Fallido` not live / not approvable. Web: `vistaDelCobro`, plan, modal texts per state, `cobrarConMercadoPago` fallido flow, `Pos.test.tsx` Point flow (terminal text, aprobado, rechazado + retry with the same number), descriptor tests.
+- Deviations / open: the numbered reservation is released on `fallido` (design said "stays reserved"; with the peek model releasing and re-reserving yields the same number and does not block offline sales); `total_amount` was dropped from the Point body in judgment-day round 1; a Point charge left `at_terminal` after the cashier walked away is cancelled only on the terminal (or it expires after 10 min); the POS bundle needs a release; nothing was exercised against real Mercado Pago or a real terminal.
+
+
+## Judgment-day E4 round 1 (2026-11-01)
+
+Both judges confirmed P1-P3; one judge each P4-P6 (accepted). Fix commit `fix(mercadopago): un Point rechazado se sigue vigilando, la terminal ocupada no deja la fila viva y el cuerpo va sin total_amount`.
+
+- P1 — `failed` no cierra la vigilancia. `fallido` sigue sin ser vivo (número y medio libres, otro intento permitido), pero GET, webhook, apartar y el límite de una lectura cada 2 s lo tratan como un pendiente hasta que pasa `expira_en` + margen de abandono (5 min; `SeSigueVigilando`). Si Mercado Pago informa después un pago legible, el cobro pasa a `sin_venta` con `fecha_apartado` (nunca `aprobado`: su número pudo reutilizarse) y lo lista `cobros-sin-venta`; `canceled`/`expired` lo cierran como `cancelado`/`expirado` (decisión: dejan de vigilarse); un `processed` sin pago legible queda `fallido` y se reintenta. El POS sigue mostrando el rechazo; la vigilancia es del servidor (webhook, o cualquier GET del cobro). Límite: el POS deja de sondear un `fallido`, así que sin webhook configurado el pago tardío se descubre solo si algo consulta el cobro.
+- P2 — el 409 exacto `already_queued_order_for_terminal` rechaza la creación (el reenvío idempotente de una orden creada devuelve la orden, no este 409): la fila pasa a `cancelado` sin orden y el 409 `mercadopago_terminal_ocupada` libera el número (el siguiente crear abre otro intento). `ck_cobros_mercadopago_orden` ganó `OR (estado = 'cancelado' AND tipo = 'point')`, editado en la migración `CobroMercadoPagoPoint` (aún no publicada), su Designer, el snapshot y la configuración; `Down` devuelve esas filas a `expirado`. Cualquier otro 4xx conserva la regla de E3 (la fila sigue `creando`).
+- P3 — el cuerpo Point va sin `total_amount` (el ejemplo documentado solo trae `transactions.payments[{amount}]`); el QR lo conserva. Los manejadores falsos de los tests leen el total del pago cuando falta.
+- P4 — crear toma el lock de la caja (`ClaveDeLockDeCaja`) antes de leer `id_terminal_point`, dentro del lock de cobros del punto de venta (orden punto de venta → cobro → caja; asignar, quitar y registrar toman sucursal → caja y nunca el de cobros: sin ciclo). Test con el lock de la caja retenido y una reasignación que confirma mientras el crear espera.
+- P5 — el modal Point (en la terminal y revisar la terminal) ofrece «Cerrar y dejarlo en curso» (resultado `en_curso`: detiene la venta con un aviso, conserva la reserva y el cobro; el próximo cobrar() lo retoma) y `revisar_terminal` muestra la cuenta regresiva. Tests RTL y de `resolverResultadoDelCobro`.
+- P6 — un 409 de Mercado Pago al cancelar cuya relectura deja el cobro pendiente, fuera de la terminal y sin pago informado responde 409 `mercadopago_cancelacion_no_aplicada` (para QR y Point; el test QR que esperaba el 200 se actualizó); copia de error del POS agregada.
+- Evidencia de mutación (una por corrida): P1 `SeSigueVigilando` solo pendiente -> 4 tests rojos; P2 sin marcar `cancelado` -> 2 rojos; P3 `total_amount` de vuelta -> 1 rojo; P4 sin el lock de la caja -> 1 rojo; P5 sin el botón en `revisar_terminal` -> 1 rojo.
+
+## Judgment-day E4 round 2 (2026-11-01, final)
+
+Fix commit `fix(mercadopago): la terminal ocupada cancela solo en el primer envío y un Point rechazado con pago informado no se pierde`.
+
+- R1 — el 409 `already_queued_order_for_terminal` cancela la fila solo en su primer envío (el de la misma llamada de `CrearAsync` que insertó el `creando`; la bandera `primerEnvio` sale de la reserva, sin columna nueva). En un reenvío de una fila que quedó `creando` tras una respuesta perdida, Mercado Pago pudo mirar la cola de la terminal antes de reconocer la clave: la fila sigue `creando` (retiene el número), responde 409 `mercadopago_terminal_ocupada` y las bandas de tiempo de E3 la liberan. Tests: el de primer envío ya existente (cancelado + otro intento) y uno nuevo de reenvío (sigue creando, 409 en curso a los 10 min, expirada a los 25 y número libre).
+- R2 — releer un `fallido` es de mejor esfuerzo: un error de Mercado Pago o de la red (5xx, tiempo agotado, 404 antes del plazo) se registra sin tokens y se devuelve el estado guardado (consultar, apartar, aviso); la cancelación del request no se captura. Test con 503 y 404.
+- R3 — un `fallido` cuya orden se informa `processed` sin pago legible se sigue vigilando mientras `fecha_procesada_mercadopago` esté marcada, con tope de 24 h desde la reserva, y `GET /api/mercadopago/cobros-sin-venta` lo lista con `pagoInformadoSinDatos: true`. Tests de vigilancia, listado, paso a `sin_venta` al volverse legible y tope de 24 h.
+- Evidencia de mutación (una por corrida): R1 sin la guarda `primerEnvio` -> 1 rojo; R2 sin el catch del fallido -> 2 rojos; R3 sin la cláusula de `fecha_procesada` -> 1 rojo.
+- Verificación: build Release 0 errores; sin cambios pendientes del modelo; Domain 2493, Application 1658, integración filtrada (Cobros/Venta/Webhook) 189 en verde. Web sin cambios.
+
+## Judgment-day E4 verdict
+
+- 2026-11-01: **APPROVED** after two fix rounds, no CRITICAL. Round 1 (both judges): `failed` closed as final and never re-read,
+  terminal-busy 409 left a hidden `creando` row, unverified `total_amount` in the Point body (+ terminal read vs reassignment,
+  modal without exit, silent cancel); fixed in b77106d1. Re-judgment (both): cancelling on the busy 409 for a re-send was unsafe;
+  judge A: a failing refresh of a fallido threw; judge B: a fallido processed without readable data was lost; fixed in ba2479bf.
+  Final re-judgment: R1–R3 resolved. Applied after it (both suggested): a failed best-effort refresh of a fallido counts for the
+  2 s interval.
+- Open (both, narrow): `primerEnvio` is derived from "reserved in this call", so two simultaneous creates for the same number plus a
+  timeout on the other one could still cancel a row whose order is live on the terminal. A persisted "sent" mark would close it.

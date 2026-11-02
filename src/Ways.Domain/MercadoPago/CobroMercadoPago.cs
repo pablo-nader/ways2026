@@ -43,8 +43,29 @@ public static class EstadosDeCobroMercadoPago
     /// </summary>
     public const string SinVenta = "sin_venta";
 
+    /// <summary>
+    /// Solo Point: Mercado Pago informó la orden <c>failed</c> (el pago se rechazó o falló en la terminal). No es vivo: libera el número
+    /// y el medio, el cajero puede cobrar de nuevo (otro intento) o usar otro medio. Mercado Pago puede informar después un pago de esa
+    /// orden: por eso se sigue leyendo hasta que vence su plazo más el margen de abandono, y un pago legible lo pasa a
+    /// <see cref="SinVenta"/> (nunca a <see cref="Aprobado"/>: su número pudo reutilizarse).
+    /// </summary>
+    public const string Fallido = "fallido";
+
     /// <summary>Los estados que ocupan el número de venta: a lo sumo un cobro por número (<c>ux_cobros_mercadopago_vivo_numero</c>).</summary>
     public static bool EsVivo(string estado) => estado is Creando or Pendiente or Aprobado;
+}
+
+/// <summary>
+/// Dónde está un cobro Point pendiente según la última lectura de la orden (<c>cobros_mercadopago.situacion_terminal</c>); nulo
+/// mientras la orden está <c>created</c> (la terminal todavía no la tomó) y en cualquier cobro que no sea Point o ya no esté pendiente.
+/// </summary>
+public static class SituacionesDeTerminalMercadoPago
+{
+    /// <summary>La orden llegó a la terminal (<c>at_terminal</c>) y el cliente la está pagando.</summary>
+    public const string EnTerminal = "en_terminal";
+
+    /// <summary>Mercado Pago pide mirar la terminal (<c>action_required</c>): el cajero revisa el resultado ahí.</summary>
+    public const string RevisarTerminal = "revisar_terminal";
 }
 
 /// <summary>
@@ -90,7 +111,7 @@ public class CobroMercadoPago : EntidadTenant
     /// </summary>
     public required string ClaveIdempotencia { get; set; }
 
-    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>); nulo solo mientras el cobro está <see cref="EstadosDeCobroMercadoPago.Creando"/> o si la fila se abandonó sin que se confirmara ninguna orden y quedó <see cref="EstadosDeCobroMercadoPago.Expirado"/>.</summary>
+    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>); nulo solo mientras el cobro está <see cref="EstadosDeCobroMercadoPago.Creando"/> o si la fila se abandonó sin que se confirmara ninguna orden y quedó <see cref="EstadosDeCobroMercadoPago.Expirado"/> (o <see cref="EstadosDeCobroMercadoPago.Cancelado"/>, en un Point que Mercado Pago rechazó por terminal ocupada).</summary>
     public string? IdOrdenMercadoPago { get; set; }
 
     /// <see cref="EstadosDeCobroMercadoPago"/>.
@@ -104,7 +125,14 @@ public class CobroMercadoPago : EntidadTenant
     /// <summary>Lo que Mercado Pago dice que se pagó; puede diferir de <see cref="Importe"/>.</summary>
     public decimal? ImportePagado { get; set; }
 
-    /// <summary>Contenido EMVCo del QR dinámico; se dibuja en pantalla.</summary>
+    /// <summary>Solo Point: la terminal (<c>id_terminal_point</c> de la caja) a la que se pidió la orden, tal como se pidió: reintentar una
+    /// creación reenvía la misma orden aunque la caja haya cambiado de terminal. Nulo exactamente en los cobros QR.</summary>
+    public string? IdTerminalPoint { get; set; }
+
+    /// <summary><see cref="SituacionesDeTerminalMercadoPago"/>; solo un cobro Point pendiente la tiene.</summary>
+    public string? SituacionTerminal { get; set; }
+
+    /// <summary>Contenido EMVCo del QR dinámico; se dibuja en pantalla. Un cobro Point no tiene QR.</summary>
     public string? QrData { get; set; }
 
     public DateTimeOffset ExpiraEn { get; set; }
