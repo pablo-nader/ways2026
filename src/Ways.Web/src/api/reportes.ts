@@ -6,6 +6,7 @@
  * `timestamptz` y sí necesita ese offset.
  */
 import { api } from './cliente'
+import { fechaIsoConOffset } from './fechas'
 import type {
   ArticuloDeReporte,
   Comisiones,
@@ -188,25 +189,10 @@ export const clienteDeReportes = {
     api.get<LibroIva>(`/reportes/libro-iva-ventas${construirQueryDeLibroIva(filtros)}`),
 }
 
-// ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
-// Slices 6a/7): a diferencia de ventas/resumen (arriba, `DateOnly` del lado del servidor), estas
-// dos rutas filtran contra un `timestamptz` (`fecha_cierre`/`fecha`) — mismo criterio de offset
-// explícito que `compras.ts`/`cuentaCorriente.ts`. Duplicado a propósito: no hay un módulo
-// compartido de utilidades de fecha en esta web todavía. -------------------------------------
-function desplazamientoUtcLocal(anio: number, mes: number, dia: number): string {
-  const minutos = new Date(anio, mes - 1, dia).getTimezoneOffset()
-  const signo = minutos > 0 ? '-' : '+'
-  const minutosAbsolutos = Math.abs(minutos)
-  const horas = String(Math.floor(minutosAbsolutos / 60)).padStart(2, '0')
-  const restoMinutos = String(minutosAbsolutos % 60).padStart(2, '0')
-  return `${signo}${horas}:${restoMinutos}`
-}
-
-function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
-  const [anio, mes, dia] = fechaIso.split('-').map(Number)
-  return `${fechaIso}T${horaLimite}${desplazamientoUtcLocal(anio, mes, dia)}`
-}
-
+// ---- /cajas y /tesoreria (stage-11-exportacion-reportes, Slices 6a/7): a diferencia de
+// ventas/resumen (arriba, `DateOnly` del lado del servidor), estas dos rutas filtran contra un
+// `timestamptz` (`fecha_cierre`/`fecha`), así que `desde`/`hasta` llevan el offset local
+// explícito (`fechaIsoConOffset`, ./fechas). ---------------------------------------------------
 /** Filtro de `GET /api/reportes/cajas` — `idPuntoVenta` es opcional (a diferencia de
  * `FiltrosDeTesoreria`): el histórico de cierres admite "Todos". */
 export type FiltrosDeHistoricoDeCajas = {

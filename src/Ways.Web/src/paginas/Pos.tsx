@@ -169,6 +169,7 @@ import { useConfirmacionDeReusoDeCobro } from '../pos/useConfirmacionDeReusoDeCo
 import { conFiscalSoloSiSeguroSeFactura, ESPERA_DE_LA_FACTURA_MS, ventaSeguroSeFactura } from '../pos/facturacionAlCobrar'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { pluralizar } from '../formato/pluralizar'
+import { toast } from '../toasts/toasts'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -1018,7 +1019,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [registrandoRetiro, setRegistrandoRetiro] = useState(false)
   const registrandoRetiroRef = useRef(false)
   const [errorRetiro, setErrorRetiro] = useState('')
-  const [avisoRetiroOk, setAvisoRetiroOk] = useState('')
 
   // stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only): flujo "Cerrar caja" por
   // retiro — mismo criterio de "un solo dueño" que `pasoRetiro`. `idTurnoACerrar` es el turno que
@@ -1861,7 +1861,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // `setPasoCierre` posterior: `verificandoCierreRef` recién se libera en el `finally`.
     if (verificandoCierreRef.current) return
     setErrorAperturaRetiro('')
-    setAvisoRetiroOk('')
     cambiarPasoRetiro('confirmarApertura')
   }
 
@@ -1927,7 +1926,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       )
       cambiarPasoRetiro(null)
       setMontoRetiro(null)
-      setAvisoRetiroOk('Retiro registrado.')
+      toast.exito('Retiro registrado.')
     } catch (e) {
       if (!montadoRef.current) return
       setErrorRetiro(e instanceof ErrorApi ? e.message : 'No se pudo registrar el retiro.')
@@ -1936,15 +1935,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       if (montadoRef.current) setRegistrandoRetiro(false)
     }
   }
-
-  // El aviso de éxito es efímero — desaparece solo a los pocos segundos, o de inmediato si el
-  // cajero arranca otro "Retirar" (`abrirRetiro` ya lo limpia). El timer se limpia en cada corrida
-  // (incluido el desmontaje) para no setear estado después de que la pantalla ya no está.
-  useEffect(() => {
-    if (avisoRetiroOk === '') return
-    const idTimeout = setTimeout(() => setAvisoRetiroOk(''), 4000)
-    return () => clearTimeout(idTimeout)
-  }, [avisoRetiroOk])
 
   // --- stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only): flujo "Cerrar caja" ---
 
@@ -3381,7 +3371,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 </>
               )}
               {avisoCerrarCaja && <span className="alert alert-warning py-1 px-2 small mb-0">{avisoCerrarCaja}</span>}
-              {avisoRetiroOk && <span className="alert alert-success py-1 px-2 small mb-0">{avisoRetiroOk}</span>}
             </>
           )}
         </div>
