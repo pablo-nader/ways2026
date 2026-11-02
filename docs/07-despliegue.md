@@ -37,8 +37,21 @@ commit, y recién después llama al Deployment Trigger de EasyPanel, que descarg
 reinicia el contenedor. Compilar .NET en el servidor (1,9 GB de RAM) colgaba el build
 durante horas con la app caída.
 
-Para volver a una versión anterior, cambiá la etiqueta `latest` por el SHA de ese commit
-y redeployá.
+Requisitos, una sola vez:
+
+- El secret `EASYPANEL_DEPLOY_URL` del repo con la Deployment Trigger URL del servicio.
+- El paquete `ways2026` de GHCR en **Public** (GitHub → Packages → ways2026 → Package
+  settings). Un paquete nuevo nace privado y EasyPanel no lo puede descargar sin
+  credenciales. Es público como el repo, así que la imagen no lleva secretos: toda la
+  configuración entra por las variables de entorno de EasyPanel.
+
+El disparo manual (Actions → deploy-produccion → Run workflow) solo corre sobre `main`.
+Con `disparar_deploy` apagado publica la imagen sin avisar a EasyPanel.
+
+Para volver a una versión anterior, cambiá en EasyPanel la etiqueta `latest` por el SHA
+de ese commit y redeployá. Mientras esté fijada, los deploys automáticos siguen
+publicando `latest` pero EasyPanel descarga el SHA fijado: cuando el arreglo llegue a
+`main`, volvé a poner `latest`.
 
 Si alguna vez hay que volver a compilar en el servidor: Source GitHub →
 `pablo-nader/ways2026`, rama `main`, build method Dockerfile, path `docker/Dockerfile` y

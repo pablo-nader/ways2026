@@ -27,7 +27,7 @@ jobs:
   deploy:
     if: >-
       github.repository == 'pablo-nader/ways2026' &&
-      (github.event_name == 'workflow_dispatch' ||
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
@@ -81,7 +81,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Disparar el deploy en EasyPanel
-        if: env.OMITIR != '1' && inputs.disparar_deploy != false
+        if: env.OMITIR != '1' && (github.event_name != 'workflow_dispatch' || inputs.disparar_deploy)
         env:
           URL_DE_DEPLOY: ${{ secrets.EASYPANEL_DEPLOY_URL }}
         run: |
