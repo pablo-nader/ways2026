@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Reposicion } from './Reposicion'
 import { RutaProtegida } from '../auth/RutaProtegida'
@@ -126,7 +127,12 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
 }
 
 function renderReposicion() {
-  return render(<Reposicion />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<Reposicion />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 /** Monta detrás del mismo gate de rol que `App.tsx` usa para
@@ -147,6 +153,14 @@ function renderReposicionProtegido() {
       </Routes>
     </MemoryRouter>,
   )
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -256,6 +270,21 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     expect(ascendente[3]).toContain('Proveedor Dos')
     expect(ascendente[4]).toContain('Gama')
     expect(ascendente[5]).toContain('Beta')
+  })
+
+  it('una descarga fallida avisa con un toast de error', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))
+      return undefined
+    })
+    apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
+    const usuario = userEvent.setup()
+    renderReposicion()
+
+    await screen.findByText('Yerba mate 1kg')
+    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
   })
 
   it('el botón de descarga apunta a /reportes/stock/reposicion/export con el idSucursal elegido', async () => {

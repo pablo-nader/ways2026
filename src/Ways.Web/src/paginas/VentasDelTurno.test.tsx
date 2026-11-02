@@ -18,12 +18,13 @@ import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
-    put: vi.fn(),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: vi.fn(),
   },
   ErrorApi: class ErrorApiMock extends Error {
@@ -213,6 +214,7 @@ function mockearRutas(opciones: {
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  apiPutMock.mockReset()
   estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
   usuarioActual = usuarioFixture()
 })
@@ -2007,5 +2009,251 @@ describe('VentasDelTurno — orden por columna', () => {
     await userEvent.click(within(within(lineas).getByRole('columnheader', { name: 'Total' })).getByRole('button'))
 
     expect(Array.from(lineas.querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent)).toEqual(['Sal', 'Agua', 'Maple'])
+  })
+})
+
+describe('VentasDelTurno — orden por cada columna, ascendente y descendente', () => {
+  const numeros = () =>
+    Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent)
+
+  // El orden original (1, 2, 3) no coincide con ninguno de los órdenes esperados: un orden que devuelve las filas tal
+  // cual no pasa ninguna de estas pruebas.
+  const VENTAS = [
+    ventaFixture({
+      id: 1,
+      numeroVisible: '0007-00000002',
+      fecha: '2026-09-16T15:00:00Z',
+      nombreCliente: 'Zulema',
+      total: 300,
+      estado: 'Emitido',
+      mediosDePago: [{ idMedioPago: 3, nombre: 'Transferencia', importe: 300 }],
+    }),
+    ventaFixture({
+      id: 2,
+      numeroVisible: '0007-00000003',
+      fecha: '2026-09-16T09:00:00Z',
+      nombreCliente: 'Ángela',
+      total: 5000,
+      estado: 'Anulado',
+      mediosDePago: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 5000 }],
+    }),
+    ventaFixture({
+      id: 3,
+      numeroVisible: '0007-00000001',
+      fecha: '2026-09-16T12:00:00Z',
+      nombreCliente: 'Berta',
+      total: 20,
+      estado: 'Emitido',
+      mediosDePago: [{ idMedioPago: 2, nombre: 'Tarjeta', importe: 20 }],
+    }),
+  ]
+  const [N1, N2, N3] = ['0007-00000001', '0007-00000002', '0007-00000003']
+  // [columna, orden ascendente esperado, orden descendente esperado] (por número visible). En "Estado" hay dos
+  // emitidas empatadas: conservan su orden original en las dos direcciones, así que el descendente no es el inverso.
+  const CASOS: [string, string[], string[]][] = [
+    ['Número', [N1, N2, N3], [N3, N2, N1]],
+    ['Fecha', [N3, N1, N2], [N2, N1, N3]],
+    ['Cliente', [N3, N1, N2], [N2, N1, N3]],
+    ['Total', [N1, N2, N3], [N3, N2, N1]],
+    ['Medios de pago', [N3, N1, N2], [N2, N1, N3]],
+    ['Estado', [N3, N2, N1], [N2, N1, N3]],
+  ]
+
+  it.each(CASOS)('%s ordena ascendente y descendente', async (columna, ascendente, descendente) => {
+    mockearRutas({ turno: turnoFixture(), ventas: VENTAS })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000002')
+    const original = numeros()
+    expect(original).toEqual(['0007-00000002', '0007-00000003', '0007-00000001'])
+    expect(ascendente).not.toEqual(original)
+
+    const encabezado = screen.getByRole('columnheader', { name: columna })
+    await userEvent.click(within(encabezado).getByRole('button'))
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+    expect(numeros()).toEqual(ascendente)
+
+    await userEvent.click(within(encabezado).getByRole('button'))
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+    expect(numeros()).toEqual(descendente)
+  })
+})
+
+describe('VentasDelTurno — cambiar medio de pago', () => {
+  const MEDIOS: MedioPagoListado[] = [
+    medioEfectivo,
+    { ...medioEfectivo, id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true },
+    { ...medioEfectivo, id: 3, nombre: 'Transferencia', comportamiento: 'Electronico', admiteVuelto: false },
+    { ...medioEfectivo, id: 4, nombre: 'Cuenta corriente', comportamiento: 'CuentaCorriente', admiteVuelto: false },
+  ]
+  const UNA_VENTA = [ventaFixture({ id: 1, numeroVisible: '0007-00000001', total: 100 })]
+  const accion = () => screen.getByRole('button', { name: 'Cambiar medio de pago' })
+
+  function renderConToasts() {
+    return render(
+      <>
+        <VentasDelTurno />
+        <Toaster />
+      </>,
+    )
+  }
+
+  async function esperarCatalogoDeMedios() {
+    // El catálogo llega aparte del listado: el bloqueo por cuenta corriente depende de él.
+    await waitFor(() => expect(apiGetMock.mock.calls.some((c) => c[0] === '/catalogos/medios-pago')).toBe(true))
+    await act(async () => {})
+  }
+
+  function listados() {
+    return apiGetMock.mock.calls.filter((c) => String(c[0]).startsWith('/ventas/por-turno/')).length
+  }
+
+  function mockearVenta100() {
+    mockearRutas({ turno: turnoFixture(), ventas: UNA_VENTA, medios: MEDIOS, comprobantes: { 1: comprobanteFixture() } })
+  }
+
+  it('una venta emitida ofrece la acción; una anulada y el Root no', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      ventas: [
+        ventaFixture({ id: 1, numeroVisible: '0007-00000001' }),
+        ventaFixture({ id: 2, numeroVisible: '0007-00000002', estado: 'Anulado' }),
+      ],
+      medios: MEDIOS,
+    })
+    renderConToasts()
+    await screen.findByText('0007-00000002')
+
+    expect(screen.getAllByRole('button', { name: 'Cambiar medio de pago' })).toHaveLength(1)
+  })
+
+  it('el Root nunca opera el POS: no ve la acción', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Root, rol: 'Root' })
+    mockearRutas({ turno: turnoFixture(), ventas: UNA_VENTA, medios: MEDIOS })
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+
+    expect(screen.queryByRole('button', { name: 'Cambiar medio de pago' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['con CAE', { estadoFiscal: 'aprobado' as const }, 'La venta tiene factura con CAE'],
+    ['con la factura en trámite', { estadoFiscal: 'pendiente' as const }, 'La factura de esta venta está en trámite'],
+    [
+      'cobrada con cuenta corriente',
+      { mediosDePago: [{ idMedioPago: 4, nombre: 'Cuenta corriente', importe: 100 }] },
+      'No se puede cambiar el medio de una venta cobrada con cuenta corriente',
+    ],
+  ])('una venta %s tiene la acción deshabilitada y explica por qué', async (_nombre, sobrescribir, explicacion) => {
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 1, ...sobrescribir })], medios: MEDIOS })
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+    await esperarCatalogoDeMedios()
+
+    expect(accion()).toBeDisabled()
+    expect(accion().getAttribute('title')).toContain(explicacion)
+  })
+
+  it('una venta sin factura ni cuenta corriente la deja habilitada', async () => {
+    mockearVenta100()
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+    await esperarCatalogoDeMedios()
+
+    expect(accion()).toBeEnabled()
+  })
+
+  it('sin conexión la acción se deshabilita con una explicación, y vuelve cuando vuelve la red', async () => {
+    const estado = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+    mockearVenta100()
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+    await esperarCatalogoDeMedios()
+
+    expect(accion()).toBeDisabled()
+    expect(accion().getAttribute('title')).toContain('Sin conexión')
+    expect(screen.getByRole('status')).toHaveTextContent('Sin conexión')
+
+    estado.mockReturnValue(true)
+    act(() => {
+      window.dispatchEvent(new Event('online'))
+    })
+    await waitFor(() => expect(accion()).toBeEnabled())
+    expect(screen.queryByText(/Sin conexión/)).not.toBeInTheDocument()
+    estado.mockRestore()
+  })
+
+  it('cambia el medio: abre el modal, guarda, avisa con un toast, refresca el listado y devuelve el foco a la acción', async () => {
+    mockearVenta100()
+    apiPutMock.mockResolvedValue(comprobanteFixture({ pagos: [{ idMedioPago: 3, importe: 100, referencia: null, vuelto: 0 }] }))
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+    await esperarCatalogoDeMedios()
+    const antes = listados()
+
+    await userEvent.click(accion())
+    const selector = await screen.findByLabelText('Medio de la línea 1')
+    expect(selector).toHaveValue('1')
+    await userEvent.selectOptions(selector, '3')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambio' }))
+
+    expect(await screen.findByText('Se cambió el medio de pago de la venta 0007-00000001.')).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledWith('/ventas/1/medios', { pagos: [{ idMedioPago: 3, importe: 100, referencia: null, vuelto: 0 }] })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(listados()).toBe(antes + 1))
+    await waitFor(() => expect(accion()).toBeEnabled())
+    await waitFor(() => expect(accion()).toHaveFocus())
+  })
+
+  it('un rechazo del servidor deja el modal abierto con su mensaje y no refresca el listado', async () => {
+    mockearVenta100()
+    const { ErrorApi } = await import('../api/cliente')
+    apiPutMock.mockRejectedValue(new ErrorApi(409, 'venta_con_cae', 'x'))
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+    await esperarCatalogoDeMedios()
+    const antes = listados()
+
+    await userEvent.click(accion())
+    await userEvent.selectOptions(await screen.findByLabelText('Medio de la línea 1'), '3')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambio' }))
+
+    expect(await screen.findByText(/La venta tiene factura con CAE/)).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(listados()).toBe(antes)
+  })
+
+  it('mientras el modal está abierto el resto de la pantalla queda inerte; al cancelar, el foco vuelve a la acción', async () => {
+    mockearVenta100()
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+    await esperarCatalogoDeMedios()
+
+    await userEvent.click(accion())
+    await screen.findByLabelText('Medio de la línea 1')
+    expect(screen.getByRole('button', { name: 'Actualizar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Anular' })).toBeDisabled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(accion()).toHaveFocus())
+  })
+
+  it('si el refresco posterior falla, el cambio ya guardado se informa como hecho y el fallo del listado tiene su propio aviso', async () => {
+    mockearVenta100()
+    apiPutMock.mockResolvedValue(comprobanteFixture())
+    renderConToasts()
+    await screen.findByText('0007-00000001')
+    await esperarCatalogoDeMedios()
+
+    await userEvent.click(accion())
+    await userEvent.selectOptions(await screen.findByLabelText('Medio de la línea 1'), '3')
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/ventas/por-turno/')) return Promise.reject(new Error('sin red'))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambio' }))
+
+    expect(await screen.findByText('Se cambió el medio de pago de la venta 0007-00000001.')).toBeInTheDocument()
+    expect(await screen.findByText('No se pudieron cargar las ventas del turno.')).toBeInTheDocument()
   })
 })

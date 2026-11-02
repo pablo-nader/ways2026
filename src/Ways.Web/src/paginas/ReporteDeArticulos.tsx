@@ -25,6 +25,7 @@ import type {
 } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable } from '../componentes/grilla'
@@ -86,7 +87,6 @@ export function ReporteDeArticulos() {
   const [pagina, setPagina] = useState<PaginaDe<ArticuloDeReporte> | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   function agregarErrorCatalogo(mensaje: string) {
@@ -358,13 +358,10 @@ export function ReporteDeArticulos() {
             <BotonDeDescarga
               ruta={rutasDeExportacion.articulos(filtros)}
               etiqueta="Descargar"
-              onError={setErrorDescarga}
-              onInicio={() => setErrorDescarga('')}
+              onError={toast.error}
             />
           </div>
         </div>
-
-        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
         {cargando && !pagina && <Cargando />}
 

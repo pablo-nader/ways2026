@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LibroIva } from './LibroIva'
 import { RutaProtegida } from '../auth/RutaProtegida'
@@ -173,7 +174,12 @@ function libroDeVentas(): LibroIvaRespuesta {
 }
 
 function renderLibroIva() {
-  return render(<LibroIva />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<LibroIva />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 function mockearRutas(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
@@ -202,6 +208,14 @@ function diferido<T>() {
     resolver = resolve
   })
   return { promesa, resolver }
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -520,6 +534,18 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
 
     await screen.findByText('Proveedor Uno SA')
     expect(screen.queryByText('Falló el libro')).not.toBeInTheDocument()
+  })
+
+  it('una descarga fallida avisa con un toast de error', async () => {
+    mockearRutas()
+    apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
+    const usuario = userEvent.setup()
+    renderLibroIva()
+    await screen.findByText('Proveedor Uno SA')
+
+    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
   })
 
   it('Descargar baja el export de la pestaña activa con los filtros vigentes', async () => {

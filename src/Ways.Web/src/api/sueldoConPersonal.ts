@@ -8,6 +8,7 @@ import type {
   CategoriaPago,
   LineaDeSolicitudDePagoDePersonal,
   PersonalListado,
+  SolicitudDeEdicionDePagoConLineas,
   SolicitudDePagoDePersonal,
   SolicitudDePagoDePersonalDelPos,
 } from './tipos'
@@ -94,6 +95,18 @@ export function aSolicitudDePagoDePersonalDesdeElPos(f: {
     lineas,
     ...(detalle !== '' && { detalle }),
   }
+}
+
+/**
+ * Asignar un empleado a un pago de sueldos común lo convierte en un pago de personal (`PUT` de edición con `idPersonal`):
+ * el servidor genera el concepto con el nombre del empleado y el pago no lleva proveedor, por eso ni uno ni otro viajan.
+ */
+export function conEmpleadoAsignado(
+  solicitud: SolicitudDeEdicionDePagoConLineas,
+  idPersonal: number | '',
+): SolicitudDeEdicionDePagoConLineas {
+  if (idPersonal === '') return solicitud
+  return { ...solicitud, concepto: '', idProveedor: null, idPersonal }
 }
 
 export const MOTIVO_PAGO_A_PERSONAL_SIN_CONEXION = 'Sin conexión: pagar a un empleado necesita conexión con el servidor.'

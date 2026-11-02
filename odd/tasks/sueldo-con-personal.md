@@ -55,8 +55,28 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
   (the web no longer sends it) and any other date answers 400 `fecha_no_es_hoy`; the test rejects past and future dates and
   fails with the guard disabled (mutation killed, guard restored). F3 offline the employee select stays enabled, only the
   employee options are disabled, so "Sin empleado" remains selectable for a plain Sueldos pago; no auto-reset.
-- [ ] T3 — Edit: convert a plain Sueldos payment into a pago de personal (backend transaction +
-  web picker in the edit modal). Route: delegated writer. Branch stacked on T2 or main.
+- [x] T3 — Edit: convert a plain Sueldos payment into a pago de personal (backend transaction +
+  web picker in the edit modal). Route: delegated writer. Branch `pnader/sueldo-personal-edicion`, stacked on T2 (#606).
+  Evidence (writer, uncommitted): no new route and no migration: `idPersonal` is an optional field of the two existing edit
+  bodies (`PUT /api/pagos/administracion/{id}` and `PUT /api/pagos/{id}`), so one transaction both edits and converts.
+  `ServicioDePagos.ConvertirEnPagoDePersonalAsync` (inside `EjecutarEscrituraAsync`, after the pago lock and its guards)
+  debits the employee with the same raw `UPDATE ... RETURNING` + `InsertarMovimientoAsync` pair as `ServicioDePagoDePersonal`,
+  links `IdMovimientoPersonal`, sets the concepto `Pago de personal: {nombre}` and the matching treasury row text; the pago,
+  items, origin, turno and fecha are untouched, so arqueo and treasury balances do not move. Guards: 404 for pago then employee
+  before any 400; `pago_personal_requiere_sueldos` / `pago_personal_sin_proveedor` / `concepto_de_pago_de_personal` (the concepto
+  is server generated so a non-blank one is rejected, not dropped); `gasto_de_pago_de_personal` 409 re-checked under the pago
+  lock (the conversion is now the one writer of `id_movimiento_personal` after creation). POS keeps its rules (open turno,
+  `gasto_turno_cerrado`) and its response (`PagoRegistrado`) has no balance. Tests: `PagoDeSueldoConvertidoEnPersonalTests` (8)
+  RED 7 failed -> GREEN; mutation: Sueldos guard disabled -> killed, under-lock re-check removed -> killed by the concurrent
+  conversion test. Web: `ModalDeEdicionDePago` shows `Empleado (opcional)` for Sueldos (`personal` prop), POS reads
+  `GET /api/pos/personal/opciones`, offline disables the options only. Results: dotnet build ok; Application.Tests 1638, Domain.Tests 2322 passed; integration (new class, PagosEdicion*, PagoDePersonal*, PagosConLineas/ApiConLineas, SuperficieDeAutorizacion, AislamientoDeTenant, OpenApi, ConciliacionDeTesoreria) 173 passed; vitest 308 files / 9428 tests passed; tsc -b ok; lint 0 errors.
+  Judgment Day round 1 fixes (G1-G3): G1 the edit modal no longer drops the provider on entering Sueldos (a pago with a
+  provider keeps showing the provider select; the employee picker appears once the provider is set to "Sin proveedor", and
+  choosing an employee sends `idProveedor: null`); component test in `Pagos.test.tsx` killed by restoring the old clearing.
+  G2 five integration tests (fecha in the empresa zone, 2-line total, 400 `pago_personal_sin_proveedor`, `periodo_conciliado`
+  409, treasury concepto rewrite), all five killed together by mutating `ServicioDePagos` (UTC date, provider check off, conciliation
+  guard off, importe halved, concepto UPDATE neutralized) and guard restored; no real bug found. G3 stale comment in `Pagos.tsx` fixed.
+  Results: dotnet build ok; PagoDeSueldoConvertidoEnPersonalTests + PagosEdicionEndpoints 37 passed; vitest Pagos/PagosDelTurno/sueldoConPersonal 172 passed; tsc -b ok; lint 0 errors.
 
 ## Checks
 
@@ -67,4 +87,6 @@ so a salary paid from Pagos or from the POS cash drawer never reached the employ
 
 ## Next step
 
-T2.
+Feature complete. T3 commits 6886841a + a71a65d5 (fixes G1 proveedor, G2 tests, G3 comentario); judgment-day
+APPROVED. Follow-ups: POS release (owner decides); hint in the edit modal to clear the provider of a Sueldos pago
+before choosing an employee.
