@@ -633,6 +633,8 @@ public class ServicioDeCobrosMercadoPago(
             log.LogWarning(
                 "No se pudo releer la orden {IdOrden} del cobro fallido {IdCobro} ({Codigo}): se devuelve el estado guardado.",
                 cobro.IdOrdenMercadoPago, cobro.Id, error.Codigo);
+            // Cuenta como consulta para el intervalo: mientras Mercado Pago falle, cada sondeo no vuelve a pegarle antes de tiempo.
+            cobro.FechaUltimaConsulta = ahora;
             return;
         }
         catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 404 && ahora >= cobro.ExpiraEn)

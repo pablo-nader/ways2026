@@ -457,3 +457,14 @@ Fix commit `fix(mercadopago): la terminal ocupada cancela solo en el primer env�
 - R3 — un `fallido` cuya orden se informa `processed` sin pago legible se sigue vigilando mientras `fecha_procesada_mercadopago` esté marcada, con tope de 24 h desde la reserva, y `GET /api/mercadopago/cobros-sin-venta` lo lista con `pagoInformadoSinDatos: true`. Tests de vigilancia, listado, paso a `sin_venta` al volverse legible y tope de 24 h.
 - Evidencia de mutación (una por corrida): R1 sin la guarda `primerEnvio` -> 1 rojo; R2 sin el catch del fallido -> 2 rojos; R3 sin la cláusula de `fecha_procesada` -> 1 rojo.
 - Verificación: build Release 0 errores; sin cambios pendientes del modelo; Domain 2493, Application 1658, integración filtrada (Cobros/Venta/Webhook) 189 en verde. Web sin cambios.
+
+## Judgment-day E4 verdict
+
+- 2026-11-01: **APPROVED** after two fix rounds, no CRITICAL. Round 1 (both judges): `failed` closed as final and never re-read,
+  terminal-busy 409 left a hidden `creando` row, unverified `total_amount` in the Point body (+ terminal read vs reassignment,
+  modal without exit, silent cancel); fixed in b77106d1. Re-judgment (both): cancelling on the busy 409 for a re-send was unsafe;
+  judge A: a failing refresh of a fallido threw; judge B: a fallido processed without readable data was lost; fixed in ba2479bf.
+  Final re-judgment: R1–R3 resolved. Applied after it (both suggested): a failed best-effort refresh of a fallido counts for the
+  2 s interval.
+- Open (both, narrow): `primerEnvio` is derived from "reserved in this call", so two simultaneous creates for the same number plus a
+  timeout on the other one could still cancel a row whose order is live on the terminal. A persisted "sent" mark would close it.
