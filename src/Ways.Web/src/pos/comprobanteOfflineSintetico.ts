@@ -167,7 +167,15 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     direccionEntrega: params.envio?.direccionEntrega?.trim() || null,
     observaciones: null,
     items,
-    pagos: params.pagos.map((p) => ({ idMedioPago: p.idMedioPago, importe: p.importe, referencia: p.referencia, vuelto: p.vuelto })),
+    pagos: params.pagos.map((p) => ({
+      idMedioPago: p.idMedioPago,
+      importe: p.importe,
+      referencia: p.referencia,
+      vuelto: p.vuelto,
+      // Como el servidor: el pago con cobro queda `mercadopago` y la aprobación manual `sin_verificar`.
+      ...(p.aprobacionManualSinVerificar ? { verificacionMercadoPago: 'sin_verificar' as const } : {}),
+      ...(p.idCobroMercadoPago !== undefined ? { verificacionMercadoPago: 'mercadopago' as const } : {}),
+    })),
     idPresupuestoOrigen: null,
   }
 }

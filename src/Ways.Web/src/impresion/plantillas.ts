@@ -212,6 +212,9 @@ export function notaDeCreditoDeVenta(
 
 type ModoNotaDeCredito = { facturaAsociada: DatosDeFacturaFiscal | null }
 
+/** Lo que dice el ticket de un pago de Mercado Pago que el cajero aprobó a mano sin red: nadie lo verificó todavía. */
+export const TEXTO_DE_PAGO_SIN_VERIFICAR = 'Pago Mercado Pago sin verificar'
+
 function numeroFiscal(datos: DatosDeFacturaFiscal): string {
   return `${String(datos.puntoDeVentaFiscal).padStart(5, '0')}-${String(datos.numero).padStart(8, '0')}`
 }
@@ -306,6 +309,9 @@ function armarComprobanteDeVenta(
     for (const pago of comprobante.pagos) {
       const nombreMedio = medioPorId.get(pago.idMedioPago)?.nombre ?? `Medio #${pago.idMedioPago}`
       ticket.lineaDeColumnas(nombreMedio, formatearMoneda(pago.importe))
+      if (pago.verificacionMercadoPago === 'sin_verificar') {
+        ticket.linea(TEXTO_DE_PAGO_SIN_VERIFICAR)
+      }
       if (pago.vuelto > 0) {
         ticket.lineaDeColumnas('  Vuelto', formatearMoneda(pago.vuelto))
       }

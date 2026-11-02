@@ -146,6 +146,179 @@ public class ReglaDeCobroEnVentaTests
     }
 
     [Fact]
+    public void UnMedioConProveedorAdmiteLaAprobacionManualEnUnaVentaConNumeroPreasignado() =>
+        ReglaDeCobroEnVenta.ExigirFormaDelPago(
+            "mercadopago_qr", null, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true);
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("OP-123")]
+    public void LaAprobacionManualAdmiteLaReferenciaOpcionalDelCajero(string? referencia) =>
+        ReglaDeCobroEnVenta.ExigirFormaDelPago(
+            "mercadopago_point", null, referencia, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true);
+
+    [Fact]
+    public void LaAprobacionManualSinNumeroPreasignadoEsSoloOffline() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", null, null, traeNumeroPreasignado: false, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.AprobacionManualSoloOffline, 400);
+
+    [Fact]
+    public void ElCobroYLaAprobacionManualJuntosSeRechazan() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", 5, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.CobroYAprobacionManual, 400);
+
+    [Fact]
+    public void LaAprobacionManualEnUnMedioSinProveedorSeRechaza() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                null, null, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.AprobacionManualEnMedioSinProveedor, 400);
+
+    [Fact]
+    public void UnaDevolucionNoLlevaAprobacionManual() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", null, null, traeNumeroPreasignado: true, esDevolucion: true, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.NoAdmitidoEnDevolucion, 400);
+
+    [Fact]
+    public void ElMedioConProveedorSinCobroNiAprobacionManualSigueSiendoRequerido() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", null, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: false),
+            CodigosDePagoConMercadoPago.Requerido, 400);
+
+    [Theory]
+    [InlineData(5, false, "mercadopago")]
+    [InlineData(null, true, "sin_verificar")]
+    [InlineData(null, false, null)]
+    public void LaVerificacionDelPagoLaFijaElCobroOLaAprobacionManual(int? idCobro, bool manual, string? esperada) =>
+        Assert.Equal(esperada, VerificacionDePagoMercadoPago.Resolver(idCobro, manual));
+
+    [Theory]
+    [InlineData("sin_verificar", true)]
+    [InlineData("verificado_manualmente", true)]
+    [InlineData("mercadopago", false)]
+    [InlineData(null, false)]
+    public void SoloLaAprobacionManualNaceDeUnaAprobacionManual(string? verificacion, bool esperado) =>
+        Assert.Equal(esperado, VerificacionDePagoMercadoPago.NacioDeAprobacionManual(verificacion));
+
+    private static CobroDelNumero DelNumero(
+        int id, string estado = EstadosDeCobroMercadoPago.Aprobado, int idMedio = Medio, decimal? importe = Importe,
+        int? idComprobante = null, bool pagoInformado = true, string? idPago = "PAY1") =>
+        new(id, idMedio, estado, importe, idPago, idComprobante, pagoInformado);
+
+    private static readonly PagoManualPedido[] Manual = [new PagoManualPedido(2, Medio, Importe)];
+
+    [Fact]
+    public void UnCobroAprobadoLibreDelMismoMedioEImporteSeLigaEnLugarDeRegistrarElPagoDosVeces()
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual([DelNumero(11)], Manual, []);
+
+        Assert.Equal(11, r.IdCobroALigar);
+        Assert.Equal(2, r.IndiceDelPagoALigar);
+        Assert.Empty(r.IdsEnConflicto);
+    }
+
+    [Theory]
+    [InlineData(8, 150.50, null)]
+    [InlineData(9, 150.00, null)]
+    [InlineData(9, 150.50, 33)]
+    public void UnCobroAprobadoDeOtroMedioImporteOLigadoAOtraVentaNoSeLiga(int medio, double importe, int? comprobante)
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual(
+            [DelNumero(11, idMedio: medio, importe: (decimal)importe, idComprobante: comprobante)], Manual, []);
+
+        Assert.Null(r.IdCobroALigar);
+    }
+
+    [Fact]
+    public void UnCobroAprobadoConOtroImporteOMedioChocaConLaAprobacionManual()
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual(
+            [DelNumero(11, importe: 99m), DelNumero(12, idMedio: 8)], Manual, []);
+
+        Assert.Null(r.IdCobroALigar);
+        Assert.Equal(new[] { 11, 12 }, r.IdsEnConflicto);
+    }
+
+    [Theory]
+    [InlineData(EstadosDeCobroMercadoPago.Creando, true)]
+    [InlineData(EstadosDeCobroMercadoPago.Pendiente, true)]
+    [InlineData(EstadosDeCobroMercadoPago.SinVenta, true)]
+    [InlineData(EstadosDeCobroMercadoPago.Devuelto, true)]
+    [InlineData(EstadosDeCobroMercadoPago.Cancelado, false)]
+    [InlineData(EstadosDeCobroMercadoPago.Expirado, false)]
+    public void SoloLosCobrosQueOcupanElNumeroChocan(string estado, bool choca)
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual([DelNumero(11, estado: estado)], Manual, []);
+
+        Assert.Equal(choca ? new[] { 11 } : Array.Empty<int>(), r.IdsEnConflicto);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void UnCobroFallidoChocaSoloSiMercadoPagoInformoUnPago(bool pagoInformado, bool choca)
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual(
+            [DelNumero(11, estado: EstadosDeCobroMercadoPago.Fallido, pagoInformado: pagoInformado)], Manual, []);
+
+        Assert.Equal(choca ? new[] { 11 } : Array.Empty<int>(), r.IdsEnConflicto);
+    }
+
+    [Fact]
+    public void UnCobroAprobadoYaLigadoAOtraVentaNoChoca()
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual([DelNumero(11, idComprobante: 33)], Manual, []);
+
+        Assert.Null(r.IdCobroALigar);
+        Assert.Empty(r.IdsEnConflicto);
+    }
+
+    [Fact]
+    public void UnaVentaQueYaTraeSuCobroNoLigaOtroNiChocaConEl()
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual([DelNumero(11), DelNumero(12)], Manual, [11]);
+
+        Assert.Null(r.IdCobroALigar);
+        Assert.Equal(new[] { 12 }, r.IdsEnConflicto);
+    }
+
+    [Fact]
+    public void ConDosCobrosAprobadosLigaElDeMenorIdYElOtroChoca()
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual([DelNumero(13), DelNumero(11)], Manual, []);
+
+        Assert.Equal(11, r.IdCobroALigar);
+        Assert.Equal(new[] { 13 }, r.IdsEnConflicto);
+    }
+
+    [Fact]
+    public void UnCobroAprobadoSinIdDePagoNoSeLigaPeroChoca()
+    {
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual([DelNumero(11, idPago: null)], Manual, []);
+
+        Assert.Null(r.IdCobroALigar);
+        Assert.Equal(new[] { 11 }, r.IdsEnConflicto);
+    }
+
+    [Fact]
+    public void UnCobroAprobadoSoloSeLigaAlPagoManualDelMismoMedioEImporte()
+    {
+        PagoManualPedido[] pagos = [new(0, 5, Importe), new(3, Medio, Importe)];
+
+        var r = ReglaDeCobroEnVenta.ResolverAprobacionManual([DelNumero(11)], pagos, []);
+
+        Assert.Equal(3, r.IndiceDelPagoALigar);
+    }
+
+    [Fact]
     public void UnCobroAprobadoSinIdDePagoEs409()
     {
         var cobro = new CobroParaVender(1, 7, 3, EstadosDeCobroMercadoPago.Aprobado, 100m, null, null);

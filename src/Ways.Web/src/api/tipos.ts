@@ -2240,6 +2240,10 @@ export type PagoDeVenta = {
   vuelto: number
   /** El cobro aprobado de Mercado Pago que paga esta fila: viaja sin `referencia` (la fija el servidor) y con `importe` igual al pagado. */
   idCobroMercadoPago?: number
+  /** Solo `true` viaja: el cajero dio por pagado este medio de Mercado Pago a mano porque no se pudo crear el cobro. Excluyente con
+   * `idCobroMercadoPago`; solo se admite en una venta con `numeroPreasignado` (la cola offline) y deja el pago `sin_verificar`. Su
+   * `referencia` (el número de operación que mostró el cliente) es opcional. */
+  aprobacionManualSinVerificar?: boolean
 }
 
 /** Cuerpo de `PUT /api/ventas/{id}/medios` (y de su gemelo de administración): los medios nuevos reemplazan a todos los cobros de la venta. */
@@ -2433,7 +2437,15 @@ export type ItemEmitido = {
 }
 
 /** Pago ya emitido — espejo de `PagoEmitido`. */
-export type PagoEmitido = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
+export type PagoEmitido = {
+  idMedioPago: number
+  importe: number
+  referencia: string | null
+  vuelto: number
+  /** Qué respalda un pago de Mercado Pago: un cobro aprobado (`mercadopago`), la aprobación manual del cajero sin red
+   * (`sin_verificar`, a la espera de la conciliación) o `verificado_manualmente` (reservado). Ausente o `null` en cualquier otro pago. */
+  verificacionMercadoPago?: 'mercadopago' | 'sin_verificar' | 'verificado_manualmente' | null
+}
 
 /** Respuesta de `POST /api/ventas` (checkout) y `GET /api/ventas/{id}` (reimpresión) — espejo
  * de `ComprobanteEmitido`. `numeroVisible` ya viene formateado `PPPP-NNNNNNNN`.

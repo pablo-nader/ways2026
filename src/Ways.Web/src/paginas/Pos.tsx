@@ -158,6 +158,9 @@ import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { clienteDeCobrosMercadoPago, mensajeDeErrorDeCobroMercadoPago } from '../api/cobrosMercadoPago'
 import {
   indicacionDeCobroAprobado,
+  MENSAJE_APROBACION_MANUAL_CON_COBRO_VIVO,
+  MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL,
+  MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO,
   MENSAJE_DE_VARIOS_COBROS,
   planDeCobroMercadoPago,
   TEXTO_POR_CIERRE_SIN_APROBAR,
@@ -167,6 +170,7 @@ import { cobrarConMercadoPago, cobroAAPartar, resolverResultadoDelCobro, sanarRe
 import type { CobroSinVenta, ReservaDeCobro } from '../pos/reservaDeCobro'
 import { useModalDeCobroMercadoPago } from '../pos/useModalDeCobroMercadoPago'
 import { useConfirmacionDeReusoDeCobro } from '../pos/useConfirmacionDeReusoDeCobro'
+import { useConfirmacionDeAprobacionManual, type AprobacionManualConfirmada } from '../pos/useConfirmacionDeAprobacionManual'
 import { conFiscalSoloSiSeguroSeFactura, ESPERA_DE_LA_FACTURA_MS, ventaSeguroSeFactura } from '../pos/facturacionAlCobrar'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { pluralizar } from '../formato/pluralizar'
@@ -924,6 +928,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [filasPago, setFilasPago] = useState<FilaPago[]>(
     () => borradorInicial?.filasPago ?? [filaPagoInicial(proximaFilaPagoIdRef.current++, null)],
   )
+  // Espejo de `filasPago` para `aprobarAMano`: al volver de la confirmación sabe si el cajero cambió los pagos con el diálogo abierto.
+  const filasPagoRef = useRef(filasPago)
+  useEffect(() => {
+    filasPagoRef.current = filasPago
+  }, [filasPago])
 
   // react-async-state regla 9: mientras el checkout está en vuelo, TODO lo que podría
   // superponerse (escaneo, edición de carrito, cliente, filas de pago) queda
@@ -1146,6 +1155,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       : undefined,
   )
   const confirmacionDeReuso = useConfirmacionDeReusoDeCobro()
+  const confirmacionDeAprobacionManual = useConfirmacionDeAprobacionManual()
+  // El cobro con Mercado Pago no se pudo crear (sin red o Mercado Pago no responde): se ofrece aprobar el pago a mano. Vale solo para
+  // las filas de pago con las que se ofreció (se apaga al cambiarlas) y se re-verifica al confirmar.
+  const [aprobacionManualOfrecida, setAprobacionManualOfrecida] = useState<FilaPago[] | null>(null)
+  const aprobandoAManoRef = useRef(false)
   // Un cobro de Mercado Pago que quedó vivo al recargar la pantalla: se ofrece retomarlo o cancelarlo.
   const [cobroDeRecarga, setCobroDeRecarga] = useState<ReservaDeCobro | null>(null)
   // Un cobro aprobado cuya venta no se cerró y que el cajero puede apartar para liberar la caja.
@@ -3398,7 +3412,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     </div>
   )
 
-  async function cobrar() {
+  async function cobrar(opciones?: { aprobacionManual?: AprobacionManualConfirmada }) {
     // react-async-state regla 9: guard de reentrancia de primera línea — un doble click en el
     // mismo tick le gana al re-render que deshabilita el botón.
     if (cobrandoRef.current) return
@@ -3409,10 +3423,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setCobrando(true)
     setErrorCobro('')
     setCobroAApartarAhora(null)
+    setAprobacionManualOfrecida(null)
     const inicioDelCobro = Date.now()
     const forzarFactura = !modoPresupuesto && facturar
     // Se declara afuera para que el `catch` también sepa que hay un cobro aprobado que se conserva.
     let cobroDeMercadoPago: { idFila: number; idCobro: number; numero: number; importe: number; apartable: CobroAAPartar } | null = null
+    // La fila de Mercado Pago que el cajero aprobó a mano (sin cobro): la venta viaja solo por la cola, con el pago `sin_verificar`.
+    let aprobacionManual: { idFila: number; referencia: string | null } | null = null
 
     try {
       // stage-17-presupuestos-y-remitos (Slice 7, design: Web composition — "post {
@@ -3427,7 +3444,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         setErrorCobro(MENSAJE_DE_VARIOS_COBROS)
         return
       }
-      if (planDeMercadoPago.tipo === 'uno') {
+      if (opciones?.aprobacionManual !== undefined && planDeMercadoPago.tipo !== 'uno') {
+        setErrorCobro('Ya no hay un pago de Mercado Pago para aprobar a mano.')
+        return
+      }
+      if (planDeMercadoPago.tipo === 'uno' && opciones?.aprobacionManual !== undefined) {
+        if (modoPresupuesto) {
+          setErrorCobro('Un presupuesto no se puede cobrar con Mercado Pago desde esta pantalla: convertilo en venta y cobrala con otro medio.')
+          return
+        }
+        // Nunca con un cobro de Mercado Pago sin resolver en este dispositivo: pudo quedar pagado y se cobraría dos veces.
+        if ((await sincronizacionOffline.leerReservaDeCobro()) !== null) {
+          if (generacionCobroRef.current === miGeneracion) setErrorCobro(MENSAJE_APROBACION_MANUAL_CON_COBRO_VIVO)
+          return
+        }
+        if (generacionCobroRef.current !== miGeneracion) return
+        aprobacionManual = { idFila: planDeMercadoPago.pago.idFila, referencia: opciones.aprobacionManual.referencia }
+      } else if (planDeMercadoPago.tipo === 'uno') {
         if (modoPresupuesto) {
           setErrorCobro('Un presupuesto no se puede cobrar con Mercado Pago desde esta pantalla: convertilo en venta y cobrala con otro medio.')
           return
@@ -3446,6 +3479,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         if (resultadoDelCobro.tipo === 'detenido') {
           setErrorCobro(resultadoDelCobro.mensaje)
           setCobroAApartarAhora(resultadoDelCobro.apartable ?? null)
+          // Se ofrece aprobar a mano solo para ESTAS filas de pago: cambiarlas apaga la oferta.
+          if (resultadoDelCobro.aprobableAMano === true) setAprobacionManualOfrecida(filasPago)
           return
         }
         cobroDeMercadoPago = {
@@ -3460,11 +3495,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           ),
         }
       }
-      const pagosDeLaVenta = aPagosDeVenta(pagosConVuelto).map((pago, indice) =>
-        cobroDeMercadoPago !== null && pagosConVuelto[indice].idFila === cobroDeMercadoPago.idFila
-          ? { ...pago, referencia: null, idCobroMercadoPago: cobroDeMercadoPago.idCobro }
-          : pago,
-      )
+      const pagosDeLaVenta = aPagosDeVenta(pagosConVuelto).map((pago, indice) => {
+        if (cobroDeMercadoPago !== null && pagosConVuelto[indice].idFila === cobroDeMercadoPago.idFila) {
+          return { ...pago, referencia: null, idCobroMercadoPago: cobroDeMercadoPago.idCobro }
+        }
+        // Aprobación manual: sin cobro; la referencia es el número de operación que tipeó el cajero (opcional).
+        if (aprobacionManual !== null && pagosConVuelto[indice].idFila === aprobacionManual.idFila) {
+          return { ...pago, referencia: aprobacionManual.referencia, aprobacionManualSinVerificar: true }
+        }
+        return pago
+      })
       const seguroSeFactura = ventaSeguroSeFactura({ forzarFactura, pagos: pagosDeLaVenta, medioPorId })
       const solicitud =
         modoPresupuesto && idPresupuesto !== null
@@ -3534,7 +3574,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           lineas,
           instantanea,
           idListaPrecio: clienteSeleccionado.idListaPrecio,
-          pagos: aPagosDeVenta(pagosConVuelto),
+          pagos: pagosDeLaVenta,
           ahora: new Date(),
           ...(conEnvio && importeVigenteDelEnvio !== null
             ? { envio: { importe: importeVigenteDelEnvio, direccionEntrega: clienteSeleccionado.domicilio } }
@@ -3615,7 +3655,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // Un cobro de Mercado Pago apartado solo frena a la venta local (tomaría su número): una venta online lleva el número del servidor.
           const sinSalidaOnline =
             local.tipo === 'rechazada' && (local.motivo === 'instantanea_sin_integracion' || local.motivo === 'cobro_en_curso') && !sincronizacionOffline.enLinea
-          if (local.tipo !== 'rechazada' || rechazoOfflineEsDefinitivo(local.motivo) || sinSalidaOnline) return await resolverEncolado(local)
+          // Una aprobación manual NUNCA va por el camino online: el servidor la admite solo con número preasignado (la cola).
+          if (local.tipo !== 'rechazada' || rechazoOfflineEsDefinitivo(local.motivo) || sinSalidaOnline || aprobacionManual !== null) {
+            return await resolverEncolado(local)
+          }
+        }
+        if (aprobacionManual !== null) {
+          setErrorCobro(MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL)
+          return null
         }
 
         try {
@@ -3799,6 +3846,35 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * mantenido apretado, `evento.repeat`) no hace nada.
    */
   const finalizandoDesdeDialogoRef = useRef(false)
+  /** "Aprobar a mano (sin verificar)": el cobro de Mercado Pago no se pudo crear y el cajero confirma, con el número de operación
+   * opcional, que el cliente ya pagó. La venta sigue por `cobrar()` con la aprobación manual: nunca sin la confirmación. */
+  async function aprobarAMano() {
+    if (cobrandoRef.current || aprobandoAManoRef.current || aprobacionManualOfrecida !== filasPago) return
+    const plan = planDeCobroMercadoPago(pagosConVuelto, medioPorId)
+    if (plan.tipo !== 'uno') {
+      setAprobacionManualOfrecida(null)
+      return
+    }
+    aprobandoAManoRef.current = true
+    try {
+      const confirmada = await confirmacionDeAprobacionManual.pedir({
+        importe: plan.pago.importe,
+        nombreDelMedio: medioPorId[plan.pago.idMedioPago]?.nombre ?? `Medio #${plan.pago.idMedioPago}`,
+      })
+      if (confirmada === null) return
+      // El diálogo mostró el importe de estas filas y `cobrar` encola las de este render: si cambiaron mientras tanto, lo confirmado
+      // ya no es lo que se encolaría.
+      if (filasPagoRef.current !== filasPago) {
+        setAprobacionManualOfrecida(null)
+        setErrorCobro(MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO)
+        return
+      }
+      await cobrar({ aprobacionManual: confirmada })
+    } finally {
+      aprobandoAManoRef.current = false
+    }
+  }
+
   async function confirmarYcobrar() {
     if (finalizandoDesdeDialogoRef.current) return
     finalizandoDesdeDialogoRef.current = true
@@ -4696,6 +4772,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             {errorMedios && <div className="alert alert-danger py-1 px-2 small">{errorMedios}</div>}
             {errorParametros && <div className="alert alert-danger py-1 px-2 small">{errorParametros}</div>}
             {errorCobro && <div className="alert alert-danger py-1 px-2 small">{errorCobro}</div>}
+            {aprobacionManualOfrecida === filasPago && !modoPresupuesto && (
+              <div className="alert alert-warning py-1 px-2 small" role="alert">
+                <p className="mb-1">
+                  Si el cliente ya pagó, podés dar el pago por aprobado a mano: la venta se guarda en este dispositivo y el pago queda marcado como sin verificar hasta
+                  la conciliación.
+                </p>
+                <button type="button" className="btn btn-sm btn-outline-danger" disabled={pantallaCobroInerte} onClick={() => void aprobarAMano()}>
+                  Aprobar a mano (sin verificar)
+                </button>
+              </div>
+            )}
             {cobroAApartarAhora !== null && !modoPresupuesto && (
               <div className="alert alert-warning py-1 px-2 small" role="alert">
                 <p className="mb-1">Mientras el cobro aprobado siga sin venta, esta caja no puede iniciar otro cobro con Mercado Pago.</p>
@@ -4877,7 +4964,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               className="btn btn-success w-100"
               disabled={!puedeCobrar || confirmandoCobro || ventaFinalizada !== null}
               aria-keyshortcuts="F9"
-              onClick={cobrar}
+              onClick={() => void cobrar()}
             >
               {facturando ? (
                 'Facturando…'
@@ -4904,6 +4991,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           instante. */}
       {modalDeCobroMercadoPago.modal}
       {confirmacionDeReuso.modal}
+      {confirmacionDeAprobacionManual.modal}
 
       {confirmandoCobro && !ventaFinalizada && (
         <ConfirmacionDeCobro

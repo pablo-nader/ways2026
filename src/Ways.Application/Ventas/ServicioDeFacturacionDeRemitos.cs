@@ -126,7 +126,8 @@ public class ServicioDeFacturacionDeRemitos(
         foreach (var pago in pagos)
         {
             ReglaDeCobroEnVenta.ExigirFormaDelPago(
-                medioPorId[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia, traeNumeroPreasignado: false);
+                medioPorId[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia, traeNumeroPreasignado: false,
+                aprobacionManualSinVerificar: pago.AprobacionManualSinVerificar);
         }
 
         var pagosAValidar = pagos

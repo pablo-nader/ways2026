@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { CobroMercadoPago } from '../api/cobrosMercadoPago'
 import type { MedioPagoListado } from '../api/tipos'
 import {
   esperaHastaLaProximaConsulta,
   formatearCuentaRegresiva,
+  habilitaAprobacionManual,
   INTERVALO_DE_CONSULTA_MS,
   INTERVALO_TRAS_FALLO_MS,
+  MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL,
+  MENSAJE_SIN_CONEXION_PARA_COBRAR,
+  MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO,
   medioConCobroIntegrado,
   planDeCobroMercadoPago,
   segundosParaExpirar,
@@ -174,5 +179,35 @@ describe('cuenta regresiva', () => {
     expect(formatearCuentaRegresiva(600)).toBe('10:00')
     expect(formatearCuentaRegresiva(65)).toBe('01:05')
     expect(formatearCuentaRegresiva(0)).toBe('00:00')
+  })
+})
+
+describe('mensajes de la aprobación manual', () => {
+  it('el aviso sin conexión solo sugiere aprobar a mano en la variante que acompaña al botón', () => {
+    expect(MENSAJE_SIN_CONEXION_PARA_COBRAR).not.toMatch(/a mano/)
+    expect(MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO).toMatch(/aprobalo a mano/)
+  })
+
+  it('sin copia local dice que no se guardó nada y no promete la cola', () => {
+    expect(MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL).toMatch(/no se guardó nada/)
+    expect(MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL).not.toMatch(/cola/)
+  })
+})
+
+describe('habilitaAprobacionManual', () => {
+  it('Mercado Pago no disponible o sin red habilitan aprobar a mano', () => {
+    expect(habilitaAprobacionManual(new ErrorApi(503, 'mercadopago_no_disponible', 'x'))).toBe(true)
+    expect(habilitaAprobacionManual(new ErrorDeRed(new TypeError('x')))).toBe(true)
+  })
+
+  it.each(['mercadopago_caja_no_registrada', 'mercadopago_caja_sin_terminal', 'mercadopago_terminal_ocupada', 'cobro_mercadopago_medio_invalido'])(
+    'el rechazo %s no lo habilita',
+    (codigo) => {
+      expect(habilitaAprobacionManual(new ErrorApi(409, codigo, 'x'))).toBe(false)
+    },
+  )
+
+  it('un error desconocido no lo habilita', () => {
+    expect(habilitaAprobacionManual(new Error('x'))).toBe(false)
   })
 })

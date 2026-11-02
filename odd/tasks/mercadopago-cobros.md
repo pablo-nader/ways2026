@@ -53,7 +53,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   el candado de la reserva.
 - [x] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
 - [x] E4 — Point: same charge with `type:"point"` on the PV's terminal.
-- [ ] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
+- [x] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
   account.
 - [ ] E7 — Withdrawals/payouts from the report into treasury.
@@ -64,7 +64,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E5: offline manual approval flagged `sin_verificar`, carried in the offline queue (Point and QR charges both need it; the POS shows "Mercado Pago necesita conexión" until then). E4 is built and awaits its own judgment-day before the PR; E3-T4 and E3-T3b are already approved. Pending before it ships to the cajas: the POS bundle of E3-T3/E4 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress). Nothing of E4 was exercised against the real Mercado Pago API or a real terminal.
+E6: reconciliation (import the release report, match charges and the `sin_verificar` payments listed by `GET /api/mercadopago/pagos-sin-verificar`, real fees, net to the treasury account; `verificado_manualmente` is reserved for it). E5 is built and awaits its own judgment-day before the PR; E4, E3-T4 and E3-T3b are already approved. Pending before it ships to the cajas: the POS bundle of E3-T3/E4 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress). Nothing of E4 was exercised against the real Mercado Pago API or a real terminal.
 
 ## E3-T1 design (2026-11-01)
 
@@ -468,3 +468,108 @@ Fix commit `fix(mercadopago): la terminal ocupada cancela solo en el primer env�
   2 s interval.
 - Open (both, narrow): `primerEnvio` is derived from "reserved in this call", so two simultaneous creates for the same number plus a
   timeout on the other one could still cancel a row whose order is live on the terminal. A persisted "sent" mark would close it.
+
+## E5 design (2026-11-01) — manual approval offline, flagged "sin verificar"
+
+Branch `pnader/mercadopago-e5`, stacked on E4. Backend + POS.
+
+- Owner decision (2026-10-31): without network the cashier can approve a Mercado Pago payment by hand and it stays flagged
+  "sin verificar" until reconciliation; the flag is fixed when the sale is queued.
+- Sale payment (`cobros` table): new column `verificacion_mercadopago varchar(20) NULL` with CHECK in (`mercadopago`,
+  `sin_verificar`, `verificado_manualmente`): NULL for a medio without provider; `mercadopago` when linked to an approved charge
+  (E3-T2, set by the server); `sin_verificar` for a manual approval. `verificado_manualmente` is reserved for E6.
+- `PagoDeVenta` gains `AprobacionManualSinVerificar: bool` (dto-contract-honesty). A provider medio payment needs exactly one of
+  `IdCobroMercadoPago` or `AprobacionManualSinVerificar` (400 `cobro_mercadopago_requerido` / `cobro_mercadopago_y_aprobacion_manual`).
+  The manual flag is accepted only on a device sale with `numeroPreasignado` (the offline queue), never from the back office
+  (400 `aprobacion_manual_solo_offline`). `Referencia` is optional on a manual approval (the cashier may type the operation number
+  the customer shows). The idempotent retry compares the flag.
+- Reports/back office: `GET /api/mercadopago/pagos-sin-verificar?idEmpresa=&desde=&hasta=` (Supervisor/Admin) lists sale payments
+  with `sin_verificar` (sale number, PV, date, amount, referencia, cashier) for E6's screen.
+- POS: when a Mercado Pago medio row cannot be charged because there is no network (offline) or Mercado Pago is unavailable
+  (`mercadopago_no_disponible` / network errors on create), offer "Aprobar a mano (sin verificar)": a confirmation dialog that
+  says the payment is not verified and will be checked in the reconciliation, an optional "Número de operación" field, then the
+  sale is queued with `aprobacionManualSinVerificar: true` and prints once. The ticket shows "Pago Mercado Pago sin verificar".
+  The offline snapshot path uses the existing outbox; no charge is created; no number is set aside beyond the normal queue.
+- Not allowed when a charge for that sale is live (an `en_curso` reservation): the cashier must resolve it first (retomar,
+  cancelar, apartar) — avoids paying twice.
+- Tests: server validation matrix, flag persisted, retry comparison, list scoping; POS offline offer, confirmation, single print,
+  ticket text, blocked while a charge is live.
+
+## E5 progress (2026-11-02)
+
+Done on `pnader/mercadopago-e5`, commit `feat(mercadopago): sin red el cajero aprueba a mano un pago de Mercado Pago y queda sin verificar` (hash in git log). Own judgment-day pending. Migration `PagoDeVentaSinVerificarMercadoPago`. Nothing was exercised against the real Mercado Pago API; the POS bundle needs a Ways.Desktop bump + `pos-v*` tag (owner's call).
+
+- Model summary (docs/10 parts 04 and 07): `cobros.verificacion_mercadopago varchar(20) NULL` (`mercadopago` | `sin_verificar` | `verificado_manualmente`), CHECKs `ck_cobros_verificacion_mercadopago` (catalog) and `ck_cobros_verificacion_mercadopago_cobro` (`(id_cobro_mercadopago IS NOT NULL) = (verificacion = 'mercadopago')`, 23514 -> 400 `verificacion_mercadopago_invalida`), partial index `ix_cobros_sin_verificar (id_tenant, id_comprobante_venta) WHERE sin_verificar AND deleted_at IS NULL`. The migration backfills `mercadopago` on the payments that already carry a charge (`SET LOCAL app.acceso = 'plataforma'`, tested under `ways_app` in `MercadoPagoVerificacionMigracionTests`). No new table: no golden inventory or tenant-isolation change.
+- Sale: `PagoDeVenta.AprobacionManualSinVerificar` (persisted as the mark, never accepted-and-dropped) and `PagoEmitido.VerificacionMercadoPago`. `ReglaDeCobroEnVenta.ExigirFormaDelPago` takes the flag: a provider medio needs exactly one of charge / manual (400 `cobro_mercadopago_requerido`, 400 `cobro_mercadopago_y_aprobacion_manual`); manual only with `numeroPreasignado` (400 `aprobacion_manual_solo_offline`, which also covers the back office, the cambio de medios and the remitos), only on a provider medio (400 `aprobacion_manual_en_medio_sin_proveedor`) and never in a credit note. The mark is fixed by the server (`VerificacionDePagoMercadoPago.Resolver`); a manual approval never creates, locks or links a `cobros_mercadopago` row and never sets `IdCobroMercadoPago`; its `referencia` is optional and stored as typed (the validator does not demand it). The idempotent retry compares the mark (`PagoParaIdentidad`). `ServicioDeCambioDeMedios` rejects a `sin_verificar` payment like a charged one (409 `pago_mercadopago_no_editable`). Structural guard: only `ServicioDeVentas` assigns `VerificacionMercadoPago` (`EscritoresDePagosDeVentaEstructuralTests`).
+- Back office: `GET /api/mercadopago/pagos-sin-verificar?idEmpresa=&desde=&hasta=` (Supervisor/Admin, `LecturaDeReportes`) lists the live `sin_verificar` payments by the empresa of the sale's punto de venta (sale number, PV, date, medio, amount, referencia, cashier, `anulada`); 404 for an empresa outside the tenant; no screen (E6).
+- POS: `cobrarConMercadoPago` answers `aprobableAMano` only when the charge cannot be created: offline with no live reservation, or a create failure that is `mercadopago_no_disponible` / `ErrorDeRed` (`habilitaAprobacionManual`); any other rejection, a cancelled/expired charge or a live reservation never offers it. `Pos.tsx` shows "Aprobar a mano (sin verificar)" for those payment rows only (changing them turns the offer off), asks for confirmation with the optional "Número de operación" (`useConfirmacionDeAprobacionManual`), re-checks at confirm time that no reservation exists, and runs `cobrar({ aprobacionManual })`: no charge, no reserved number, the sale goes ONLY through the offline queue (`encolarVentaOffline`, never `clienteDeVentas.emitir`) with the row `{ referencia, aprobacionManualSinVerificar: true }` and no `idCobroMercadoPago`; prints once through `alEmitir`. The synthetic comprobante carries `verificacionMercadoPago: 'sin_verificar'`; `ticketDeVenta` prints "Pago Mercado Pago sin verificar" under that payment (also on reprints).
+- Verification: `dotnet build Ways.slnx -c Release` 0 errors, `has-pending-model-changes` clean, Domain 2509, Application 1660, integration filter (`MercadoPagoVenta|MercadoPagoCobrosTests|CambioDeMedios|UpDownUp|SuperficieDeAutorizacion|AislamientoDeTenant|MercadoPagoVerificacionMigracion`) 233 green (10 m 41 s); web `tsc -b`, oxlint (no findings in the touched files), vitest `src/pos src/paginas/Pos.test.tsx src/impresion` 39 files / 1914 tests, `npm run build` OK.
+- Mutation evidence (one per run, each killed): server — charge + manual together allowed (domain), manual without `numeroPreasignado` allowed (domain), manual on a medio without provider allowed (domain), mark persisted as NULL (2 integration), the retry compares the mark on one side only (1), cambio de medios guard without `sin_verificar` (1), list without the empresa filter (1), list without the `sin_verificar` filter (1); POS — `habilitaAprobacionManual` always true (7), offline offer ignoring a live reservation (2), the re-check at confirm time removed (1), payload without the flag (4), online fallback allowed for a manual approval (1), the ticket without the text (2) and printing it for every mark (2), `alEmitir` called twice (1).
+- Survives by design: removing the mark from BOTH sides of the retry comparison. A provider medio payment is either a charge or manual, and a non-provider medio cannot be manual, so `IdCobroMercadoPago` and the medio already tell them apart; the mark stays in the comparison as the instructed identity but no test can kill its removal alone.
+- Deviations / open: the manual flow needs the device's local copy of the prices (the sale preview comes from the snapshot): a customer outside the copy has no preview-from-snapshot, so the payment cannot be queued and the cashier gets the "copia local" message instead of an online sale (the server only admits the approval with a pre-assigned number). A create whose answer was lost may leave a live order at the provider (a Point terminal could still be paid): a later manual approval of the same sale is then reconciled by E6, not prevented here. No screen for the new list (E6). Not exercised against real Mercado Pago.
+
+## Judgment-day E5 round 1 (2026-11-02)
+
+Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: the model did not change, `has-pending-model-changes` clean).
+
+- F1 (double payment) — the server accepted a manual `sin_verificar` approval without looking at `cobros_mercadopago`. Inside the sale transaction, when the plan has a manual payment, `EscriturasDeCobroMercadoPago.LeerDelNumeroBloqueadoAsync` locks (`FOR UPDATE`, ascending id, after the explicit-charge locks, so lock order is unchanged) and reads once every charge of the (punto de venta, `numero_preasignado`). `ReglaDeCobroEnVenta.ResolverAprobacionManual` (domain, pure) decides: (a) an `aprobado`, unlinked charge with a payment id, same medio and `importe_pagado` equal to the payment importe is linked instead (the payment becomes a charge payment: `IdCobroMercadoPago` set by the server, `verificacion = mercadopago`, `referencia` from the Mercado Pago payment id; at most one, and none when the sale already carries its explicit charge); (b) any other charge that still occupies the number (`creando`/`pendiente`, `aprobado` unlinked that was not linked, `sin_venta`, `devuelto`, `fallido` with a payment) leaves the sale `sin_verificar` and is audited. `cancelado`, `expirado`, `fallido` without payment and an `aprobado` already linked to another sale do not clash.
+- Audit: new actions `venta.aprobacionmanualmercadopago` (one row per manual approval: `numero_visible`, `id_medio_pago`, `importe`, `referencia`, `id_dispositivo`, `id_cobro_mercadopago_ligado` or null) and `venta.mercadopagodoblecobro` (`ids_cobro_mercadopago`, `id_dispositivo`; no credentials). `GET /api/mercadopago/pagos-sin-verificar` rows carry `idCobroEnConflicto` (lowest id audited for the sale). Audit catalog is 44 entries.
+- Idempotent retry: a retry that still asks for a manual approval for a sale whose payment was auto-linked must not be a 409. `ExigirMismoContenido` accepts it only when the audit trail proves the link came from a manual approval (`LaAprobacionManualLigoUnCobroAsync`, one audit read, only when the retry has a manual payment and the stored sale has a charge payment); an explicit-charge sale retried as manual stays 409. The retry returns the stored sale without entering the transaction, so nothing is linked or audited twice.
+- F2 — `GET /api/mercadopago/pagos-sin-verificar`: `desde`/`hasta` are required `DateOnly`, inclusive, resolved in the empresa timezone through `RangoDeReporte` (400 `rango_invalido` when `hasta < desde`, 400 `rango_demasiado_amplio` beyond 366 days; a missing day is a binding 400), `limite` (default 200, max 500, 400 `limite_invalido`), newest first, and the response is now `{ items, truncado }` (`take(limite + 1)` detects truncation). `ServicioDeCobrosMercadoPago` takes `ServicioDeParametros`.
+- F3 — `Pos.tsx aprobarAMano`: `filasPagoRef` mirrors `filasPago`; after the confirmation dialog resolves, if the rows are not the ones the dialog was opened with, nothing is queued, the offer is turned off and `MENSAJE_PAGOS_CAMBIARON_AL_APROBAR_A_MANO` is shown.
+- F4 — copy: `MENSAJE_APROBACION_MANUAL_SIN_COPIA_LOCAL` now says the copy is missing and nothing was saved; the offline notice is chosen by state: `MENSAJE_SIN_CONEXION_PARA_COBRAR_O_APROBAR_A_MANO` only with the button, `MENSAJE_SIN_CONEXION_PARA_COBRAR` (no mention of approving by hand) when a live reservation hides it.
+- Tests: domain (`ResolverAprobacionManual` matrix, audit catalog 44), integration `MercadoPagoVentaTests` (auto-link, retry without double link or audit, conflict with pending / approved-other-amount, cancelled does not clash, audit payload, inclusive days in the empresa zone, range and 366 cap, limit/order/truncado, list without range = 400), vitest (copy by state, RTL for the amount change with the dialog open and for the unchanged happy path).
+- Mutation evidence (one per run, each killed): auto-link removed from the plan (1 integration); conflict audit disabled (2); manual-approval audit disabled (2); `idCobroEnConflicto` dropped from the list (2); retry leniency removed (1); exclusive day (`hastaUtcExclusivo - 1 day`) (1); `Take(tope)` instead of `Take(tope + 1)` (1); span cap 366 -> 400 (1); the F3 re-check disabled (1 RTL); the offline notice always offering manual approval (1 unit).
+- Verification: `dotnet build Ways.slnx -c Release` 0 errors, `has-pending-model-changes` clean, Domain 2527, Application 1660, integration filter (`MercadoPagoVenta|MercadoPagoCobrosTests|SuperficieDeAutorizacion`) 217 green (10 m 4 s); web `tsc -b` clean, vitest `src/pos src/paginas/Pos.test.tsx src/impresion` 39 files / 1919 tests, `npm run build` OK.
+- Known limit (documented): the leniency of the retry reads the audit trail, so an auto-linked sale whose audit row was lost would answer 409 on a manual retry (audit rows are append-only).
+
+## Judgment-day E5 round 2 (2026-11-02)
+
+Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-pending-model-changes` clean).
+
+- G1 — a charge that was `creando`/`pendiente` when a manual approval sold its number and is approved later (poll, cancel-409 refresh or webhook) stayed `aprobado` with no sale and in no list. `ServicioDeCobrosMercadoPago.AplicarOrdenAsync` now, for a `processed` order on an unlinked charge, takes the charge row `FOR UPDATE` and reads whether a non-annulled sale (mirrors excluded) already holds the (punto de venta, `numero_preasignado`) with at least one `sin_verificar` payment (narrowed by the E5 owner decision, see below); if so the approval sets `sin_venta` + `fecha_apartado` (payment id and amount kept) instead of `aprobado`, and audits `venta.mercadopagodoblecobro` on that sale with `ids_cobro_mercadopago = [charge]` and `origen = cobro_aprobado_despues_de_la_venta` (same action: the catalog stays at 44). The signed webhook has no user and `auditoria.id_actor` is NOT NULL: `ServicioDeAuditoria.Registrar` takes an optional `idActor` and the late-approval row is attributed to the sale employee when the context has no user. The POS sees `sin_venta` (closed) and `cobros-sin-venta` lists it.
+- G2 — `GET /api/mercadopago/pagos-sin-verificar` rows now carry `idsCobroEnConflicto: int[]` (every audited id, distinct, ascending, `[]` when none) instead of `idCobroEnConflicto`; a late-approved charge shows up there too. The web does not consume the field.
+- G3 — lock order: with a manual payment, `LeerDelNumeroBloqueadoAsync` now runs first and locks in ONE ascending `FOR UPDATE` the explicit charge ids unioned with all charges of the number (only the number's rows are returned); `ReservarYValidarAsync` then re-requests rows the transaction already holds. Class summary of `EscriturasDeCobroMercadoPago` rewritten (it described the old two-step order); it now also states that the poll/webhook UPDATE of a `creando`/`pendiente` charge waits for a sale holding that row and, once the sale commits, sees the number used.
+- Tests: `MercadoPagoVentaTests` — late approval by poll and by signed webhook (state, `fecha_apartado`, payment kept, listed in `cobros-sin-venta`, audited, in `idsCobroEnConflicto`), annulled sale does not clash, several conflicting ids ascending, lock-order test (a transaction holds the lower-id charge; the sale must wait there without having locked the explicit higher-id one: `FOR UPDATE NOWAIT` on it succeeds). One existing retry test now seeds its approved charge on another number and moves it, because approving it after the sale correctly makes it `sin_venta`.
+- Mutation evidence (one per run, each killed): sale-exists lookup disabled (2 integration: poll and webhook); distinct ids collapsed to the first (1); lock order swapped back (explicit before the number's rows) (1).
+- Verification: `dotnet build Ways.slnx -c Release` 0 errors, `has-pending-model-changes` clean, Domain 2527, Application 1660, integration filter (`MercadoPagoVenta|MercadoPagoCobrosTests|MercadoPagoWebhook`) 217 green (11 m 59 s).
+- Known limit: a Fallido charge approved late now also writes the double-charge audit when a sale holds its number (it was already `sin_venta`).
+
+## Judgment-day E5 verdict
+
+- 2026-11-02: **ESCALATED** after two fix rounds (budget exhausted). Round 1 (both): the server ignored live/approved charges of
+  the same number on a manual approval, the pagos-sin-verificar list had no bounds; fixed in 6ac1b969 (auto-link of an approved
+  unlinked charge, audits, idsCobroEnConflicto, inclusive days, limit). Re-judgment (both): a pending conflicting charge approved
+  later stayed unlinked and unlisted; fixed in 21cfcd19 (approval checks whether a sale with that number exists → sin_venta).
+- Remaining, confirmed by both in the final re-judgment (judge B: CRITICAL, judge A: WARNING): that check matches a sale of ANY
+  tipo de comprobante with the same (punto de venta, número), but numbering is per (punto de venta, tipo) and the charge stores no
+  tipo. A legitimate charge for ticket N becomes `sin_venta` (with a false double-charge audit) whenever another tipo (e.g. a
+  credit note) already has number N at that PV; the real sale then cannot link it. Also confirmed (WARNING both): the check misses
+  a not-yet-committed plain sale (no Mercado Pago payment) for that number, since such sales take no charge-row lock.
+- Not opened as a PR. Owner decision needed. Options: (a) store the tipo de comprobante on the charge and match by it (schema change,
+  new slice); (b) narrow the check to sales of that number that carry a `sin_verificar` Mercado Pago payment (the actual double-pay
+  case, no schema change); (c) revert the round-2 check and leave late approvals to the E6 reconciliation.
+
+## E5 owner decision (2026-11-02)
+
+- Option (b) chosen after the ESCALATED verdict: the late-approval double-charge check (`LeerVentaDelNumeroBloqueandoAsync`) only counts a
+  non-annulled sale with the same (punto de venta, `numero_preasignado`) that has at least one `cobros` row with
+  `verificacion_mercadopago = 'sin_verificar'`. A cash-only sale, or a sale (of any tipo) without that payment, no longer affects the
+  charge: it stays `aprobado` (no false audit) and the real sale can link it. Known limit: the match is (punto de venta, número)
+  without tipo, so a sale of ANOTHER tipo with the same number AND a `sin_verificar` payment would still send the charge to
+  `sin_venta` (rare: two tipos reaching the same number at one PV, one of them approved by hand); closing it needs the tipo on the
+  charge (option a).
+- The plain-sale race the judges noted no longer applies: only sales with a `sin_verificar` payment count, and those take the number-wide
+  charge lock in `LeerDelNumeroBloqueadoAsync`, so the `FOR UPDATE` read sees their result.
+- The extra "medio with a Mercado Pago provider" condition was dropped: no test can kill it, because the sale rule only admits `sin_verificar`
+  on a provider medio (guardas-inmatables policy).
+- Tests (`MercadoPagoVentaTests`): other tipo (NCX) with the same number stays `aprobado` and the real sale links it; cash-only sale stays
+  `aprobado`; a sale whose payment has no mark stays `aprobado`. Mutation: dropping the `sin_verificar` condition fails the no-mark test;
+  dropping the whole check fails the two existing late-approval tests (poll and webhook).
+- Found and fixed (d472225f): `cobros.verificacion_mercadopago` was `varchar(20)` while `verificado_manualmente` has 22 characters; widened to
+  `varchar(30)` in the unshipped E5 migration (never applied outside test databases), with a schema test.
+
+## Judgment-day E5 verdict (after the owner decision)
+
+- 2026-11-02: **APPROVED**. Scoped re-judgment of option (b) (9364eda2) and the column widening (d472225f): both judges confirm the frozen
+  finding resolved, no CRITICAL or WARNING; suggestions applied (doc states the residual same-number-other-tipo limit; widening recorded).
