@@ -24,7 +24,8 @@ Out of scope: backend changes, snapshot schema changes, POS release (a separate 
 
 ## Tasks
 
-- [x] T1 — Article search source (snapshot | API), modal and POS wiring, tests. Route: delegated (writer trigger: 2+ non-trivial files). Commit 3c1b060b.
+- [x] T1 — Article search source (snapshot | API), modal and POS wiring, tests. Route: delegated (writer trigger: 2+ non-trivial files). Commit 3c1b060b (PR #621, merged).
+- [ ] T2 — Price preview follows the cart's gate per row: snapshot only when the client is admitted offline and the article has a price in the list; otherwise the row is priced via API (failure → no price). Search stays local. Route: delegated (writer trigger: 2+ non-trivial files). Branch `pnader/buscador-articulos-online-fallback`.
 
 ## Acceptance criteria
 

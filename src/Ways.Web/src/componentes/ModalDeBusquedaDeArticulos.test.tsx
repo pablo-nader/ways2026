@@ -5,6 +5,9 @@ import type { ArticuloDeInstantanea, ArticuloListado, InstantaneaDePos, PaginaDe
 import { fuenteDeArticulosDesdeApi, fuenteDeArticulosDesdeInstantanea } from '../pos/fuenteDeArticulos'
 import type { OfertasVigentesDeArticulo } from '../api/ofertasVigentes'
 
+const CONSUMIDOR_FINAL = { id: 1, esConsumidorFinal: true }
+const CLIENTE_AJENO = { id: 77, esConsumidorFinal: false }
+
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 
@@ -141,7 +144,7 @@ describe('ModalDeBusquedaDeArticulos — fuente local (instantánea)', () => {
 
   it('con una fuente de instantánea lista, muestra el precio y agrega sin pedirle nada al servidor', async () => {
     const onAgregar = vi.fn()
-    render(<ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea), idListaPrecio: 3, idEmpresa: 7, onAgregar })} />)
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea, CONSUMIDOR_FINAL), idListaPrecio: 3, idEmpresa: 7, onAgregar })} />)
     const input = screen.getByLabelText('Buscar artículo por nombre')
     fireEvent.change(input, { target: { value: 'fan' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -156,6 +159,51 @@ describe('ModalDeBusquedaDeArticulos — fuente local (instantánea)', () => {
     )
     expect(apiGetMock).not.toHaveBeenCalled()
     expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('un cliente que la instantánea no admite ve el precio del servidor, y la búsqueda sigue siendo local', async () => {
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver'
+        ? Promise.resolve<ResultadoDeResolucion[]>([{ idArticulo: 9, idListaPrecio: 3, precioOriginal: 1700, precioFinal: 1700, descuentoUnitario: 0, aplicadas: [] }])
+        : Promise.reject(new Error(ruta)),
+    )
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea, CLIENTE_AJENO), idListaPrecio: 3, idEmpresa: 7 })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fan' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText(/1\.700/)).toBeInTheDocument()
+    expect(screen.queryByText(/1\.500/)).not.toBeInTheDocument()
+    expect(apiGetMock).not.toHaveBeenCalled()
+  })
+
+  it('sin conexión, el precio que solo daría el servidor queda en "—" y la búsqueda no falla', async () => {
+    apiPostMock.mockRejectedValue(new Error('sin red'))
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea, CLIENTE_AJENO), idListaPrecio: 3, idEmpresa: 7 })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fan' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('Fanta 1.5L')).toBeInTheDocument()
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
+    expect(screen.getByText('—')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('al cambiar la fuente con el modal abierto, repite la búsqueda con la nueva y el precio viejo no queda', async () => {
+    apiPostMock.mockRejectedValue(new Error('sin red'))
+    const { rerender } = render(
+      <ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea, CONSUMIDOR_FINAL), idListaPrecio: 3, idEmpresa: 7 })} />,
+    )
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fan' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await screen.findByText(/1\.500/)).toBeInTheDocument()
+
+    rerender(<ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea, CLIENTE_AJENO), idListaPrecio: 3, idEmpresa: 7 })} />)
+
+    await waitFor(() => expect(screen.queryByText(/1\.500/)).not.toBeInTheDocument())
+    expect(await screen.findByText('—')).toBeInTheDocument()
   })
 })
 

@@ -10,6 +10,9 @@ import {
 import { resolverPreciosOffline } from './instantaneaOffline'
 
 const LISTA = 5
+const CONSUMIDOR_FINAL = { id: 1, esConsumidorFinal: true }
+const CLIENTE_FUERA_DE_LA_INSTANTANEA = { id: 77, esConsumidorFinal: false }
+const apiSinUso = () => ({ resolver: vi.fn().mockRejectedValue(new Error('no debía llamarse')) })
 
 function articulo(idArticulo: number, nombre: string, extra: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
   return {
@@ -37,6 +40,7 @@ describe('fuenteDeArticulosDesdeInstantanea.buscar', () => {
       articulo(2, 'Cola Zero', { acumulaEnVenta: false }),
       articulo(4, 'Sin unidad', { unidadVenta: undefined }),
     ]),
+    CONSUMIDOR_FINAL,
   )
 
   it('encuentra por nombre, código interno y código de barras, sin mayúsculas ni acentos', async () => {
@@ -60,6 +64,7 @@ describe('fuenteDeArticulosDesdeInstantanea.buscar', () => {
   it('corta en una página del servidor', async () => {
     const muchos = fuenteDeArticulosDesdeInstantanea(
       instantanea(Array.from({ length: TOPE_DE_RESULTADOS_DE_ARTICULOS + 5 }, (_, i) => articulo(i + 1, `Galletita ${String(i).padStart(2, '0')}`))),
+      CONSUMIDOR_FINAL,
     )
     const resultado = await muchos.buscar('galle')
     expect(resultado).toHaveLength(TOPE_DE_RESULTADOS_DE_ARTICULOS)
@@ -82,7 +87,7 @@ describe('fuenteDeArticulosDesdeInstantanea.resolverPrecios', () => {
       ],
     })
     const snapshot = instantanea([conEscalon, articulo(2, 'Plano')])
-    const fuente = fuenteDeArticulosDesdeInstantanea(snapshot)
+    const fuente = fuenteDeArticulosDesdeInstantanea(snapshot, CONSUMIDOR_FINAL)
 
     const vista = await fuente.resolverPrecios([1, 2], LISTA, 9)
 
@@ -93,8 +98,8 @@ describe('fuenteDeArticulosDesdeInstantanea.resolverPrecios', () => {
     expect(vista.map((r) => r.precioFinal)).toEqual([180, 100])
   })
 
-  it('un artículo sin precio en la lista queda sin precio, y las filas no se suman entre sí', async () => {
-    const fuente = fuenteDeArticulosDesdeInstantanea(instantanea([articulo(1, 'Otra lista', { preciosPorLista: [] })]))
+  it('un artículo sin precio en la lista queda sin precio si la API tampoco responde', async () => {
+    const fuente = fuenteDeArticulosDesdeInstantanea(instantanea([articulo(1, 'Otra lista', { preciosPorLista: [] })]), CONSUMIDOR_FINAL, apiSinUso())
 
     expect(await fuente.resolverPrecios([1, 99], LISTA, null)).toEqual([
       { idArticulo: 1, idListaPrecio: LISTA, precioOriginal: null, precioFinal: null, descuentoUnitario: 0, aplicadas: [] },
@@ -103,7 +108,78 @@ describe('fuenteDeArticulosDesdeInstantanea.resolverPrecios', () => {
   })
 
   it('no ofrece ofertas vigentes: la instantánea no las trae', () => {
-    expect(fuenteDeArticulosDesdeInstantanea(instantanea([])).ofertasVigentes).toBeUndefined()
+    expect(fuenteDeArticulosDesdeInstantanea(instantanea([]), CONSUMIDOR_FINAL).ofertasVigentes).toBeUndefined()
+  })
+})
+
+describe('fuenteDeArticulosDesdeInstantanea.resolverPrecios: misma regla que el carrito', () => {
+  const resultadoApi = (idArticulo: number, precioFinal: number): ResultadoDeResolucion => ({
+    idArticulo,
+    idListaPrecio: LISTA,
+    precioOriginal: precioFinal,
+    precioFinal,
+    descuentoUnitario: 0,
+    aplicadas: [],
+  })
+  const snapshot = instantanea([articulo(1, 'Con precio'), articulo(2, 'Sin precio en la lista', { preciosPorLista: [] })])
+
+  it('cliente admitido con precio en la instantánea: precio local y sin llamar a la API', async () => {
+    const resolver = vi.fn()
+    const fuente = fuenteDeArticulosDesdeInstantanea(snapshot, CONSUMIDOR_FINAL, { resolver })
+
+    expect((await fuente.resolverPrecios([1], LISTA, 9)).map((r) => r.precioFinal)).toEqual([100])
+    expect(resolver).not.toHaveBeenCalled()
+  })
+
+  it('cliente que no está en la instantánea: todas las filas van a la API, en una sola llamada', async () => {
+    const resolver = vi.fn().mockResolvedValue([resultadoApi(1, 111), resultadoApi(2, 222)])
+    const fuente = fuenteDeArticulosDesdeInstantanea(snapshot, CLIENTE_FUERA_DE_LA_INSTANTANEA, { resolver })
+
+    const vista = await fuente.resolverPrecios([1, 2], LISTA, 9)
+
+    expect(resolver).toHaveBeenCalledTimes(1)
+    expect(resolver).toHaveBeenCalledWith(
+      [
+        { idArticulo: 1, idEmpresa: 9, idListaPrecio: LISTA, cantidad: 1 },
+        { idArticulo: 2, idEmpresa: 9, idListaPrecio: LISTA, cantidad: 1 },
+      ],
+      'PorLinea',
+    )
+    expect(vista.map((r) => r.precioFinal)).toEqual([111, 222])
+  })
+
+  it('cliente admitido pero sin precio de ese artículo en su lista: solo esa fila va a la API', async () => {
+    const resolver = vi.fn().mockResolvedValue([resultadoApi(2, 222)])
+    const fuente = fuenteDeArticulosDesdeInstantanea(snapshot, CONSUMIDOR_FINAL, { resolver })
+
+    const vista = await fuente.resolverPrecios([1, 2], LISTA, 9)
+
+    expect(resolver).toHaveBeenCalledWith([{ idArticulo: 2, idEmpresa: 9, idListaPrecio: LISTA, cantidad: 1 }], 'PorLinea')
+    expect(vista.map((r) => [r.idArticulo, r.precioFinal])).toEqual([
+      [1, 100],
+      [2, 222],
+    ])
+  })
+
+  it('si la API falla, las filas locales conservan su precio y las demás quedan sin precio', async () => {
+    const resolver = vi.fn().mockRejectedValue(new Error('sin conexión'))
+    const fuente = fuenteDeArticulosDesdeInstantanea(snapshot, CONSUMIDOR_FINAL, { resolver })
+
+    const vista = await fuente.resolverPrecios([1, 2], LISTA, 9)
+
+    expect(vista.map((r) => [r.idArticulo, r.precioFinal])).toEqual([
+      [1, 100],
+      [2, null],
+    ])
+  })
+
+  it('el cliente nuevo manda: con un cliente de la instantánea y precio, sale local', async () => {
+    const resolver = vi.fn()
+    const conCliente = { ...snapshot, clientes: [{ idCliente: 77 }] } as unknown as InstantaneaDePos
+    const fuente = fuenteDeArticulosDesdeInstantanea(conCliente, CLIENTE_FUERA_DE_LA_INSTANTANEA, { resolver })
+
+    expect((await fuente.resolverPrecios([1], LISTA, 9))[0].precioFinal).toBe(100)
+    expect(resolver).not.toHaveBeenCalled()
   })
 })
 
@@ -129,7 +205,7 @@ describe('fuenteDeArticulosDesdeApi', () => {
 
 describe('elegirFuenteDeArticulos', () => {
   it('con instantánea usa la local; sin ella, la API', () => {
-    expect(elegirFuenteDeArticulos(instantanea([])).origen).toBe('instantanea')
-    expect(elegirFuenteDeArticulos(null).origen).toBe('api')
+    expect(elegirFuenteDeArticulos(instantanea([]), CONSUMIDOR_FINAL).origen).toBe('instantanea')
+    expect(elegirFuenteDeArticulos(null, CONSUMIDOR_FINAL).origen).toBe('api')
   })
 })

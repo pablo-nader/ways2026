@@ -1323,7 +1323,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     [instantaneaDelPuntoVenta, idListaDeLaVenta, idEmpresaDeLaVenta, enLineaParaCombos, fuenteDeCombosDeLaApi],
   )
 
-  const fuenteDeArticulos = useMemo(() => elegirFuenteDeArticulos(instantaneaDelPuntoVenta), [instantaneaDelPuntoVenta])
+  const fuenteDeArticulos = useMemo(() => elegirFuenteDeArticulos(instantaneaDelPuntoVenta, clienteSeleccionado), [instantaneaDelPuntoVenta, clienteSeleccionado])
 
   // Datos locales para el POS de escritorio (decisiones 6 y 7 del dueño): medios de pago y
   // tolerancia salen de la instantánea mientras el servidor no respondió o si falló por falta de
