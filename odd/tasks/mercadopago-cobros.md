@@ -573,3 +573,40 @@ Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-p
 
 - 2026-11-02: **APPROVED**. Scoped re-judgment of option (b) (9364eda2) and the column widening (d472225f): both judges confirm the frozen
   finding resolved, no CRITICAL or WARNING; suggestions applied (doc states the residual same-number-other-tipo limit; widening recorded).
+
+## E6 design (2026-11-02) — reconciliation from the settlement report
+
+Branch `pnader/mercadopago-e6`, stacked on E5. Backend + back-office web.
+
+Facts (2026-11-02, MP report docs, .co/.mx mirrors; AR pages not retrievable): the "Reporte de todas las transacciones"
+(`settlement_report`) has one row per payment/installment with `SOURCE_ID` (MP transaction id, e.g. the payment), `EXTERNAL_REFERENCE`
+(the order's external reference), `TRANSACTION_TYPE` (SETTLEMENT, REFUND, CHARGEBACK, DISPUTE, WITHDRAWAL, WITHDRAWAL_CANCEL, PAYOUT),
+`TRANSACTION_AMOUNT`, `FEE_AMOUNT` (VAT included), `SETTLEMENT_NET_AMOUNT`, `TRANSACTION_DATE`, `SETTLEMENT_DATE`,
+`MONEY_RELEASE_DATE`, `EXTERNAL_POS_ID`, `EXTERNAL_STORE_ID`, `ORDER_ID`. The report API (`/v1/account/settlement_report`) has
+unverified pieces (file name in the list, OAuth seller token access), so E6 starts with a file upload; fetching through the API is a
+later step once tried against a real account.
+
+Decision (orchestrator, 2026-11-02): reconciliation by uploaded CSV first.
+
+- `POST /api/mercadopago/conciliaciones?idEmpresa=` (Admin; multipart CSV ≤ 10 MB): parses the settlement report by header name
+  (comma or semicolon; tolerant to extra/missing optional columns; required: SOURCE_ID, TRANSACTION_TYPE, TRANSACTION_AMOUNT,
+  TRANSACTION_DATE; EXTERNAL_REFERENCE, FEE_AMOUNT, SETTLEMENT_NET_AMOUNT, MONEY_RELEASE_DATE, EXTERNAL_POS_ID optional; numbers with
+  "." decimals; dates ISO with offset). Stored as `conciliaciones_mercadopago` (header: empresa, file hash UNIQUE per empresa to reject
+  a re-upload, period from/to, uploaded by/at, counts) + `filas_conciliacion_mercadopago` (each parsed row + its match result).
+- Matching per SETTLEMENT row (in this order): (1) `EXTERNAL_REFERENCE` = a charge's `external_reference` of that empresa; (2)
+  `SOURCE_ID` = a charge's `referencia_pago_mercadopago` (numeric) or `id_pago_mercadopago`. Result: `conciliado` (charge `aprobado`
+  linked to a sale, amount equal) — store fee and net on the charge (`comision_real`, `neto_real`, `fecha_liberacion`); `sin_venta`
+  (charge `sin_venta`/`fallido` with payment) — flagged for the supervisor; `importe_distinto`; `sin_cobro_en_ways` (no charge: a
+  payment received outside Ways or a manual approval). Manual approvals (`sin_verificar` sale payments, E5) get candidate matches
+  among `sin_cobro_en_ways` rows by same empresa, amount, and `TRANSACTION_DATE` within ±1 day of the sale (and the same
+  `EXTERNAL_POS_ID` when present); a candidate is never applied automatically: the Admin confirms it, which sets the payment's
+  `verificacion_mercadopago = verificado_manualmente` and links the row.
+- REFUND/CHARGEBACK rows: matched to the charge like a payment and shown as `devolucion` / `contracargo` (no automatic sale change).
+- WITHDRAWAL/PAYOUT rows: listed as `retiro` (E7 turns them into treasury movements).
+- Web (back office, Tesorería → "Conciliación Mercado Pago", Admin/Supervisor read, Admin upload/confirm): upload the CSV, see the
+  summary (counts and totals per result, real fees vs estimated), the rows with filters, the "cobros sin venta" and "pagos sin
+  verificar" lists (E3-T3b / E5 endpoints), and confirm manual-approval candidates.
+- Tests: parser (headers, separators, decimals, dates, missing optional columns, bad rows reported not thrown), matching order,
+  duplicate upload rejected, confirm candidate, tenant/empresa scoping; web: upload flow, filters, confirm.
+- Slices: **E6-T1** backend (tables, parser, matching, upload/list/confirm endpoints, real fee/net on the charge; the column
+  `verificacion_mercadopago` already admits `verificado_manualmente`); **E6-T2** back-office web screen.
