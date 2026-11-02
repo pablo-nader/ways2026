@@ -56,6 +56,8 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 - [x] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
   account.
+  - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
+  - [ ] E6-T2 — Back-office web screen.
 - [ ] E7 — Withdrawals/payouts from the report into treasury.
 
 ## Delivery strategy
@@ -64,7 +66,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E6: reconciliation (import the release report, match charges and the `sin_verificar` payments listed by `GET /api/mercadopago/pagos-sin-verificar`, real fees, net to the treasury account; `verificado_manualmente` is reserved for it). E5 is built and awaits its own judgment-day before the PR; E4, E3-T4 and E3-T3b are already approved. Pending before it ships to the cajas: the POS bundle of E3-T3/E4 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress). Nothing of E4 was exercised against the real Mercado Pago API or a real terminal.
+E6-T2: back-office web screen (Tesorería → "Conciliación Mercado Pago": upload, summary, rows with filters, cobros sin venta / pagos sin verificar lists, confirm candidates) over the E6-T1 endpoints. E6-T1 awaits its judgment-day before the PR.
 
 ## E3-T1 design (2026-11-01)
 
@@ -610,3 +612,13 @@ Decision (orchestrator, 2026-11-02): reconciliation by uploaded CSV first.
   duplicate upload rejected, confirm candidate, tenant/empresa scoping; web: upload flow, filters, confirm.
 - Slices: **E6-T1** backend (tables, parser, matching, upload/list/confirm endpoints, real fee/net on the charge; the column
   `verificacion_mercadopago` already admits `verificado_manualmente`); **E6-T2** back-office web screen.
+
+## E6-T1 progress (2026-11-02)
+
+- Built exactly as designed: tables `conciliaciones_mercadopago` / `filas_conciliacion_mercadopago` (RLS, composite FKs, UNIQUE (id_empresa, hash) -> 409 `conciliacion_ya_importada`, partial UNIQUE on the confirmed payment -> 409 `conciliacion_pago_ya_verificado`), charge columns `comision_real`, `neto_real`, `fecha_liberacion`, `id_fila_conciliacion` (CHECK: values only with the row). Pure `LectorDeReporteMercadoPago` and `ConciliadorMercadoPago` in Domain; `ServicioDeConciliacionMercadoPago`; endpoints POST/GET list/GET detail/POST confirmar. docs/10 part 07 + index updated.
+- Decisions to confirm: a matched charge that is approved but not linked to a sale (or pending/cancelled/expired) is `sin_venta`; a charge already reconciled, or repeated in the same file, keeps the FIRST row (installments with several rows per payment store only the first); fee stored as reported (sign kept); unknown TRANSACTION_TYPE or more than 2 decimals make the row `invalida`; confirm does not re-enforce amount/date/caja (only same empresa); candidate window is 24 h inclusive; annulled sales are not candidates; more than 1000 invalid rows rejects the file.
+- Guards touched: inventory golden (+5 lines), `AccionAuditada` (+2, count 46), `EscritoresDePagosDeVentaEstructuralTests` (the confirmation is the second writer of `verificacion_mercadopago`; regex now also sees `SetProperty`), `LectoresDeComprobantesVentaEstructuralesTests` (2 entries), `SuperficieDeAutorizacionTests` (new walker for the 4 routes).
+- Verification: build 0 errors; no pending model changes; Domain 2593 pass; Application 1660 pass; integration filter (MercadoPago|UpDownUp|Cobertura|AislamientoDeTenant|SuperficieDeAutorizacion) 486 pass before the last service tweak, then the 20 new tests + AislamientoDeTenant/Superficie/UpDownUp/Cobertura (49) pass.
+- Mutation evidence (each reverted): parser separator, >2 decimals, date without zone, required column, dropped bad row, reference-before-SOURCE_ID, importe check, +-1 day window, POS id; integration: empresa scoping, fila already confirmed, pago of another empresa, 23505 translation, auto-apply of candidates, removing RLS (AislamientoDeTenant red). Lock removal alone and pre-check removal alone survive because the guarded UPDATE / unique index cover them; removing lock + guard fails the same-row race test 3/3.
+- Open: no real Mercado Pago report was tried (column names from docs); T2 web; E7 treasury movements from `retiro` rows and real fee into the treasury.
+
