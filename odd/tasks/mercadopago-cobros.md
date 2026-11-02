@@ -527,7 +527,7 @@ Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: the mo
 
 Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-pending-model-changes` clean).
 
-- G1 — a charge that was `creando`/`pendiente` when a manual approval sold its number and is approved later (poll, cancel-409 refresh or webhook) stayed `aprobado` with no sale and in no list. `ServicioDeCobrosMercadoPago.AplicarOrdenAsync` now, for a `processed` order on an unlinked charge, takes the charge row `FOR UPDATE` and reads whether a non-annulled sale (any comprobante type, mirrors excluded) already holds the (punto de venta, `numero_preasignado`); if so the approval sets `sin_venta` + `fecha_apartado` (payment id and amount kept) instead of `aprobado`, and audits `venta.mercadopagodoblecobro` on that sale with `ids_cobro_mercadopago = [charge]` and `origen = cobro_aprobado_despues_de_la_venta` (same action: the catalog stays at 44). The signed webhook has no user and `auditoria.id_actor` is NOT NULL: `ServicioDeAuditoria.Registrar` takes an optional `idActor` and the late-approval row is attributed to the sale employee when the context has no user. The POS sees `sin_venta` (closed) and `cobros-sin-venta` lists it.
+- G1 — a charge that was `creando`/`pendiente` when a manual approval sold its number and is approved later (poll, cancel-409 refresh or webhook) stayed `aprobado` with no sale and in no list. `ServicioDeCobrosMercadoPago.AplicarOrdenAsync` now, for a `processed` order on an unlinked charge, takes the charge row `FOR UPDATE` and reads whether a non-annulled sale (mirrors excluded) already holds the (punto de venta, `numero_preasignado`) with at least one `sin_verificar` payment (narrowed by the E5 owner decision, see below); if so the approval sets `sin_venta` + `fecha_apartado` (payment id and amount kept) instead of `aprobado`, and audits `venta.mercadopagodoblecobro` on that sale with `ids_cobro_mercadopago = [charge]` and `origen = cobro_aprobado_despues_de_la_venta` (same action: the catalog stays at 44). The signed webhook has no user and `auditoria.id_actor` is NOT NULL: `ServicioDeAuditoria.Registrar` takes an optional `idActor` and the late-approval row is attributed to the sale employee when the context has no user. The POS sees `sin_venta` (closed) and `cobros-sin-venta` lists it.
 - G2 — `GET /api/mercadopago/pagos-sin-verificar` rows now carry `idsCobroEnConflicto: int[]` (every audited id, distinct, ascending, `[]` when none) instead of `idCobroEnConflicto`; a late-approved charge shows up there too. The web does not consume the field.
 - G3 — lock order: with a manual payment, `LeerDelNumeroBloqueadoAsync` now runs first and locks in ONE ascending `FOR UPDATE` the explicit charge ids unioned with all charges of the number (only the number's rows are returned); `ReservarYValidarAsync` then re-requests rows the transaction already holds. Class summary of `EscriturasDeCobroMercadoPago` rewritten (it described the old two-step order); it now also states that the poll/webhook UPDATE of a `creando`/`pendiente` charge waits for a sale holding that row and, once the sale commits, sees the number used.
 - Tests: `MercadoPagoVentaTests` — late approval by poll and by signed webhook (state, `fecha_apartado`, payment kept, listed in `cobros-sin-venta`, audited, in `idsCobroEnConflicto`), annulled sale does not clash, several conflicting ids ascending, lock-order test (a transaction holds the lower-id charge; the sale must wait there without having locked the explicit higher-id one: `FOR UPDATE NOWAIT` on it succeeds). One existing retry test now seeds its approved charge on another number and moves it, because approving it after the sale correctly makes it `sin_venta`.
@@ -549,3 +549,19 @@ Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-p
 - Not opened as a PR. Owner decision needed. Options: (a) store the tipo de comprobante on the charge and match by it (schema change,
   new slice); (b) narrow the check to sales of that number that carry a `sin_verificar` Mercado Pago payment (the actual double-pay
   case, no schema change); (c) revert the round-2 check and leave late approvals to the E6 reconciliation.
+
+## E5 owner decision (2026-11-02)
+
+- Option (b) chosen after the ESCALATED verdict: the late-approval double-charge check (`LeerVentaDelNumeroBloqueandoAsync`) only counts a
+  non-annulled sale with the same (punto de venta, `numero_preasignado`) that has at least one `cobros` row with
+  `verificacion_mercadopago = 'sin_verificar'`. A sale of another tipo with the same number, a cash-only sale, or a sale without that
+  payment no longer affects the charge: it stays `aprobado` (no false audit) and the real sale can link it.
+- The plain-sale race the judges noted no longer applies: only sales with a `sin_verificar` payment count, and those take the number-wide
+  charge lock in `LeerDelNumeroBloqueadoAsync`, so the `FOR UPDATE` read sees their result.
+- The extra "medio with a Mercado Pago provider" condition was dropped: no test can kill it, because the sale rule only admits `sin_verificar`
+  on a provider medio (guardas-inmatables policy).
+- Tests (`MercadoPagoVentaTests`): other tipo (NCX) with the same number stays `aprobado` and the real sale links it; cash-only sale stays
+  `aprobado`; a sale whose payment has no mark stays `aprobado`. Mutation: dropping the `sin_verificar` condition fails the no-mark test;
+  dropping the whole check fails the two existing late-approval tests (poll and webhook).
+- Found, not fixed: `cobros.verificacion_mercadopago` is `varchar(20)` while the allowed value `verificado_manualmente` has 22 characters, so
+  E6 cannot store it (22001). Needs a column widening before E6.

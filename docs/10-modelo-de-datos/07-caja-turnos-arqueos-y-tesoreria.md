@@ -597,7 +597,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
 > toma el cobro con `FOR UPDATE` y rechaza uno ya ligado, así que solo lo alcanza una escritura que se salte ese lock). La clave alterna `ak_cobros_mercadopago_id_id_tenant`
 > sostiene la FK `fk_cobros_cobro_mercadopago` de `cobros.id_cobro_mercadopago` (§4). Un cobro ligado a una venta no se borra (RESTRICT) y anular la venta no lo desliga.
 > **Aprobación manual (E5).** Una venta aprobada a mano sin red (`cobros.verificacion_mercadopago = 'sin_verificar'`, §4) no tiene fila en esta tabla: no hay orden
-> ni cobro que ligar, y `GET /api/mercadopago/pagos-sin-verificar` es el listado que la conciliación (E6) usa para cotejarlas contra el reporte de Mercado Pago.
+> ni cobro que ligar, y `GET /api/mercadopago/pagos-sin-verificar` es el listado que la conciliación (E6) usa para cotejarlas contra el reporte de Mercado Pago. Un cobro `pendiente` o `creando` que una orden `processed` aprueba después, cuando una venta no anulada del mismo (punto de venta, `numero_preasignado`) ya tiene al menos un pago `sin_verificar`, no queda `aprobado`: pasa a `sin_venta` con `fecha_apartado` y se audita `venta.mercadopagodoblecobro` (`origen = cobro_aprobado_despues_de_la_venta`) sobre esa venta. Una venta con ese número sin pago `sin_verificar` (otro tipo de comprobante, efectivo, un pago ligado) no cuenta y el cobro sigue `aprobado`.
 > RLS estándar. Efecto: como toda FK del modelo, un punto de venta, empresa o medio de pago con cobros cuenta como en uso y no se da de baja
 > (`inventario-de-dependientes.txt`, clasificación `marcado`). La tabla no se audita: es en sí el registro de cada intento y sus estados.
 >
