@@ -130,6 +130,10 @@ export async function resolverResultadoDelCobro(
     case 'sin_aprobar':
       await reserva.soltarReservaDeCobro(numero, ...conDueno(contexto?.dueno))
       return detenido(TEXTO_POR_CIERRE_SIN_APROBAR[resultado.estado])
+    case 'en_curso':
+      return detenido(
+        'El cobro con Mercado Pago sigue en curso en la terminal. Cuando termine, volvé a cobrar para retomarlo: el número queda reservado.',
+      )
     case 'importe_distinto':
       return {
         ...detenido(mensajeDeImporteDistinto(resultado.cobro.importe, resultado.cobro.importePagado ?? 0, formatear)),

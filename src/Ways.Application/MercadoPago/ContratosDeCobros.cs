@@ -75,6 +75,9 @@ public static class CodigosDeErrorDeCobrosMercadoPago
 
     /// <summary>Cancelar un cobro Point que ya llegó a la terminal: Mercado Pago solo cancela una orden <c>created</c>.</summary>
     public const string CancelarEnLaTerminal = "mercadopago_cancelar_en_la_terminal";
+
+    /// <summary>Mercado Pago contestó 409 al cancelar y la lectura posterior dejó el cobro pendiente y fuera de la terminal: la cancelación no se aplicó.</summary>
+    public const string CancelacionNoAplicada = "mercadopago_cancelacion_no_aplicada";
 }
 
 /// <summary>
@@ -97,12 +100,12 @@ public sealed record ItemDeOrdenMercadoPago(string Title, string UnitPrice, int 
 
 /// <summary>
 /// Cuerpo de <c>POST /v1/orders</c> para un cobro en la terminal Point: la terminal y el pago a cobrar (<c>print_on_terminal</c> es
-/// <c>no_ticket</c>: el ticket lo imprime Ways). Mismos nombres snake_case e importes como cadena con dos decimales.
+/// <c>no_ticket</c>: el ticket lo imprime Ways). Mismos nombres snake_case e importes como cadena con dos decimales. No lleva
+/// <c>total_amount</c>: el ejemplo documentado de Point trae solo <c>transactions.payments[{amount}]</c> y el total no está verificado.
 /// </summary>
 public sealed record SolicitudDeOrdenPointMercadoPago(
     string Type,
     string ExternalReference,
-    string TotalAmount,
     string ExpirationTime,
     ConfiguracionDeOrdenPointMercadoPago Config,
     TransaccionesDeSolicitudPointMercadoPago Transactions);

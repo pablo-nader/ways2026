@@ -18,6 +18,8 @@ export type ResultadoDelCobro =
   | { tipo: 'aprobado'; cobro: CobroMercadoPago }
   | { tipo: 'sin_aprobar'; estado: EstadoSinAprobar; cobro: CobroMercadoPago }
   | { tipo: 'importe_distinto'; cobro: CobroMercadoPago }
+  /** Solo Point: el cajero cierra el modal y deja el cobro vivo en la terminal; la reserva se conserva y el próximo cobrar() lo retoma. */
+  | { tipo: 'en_curso'; cobro: CobroMercadoPago }
 
 type PropsModalDeCobroMercadoPago = {
   cobro: CobroMercadoPago
@@ -35,7 +37,8 @@ const formatear = (valor: number) => formatearImporte(valor, { simbolo: true })
  * Cobro con QR o con la terminal Point de Mercado Pago: muestra el QR del cobro ya creado (Point, en cambio, avisa que se cobra en la terminal), lo consulta cada 2 s (una consulta en vuelo a la vez, con más
  * espera tras un fallo) y se resuelve solo cuando el cobro termina (aprobado, cancelado, vencido) o el cajero revisa un importe
  * distinto. No se puede descartar: cerrarlo sin saber si el cliente pagó dejaría un cobro vivo sin dueño. Una respuesta que llega
- * después de resuelto o desmontado se ignora (generación).
+ * después de resuelto o desmontado se ignora (generación). Un cobro Point en la terminal sí se puede cerrar con «Cerrar y dejarlo en
+ * curso»: el cobro y la reserva siguen vivos y el próximo cobrar() lo retoma.
  */
 export function ModalDeCobroMercadoPago({ cobro: cobroInicial, numeroVisible, onResuelto, onImprimirQr, clienteDeCobros, ahora }: PropsModalDeCobroMercadoPago) {
   const clientes = clienteDeCobros ?? clienteDeCobrosMercadoPago
@@ -145,6 +148,12 @@ export function ModalDeCobroMercadoPago({ cobro: cobroInicial, numeroVisible, on
     }
   }
 
+  function dejarEnCurso() {
+    if (resueltoRef.current || cancelandoRef.current) return
+    resueltoRef.current = true
+    onResueltoRef.current({ tipo: 'en_curso', cobro })
+  }
+
   function revisado() {
     if (resueltoRef.current) return
     resueltoRef.current = true
@@ -180,6 +189,7 @@ export function ModalDeCobroMercadoPago({ cobro: cobroInicial, numeroVisible, on
         {vista.tipo === 'revisar_terminal' && (
           <>
             <p className="mb-1">Revisá el resultado en la terminal.</p>
+            {segundos !== null && <p className="text-body-secondary mb-1">Vence en {formatearCuentaRegresiva(segundos)}</p>}
             <p className="text-body-secondary mb-0">Para cancelarlo, hacelo en la terminal.</p>
           </>
         )}
@@ -222,6 +232,11 @@ export function ModalDeCobroMercadoPago({ cobro: cobroInicial, numeroVisible, on
               >
                 {cancelando ? 'Cancelando…' : 'Cancelar cobro'}
               </button>
+              {(vista.tipo === 'cobrando_en_terminal' || vista.tipo === 'revisar_terminal') && (
+                <button type="button" className="btn btn-outline-secondary" disabled={cancelando} onClick={dejarEnCurso}>
+                  Cerrar y dejarlo en curso
+                </button>
+              )}
             </>
           )}
         </div>

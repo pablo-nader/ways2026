@@ -435,6 +435,16 @@ describe('cobrarConMercadoPago', () => {
 })
 
 describe('resolverResultadoDelCobro', () => {
+  it('en_curso deja la reserva y detiene la venta sin apartar nada', async () => {
+    const soltar = vi.fn().mockResolvedValue(true)
+
+    const resultado = await resolverResultadoDelCobro({ tipo: 'en_curso', cobro: cobro() }, 500, { soltarReservaDeCobro: soltar })
+
+    expect(soltar).not.toHaveBeenCalled()
+    expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('sigue en curso') })
+    expect(resultado).not.toHaveProperty('apartable')
+  })
+
   it('cancelado también suelta la reserva', async () => {
     const soltar = vi.fn().mockResolvedValue(true)
 

@@ -53,6 +53,7 @@ const MENSAJE_POR_CODIGO: Record<string, string> = {
     'Mercado Pago informa el pago, falta confirmarlo. No se puede cancelar: esperá la confirmación.',
   mercadopago_caja_sin_terminal: 'La caja de este punto de venta no tiene una terminal Point asignada. Pedile a un administrador que la asigne.',
   mercadopago_terminal_ocupada: 'La terminal tiene otra orden esperando. Terminá o cancelá ese cobro en la terminal y probá de nuevo.',
+  mercadopago_cancelacion_no_aplicada: 'Mercado Pago no pudo cancelar el cobro y sigue pendiente. Consultá su estado y probá de nuevo.',
   mercadopago_cancelar_en_la_terminal: 'El cobro ya está en la terminal: cancelalo en la terminal y esperá a que aparezca acá.',
   cobro_mercadopago_medio_invalido: 'Este medio de pago no está habilitado para cobrar con Mercado Pago.',
   cobro_mercadopago_importe_invalido: 'El importe no es válido para cobrar con Mercado Pago.',

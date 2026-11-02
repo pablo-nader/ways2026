@@ -39,7 +39,7 @@ public partial class MercadoPagoCobrosTests
 
     private static string IdDeLaOrden(Escenario e) => e.Ordenes.OrdenPorClave.Values.Single();
 
-    // Clausula: la orden Point lleva type point, el total, la terminal de la caja, print_on_terminal no_ticket, la vigencia y el pago;
+    // Clausula: la orden Point lleva type point, sin total_amount, la terminal de la caja, print_on_terminal no_ticket, la vigencia y el pago;
     // no lleva ni caja QR ni items; la fila guarda tipo point, la terminal pedida y ningun qr_data.
     [Fact]
     public async Task CrearUnCobroPointMandaLaOrdenConLaTerminalDeLaCajaYGuardaLaFilaSinQr()
@@ -62,7 +62,7 @@ public partial class MercadoPagoCobrosTests
         var raiz = cuerpo.RootElement;
         Assert.Equal("point", raiz.GetProperty("type").GetString());
         Assert.Equal($"W{e.IdTenant}P{e.IdPuntoVenta}N6001I1", raiz.GetProperty("external_reference").GetString());
-        Assert.Equal("250.50", raiz.GetProperty("total_amount").GetString());
+        Assert.False(raiz.TryGetProperty("total_amount", out _));
         Assert.Equal("PT10M", raiz.GetProperty("expiration_time").GetString());
         var point = raiz.GetProperty("config").GetProperty("point");
         Assert.Equal(TerminalDePrueba, point.GetProperty("terminal_id").GetString());
@@ -109,10 +109,10 @@ public partial class MercadoPagoCobrosTests
         Assert.Empty(await FilasAsync(e.IdPuntoVenta));
     }
 
-    // Clausula: el 409 already_queued_order_for_terminal de Mercado Pago es 409 mercadopago_terminal_ocupada; la fila sigue creando
-    // y, liberada la terminal, el mismo crear completa la misma orden con la misma clave.
+    // Clausula: el 409 already_queued_order_for_terminal de Mercado Pago rechaza la creacion: 409 mercadopago_terminal_ocupada, la fila
+    // queda cancelada (sin orden) y libera el numero; liberada la terminal, un crear nuevo abre otro intento y otra orden.
     [Fact]
-    public async Task UnaTerminalConOtraOrdenEsperandoEsUn409TerminalOcupadaYElReintentoCompletaLaMismaOrden()
+    public async Task UnaTerminalConOtraOrdenEsperandoEsUn409TerminalOcupadaCancelaLaFilaYElSiguienteCrearAbreOtroIntento()
     {
         var (e, medio) = await PrepararPointAsync("mp-point-ocupada");
         var ocupada = true;
@@ -121,15 +121,36 @@ public partial class MercadoPagoCobrosTests
             : null;
 
         await AssertCodigoAsync(await CrearAsync(e, 6004, 100m, medio), HttpStatusCode.Conflict, "mercadopago_terminal_ocupada");
-        Assert.Equal("creando", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+        var rechazada = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("cancelado", rechazada["estado"]);
+        Assert.Null(rechazada["id_orden_mercadopago"]);
+        Assert.Null(rechazada["situacion_terminal"]);
 
         ocupada = false;
         var cobro = await CrearPointOkAsync(e, medio, 6004, 100m);
 
         Assert.Equal("pendiente", cobro.Estado);
-        var claves = Creaciones(e).Select(p => p.ClaveDeIdempotencia).Distinct().ToList();
-        Assert.Single(claves);
-        Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        var filas = await FilasAsync(e.IdPuntoVenta);
+        Assert.Equal(["cancelado", "pendiente"], filas.Select(f => (string)f["estado"]!));
+        Assert.Equal([1, 2], filas.Select(f => (int)f["intento"]!));
+        Assert.Equal(2, Creaciones(e).Select(p => p.ClaveDeIdempotencia).Distinct().Count());
+    }
+
+    // Clausula: la fila cancelada por terminal ocupada se devuelve tal cual al consultarla y no abre ordenes.
+    [Fact]
+    public async Task UnCobroCanceladoPorTerminalOcupadaSeDevuelveTalCualAlConsultarloYNoAbreOrdenes()
+    {
+        var (e, medio) = await PrepararPointAsync("mp-point-ocupada-consulta");
+        e.Ordenes.Antes = pedido => pedido.Metodo == HttpMethod.Post && pedido.Uri.AbsolutePath == "/v1/orders"
+            ? Json(HttpStatusCode.Conflict, """{"errors":[{"code":"already_queued_order_for_terminal","message":"terminal ocupada"}]}""")
+            : null;
+        await CrearAsync(e, 6008, 100m, medio);
+        var id = (int)Assert.Single(await FilasAsync(e.IdPuntoVenta))["id_cobro_mercadopago"]!;
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, id));
+
+        Assert.Equal("cancelado", consultado.Estado);
+        Assert.Single(Creaciones(e));
     }
 
     // Clausula: un 409 con otro codigo (o un QR) no es terminal ocupada.
@@ -263,9 +284,9 @@ public partial class MercadoPagoCobrosTests
         Assert.Equal(2, Creaciones(e).Select(p => p.ClaveDeIdempotencia).Distinct().Count());
     }
 
-    // Clausula: un cobro fallido se devuelve tal cual (sin llamar a Mercado Pago) al consultarlo y al cancelarlo.
+    // Clausula: un cobro fallido se sigue leyendo (con el limite de una consulta cada 2 s) pero cancelarlo no llama a Mercado Pago.
     [Fact]
-    public async Task ConsultarOCancelarUnCobroFallidoLoDevuelveSinLlamarAMercadoPago()
+    public async Task ConsultarUnCobroFallidoRespetaElLimiteDeConsultasYCancelarloNoLlamaAMercadoPago()
     {
         var (e, medio) = await PrepararPointAsync("mp-point-fallido-final");
         var cobro = await CrearPointOkAsync(e, medio, 6015, 100m);
@@ -280,6 +301,137 @@ public partial class MercadoPagoCobrosTests
         Assert.Equal("fallido", cancelado.Estado);
         Assert.Equal(lecturas, Lecturas(e).Count);
         Assert.Empty(Cancelaciones(e));
+    }
+
+    private async Task<(Escenario E, int IdMedio, CobroDeMercadoPago Fallido, string IdOrden)> PrepararFallidoAsync(string nombre, long numero)
+    {
+        var (e, medio) = await PrepararPointAsync(nombre);
+        var cobro = await CrearPointOkAsync(e, medio, numero, 100m);
+        var idOrden = IdDeLaOrden(e);
+        e.Ordenes.Estados[idOrden] = "failed";
+        var fallido = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+        Assert.Equal("fallido", fallido.Estado);
+        return (e, medio, fallido, idOrden);
+    }
+
+    // Clausula: failed no cierra la vigilancia. Si Mercado Pago informa despues un pago legible, el cobro fallido (cuyo numero pudo
+    // reutilizarse) pasa a sin_venta con fecha_apartado, nunca a aprobado, y aparece en el listado de la conciliacion.
+    [Fact]
+    public async Task UnPointFallidoSeSigueLeyendoYUnPagoPosteriorLoDejaSinVentaYListadoParaLaConciliacion()
+    {
+        var (e, medio, fallido, idOrden) = await PrepararFallidoAsync("mp-point-fallido-pago-tardio", 6030);
+        var reintento = await CrearPointOkAsync(e, medio, 6030, 100m);
+        e.Ordenes.Estados[idOrden] = "processed";
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+
+        var tardio = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
+
+        Assert.Equal("sin_venta", tardio.Estado);
+        Assert.Equal(100m, tardio.ImportePagado);
+        var filas = await FilasAsync(e.IdPuntoVenta);
+        var fila = filas.Single(f => Convert.ToInt32(f["id_cobro_mercadopago"]) == fallido.IdCobro);
+        Assert.NotNull(fila["fecha_apartado"]);
+        Assert.Equal($"PAY{idOrden}", fila["id_pago_mercadopago"]);
+        Assert.Equal("pendiente", filas.Single(f => Convert.ToInt32(f["id_cobro_mercadopago"]) == reintento.IdCobro)["estado"]);
+        var lista = await LeerAsync<List<CobroSinVentaListado>>(await e.Ctx.Admin.GetAsync($"{RutaSinVenta}?idEmpresa={e.Ctx.IdEmpresa}"));
+        Assert.Equal(fallido.IdCobro, Assert.Single(lista).IdCobro);
+    }
+
+    // Clausula: lo mismo por el camino del webhook (el POS ya no consulta un cobro fallido).
+    [Fact]
+    public async Task UnAvisoFirmadoDeUnPointFallidoConPagoPosteriorLoDejaSinVenta()
+    {
+        var (e, _, fallido, idOrden) = await PrepararFallidoAsync("mp-point-fallido-aviso", 6031);
+        e.Ordenes.Estados[idOrden] = "processed";
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+
+        var respuesta = await AvisarAsync(ClienteDelWebhook(e), idOrden, FirmaValida(e, idOrden));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("sin_venta", fila["estado"]);
+        Assert.NotNull(fila["fecha_apartado"]);
+        var lista = await LeerAsync<List<CobroSinVentaListado>>(await e.Ctx.Admin.GetAsync($"{RutaSinVenta}?idEmpresa={e.Ctx.IdEmpresa}"));
+        Assert.Equal(fallido.IdCobro, Assert.Single(lista).IdCobro);
+    }
+
+    // Clausula: un fallido que Mercado Pago despues informa canceled o expired se cierra como cancelado o expirado (deja de vigilarse).
+    [Theory]
+    [InlineData("canceled", "cancelado")]
+    [InlineData("expired", "expirado")]
+    public async Task UnPointFallidoQueMercadoPagoCierraDespuesQuedaCanceladoOExpirado(string estadoDeMercadoPago, string esperado)
+    {
+        var (e, _, fallido, idOrden) = await PrepararFallidoAsync("mp-point-fallido-cierra-" + estadoDeMercadoPago, 6032);
+        e.Ordenes.Estados[idOrden] = estadoDeMercadoPago;
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
+
+        Assert.Equal(esperado, consultado.Estado);
+    }
+
+    // Clausula: pasado el plazo de la orden mas el margen de abandono el fallido ya no se lee: sigue fallido aunque Mercado Pago diga otra cosa.
+    [Fact]
+    public async Task UnPointFallidoYaNoSeLeePasadoElPlazoDeLaOrdenMasElMargen()
+    {
+        var (e, _, fallido, idOrden) = await PrepararFallidoAsync("mp-point-fallido-fuera-de-plazo", 6033);
+        var lecturas = Lecturas(e).Count;
+        e.Ordenes.Estados[idOrden] = "processed";
+        e.Reloj.Ahora = e.Reloj.Ahora.AddMinutes(16);
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, fallido.IdCobro));
+
+        Assert.Equal("fallido", consultado.Estado);
+        Assert.Equal(lecturas, Lecturas(e).Count);
+    }
+
+    // Clausula: single-read-under-lock. Crear toma el lock de la caja antes de leer la terminal: una reasignacion que confirma mientras
+    // el crear espera se ve en la orden (la orden va a la terminal vigente, no a la leida antes del lock).
+    [Fact]
+    public async Task CrearPointTomaElLockDeLaCajaYPideLaOrdenALaTerminalReasignadaMientrasEsperaba()
+    {
+        var (e, medio) = await PrepararPointAsync("mp-point-lock-caja");
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var transaccion = await conexion.BeginTransactionAsync();
+        await using (var tomar = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock($1, $2)", conexion, transaccion))
+        {
+            tomar.Parameters.Add(new Npgsql.NpgsqlParameter { Value = e.IdPuntoVenta });
+            tomar.Parameters.Add(new Npgsql.NpgsqlParameter { Value = ServicioDeCajasMercadoPago.ClaveDeLockDeCaja });
+            await tomar.ExecuteNonQueryAsync();
+        }
+
+        var crear = CrearAsync(e, 6034, 100m, medio);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        Assert.False(crear.IsCompleted);
+
+        await using (var reasignar = new Npgsql.NpgsqlCommand(
+            "UPDATE cajas_mercadopago SET id_terminal_point = 'PAX_A910__REASIGNADA1' WHERE id_punto_venta = $1", conexion, transaccion))
+        {
+            reasignar.Parameters.Add(new Npgsql.NpgsqlParameter { Value = e.IdPuntoVenta });
+            await reasignar.ExecuteNonQueryAsync();
+        }
+
+        await transaccion.CommitAsync();
+        var cobro = await LeerAsync<CobroDeMercadoPago>(await crear);
+
+        Assert.Equal("PAX_A910__REASIGNADA1", cobro.IdTerminal);
+        using var cuerpo = JsonDocument.Parse(Assert.Single(Creaciones(e)).Cuerpo);
+        Assert.Equal("PAX_A910__REASIGNADA1", cuerpo.RootElement.GetProperty("config").GetProperty("point").GetProperty("terminal_id").GetString());
+    }
+
+    // Clausula: si Mercado Pago contesta 409 al cancelar y la lectura posterior deja el cobro pendiente y fuera de la terminal, la
+    // cancelacion no se aplico: 409 mercadopago_cancelacion_no_aplicada, no un 200 silencioso; el cobro sigue pendiente.
+    [Fact]
+    public async Task UnCancelarQueContesta409YDejaElCobroPendienteFueraDeLaTerminalEsUn409CancelacionNoAplicada()
+    {
+        var (e, medio) = await PrepararPointAsync("mp-point-cancelacion-no-aplicada");
+        var cobro = await CrearPointOkAsync(e, medio, 6035, 100m);
+        e.Ordenes.Cancelar = _ => Json(HttpStatusCode.Conflict, """{"error": "cannot_cancel_order", "message": "nope"}""");
+
+        await AssertCodigoAsync(await CancelarAsync(e, cobro.IdCobro), HttpStatusCode.Conflict, "mercadopago_cancelacion_no_aplicada");
+
+        Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
     }
 
     // Clausula: mientras la orden esta created el cobro Point se cancela como un QR.

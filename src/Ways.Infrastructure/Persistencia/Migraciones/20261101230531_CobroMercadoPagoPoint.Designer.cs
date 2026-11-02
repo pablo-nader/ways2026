@@ -3804,7 +3804,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
 
-                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
+                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL OR (estado = 'cancelado' AND tipo = 'point')");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_sin_venta", "estado <> 'sin_venta' OR (fecha_apartado IS NOT NULL AND id_comprobante_venta IS NULL AND id_pago_mercadopago IS NOT NULL)");
 

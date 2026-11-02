@@ -140,9 +140,31 @@ describe('ModalDeCobroMercadoPago', () => {
       const { onResuelto } = montar({ inicial: revisar, consultar: vi.fn().mockResolvedValue(revisar) })
 
       expect(screen.getByText('Revisá el resultado en la terminal.')).toBeInTheDocument()
+      expect(screen.getByText(/Vence en/)).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cancelar cobro' })).toBeDisabled()
       await new Promise((r) => setTimeout(r, 80))
       expect(onResuelto).not.toHaveBeenCalled()
+    })
+
+    it('«Cerrar y dejarlo en curso» resuelve con en_curso en la terminal y en revisar la terminal, y no cancela nada', async () => {
+      const enTerminal = point({ enTerminal: true })
+      const a = montar({ inicial: enTerminal, consultar: vi.fn().mockResolvedValue(enTerminal) })
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar y dejarlo en curso' }))
+      expect(a.onResuelto).toHaveBeenCalledTimes(1)
+      expect(a.onResuelto.mock.calls[0][0]).toMatchObject({ tipo: 'en_curso', cobro: { idCobro: 77 } })
+      expect(a.cancelar).not.toHaveBeenCalled()
+      cleanup()
+
+      const revisar = point({ idCobro: 78, revisarTerminal: true })
+      const r = montar({ inicial: revisar, consultar: vi.fn().mockResolvedValue(revisar) })
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar y dejarlo en curso' }))
+      expect(r.onResuelto.mock.calls[0][0]).toMatchObject({ tipo: 'en_curso', cobro: { idCobro: 78 } })
+    })
+
+    it('un cobro con QR no ofrece cerrarlo en curso', () => {
+      montar({})
+
+      expect(screen.queryByRole('button', { name: 'Cerrar y dejarlo en curso' })).not.toBeInTheDocument()
     })
 
     it('un cobro Point aprobado se resuelve; uno fallido vuelve al pago con el motivo', async () => {

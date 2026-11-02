@@ -45,7 +45,9 @@ public static class EstadosDeCobroMercadoPago
 
     /// <summary>
     /// Solo Point: Mercado Pago informó la orden <c>failed</c> (el pago se rechazó o falló en la terminal). No es vivo: libera el número
-    /// y el medio, el cajero puede cobrar de nuevo (otro intento) o usar otro medio. Es final.
+    /// y el medio, el cajero puede cobrar de nuevo (otro intento) o usar otro medio. Mercado Pago puede informar después un pago de esa
+    /// orden: por eso se sigue leyendo hasta que vence su plazo más el margen de abandono, y un pago legible lo pasa a
+    /// <see cref="SinVenta"/> (nunca a <see cref="Aprobado"/>: su número pudo reutilizarse).
     /// </summary>
     public const string Fallido = "fallido";
 
@@ -109,7 +111,7 @@ public class CobroMercadoPago : EntidadTenant
     /// </summary>
     public required string ClaveIdempotencia { get; set; }
 
-    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>); nulo solo mientras el cobro está <see cref="EstadosDeCobroMercadoPago.Creando"/> o si la fila se abandonó sin que se confirmara ninguna orden y quedó <see cref="EstadosDeCobroMercadoPago.Expirado"/>.</summary>
+    /// <summary><c>id</c> de la orden en Mercado Pago (<c>ORD…</c>); nulo solo mientras el cobro está <see cref="EstadosDeCobroMercadoPago.Creando"/> o si la fila se abandonó sin que se confirmara ninguna orden y quedó <see cref="EstadosDeCobroMercadoPago.Expirado"/> (o <see cref="EstadosDeCobroMercadoPago.Cancelado"/>, en un Point que Mercado Pago rechazó por terminal ocupada).</summary>
     public string? IdOrdenMercadoPago { get; set; }
 
     /// <see cref="EstadosDeCobroMercadoPago"/>.

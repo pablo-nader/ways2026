@@ -25,9 +25,13 @@ namespace Ways.Application.MercadoPago;
 /// <b>Point (E4).</b> El proveedor del medio decide el tipo del cobro. Un cobro Point pide <c>type: "point"</c> a la terminal de la caja
 /// (guardada en el cobro: un reintento reenvía la misma; sin terminal, 409 <c>mercadopago_caja_sin_terminal</c>), no tiene QR, y su orden
 /// pasa por <c>created</c>, <c>at_terminal</c> y <c>action_required</c> (situación en la terminal, <c>pendiente</c>), <c>processed</c>
-/// (<c>aprobado</c>) o <c>failed</c> (<c>fallido</c>, no vivo). Solo se cancela con la orden <c>created</c>; ya en la terminal se cancela
+/// (<c>aprobado</c>) o <c>failed</c> (<c>fallido</c>, no vivo: libera el número, pero se sigue leyendo hasta que pasa el plazo de la orden más
+/// el margen de abandono; si Mercado Pago informa después un pago legible el cobro pasa a <c>sin_venta</c>, nunca a <c>aprobado</c>, porque
+/// su número pudo reutilizarse; <c>canceled</c> o <c>expired</c> lo cierran como <c>cancelado</c> o <c>expirado</c>). Solo se cancela con la orden <c>created</c>; ya en la terminal se cancela
 /// ahí (409 <c>mercadopago_cancelar_en_la_terminal</c>). Un 409 <c>already_queued_order_for_terminal</c> al crear es 409
-/// <c>mercadopago_terminal_ocupada</c> y la fila sigue <c>creando</c>.
+/// <c>mercadopago_terminal_ocupada</c> y la fila pasa a <c>cancelado</c> (sin orden): ese código exacto rechaza la creación, no es un
+/// reenvío idempotente de una orden ya creada, y el número queda libre para otro intento. El cuerpo Point no lleva <c>total_amount</c>.
+/// Antes de leer la terminal de la caja se toma el lock de la caja (el mismo de asignar y quitar la terminal).
 ///
 /// <b>Un cobro vivo por número.</b> Un cobro <c>creando</c>, <c>pendiente</c> o <c>aprobado</c> ocupa el número de venta
 /// (<c>ux_cobros_mercadopago_vivo_numero</c>). Crear con el mismo medio e importe devuelve el pendiente tal cual (el dispositivo que
@@ -50,7 +54,7 @@ namespace Ways.Application.MercadoPago;
 /// terminal pasa por el mapeo de estados; una <c>processed</c> sin pago legible (importe o id) queda <c>pendiente</c> sin QR
 /// (<c>VerificandoPago</c> y <c>PagoInformadoSinDatos</c>).
 ///
-/// <b>Locks</b> (<c>single-read-under-lock</c>), siempre en el orden punto de venta → cobro: crear toma el lock del punto de venta y,
+/// <b>Locks</b> (<c>single-read-under-lock</c>), siempre en el orden punto de venta → cobro (→ caja, solo al crear: la terminal se lee bajo el lock de la caja): crear toma el lock del punto de venta y,
 /// si hay un cobro vivo del número, el del cobro; consultar y cancelar toman el del cobro y, si el cobro está <c>creando</c> (hay
 /// que reenviar la orden), antes el del punto de venta. Todo camino que devuelve o modifica un cobro vivo lo vuelve a leer después
 /// de tomar su lock. El lock se mantiene mientras se llama a Mercado Pago: dos consultas del mismo cobro se serializan, y la segunda
@@ -203,6 +207,9 @@ public class ServicioDeCobrosMercadoPago(
                 CodigosDeErrorDeMercadoPago.NoConectada, "La empresa no tiene Mercado Pago conectado.", 409)
         };
 
+        // Lock de la caja (orden: punto de venta -> cobro -> caja; asignar, quitar y registrar la terminal toman sucursal -> caja y nunca
+        // el del punto de venta de cobros): o la reasignación confirma antes y se ve acá, o espera a que esta reserva confirme.
+        await ServicioDeCajasMercadoPago.TomarLockAsync(db, puntoVenta.Id, ServicioDeCajasMercadoPago.ClaveDeLockDeCaja, ct);
         var caja = await db.CajasMercadoPago
             .AsNoTracking()
             .FirstOrDefaultAsync(c => c.IdPuntoVenta == puntoVenta.Id && c.IdUsuarioMercadoPago == idUsuarioMercadoPago, ct)
@@ -253,7 +260,7 @@ public class ServicioDeCobrosMercadoPago(
     /// Resuelve una fila <c>creando</c> según el instante en que se reservó (<c>created_at</c>). Dentro de <see cref="Vigencia"/> reenvía
     /// la orden. Pasado ese plazo no la reenvía nunca más (un reenvío podría crear una orden nueva y cobrable) y responde 409 mientras
     /// una orden creada por un reenvío anterior pueda seguir viva; cuando ya no puede, la fila se da por <c>expirado</c> sin llamar a
-    /// Mercado Pago y libera el número. Un 4xx no prueba que la orden no exista, por eso nunca cancela la fila. Quien la llama tiene el
+    /// Mercado Pago y libera el número. Un 4xx no prueba que la orden no exista, por eso nunca cancela la fila (salvo el 409 exacto de terminal ocupada de Point, que rechaza la creación). Quien la llama tiene el
     /// lock del punto de venta y el del cobro y acaba de leer la fila.
     /// </summary>
     private async Task ResolverCreandoAsync(CobroMercadoPago cobro, CancellationToken ct)
@@ -295,7 +302,13 @@ public class ServicioDeCobrosMercadoPago(
         }
         catch (ErrorDeApiMercadoPago error) when (esPoint && error.EstadoMercadoPago == 409 && error.CodigoMercadoPago == CodigoDeTerminalOcupada)
         {
-            // La fila sigue creando (un 4xx no prueba que la orden no exista): el próximo intento reenvía la misma orden con la misma clave.
+            // Este código exacto es un rechazo de la creación (el reenvío idempotente de una orden ya creada devuelve la orden, no este
+            // 409): la fila no es una orden posible. Se cancela, libera el número y el POS ya no la ve viva.
+            var ahoraOcupada = reloj.Ahora;
+            cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
+            cobro.SituacionTerminal = null;
+            cobro.UpdatedAt = ahoraOcupada;
+            await db.SaveChangesAsync(ct);
             throw ErrorDominio.Conflicto(
                 CodigosDeErrorDeCobrosMercadoPago.TerminalOcupada,
                 "La terminal tiene otra orden esperando: terminá o cancelá ese cobro en la terminal y probá de nuevo.");
@@ -332,7 +345,7 @@ public class ServicioDeCobrosMercadoPago(
 
         return await SobreCobroAsync(idCobro, idPuntoVenta, async cobro =>
         {
-            if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente)
+            if (SeSigueVigilando(cobro))
             {
                 await RefrescarAsync(cobro, respetarIntervalo: true, ct);
             }
@@ -386,7 +399,7 @@ public class ServicioDeCobrosMercadoPago(
                     CodigosDePagoConMercadoPago.YaUsado, "El cobro de Mercado Pago ya pagó una venta: no se puede apartar.");
             }
 
-            if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente)
+            if (SeSigueVigilando(cobro))
             {
                 await RefrescarAsync(cobro, respetarIntervalo: false, ct);
             }
@@ -421,7 +434,7 @@ public class ServicioDeCobrosMercadoPago(
         {
             db.ChangeTracker.Clear();
             var cobro = await db.CobrosMercadoPago.FirstOrDefaultAsync(c => c.Id == idCobro, ct);
-            if (cobro is { Estado: EstadosDeCobroMercadoPago.Pendiente })
+            if (cobro is not null && SeSigueVigilando(cobro))
             {
                 await RefrescarAsync(cobro, respetarIntervalo: true, ct);
             }
@@ -485,6 +498,14 @@ public class ServicioDeCobrosMercadoPago(
             // Mercado Pago solo cancela una orden en estado created: si contesta 409 pudo pagarse (o vencer) mientras tanto.
             await RefrescarAsync(cobro, respetarIntervalo: false, ct);
             ExigirCancelableDesdeElPos(cobro);
+
+            // Un pago informado sin datos legibles es otro desenlace (el cobro se muestra como verificando), no una cancelación fallida.
+            if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente && cobro.FechaProcesadaMercadoPago is null)
+            {
+                throw ErrorDominio.Conflicto(
+                    CodigosDeErrorDeCobrosMercadoPago.CancelacionNoAplicada,
+                    "Mercado Pago no pudo cancelar el cobro y la orden sigue pendiente: consultá su estado y probá de nuevo.");
+            }
         }
     }
 
@@ -516,7 +537,7 @@ public class ServicioDeCobrosMercadoPago(
             .FirstOrDefaultAsync(c => c.Id == idCobro && c.IdPuntoVenta == idPuntoVenta, ct)
             ?? throw CobroInexistente(idCobro);
 
-        if (!EstadosDeCobroMercadoPago.EsVivo(previo.Estado))
+        if (!EstadosDeCobroMercadoPago.EsVivo(previo.Estado) && !SeSigueVigilando(previo))
         {
             return Mapear(previo);
         }
@@ -553,6 +574,15 @@ public class ServicioDeCobrosMercadoPago(
             return await operacion(await LeerCobroAsync(idCobro, idPuntoVenta, ct));
         }, ct);
     }
+
+    /// <summary>
+    /// Un cobro <c>pendiente</c> se refresca siempre; uno <c>fallido</c> (Point) también hasta que pasa el plazo de su orden más el
+    /// margen de abandono: <c>failed</c> pudo ser un rechazo del primer pago y el cliente reintentar o pagar en la terminal. No es vivo
+    /// (libera el número), pero si Mercado Pago informa después el pago el dinero tiene que verse.
+    /// </summary>
+    private bool SeSigueVigilando(CobroMercadoPago cobro) =>
+        cobro.Estado == EstadosDeCobroMercadoPago.Pendiente
+        || (cobro.Estado == EstadosDeCobroMercadoPago.Fallido && reloj.Ahora < cobro.ExpiraEn + MargenDeAbandono);
 
     /// <summary><c>FOR UPDATE</c> de la fila del cobro, antes de leerla: es el lock con que la venta liga el cobro aprobado.</summary>
     private async Task BloquearFilaAsync(int idCobro, CancellationToken ct) =>
@@ -614,7 +644,17 @@ public class ServicioDeCobrosMercadoPago(
                     break;
                 }
 
-                cobro.Estado = EstadosDeCobroMercadoPago.Aprobado;
+                // Un fallido ya liberó su número (otro cobro pudo tomarlo): el pago tardío no aprueba, queda a la vista de la conciliación.
+                if (cobro.Estado == EstadosDeCobroMercadoPago.Fallido)
+                {
+                    cobro.Estado = EstadosDeCobroMercadoPago.SinVenta;
+                    cobro.FechaApartado = ahora;
+                }
+                else
+                {
+                    cobro.Estado = EstadosDeCobroMercadoPago.Aprobado;
+                }
+
                 cobro.FechaAprobacion = ahora;
                 cobro.IdPagoMercadoPago = idPago;
                 cobro.ReferenciaPagoMercadoPago = pago!.ReferenciaNumerica;
@@ -657,7 +697,7 @@ public class ServicioDeCobrosMercadoPago(
         if (tipo == TiposDeCobroMercadoPago.Point)
         {
             return new SolicitudDeOrdenPointMercadoPago(
-                "point", externalReference, total, VigenciaDeLaOrden,
+                "point", externalReference, VigenciaDeLaOrden,
                 new ConfiguracionDeOrdenPointMercadoPago(new ConfiguracionDePointDeOrdenMercadoPago(idTerminal!, "no_ticket")),
                 new TransaccionesDeSolicitudPointMercadoPago([new PagoDeSolicitudPointMercadoPago(total)]));
         }
