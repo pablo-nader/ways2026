@@ -468,3 +468,29 @@ Fix commit `fix(mercadopago): la terminal ocupada cancela solo en el primer env�
   2 s interval.
 - Open (both, narrow): `primerEnvio` is derived from "reserved in this call", so two simultaneous creates for the same number plus a
   timeout on the other one could still cancel a row whose order is live on the terminal. A persisted "sent" mark would close it.
+
+## E5 design (2026-11-01) — manual approval offline, flagged "sin verificar"
+
+Branch `pnader/mercadopago-e5`, stacked on E4. Backend + POS.
+
+- Owner decision (2026-10-31): without network the cashier can approve a Mercado Pago payment by hand and it stays flagged
+  "sin verificar" until reconciliation; the flag is fixed when the sale is queued.
+- Sale payment (`cobros` table): new column `verificacion_mercadopago varchar(20) NULL` with CHECK in (`mercadopago`,
+  `sin_verificar`, `verificado_manualmente`): NULL for a medio without provider; `mercadopago` when linked to an approved charge
+  (E3-T2, set by the server); `sin_verificar` for a manual approval. `verificado_manualmente` is reserved for E6.
+- `PagoDeVenta` gains `AprobacionManualSinVerificar: bool` (dto-contract-honesty). A provider medio payment needs exactly one of
+  `IdCobroMercadoPago` or `AprobacionManualSinVerificar` (400 `cobro_mercadopago_requerido` / `cobro_mercadopago_y_aprobacion_manual`).
+  The manual flag is accepted only on a device sale with `numeroPreasignado` (the offline queue), never from the back office
+  (400 `aprobacion_manual_solo_offline`). `Referencia` is optional on a manual approval (the cashier may type the operation number
+  the customer shows). The idempotent retry compares the flag.
+- Reports/back office: `GET /api/mercadopago/pagos-sin-verificar?idEmpresa=&desde=&hasta=` (Supervisor/Admin) lists sale payments
+  with `sin_verificar` (sale number, PV, date, amount, referencia, cashier) for E6's screen.
+- POS: when a Mercado Pago medio row cannot be charged because there is no network (offline) or Mercado Pago is unavailable
+  (`mercadopago_no_disponible` / network errors on create), offer "Aprobar a mano (sin verificar)": a confirmation dialog that
+  says the payment is not verified and will be checked in the reconciliation, an optional "Número de operación" field, then the
+  sale is queued with `aprobacionManualSinVerificar: true` and prints once. The ticket shows "Pago Mercado Pago sin verificar".
+  The offline snapshot path uses the existing outbox; no charge is created; no number is set aside beyond the normal queue.
+- Not allowed when a charge for that sale is live (an `en_curso` reservation): the cashier must resolve it first (retomar,
+  cancelar, apartar) — avoids paying twice.
+- Tests: server validation matrix, flag persisted, retry comparison, list scoping; POS offline offer, confirmation, single print,
+  ticket text, blocked while a charge is live.
