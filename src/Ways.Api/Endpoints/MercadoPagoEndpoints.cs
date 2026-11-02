@@ -305,7 +305,7 @@ public static class MercadoPagoEndpoints
         .WithSummary(
             "Admin: reabre una propuesta descartada (vuelve a pendiente, sin escribir nada en la tesorería; se borran quién y cuándo la descartó y el motivo); " +
             "queda auditado. Es el camino de vuelta de un retiro descartado, que las importaciones no vuelven a proponer. 404 si la conciliación o la propuesta " +
-            "no existen, 409 propuesta_no_descartada.");
+            "no existen, 409 propuesta_no_descartada, 409 propuesta_cancelada_por_mercadopago si Mercado Pago canceló la operación (la marca no se borra al reabrir).");
 
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,

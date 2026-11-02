@@ -163,7 +163,8 @@ export type CuentaDeOrigenPosible = { id: number; nombre: string }
  * `idCuentaOrigen` es nulo en un retiro cuando la empresa no tiene exactamente una cuenta en sus medios de Mercado Pago: mientras esté
  * pendiente, `origenesPosibles` trae las cuentas entre las que el Admin elige al aplicar (vacía: solo se puede descartar); si no, viene vacía.
  * `retiro_cancelado` es la reversión de un retiro ya aplicado que Mercado Pago canceló: lleva las dos cuentas del retiro (el dinero vuelve del destino
- * al origen) y no se eligen. `motivo` dice por qué se descartó cuando no fue el Admin.
+ * al origen) y no se eligen. `motivo` dice por qué se descartó cuando no fue el Admin. `canceladoPorMercadoPago` marca la propuesta cuya operación
+ * Mercado Pago canceló: el servidor no la deja reabrir.
  */
 export type PropuestaDeTesoreria = {
   id: number
@@ -184,6 +185,7 @@ export type PropuestaDeTesoreria = {
   resueltaPor: string | null
   origenesPosibles: CuentaDeOrigenPosible[]
   motivo: string | null
+  canceladoPorMercadoPago: boolean
 }
 
 export type AccionDePropuesta = 'aplicar' | 'descartar' | 'reabrir'
@@ -384,6 +386,8 @@ const MENSAJE_POR_CODIGO: Record<string, string> = {
   propuesta_descartada: 'La propuesta ya se descartó: no se puede aplicar.',
   propuesta_ya_descartada: 'La propuesta ya se descartó.',
   propuesta_no_descartada: 'La propuesta ya no está descartada: no se puede reabrir.',
+  propuesta_cancelada_por_mercadopago:
+    'Mercado Pago canceló esta operación: la propuesta no se puede reabrir. Si hace falta mover dinero, hacé un ajuste manual de tesorería.',
   cuenta_destino_requerida: 'Elegí la cuenta que recibe el retiro.',
   cuenta_destino_no_aplica: 'Esta propuesta no lleva cuenta de destino a elegir.',
   cuenta_destino_invalida: 'La cuenta de destino tiene que ser una cuenta activa de la misma empresa.',

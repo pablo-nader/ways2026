@@ -42,7 +42,10 @@ public sealed record PropuestasGeneradas(
 /// fila: pendiente, se descarta con el motivo "cancelado por Mercado Pago" (auditado, no mueve dinero); aplicada, se propone una reversión
 /// (<see cref="TiposDePropuestaDeTesoreriaMercadoPago.RetiroCancelado"/>, una por operación y empresa) que el Admin aplica; descartada o inexistente, la
 /// cancelación solo se cuenta. Si el MISMO archivo trae el retiro y su cancelación no se propone el retiro (se cuenta como cancelado): proponer y descartar
-/// en el mismo paso solo dejaría ruido. Un retiro que se importa DESPUÉS de una cancelación ya importada sí se propone: la cancelación no se recuerda.
+/// en el mismo paso solo dejaría ruido; vale para <c>WITHDRAWAL</c> y para <c>PAYOUT</c>. La cancelación se recuerda entre reportes: un retiro que se importa
+/// DESPUÉS de una cancelación ya importada (una fila <c>WITHDRAWAL_CANCEL</c> de la empresa con su SOURCE_ID, en otra conciliación) nace descartado con el motivo
+/// "cancelado por Mercado Pago". Toda propuesta que una cancelación toca (descartada, nacida descartada, retiro aplicado y su reversión, o descartada a mano)
+/// queda con <see cref="PropuestaDeTesoreriaMercadoPago.CanceladoPorMercadoPago"/>, que reabrir no borra y que impide reabrirla.
 ///
 /// <b>Diferencia de comisión y anulaciones.</b> Solo cuentan los pagos de comprobantes emitidos HOY: una venta que se anula después de cerrado el turno queda
 /// fuera del cálculo aunque el cierre ya la haya acreditado (los flujos de anulación no se concilian acá; la diferencia de esa venta no se propone).
@@ -208,7 +211,7 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         var retiros = filasDeRetiro
             .Where(f => f.TipoTransaccion is TiposDeTransaccionMercadoPago.Withdrawal or TiposDeTransaccionMercadoPago.Payout
                         && !string.IsNullOrEmpty(f.SourceId)
-                        && !(f.TipoTransaccion == TiposDeTransaccionMercadoPago.Withdrawal && idsCancelados.Contains(f.SourceId!))
+                        && !idsCancelados.Contains(f.SourceId!)
                         && f.Importe is { } importe && importe != 0m && Math.Abs(importe) <= ReglasDeAjusteDeCuentaTesoreria.ImporteMaximo)
             .OrderBy(f => f.NumeroLinea)
             .ToList();
@@ -218,6 +221,7 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         }
 
         var creados = 0;
+        var descartadosAlNacer = 0;
         if (retiros.Count > 0)
         {
             var claves = retiros.Select(f => PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(f.SourceId!)).Distinct().ToList();
@@ -228,9 +232,12 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                     .ToListAsync(ct))
                 .ToHashSet();
 
+            var cancelacionesConocidas = await CancelacionesYaImportadasAsync(
+                db, idEmpresa, idConciliacion, retiros.Select(f => f.SourceId!).Distinct().ToList(), ct);
             var cuentas = await CuentasDeOrigenAsync(db, idEmpresa, ct);
             int? idCuentaDeOrigen = cuentas.Count == 1 ? cuentas[0].Id : null;
 
+            var nacidosDescartados = new List<PropuestaDeTesoreriaMercadoPago>();
             foreach (var fila in retiros)
             {
                 var clave = PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(fila.SourceId!);
@@ -239,8 +246,8 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                     continue;
                 }
 
-                creados++;
-                db.PropuestasTesoreriaMercadoPago.Add(new PropuestaDeTesoreriaMercadoPago
+                var cancelado = cancelacionesConocidas.Contains(clave);
+                var propuesta = new PropuestaDeTesoreriaMercadoPago
                 {
                     IdTenant = idTenant,
                     IdEmpresa = idEmpresa,
@@ -250,19 +257,70 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                     Importe = Math.Abs(fila.Importe!.Value),
                     IdFila = fila.Id,
                     IdCuentaOrigen = idCuentaDeOrigen,
-                    Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente,
+                    Estado = cancelado
+                        ? EstadosDePropuestaDeTesoreriaMercadoPago.Descartada
+                        : EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente,
+                    IdUsuarioResolucion = cancelado ? idUsuario : null,
+                    FechaResolucion = cancelado ? ahora : null,
+                    MotivoResolucion = cancelado ? PropuestaDeTesoreriaMercadoPago.MotivoCancelado : null,
+                    CanceladoPorMercadoPago = cancelado,
                     CreatedAt = ahora,
                     UpdatedAt = ahora
-                });
+                };
+                db.PropuestasTesoreriaMercadoPago.Add(propuesta);
+                if (cancelado)
+                {
+                    nacidosDescartados.Add(propuesta);
+                }
+                else
+                {
+                    creados++;
+                }
             }
 
+            await db.SaveChangesAsync(ct);
+
+            foreach (var propuesta in nacidosDescartados)
+            {
+                auditoria.Registrar(new RegistroDeAuditoria(
+                    idTenant,
+                    null,
+                    AccionAuditada.PropuestaDeTesoreriaDescarte,
+                    propuesta.Id,
+                    valorAnterior: null,
+                    valorNuevo: new Dictionary<string, object?>
+                    {
+                        ["id_conciliacion"] = propuesta.IdConciliacion,
+                        ["tipo"] = propuesta.Tipo,
+                        ["importe"] = propuesta.Importe,
+                        ["estado"] = propuesta.Estado,
+                        ["motivo"] = propuesta.MotivoResolucion
+                    }));
+            }
+
+            descartadosAlNacer = nacidosDescartados.Count;
             await db.SaveChangesAsync(ct);
         }
 
         var (descartados, reversiones) = await ProcesarCancelacionesAsync(
             db, idTenant, idEmpresa, idConciliacion, cancelaciones, idUsuario, auditoria, ahora, ct);
-        return new ResultadoDeRetiros(creados, retiros.Count - creados, cancelaciones.Count, descartados, reversiones);
+        return new ResultadoDeRetiros(
+            creados, retiros.Count - creados - descartadosAlNacer, cancelaciones.Count, descartados + descartadosAlNacer, reversiones);
     }
+
+    /// <summary>Los SOURCE_ID, de entre los pedidos, que otra conciliación de la empresa ya canceló con una fila <c>WITHDRAWAL_CANCEL</c>. Las filas de la
+    /// conciliación en curso no cuentan: su cancelación se resuelve por la exclusión del mismo archivo.</summary>
+    private static async Task<HashSet<string>> CancelacionesYaImportadasAsync(
+        IWaysDbContext db, int idEmpresa, int idConciliacion, IReadOnlyList<string> idsDeOperacion, CancellationToken ct) =>
+        (await db.FilasConciliacionMercadoPago
+                .AsNoTracking()
+                .Where(f => f.IdEmpresa == idEmpresa && f.IdConciliacion != idConciliacion
+                            && f.TipoTransaccion == TiposDeTransaccionMercadoPago.WithdrawalCancel
+                            && f.SourceId != null && idsDeOperacion.Contains(f.SourceId))
+                .Select(f => f.SourceId!)
+                .Distinct()
+                .ToListAsync(ct))
+        .ToHashSet();
 
     /// <summary>Aplica las cancelaciones del reporte a las propuestas de retiro de la empresa. Las filas de las propuestas se bloquean (<c>FOR UPDATE</c>, por
     /// id ascendente, el mismo lock con el que aplican, descartan y reabren) y recién después se leen: el estado sobre el que se decide es el leído bajo el lock,
@@ -315,6 +373,7 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                 retiro.IdUsuarioResolucion = idUsuario;
                 retiro.FechaResolucion = ahora;
                 retiro.MotivoResolucion = PropuestaDeTesoreriaMercadoPago.MotivoCancelado;
+                retiro.CanceladoPorMercadoPago = true;
                 retiro.UpdatedAt = ahora;
                 auditoria.Registrar(new RegistroDeAuditoria(
                     idTenant,
@@ -332,8 +391,15 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                         ["motivo"] = retiro.MotivoResolucion
                     }));
             }
-            else if (retiro.Estado == EstadosDePropuestaDeTesoreriaMercadoPago.Aplicada && yaRevertidas.Add(clave))
+            else if (retiro.Estado == EstadosDePropuestaDeTesoreriaMercadoPago.Aplicada)
             {
+                retiro.CanceladoPorMercadoPago = true;
+                retiro.UpdatedAt = ahora;
+                if (!yaRevertidas.Add(clave))
+                {
+                    continue;
+                }
+
                 reversiones++;
                 db.PropuestasTesoreriaMercadoPago.Add(new PropuestaDeTesoreriaMercadoPago
                 {
@@ -347,9 +413,15 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                     IdCuentaOrigen = retiro.IdCuentaOrigen,
                     IdCuentaDestino = retiro.IdCuentaDestino,
                     Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente,
+                    CanceladoPorMercadoPago = true,
                     CreatedAt = ahora,
                     UpdatedAt = ahora
                 });
+            }
+            else if (!retiro.CanceladoPorMercadoPago)
+            {
+                retiro.CanceladoPorMercadoPago = true;
+                retiro.UpdatedAt = ahora;
             }
         }
 

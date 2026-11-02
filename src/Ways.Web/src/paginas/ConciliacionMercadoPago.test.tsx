@@ -673,6 +673,7 @@ function propuesta(sobrescribir: Partial<PropuestaDeTesoreria> = {}): PropuestaD
     resueltaPor: null,
     origenesPosibles: [],
     motivo: null,
+    canceladoPorMercadoPago: false,
     ...sobrescribir,
   }
 }
@@ -857,12 +858,13 @@ describe('ConciliacionMercadoPago — movimientos a tesorería', () => {
   })
 
   it('una propuesta descartada se puede reabrir: confirma, llama al endpoint y vuelve a leer', async () => {
-    propuestas = [retiro({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin', motivo: 'cancelado por Mercado Pago' })]
+    propuestas = [retiro({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
     apiPostMock.mockResolvedValue(retiro())
     renderPagina()
     const { usuario, seccion } = await abrirDetalle()
 
-    expect(await within(seccion).findByText(/Descartada el .* por admin · cancelado por Mercado Pago/)).toBeInTheDocument()
+    expect(await within(seccion).findByText(/Descartada el .* por admin/)).toBeInTheDocument()
+    expect(within(seccion).queryByText('Cancelado por Mercado Pago')).toBeNull()
     expect(within(seccion).queryByRole('button', { name: /Aplicar|Descartar/ })).toBeNull()
     const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
 
@@ -874,6 +876,37 @@ describe('ConciliacionMercadoPago — movimientos a tesorería', () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/reabrir', {}))
     expect(await screen.findByText('Propuesta reabierta.')).toBeInTheDocument()
     await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('una propuesta que Mercado Pago canceló muestra la insignia y no ofrece reabrir', async () => {
+    propuestas = [
+      retiro({
+        estado: 'descartada',
+        resueltaEl: '2026-11-01T12:00:00Z',
+        resueltaPor: 'admin',
+        motivo: 'cancelado por Mercado Pago',
+        canceladoPorMercadoPago: true,
+      }),
+    ]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Descartada el .* por admin · cancelado por Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).getByText('Cancelado por Mercado Pago')).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Reabrir/ })).toBeNull()
+  })
+
+  it('el rechazo 409 por cancelación de Mercado Pago al reabrir se explica en el diálogo', async () => {
+    propuestas = [retiro({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'propuesta_cancelada_por_mercadopago', 'x'))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Reabrir retiro de la línea 9' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reabrir' }))
+
+    expect(await within(await screen.findByRole('alertdialog')).findByText(/Mercado Pago canceló esta operación: la propuesta no se puede reabrir/)).toBeInTheDocument()
   })
 
   it('un rechazo 409 al reabrir deja el diálogo con el error y vuelve a leer', async () => {

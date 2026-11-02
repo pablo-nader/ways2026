@@ -27,7 +27,8 @@ namespace Ways.Application.MercadoPago;
 /// de entrada a la cuenta elegida (la reversión de un retiro cancelado hace lo inverso entre las dos cuentas del retiro original, que ya vienen fijas y no se
 /// eligen: <c>cuenta_destino_no_aplica</c> / <c>cuenta_origen_no_aplica</c> si el cuerpo las trae), los dos con <see cref="EscriturasDeCuentaDeTesoreria.AgregarAjuste"/> (el escritor del ajuste manual) dentro de UNA
 /// transacción, que es lo que los hace atómicos; la diferencia de comisión es un solo ajuste en la cuenta del medio, con el signo del cálculo. La propuesta
-/// recuerda las filas escritas.
+/// recuerda las filas escritas. La reversión de un retiro cancelado acepta cuentas inactivas (deshace un movimiento que esas cuentas ya tuvieron, así que
+/// desactivar una no puede dejarlo sin deshacer): solo lee y bloquea las cuentas no dadas de baja, y una dada de baja da 409 <c>cuenta_origen_no_disponible</c>.
 ///
 /// <b>Sin reintento</b> (<c>ef-retry-safe-writes</c>, forma (b)): un reintento tras un commit ambiguo escribiría dos veces en el libro.
 ///
@@ -113,7 +114,8 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                     && p.IdCuentaOrigen is null
                         ? origenes
                         : [],
-                    p.MotivoResolucion);
+                    p.MotivoResolucion,
+                    p.CanceladoPorMercadoPago);
             })
             .ToList();
     }
@@ -359,8 +361,9 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
 
     /// <summary>Devuelve una propuesta descartada a pendiente: borra quién y cuándo la resolvió y el motivo, sin escribir nada en la tesorería. Es el único
     /// camino de vuelta de un retiro descartado, que la importación no vuelve a proponer. El estado se lee UNA vez, bajo el lock de la fila, así que reabrir
-    /// contra aplicar o descartar se serializa; 409 <c>propuesta_no_descartada</c> si no está descartada. Una propuesta que el reporte descartó por una cancelación
-    /// también se puede reabrir: queda en manos del Admin.</summary>
+    /// contra aplicar o descartar se serializa; 409 <c>propuesta_no_descartada</c> si no está descartada y 409 <c>propuesta_cancelada_por_mercadopago</c> si Mercado Pago
+    /// canceló la operación (<see cref="PropuestaDeTesoreriaMercadoPago.CanceladoPorMercadoPago"/>, sea cual sea el modo en que se descartó): reabrirla dejaría aplicar
+    /// un retiro cancelado; si hace falta mover dinero, el Admin puede hacer un ajuste manual de tesorería.</summary>
     public async Task<PropuestaDeTesoreria> ReabrirAsync(int idConciliacion, int idPropuesta, CancellationToken ct = default)
     {
         var idTenant = contexto.IdTenant
@@ -383,6 +386,13 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
             {
                 throw ErrorDominio.Conflicto(
                     CodigosDeErrorDePropuestaDeTesoreria.NoDescartada, "Solo se puede reabrir una propuesta descartada.");
+            }
+
+            if (propuesta.CanceladoPorMercadoPago)
+            {
+                throw ErrorDominio.Conflicto(
+                    CodigosDeErrorDePropuestaDeTesoreria.CanceladaPorMercadoPago,
+                    "Mercado Pago canceló esta operación: la propuesta no se puede reabrir.");
             }
 
             var ahora = reloj.Ahora;

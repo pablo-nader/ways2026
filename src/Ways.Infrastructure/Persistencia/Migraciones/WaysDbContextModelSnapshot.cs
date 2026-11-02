@@ -4295,6 +4295,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<bool>("CanceladoPorMercadoPago")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("cancelado_por_mercadopago");
+
                     b.Property<string>("ClaveOrigen")
                         .IsRequired()
                         .HasMaxLength(64)

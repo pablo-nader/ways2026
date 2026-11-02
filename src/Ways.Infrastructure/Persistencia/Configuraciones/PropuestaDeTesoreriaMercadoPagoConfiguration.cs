@@ -66,6 +66,7 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
         builder.Property(p => p.IdUsuarioResolucion).HasColumnName("id_usuario_resolucion");
         builder.Property(p => p.FechaResolucion).HasColumnName("fecha_resolucion");
         builder.Property(p => p.MotivoResolucion).HasColumnName("motivo_resolucion").HasMaxLength(120);
+        builder.Property(p => p.CanceladoPorMercadoPago).HasColumnName("cancelado_por_mercadopago").HasDefaultValue(false).IsRequired();
 
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();

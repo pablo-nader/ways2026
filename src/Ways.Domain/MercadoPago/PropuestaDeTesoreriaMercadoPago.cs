@@ -83,6 +83,11 @@ public class PropuestaDeTesoreriaMercadoPago : EntidadTenant
     /// <summary>Por qué se descartó sin que lo decidiera el Admin (<see cref="MotivoCancelado"/>); nulo si se descartó a mano o no está descartada.</summary>
     public string? MotivoResolucion { get; set; }
 
+    /// <summary>Mercado Pago canceló la operación de esta propuesta (hay una fila <c>WITHDRAWAL_CANCEL</c> con su SOURCE_ID en alguna conciliación de la empresa):
+    /// el retiro que descartó o que nació descartado por eso, el retiro aplicado que se revierte y su reversión. No se borra al reabrir y una propuesta con la
+    /// marca no se puede reabrir (409 <c>propuesta_cancelada_por_mercadopago</c>): reabrirla dejaría aplicar un retiro que Mercado Pago ya canceló.</summary>
+    public bool CanceladoPorMercadoPago { get; set; }
+
     public const string MotivoCancelado = "cancelado por Mercado Pago";
 
     public static string ClaveDeCuenta(int idCuenta) => $"cuenta:{idCuenta}";
