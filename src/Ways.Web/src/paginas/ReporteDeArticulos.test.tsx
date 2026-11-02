@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta, ReporteDeArticulos } from './ReporteDeArticulos'
 import { RutaProtegida } from '../auth/RutaProtegida'
@@ -129,7 +130,12 @@ function paginaFixture(items: ArticuloDeReporte[] = [filaFixture()], sobrescribi
 }
 
 function renderReporte() {
-  return render(<ReporteDeArticulos />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<ReporteDeArticulos />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 /** Monta detrás del mismo gate de rol que `App.tsx` usa para `/reportes/articulos`
@@ -164,6 +170,14 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/reportes/articulos?')) return Promise.resolve(paginaFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -327,6 +341,18 @@ describe('ReporteDeArticulos — listado', () => {
   // Lección del proyecto (dto-contract-honesty / brief): un builder separado para la descarga
   // desincroniza el export del listado. Acá se prueba que la ruta de descarga lleva EXACTAMENTE
   // los mismos filtros que la última consulta del listado (sin pagina/tamanio, con formato=xlsx).
+  it('una descarga fallida avisa con un toast de error', async () => {
+    mockearRutasBase()
+    apiDescargarMock.mockRejectedValueOnce(new Error('no se pudo descargar'))
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await screen.findByText('COD-1')
+    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
+  })
+
   it('el botón de descarga usa exactamente los mismos filtros que el listado', async () => {
     mockearRutasBase()
     const usuario = userEvent.setup()

@@ -78,6 +78,12 @@ export function puedeAnular(fila: VentaDeTurnoListado, rolId: number): boolean {
   return fila.estado === 'Emitido' && rolId !== ROL.Root
 }
 
+/** La caja ofrece "Cambiar medio de pago" solo en ventas emitidas y a quien opera el POS (nunca Root). Si se puede intentar
+ * o no (factura, cuenta corriente, red) lo resuelve `motivoDeNoCambiarMedios`, y el servidor decide en definitiva. */
+export function puedeCambiarMedios(fila: Pick<VentaDeTurnoListado, 'estado'>, rolId: number): boolean {
+  return fila.estado === 'Emitido' && rolId !== ROL.Root
+}
+
 /** Una venta puede reimprimirse solo si está Emitida (nunca una anulada: no hay nada que
  * reimprimir de algo que se dejó sin efecto) — mismo criterio de transición que `puedeAnular`,
  * pero sin restricción de rol (reimprimir no es una operación sensible). */
