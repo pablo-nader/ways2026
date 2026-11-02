@@ -59,14 +59,11 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
   - [x] E6-T2 — Back-office web screen (commit 9cda93a5).
 - [x] E7 — Withdrawals/payouts from the report into treasury (commit 43ba5d2e).
+- [x] E7b — A withdrawal cancel is remembered across reports and its mark survives reopen (flag `cancelado_por_mercadopago`).
 
 ## Delivery strategy
 
 `ask-on-risk`, standing chain `stacked-to-main`, one PR per task through judgment-day.
-
-## Next step
-
-Program complete; production setup pending (owner).
 
 ## E3-T1 design (2026-11-01)
 
@@ -828,3 +825,24 @@ in place (Designer and snapshot too; `has-pending-model-changes` clean).
   `propuesta_cancelada_por_mercadopago` (the Admin can still post a manual treasury adjustment if needed).
 - The same-file exclusion covers Withdrawal and Payout rows.
 - Applying a `retiro_cancelado` documents that inactive accounts are accepted (it undoes a prior movement); deleted accounts keep the 409.
+
+## E7b progress (2026-11-02)
+
+- New migration `CanceladoPorMercadoPagoEnPropuestas`: `propuestas_tesoreria_mercadopago.cancelado_por_mercadopago boolean NOT NULL DEFAULT false`; backfill
+  under `SET LOCAL app.acceso = 'plataforma'` marks reversions, retiros discarded with motivo "cancelado por Mercado Pago" and applied retiros that have a reversion in
+  the same empresa; tested over `ways_app` (2 tests in `MercadoPagoPropuestasCanceladasMigracionTests`). The snapshot was edited by hand (only the new property): the generated one dropped the
+  `ux_..._retiro` index, a known EF quirk for two indexes on the same columns.
+- Generator: a retiro whose SOURCE_ID has a `WITHDRAWAL_CANCEL` row in another conciliacion of the empresa is created `descartada` (motivo, user, audit) with the flag; the flag is set in every
+  cancel branch (pending discard, applied original + reversion, manually discarded); same-file exclusion now covers Withdrawal and Payout. Counts: born-discarded retiros go to
+  `RetirosDescartadosPorCancelacion`, not to created nor to `RetirosYaPropuestos`.
+- Reopen: 409 `propuesta_cancelada_por_mercadopago` after the state check; DTO `canceladoPorMercadoPago`; web badge "Cancelado por Mercado Pago", no "Reabrir", copy for the 409.
+- retiro_cancelado apply accepts inactive accounts (documented in the service and docs/10, covered by a test); deleted accounts keep the 409.
+- Verification: build 0 errors; no pending model changes; Domain 2610, Application 1660; integration (whole `MercadoPagoVentaTests` + MercadoPagoMigracion + new migration tests + Tesoreria +
+  SuperficieDeAutorizacion + UpDownUp + AislamientoDeTenant) 331 pass; web tsc clean, 163 tests (api, page, tesoreria), `npm run build` ok.
+- Mutation (one per run, restored with identical hash): cross-report cancel lookup disabled fails 1; reopen guard disabled fails 4; Payout exclusion reverted to Withdrawal-only fails 1;
+  backfill `SET LOCAL` removed fails the `ways_app` test (the StartsWith guard).
+- Deviation: `src/Ways.Web/src/paginas/ConciliacionMercadoPago.test.tsx` was also edited (fixture needs the new field; reopen tests updated), outside the listed surface but required by the verification command.
+
+## Next step
+
+Program complete; production setup pending (owner).
