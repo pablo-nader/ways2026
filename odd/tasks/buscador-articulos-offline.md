@@ -24,7 +24,7 @@ Out of scope: backend changes, snapshot schema changes, POS release (a separate 
 
 ## Tasks
 
-- [ ] T1 — Article search source (snapshot | API), modal and POS wiring, tests. Route: delegated (writer trigger: 2+ non-trivial files).
+- [x] T1 — Article search source (snapshot | API), modal and POS wiring, tests. Route: delegated (writer trigger: 2+ non-trivial files). Commit 3c1b060b.
 
 ## Acceptance criteria
 
@@ -41,6 +41,9 @@ Out of scope: backend changes, snapshot schema changes, POS release (a separate 
 - Branch `pnader/buscador-articulos-offline` from `origin/main` 5507f8c9.
 - RDD off (clone-local); PR gate is judgment-day.
 
+- T1 checks: tsc -b clean; lint clean on touched files; vitest full 10075/10076 (1 failure in untouched CompraEditor/GrillaDeItemsDeCompra area, passes alone); targeted 35/35.
+- judgment-day: APPROVED, no severe findings. Info: offer marks hidden when a snapshot exists (even online); preview prices from the snapshot even for a client the cart would price online (not admitted offline or list missing shows "—"); top-25 order uses localeCompare vs DB collation.
+
 ## Next step
 
-T1.
+Merge, then POS release (Ways.Desktop bump + pos-v* tag). Possible follow-up: price and offer marks via API when the cart would go online.
