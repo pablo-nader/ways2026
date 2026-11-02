@@ -29,6 +29,8 @@ namespace Ways.Application.MercadoPago;
 /// idéntica a otra del archivo es <c>duplicada</c> (no se suma) y un cobro que un archivo anterior ya conciliaba deja la fila en
 /// <c>ya_conciliado</c> (no se aplica; el detalle muestra lo guardado). Los totales del resumen no cuentan esas dos clases de fila.
 ///
+/// Al final de la misma transacción nacen las propuestas de tesorería de la conciliación (<see cref="GeneradorDePropuestasDeTesoreriaMercadoPago"/>, E7).
+///
 /// <b>Sin reintento</b> (<c>ef-retry-safe-writes</c>, forma (b)): una importación no es idempotente más que por la huella, y un
 /// reintento tras un commit ambiguo la volvería a insertar.
 ///
@@ -205,6 +207,20 @@ public class ServicioDeConciliacionMercadoPago(
             cobro.UpdatedAt = ahora;
         }
 
+        await db.SaveChangesAsync(ct);
+
+        var propuestas = await GeneradorDePropuestasDeTesoreriaMercadoPago.GenerarAsync(
+            db,
+            idTenant,
+            idEmpresa,
+            cabecera.Id,
+            aplicados.ToDictionary(g => g.Key, g => porId[g.Key].ComisionReal),
+            filas.Select(f => f.Fila).Where(f => f.Resultado == ResultadosDeConciliacionMercadoPago.Retiro).ToList(),
+            contexto.UsuarioId,
+            auditoria,
+            ahora,
+            ct);
+
         var resumen = Resumir(filas.Select(f => f.Fila));
         var valorNuevo = new Dictionary<string, object?>
         {
@@ -212,7 +228,15 @@ public class ServicioDeConciliacionMercadoPago(
             ["huella_archivo"] = huella,
             ["cantidad_filas"] = cabecera.CantidadFilas,
             ["cantidad_invalidas"] = cabecera.CantidadInvalidas,
-            ["cobros_conciliados"] = aplicados.Count
+            ["cobros_conciliados"] = aplicados.Count,
+            ["propuestas_diferencia_comision"] = propuestas.Diferencias,
+            ["propuestas_retiro"] = propuestas.Retiros,
+            ["retiros_ya_propuestos"] = propuestas.RetirosYaPropuestos,
+            ["retiros_cancelados"] = propuestas.RetirosCancelados,
+            ["retiros_descartados_por_cancelacion"] = propuestas.RetirosDescartadosPorCancelacion,
+            ["reversiones_propuestas"] = propuestas.Reversiones,
+            ["cobros_sin_cierre"] = propuestas.CobrosSinCierre,
+            ["cobros_sin_comision_real"] = propuestas.CobrosSinComisionReal
         };
         foreach (var r in resumen)
         {
@@ -228,7 +252,8 @@ public class ServicioDeConciliacionMercadoPago(
             .Select(i => new FilaInvalidaDeConciliacion(i.NumeroLinea, i.Motivo))
             .ToList();
         return new ConciliacionImportada(
-            Mapear(cabecera, contexto.NombreUsuario, resumen), invalidas, lectura.Invalidas.Count > MaximoDeInvalidasDevueltas);
+            Mapear(cabecera, contexto.NombreUsuario, resumen), invalidas, lectura.Invalidas.Count > MaximoDeInvalidasDevueltas,
+            propuestas.RetirosYaPropuestos, propuestas.RetirosCancelados);
     }
 
     /// <summary>Los cobros de la empresa que alguna fila puede nombrar por referencia externa, id de pago o referencia numérica del pago,

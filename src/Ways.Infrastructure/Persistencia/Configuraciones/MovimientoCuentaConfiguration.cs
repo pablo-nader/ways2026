@@ -56,6 +56,9 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
         builder.Property(m => m.BaseBruta).HasColumnName("base_bruta").HasColumnType("numeric(14,2)");
         builder.Property(m => m.PorcentajeAplicado).HasColumnName("porcentaje_aplicado").HasColumnType("numeric(6,3)");
 
+        // Lo referencia con el tenant la propuesta de tesorería de Mercado Pago que lo escribió.
+        builder.HasAlternateKey(m => new { m.Id, m.IdTenant }).HasName("ak_movimientos_cuenta_id_id_tenant");
+
         builder.HasIndex(m => m.IdTenant).HasDatabaseName("ix_movimientos_cuenta_tenant");
 
         // Índice de soporte de la FK compuesta a la cuenta (columnas de la FK primero, como

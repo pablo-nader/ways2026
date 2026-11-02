@@ -430,7 +430,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("POST", "/api/mercadopago/conciliaciones/", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo]),
         ("GET", "/api/mercadopago/conciliaciones/", [Politicas.LecturaDeReportes]),
         ("GET", "/api/mercadopago/conciliaciones/{idConciliacion:int}", [Politicas.LecturaDeReportes]),
-        ("POST", "/api/mercadopago/conciliaciones/{idConciliacion:int}/filas/{idFila:int}/confirmar", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo])
+        ("POST", "/api/mercadopago/conciliaciones/{idConciliacion:int}/filas/{idFila:int}/confirmar", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo]),
+        ("GET", "/api/mercadopago/conciliaciones/{idConciliacion:int}/propuestas", [Politicas.LecturaDeReportes]),
+        ("POST", "/api/mercadopago/conciliaciones/{idConciliacion:int}/propuestas/{idPropuesta:int}/aplicar", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo]),
+        ("POST", "/api/mercadopago/conciliaciones/{idConciliacion:int}/propuestas/{idPropuesta:int}/descartar", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo]),
+        ("POST", "/api/mercadopago/conciliaciones/{idConciliacion:int}/propuestas/{idPropuesta:int}/reabrir", [Politicas.LecturaDeReportes, Politicas.GestionDeCatalogo])
     ];
 
     [Fact]

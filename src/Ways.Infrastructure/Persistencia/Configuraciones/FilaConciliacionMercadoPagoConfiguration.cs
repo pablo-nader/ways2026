@@ -71,6 +71,9 @@ public class FilaConciliacionMercadoPagoConfiguration : IEntityTypeConfiguration
 
         builder.HasIndex(f => new { f.IdConciliacion, f.Resultado }).HasDatabaseName("ix_filas_conciliacion_mercadopago_resultado");
 
+        // Las cancelaciones de un retiro se buscan por empresa, tipo y SOURCE_ID (generador de propuestas de tesorería).
+        builder.HasIndex(f => new { f.IdEmpresa, f.TipoTransaccion, f.SourceId }).HasDatabaseName("ix_filas_conciliacion_mercadopago_cancelaciones");
+
         // Un pago de venta sin verificar se confirma contra a lo sumo una fila. Los nulos no chocan.
         builder.HasIndex(f => new { f.IdCobro, f.IdTenant })
             .HasDatabaseName("ux_filas_conciliacion_mercadopago_cobro")

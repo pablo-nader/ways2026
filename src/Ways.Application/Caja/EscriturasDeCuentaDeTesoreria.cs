@@ -252,6 +252,35 @@ public static class EscriturasDeCuentaDeTesoreria
             : null;
     }
 
+    /// <summary>
+    /// Agrega a la cadena de una cuenta la fila <c>ajuste</c> sin turno ni medio. Es el escritor del ajuste manual
+    /// (<see cref="ServicioDeAjusteDeCuentaDeTesoreria"/>) y de la aplicación de una propuesta de la conciliación de Mercado Pago, que lo llama
+    /// una vez por cada cuenta que toca. No guarda: el llamador tiene la transacción abierta, la cuenta bloqueada con
+    /// <see cref="BloquearYLeerColaAsync"/> o <see cref="LeerYBloquearCuentasAsync"/> (la <paramref name="cola"/> se leyó después de ese lock)
+    /// y la guarda de conciliación tomada, y fija el momento con <see cref="FechaMonotona"/>.
+    /// </summary>
+    public static MovimientoCuenta AgregarAjuste(
+        IWaysDbContext db, int idTenant, int idCuenta, AjusteDeCuentaResuelto ajuste, DateTimeOffset fecha, string concepto,
+        int idEmpleado)
+    {
+        var fila = new MovimientoCuenta
+        {
+            IdTenant = idTenant,
+            IdCuentaTesoreria = idCuenta,
+            Fecha = fecha,
+            Tipo = TipoMovimientoCuenta.Ajuste,
+            Concepto = concepto,
+            Inicio = ajuste.Inicio,
+            Ingreso = ajuste.Ingreso,
+            Egreso = ajuste.Egreso,
+            Final = ajuste.Final,
+            IdEmpleado = idEmpleado
+        };
+
+        db.MovimientosCuenta.Add(fila);
+        return fila;
+    }
+
     internal static async Task<ColaDeCuenta> LeerColaAsync(
         IWaysDbContext db, int idTenant, int idCuenta, decimal saldoInicial, CancellationToken ct)
     {

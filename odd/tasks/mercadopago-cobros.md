@@ -58,15 +58,12 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   account.
   - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
   - [x] E6-T2 — Back-office web screen (commit 9cda93a5).
-- [ ] E7 — Withdrawals/payouts from the report into treasury.
+- [x] E7 — Withdrawals/payouts from the report into treasury (commit 43ba5d2e).
+- [x] E7b — A withdrawal cancel is remembered across reports and its mark survives reopen (flag `cancelado_por_mercadopago`).
 
 ## Delivery strategy
 
 `ask-on-risk`, standing chain `stacked-to-main`, one PR per task through judgment-day.
-
-## Next step
-
-E7: Mercado Pago movements into treasury (fee-difference adjustment and withdrawals proposals, apply/discard; design in "E7 design"). E6-T2 awaits its judgment-day before the PR.
 
 ## E3-T1 design (2026-11-01)
 
@@ -724,3 +721,149 @@ Confirmed issues fixed in `fix(web): la conciliación se ve como Supervisor, ...
   PVs come without razón social (dada de baja) is not offered; the empresa select is disabled while the confirm dialog is open.
 - Accepted: an empresa with no punto de venta is not offered (no Mercado Pago charges without a PV); Root sees every tenant's
   empresas in the picker.
+
+## E7 progress (2026-11-02)
+
+- Commit 43ba5d2e `feat(mercadopago): la conciliación propone a tesorería la diferencia de comisión y los retiros`. Table
+  `propuestas_tesoreria_mercadopago` (operativa, RLS, FK compuestas a empresa, conciliación, fila, cuentas origen/destino con la empresa y los dos movimientos
+  del libro; `movimientos_cuenta` gana `ak_movimientos_cuenta_id_id_tenant`); UNIQUE `(conciliación, tipo, clave_origen)`; CHECKs de forma, cuentas, aplicada y resolución.
+  Migración `20261102070932_PropuestasDeTesoreriaMercadoPago`.
+- Cálculo AL IMPORTAR (dentro de la transacción, después de fijar la comisión real; elegido sobre el cálculo perezoso porque ve una foto consistente bajo el lock de la
+  empresa y deja el GET como lectura pura). Consecuencia documentada: un turno que se cierra después de importar no se suma, y un cobro cuyo turno no acreditó el medio
+  no entra (se cuenta en el `detalle` y en la auditoría de la importación).
+- Comisión estimada: NO está guardada por pago. Se rearma con el `porcentaje_aplicado` de la fila `comision` de `movimientos_cuenta` del turno y medio de la venta (la
+  cuenta sale de su fila `cobro`), aplicado al importe del pago con el redondeo del cierre. Aproximación a centavos: el cierre redondea sobre el bruto del turno y medio,
+  esto lo hace pago por pago. Pura en Domain (`CalculadorDeDiferenciaDeComisionMercadoPago`).
+- Un retiro por fila `WITHDRAWAL`/`PAYOUT` (importe absoluto; `WITHDRAWAL_CANCEL` no propone, se descarta a mano el retiro cancelado; montos que no entran en `numeric(14,2)` no proponen).
+  Origen del retiro: cuenta de la conexión con Mercado Pago (nula sin conexión: 409 `propuesta_sin_cuenta_origen`, se puede descartar).
+- Asiento: la tesorería NO tiene transferencia entre cuentas. Diferencia = UN ajuste en la cuenta del medio (signo del cálculo); retiro = ajuste de salida en la cuenta de
+  Mercado Pago + ajuste de entrada en la cuenta elegida, en UNA transacción, con `EscriturasDeCuentaDeTesoreria.AgregarAjuste` (extraído del ajuste manual, que ahora lo usa; el libro solo muestra
+  `ajuste`, por eso no se usaron los tipos `retiro`/`deposito`). Locks: guarda de conciliación de tesorería (compartida) → fila de la propuesta `FOR UPDATE` → cuentas `FOR NO KEY UPDATE` por id.
+- Endpoints: `GET …/{id}/propuestas` (Supervisor/Admin), `POST …/propuestas/{id}/aplicar` `{idCuentaDestino?}` y `…/descartar` (Admin). 404 primero; 400 `cuenta_destino_requerida|cuenta_destino_no_aplica|cuenta_destino_invalida|cuentas_iguales`;
+  409 `propuesta_ya_aplicada|propuesta_descartada|propuesta_ya_descartada|propuesta_sin_cuenta_origen|cuenta_origen_no_disponible|periodo_conciliado`. Auditoría `conciliacion.propuestaaplicada|propuestadescartada` (catálogo 48).
+  Sin traducción 23505 de `ux_propuestas_tesoreria_mercadopago_origen`: solo la importación escribe, dentro de la transacción que crea la conciliación (guardas-inmatables); la base la hace cumplir y un test lo prueba con SQL crudo.
+- Web: sección "Movimientos a tesorería" en el detalle de la conciliación (`SeccionDePropuestas`, `DialogoDeResolucionDePropuesta`), Aplicar (con selector de cuenta en un retiro: activas, de la empresa, distintas del origen) y Descartar solo para el Admin, con diálogo de confirmación;
+  la escritura comparte `ocupadoRef` y deja inerte toda la pantalla.
+- Guards tocados: inventario golden (+3 líneas), `AccionAuditadaTests` (48), `SuperficieDeAutorizacionTests` (3 rutas). `LectoresDeComprobantesVentaEstructuralesTests` obligó a renombrar un campo `Cobros`.
+- Verificación: build 0 errores; sin cambios de modelo pendientes; Domain 2606; Application 1660; integración (E7 + 31 de conciliación + Tesoreria + SuperficieDeAutorizacion + AislamientoDeTenant + UpDownUp + Cobertura) 257 pass; web: tsc, oxlint sin errores, 150 tests (api, página, tesoreria), `npm run build` ok.
+- Mutación (una por corrida, restaurada con hash idéntico): signo de la diferencia (5 rojos) y redondeo ToEven (1) en Domain; quitar `Payout` (retiro por fila); quitar `ExigirPendiente` en aplicar (3 rojos: idempotencia, carrera, descartar); `FOR UPDATE`→`FOR SHARE` de la propuesta (carrera: rojo 2 de 2 corridas; la primera corrida de la combinación con el test mixto cayó 1 de 2);
+  destino inactivo; destino de otra empresa (filtro de empresa del lock); signo del asiento de origen; descartar sin `ExigirPendiente`; sin UNIQUE; sin RLS (`AislamientoDeTenant` rojo); sin guarda de período en la cuenta de origen (rojo solo con el test de la diferencia: en el retiro la guarda del destino la tapa); web: `puedeResolver` sin gate de Admin, sin `ocupadoRef` en `resolver`, cuentas inactivas en el selector.
+- Open: pendiente producción (dueño): registrar la app en Mercado Pago, probar con un reporte real (columnas del CSV de la documentación, WITHDRAWAL con signo negativo supuesto) y release del POS; límites conocidos: turno cerrado después de importar no se suma, `WITHDRAWAL_CANCEL` no propone, la comisión estimada es una aproximación a centavos.
+
+## Judgment-day E7 round 1 (2026-11-02)
+
+Confirmed issues fixed in `dd110a0a` (`fix(mercadopago): un retiro se propone una sola vez por empresa, ...`); the E7 migration was unshipped and was edited in place
+(Designer and snapshot too; `has-pending-model-changes` clean).
+
+- R1 (critical, both judges): a retiro that appeared in two reports (overlapping ranges) got two proposals and could be applied twice. The retiro `clave_origen` is now the
+  Mercado Pago `SOURCE_ID` (column widened to varchar(64), the report's limit) with a partial UNIQUE `ux_propuestas_tesoreria_mercadopago_retiro` on
+  `(id_tenant, id_empresa, clave_origen) WHERE tipo = 'retiro'`, next to the per-reconciliation one (which stays for the diferencia). The generator skips a retiro whose
+  SOURCE_ID already has a proposal in ANY reconciliation of the empresa (pending, applied or discarded) or is repeated inside the same file, and counts it:
+  `ConciliacionImportada.RetirosYaPropuestos` (web shows a note in the import result) and audit `retiros_ya_propuestos`. The UNIQUE is the race backstop (imports are already
+  serialized by the empresa advisory lock); a 23505 test covers it. Limit: a retiro over `ImporteMaximo` is never proposed, so it is not "already proposed" either.
+- R2 (both judges): the retiro origin was the MP connection's account, which can differ from the one the MP medios credit. It is now the account of the empresa's active medios
+  with a Mercado Pago proveedor (active account of the empresa): exactly one distinct account -> fixed origin; none or several -> `id_cuenta_origen` NULL, and `aplicar` requires
+  `idCuentaOrigen` (400 `cuenta_origen_requerida`; 400 `cuenta_origen_invalida` if it is not one of those accounts, checked under the account locks; 400 `cuenta_origen_no_aplica` for a
+  diferencia or a retiro that already has its origin). The chosen origin is written to the proposal. `propuesta_sin_cuenta_origen` (409) is gone: with no account the retiro can only be
+  discarded (400 requerida/invalida otherwise). The DTO carries `origenesPosibles` (pending retiro without fixed origin) and the web dialog shows an origin picker; the
+  destination options exclude the chosen origin.
+- R3 (both judges): the estimated fee is rounded once per (turno, medio) group like the close: `round(porcentaje x sum of the group's applied payments)`, spread among the lines by
+  largest remainder (ties by id) so lines add up to the group total; the per-account difference is sum of real fees minus sum of group estimates. Remaining approximation
+  (documented in the calculator and in docs/10): a group only partly present in the report is rounded over the part. Unit tests: 3 x 10.01 at 0.55 % (0.17, not 0.18), an asymmetric pair
+  and two groups of one account.
+- R4 (judge B): the payments query only counts payments of `Emitido` comprobantes, like `BrutoDelTurnoPorMedioAsync`; a payment of a sale annulled before the close is counted as a charge outside the calculation.
+- R5 (judge A, suggestion): the audit's `propuestas_diferencia_comision` counts only created proposals (amounts over `ImporteMaximo` excluded); `SeccionDePropuestas` derives the selected
+  destination/origin through `seleccionVigente` and prunes stale entries, so an account that is no longer offered disables Aplicar and clears the selection.
+- Verification: build 0 errors; no pending model changes; Domain 2609, Application 1660; integration (E7 + conciliation methods + Tesoreria + SuperficieDeAutorizacion + UpDownUp + AislamientoDeTenant + Cobertura) 263 pass;
+  web: tsc clean, 155 tests (api, page, tesoreria), `npm run build` ok.
+- Mutation (one per run, restored with identical hash): R1 cross-file dedupe (existing claves ignored) fails the overlapping-reports test; R1 UNIQUE (index removed from the migration)
+  fails the 23505 test; R2 origin resolution (`Count >= 1` instead of `== 1`) fails the several-accounts test; R2 required/valid origin (membership check removed) fails 2 tests; R3
+  per-payment rounding fails 2 domain tests; R4 (`Emitido` filter removed) fails the annulled-sale test (-3.00 instead of -1.50); R5 (`seleccionVigente` returns the raw selection) fails the unit and the page tests.
+
+## Judgment-day E7 round 2 (2026-11-02, final)
+
+Confirmed issues fixed in the `fix(mercadopago): una propuesta descartada se puede reabrir y la cancelación de un retiro lo revierte` commit; the E7 migration was still unshipped and was edited
+in place (Designer and snapshot too; `has-pending-model-changes` clean).
+
+- S1 (both judges): discarding was irreversible and a discarded retiro is never proposed again. New `POST …/propuestas/{idPropuesta}/reabrir` (Admin): descartada -> pendiente under the
+  proposal row lock (single read under the lock), clears `id_usuario_resolucion`, `fecha_resolucion` and the new `motivo_resolucion`, audit `conciliacion.propuestareabierta`
+  (valorAnterior = estado + motivo), 409 `propuesta_no_descartada` otherwise. The existing CHECK `_resolucion` already holds for the cleared fields; a new CHECK `_motivo` keeps the reason only on a
+  descartada. Web: "Reabrir" button on discarded proposals (Admin only) with the same confirm dialog, `ocupadoRef` guard and re-read on 404/409.
+- S2 (both judges): `WITHDRAWAL_CANCEL` was ignored. Matched by SOURCE_ID (assumption, documented in the generator and docs/10: the report repeats the cancelled operation's id on the cancel row). Under the
+  row lock of the retiro proposal: pendiente -> descartada with `motivo_resolucion = 'cancelado por Mercado Pago'` (audited, no money); aplicada -> new tipo `retiro_cancelado` (same amount, origin and
+  destination as the retiro, `clave_origen` = SOURCE_ID, partial UNIQUE `ux_propuestas_tesoreria_mercadopago_retiro_cancelado`) that the Admin applies without choosing accounts (two inverse adjustments in one
+  transaction, same writer; body accounts rejected with `cuenta_destino_no_aplica`/`cuenta_origen_no_aplica`); descartada or no proposal -> only counted. Same file with the retiro and its cancel ->
+  the retiro is not proposed (decision: proposing and discarding in one step is noise). Counted in `ConciliacionImportada.RetirosCancelados` and the import audit (`retiros_cancelados`,
+  `retiros_descartados_por_cancelacion`, `reversiones_propuestas`). Tipo CHECK, `_forma` and `_aplicada` CHECKs, docs/10 and the web labels/effect text updated. Limit: a retiro imported AFTER a cancel that was already
+  imported is still proposed (the cancel is not remembered).
+- S3 (judge B): stale OpenAPI summaries in `MercadoPagoEndpoints.cs` fixed (origin description, error codes `cuenta_origen_requerida|cuenta_origen_no_aplica|cuenta_origen_invalida`, `idCuentaOrigen`, the reabrir route
+  and the `retiro_cancelado` tipo; `propuesta_sin_cuenta_origen` removed).
+- Suggestions: the largest-remainder spread is keyed by the sale payment id (`cobros` row id), not by `IdCobroMercadoPago`, so several payments of one MP cobro no longer repeat the spare cents and lines always sum
+  to the group estimate; docs/generator now say a sale annulled after the shift close is excluded (annulment flows are not reconciled here).
+- Verification: build 0 errors; no pending model changes; Domain 2610, Application 1660; integration (whole `MercadoPagoVentaTests` + Tesoreria + SuperficieDeAutorizacion + UpDownUp + AislamientoDeTenant) 323 passed;
+  web: tsc clean, 160 tests (api, page, tesoreria), `npm run build` ok.
+- Mutation (one per run, restored with identical content): reopen guard disabled fails 2 tests; cancel of a pendiente (branch disabled) fails 1; cancel of an aplicada (branch disabled) fails 1; a descartada treated as
+  pendiente fails 1; same-file exclusion removed fails 1; duplicate reversion allowed (`Add || true`) fails 1; spread keyed by `IdCobroMercadoPago` fails the new domain test.
+
+## Judgment-day E7 verdict
+
+- 2026-11-02: **APPROVED** after two fix rounds, no CRITICAL left. Round 1 (both; CRITICAL): a withdrawal in two overlapping reports
+  was proposed twice; plus origin account, per-payment rounding, annulled sales, audit count, stale selection; fixed in dd110a0a.
+  Re-judgment (both): discard irreversible, WITHDRAWAL_CANCEL ignored; fixed in 0cae189f (reabrir, cancel handling, OpenAPI).
+- Final re-judgment, WARNINGs confirmed by both, taken as slice **E7b** (own judgment-day): a cancel imported BEFORE its withdrawal is
+  not remembered, so the later withdrawal is proposed as a normal pending retiro; reopening a retiro discarded "cancelado por Mercado
+  Pago" erases that mark. Money moves only on an explicit Admin apply. Suggestions: a retiro_cancelado apply does not check the
+  accounts are active; a Payout row with a cancel in the same file is created and discarded in the same pass.
+
+## E7b design (2026-11-02)
+
+- A cancel row is remembered: the generator looks for WITHDRAWAL_CANCEL rows of the empresa (stored in `filas_conciliacion_mercadopago`
+  from any reconciliation) with the retiro's SOURCE_ID; a retiro with a known cancel is created already `descartada` with motivo
+  "cancelado por Mercado Pago".
+- New column `cancelado_por_mercadopago boolean NOT NULL DEFAULT false` on the proposal, set whenever a cancel is known (auto-discard,
+  created discarded, or reversion created); it survives reopen. Reopening a proposal with that flag → 409
+  `propuesta_cancelada_por_mercadopago` (the Admin can still post a manual treasury adjustment if needed).
+- The same-file exclusion covers Withdrawal and Payout rows.
+- Applying a `retiro_cancelado` documents that inactive accounts are accepted (it undoes a prior movement); deleted accounts keep the 409.
+
+## E7b progress (2026-11-02)
+
+- New migration `CanceladoPorMercadoPagoEnPropuestas`: `propuestas_tesoreria_mercadopago.cancelado_por_mercadopago boolean NOT NULL DEFAULT false`; backfill
+  under `SET LOCAL app.acceso = 'plataforma'` marks reversions, retiros discarded with motivo "cancelado por Mercado Pago" and applied retiros that have a reversion in
+  the same empresa; tested over `ways_app` (2 tests in `MercadoPagoPropuestasCanceladasMigracionTests`). The snapshot was edited by hand (only the new property): the generated one dropped the
+  `ux_..._retiro` index, a known EF quirk for two indexes on the same columns.
+- Generator: a retiro whose SOURCE_ID has a `WITHDRAWAL_CANCEL` row in another conciliacion of the empresa is created `descartada` (motivo, user, audit) with the flag; the flag is set in every
+  cancel branch (pending discard, applied original + reversion, manually discarded); same-file exclusion now covers Withdrawal and Payout. Counts: born-discarded retiros go to
+  `RetirosDescartadosPorCancelacion`, not to created nor to `RetirosYaPropuestos`.
+- Reopen: 409 `propuesta_cancelada_por_mercadopago` after the state check; DTO `canceladoPorMercadoPago`; web badge "Cancelado por Mercado Pago", no "Reabrir", copy for the 409.
+- retiro_cancelado apply accepts inactive accounts (documented in the service and docs/10, covered by a test); deleted accounts keep the 409.
+- Verification: build 0 errors; no pending model changes; Domain 2610, Application 1660; integration (whole `MercadoPagoVentaTests` + MercadoPagoMigracion + new migration tests + Tesoreria +
+  SuperficieDeAutorizacion + UpDownUp + AislamientoDeTenant) 331 pass; web tsc clean, 163 tests (api, page, tesoreria), `npm run build` ok.
+- Mutation (one per run, restored with identical hash): cross-report cancel lookup disabled fails 1; reopen guard disabled fails 4; Payout exclusion reverted to Withdrawal-only fails 1;
+  backfill `SET LOCAL` removed fails the `ways_app` test (the StartsWith guard).
+- Deviation: `src/Ways.Web/src/paginas/ConciliacionMercadoPago.test.tsx` was also edited (fixture needs the new field; reopen tests updated), outside the listed surface but required by the verification command.
+
+## Veredicto judgment-day E7b (2026-11-02)
+
+- Ronda 1: jueces A y B confirmaron F1 (índices sin nombre colapsados), F2 (backfill sin filas WITHDRAWAL_CANCEL) y F3 (falta índice de búsqueda de cancelaciones); todos WARNING.
+- Corrección e86ddc91; re-juicio acotado de A y B: F1, F2 y F3 resueltos, sin hallazgos nuevos.
+- **JUDGMENT: APPROVED ✅**
+- Límites conocidos: el backfill no audita los descartes; la reversión se prueba con la conexión dueña; toma la fila de cancelación de menor id.
+
+## Judgment-day E7b round 1 fixes (2026-11-02)
+
+- F1 (index identity collapse): both partial unique indexes on `{IdTenant, IdEmpresa, ClaveOrigen}` are declared with the named `HasIndex(..., name)` overload; the E7b Designer and the
+  snapshot now carry both (`HasIndex(new[] {...}, "ux_..._retiro")` and `..._retiro_cancelado`). The E7 migration was not touched. Evidence: `dotnet ef migrations add Probe` after the
+  fix yields an EMPTY Up/Down (before the fix it wanted to create `ux_..._retiro`); the probe files were deleted by hand because `migrations remove` needs a database and none was listening.
+- F2 (backfill gap): `SqlDeBackfill` now consults `filas_conciliacion_mercadopago` (`WITHDRAWAL_CANCEL`, same tenant and empresa, `source_id = clave_origen`, any conciliacion): a pending
+  retiro with a cancel row is discarded (motivo "cancelado por Mercado Pago", `fecha_resolucion = now()`, no user: the resolution CHECK only needs the date), an applied retiro with
+  a cancel row and no reversion gets a pending `retiro_cancelado` (first cancel row, accounts and amount of the retiro, flagged, `ON CONFLICT DO NOTHING`), and every retiro with a
+  cancel row is flagged. Still under `SET LOCAL app.acceso = 'plataforma'`, idempotent. Remaining limitation: no audit records are written for the discards (SQL cannot reach the audit service).
+  Tests (`MercadoPagoPropuestasCanceladasMigracionTests`, 4 pass): hand-discarded 9005 flagged, pending 9006 discarded + flagged, 9003 (only a WITHDRAWAL row) and 9004 (cancel in another empresa)
+  untouched; reversion created once with the retiro's accounts (owner connection with FKs off, since parents are not seeded). Mutation: `SET LOCAL` removed fails the `ways_app` test.
+- F3 (missing index): `ix_filas_conciliacion_mercadopago_cancelaciones` on `(id_empresa, tipo_transaccion, source_id)`, added to the E7b migration (Up/Down), Designer and snapshot.
+- Verification: build 0 errors; Application.Tests 1660 pass; migration tests 4 pass; `MercadoPagoVentaTests` + `AislamientoDeTenant` + `UpDownUp` pass.
+
+## Next step
+
+Program complete; production setup pending (owner).

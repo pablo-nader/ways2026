@@ -6,6 +6,7 @@ import { ConciliacionMercadoPago } from './ConciliacionMercadoPago'
 import { Toaster } from '../toasts/Toaster'
 import { ROL } from '../api/tipos'
 import type { EmpresaListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type { CuentaTesoreriaListado } from '../api/cuentasTesoreria'
 import type {
   CandidatoDeConfirmacion,
   CobroSinVenta,
@@ -14,6 +15,7 @@ import type {
   DetalleDeConciliacion,
   FilaDeConciliacion,
   PagosSinVerificar,
+  PropuestaDeTesoreria,
 } from '../api/conciliacionMercadoPago'
 import { TAMANO_MAXIMO_DE_ARCHIVO } from '../api/conciliacionMercadoPago'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -160,7 +162,7 @@ function detalle(filas: FilaDeConciliacion[], extra: Partial<DetalleDeConciliaci
 }
 
 function importada(sobrescribir: Partial<ConciliacionImportada> = {}): ConciliacionImportada {
-  return { conciliacion: conciliacion(), invalidas: [], invalidasTruncado: false, ...sobrescribir }
+  return { conciliacion: conciliacion(), invalidas: [], invalidasTruncado: false, retirosYaPropuestos: 0, retirosCancelados: 0, ...sobrescribir }
 }
 
 let empresas: EmpresaListado[]
@@ -168,11 +170,15 @@ let lista: ConciliacionListado[]
 let detalles: (ruta: string) => Promise<DetalleDeConciliacion>
 let cobrosSinVenta: CobroSinVenta[]
 let pagosSinVerificar: PagosSinVerificar
+let propuestas: PropuestaDeTesoreria[]
+let cuentas: CuentaTesoreriaListado[]
 
 function mockearRutas() {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
     if (ruta.startsWith('/mercadopago/conciliaciones?')) return Promise.resolve(lista)
+    if (ruta.endsWith('/propuestas')) return Promise.resolve(propuestas)
+    if (ruta === '/cuentas-tesoreria') return Promise.resolve(cuentas)
     if (ruta.startsWith('/mercadopago/conciliaciones/')) return detalles(ruta)
     if (ruta.startsWith('/mercadopago/cobros-sin-venta')) return Promise.resolve(cobrosSinVenta)
     if (ruta.startsWith('/mercadopago/pagos-sin-verificar')) return Promise.resolve(pagosSinVerificar)
@@ -199,6 +205,8 @@ beforeEach(() => {
   detalles = () => Promise.resolve(detalle([fila()]))
   cobrosSinVenta = []
   pagosSinVerificar = { items: [], truncado: false }
+  propuestas = []
+  cuentas = []
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   apiPostFormularioMock.mockReset()
@@ -243,6 +251,28 @@ describe('ConciliacionMercadoPago — importar', () => {
     expect(within(total).getByText(/9\.025/)).toBeInTheDocument()
     expect(await screen.findByText('Reporte importado.')).toBeInTheDocument()
     await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones?').length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('avisa los retiros que un reporte anterior ya proponía y no se volvieron a proponer', async () => {
+    apiPostFormularioMock.mockResolvedValue(importada({ retirosYaPropuestos: 2 }))
+    renderPagina()
+
+    await elegirArchivo(csv())
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Importar' }))
+
+    const region = await screen.findByRole('region', { name: 'Resultado de la importación' })
+    expect(within(region).getByText(/2 retiro\(s\) ya estaban propuestos por un reporte anterior/)).toBeInTheDocument()
+  })
+
+  it('avisa los retiros que el reporte cancela', async () => {
+    apiPostFormularioMock.mockResolvedValue(importada({ retirosCancelados: 3 }))
+    renderPagina()
+
+    await elegirArchivo(csv())
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Importar' }))
+
+    const region = await screen.findByRole('region', { name: 'Resultado de la importación' })
+    expect(within(region).getByText(/3 retiro\(s\) cancelado\(s\) por Mercado Pago/)).toBeInTheDocument()
   })
 
   it('lista las filas inválidas con su línea y su motivo', async () => {
@@ -570,6 +600,8 @@ describe('ConciliacionMercadoPago — cambio de empresa y de pestaña', () => {
       if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
       if (ruta === '/mercadopago/conciliaciones?idEmpresa=1') return Promise.resolve([conciliacion()])
       if (ruta === '/mercadopago/conciliaciones?idEmpresa=2') return Promise.resolve([conciliacion({ id: 4, idEmpresa: 2, nombreArchivo: 'de-otra-sa.csv' })])
+      if (ruta.endsWith('/propuestas')) return Promise.resolve([])
+      if (ruta === '/cuentas-tesoreria') return Promise.resolve([])
       if (ruta.startsWith('/mercadopago/conciliaciones/3')) return Promise.resolve(detalle([fila()]))
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
@@ -610,5 +642,395 @@ describe('ConciliacionMercadoPago — cambio de empresa y de pestaña', () => {
     await irAPestana('Para revisar')
 
     expect(await screen.findByText('Las fechas se interpretan en la zona horaria de la empresa.')).toBeInTheDocument()
+  })
+})
+
+function propuesta(sobrescribir: Partial<PropuestaDeTesoreria> = {}): PropuestaDeTesoreria {
+  return {
+    id: 11,
+    tipo: 'diferencia_comision',
+    estado: 'pendiente',
+    importe: -1.5,
+    idCuentaOrigen: 70,
+    nombreCuentaOrigen: 'Mercado Pago',
+    idCuentaDestino: null,
+    nombreCuentaDestino: null,
+    numeroLinea: null,
+    sourceId: null,
+    fechaTransaccion: null,
+    detalle: {
+      cantidadDeCobros: 4,
+      comisionRealTotal: 26,
+      comisionEstimadaTotal: 24.5,
+      cobrosSinCierre: 2,
+      cobrosSinComisionReal: 1,
+      lineas: [],
+      lineasTruncado: false,
+    },
+    idMovimientoCuenta: null,
+    idMovimientoCuentaDestino: null,
+    resueltaEl: null,
+    resueltaPor: null,
+    origenesPosibles: [],
+    motivo: null,
+    canceladoPorMercadoPago: false,
+    ...sobrescribir,
+  }
+}
+
+function retiro(sobrescribir: Partial<PropuestaDeTesoreria> = {}): PropuestaDeTesoreria {
+  return propuesta({
+    id: 12,
+    tipo: 'retiro',
+    importe: 500,
+    detalle: null,
+    numeroLinea: 9,
+    sourceId: 'WD-1',
+    fechaTransaccion: '2026-10-30T15:00:00Z',
+    ...sobrescribir,
+  })
+}
+
+function cuenta(sobrescribir: Partial<CuentaTesoreriaListado>): CuentaTesoreriaListado {
+  return {
+    id: 1,
+    idEmpresa: 1,
+    nombreEmpresa: 'Empresa Demo',
+    nombre: 'Cuenta',
+    saldoInicial: 0,
+    saldoActual: 0,
+    activo: true,
+    saldoInicialEditable: true,
+    ...sobrescribir,
+  }
+}
+
+async function abrirDetalle() {
+  const usuario = userEvent.setup()
+  await irAPestana('Conciliaciones')
+  await usuario.click(await screen.findByRole('button', { name: /Ver reporte-octubre/ }))
+  return { usuario, seccion: await screen.findByRole('region', { name: 'Movimientos a tesorería' }) }
+}
+
+describe('ConciliacionMercadoPago — movimientos a tesorería', () => {
+  beforeEach(() => {
+    cuentas = [
+      cuenta({ id: 70, nombre: 'Mercado Pago' }),
+      cuenta({ id: 71, nombre: 'Banco Nación' }),
+      cuenta({ id: 72, nombre: 'Banco inactivo', activo: false }),
+      cuenta({ id: 73, nombre: 'Banco de otra empresa', idEmpresa: 2 }),
+    ]
+  })
+
+  it('lista la diferencia de comisión y el retiro con su efecto, el cálculo y lo que quedó fuera', async () => {
+    propuestas = [propuesta(), retiro()]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Debita \$\s?1,50 de Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/4 cobro\(s\): comisión real/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/2 cobro\(s\) de turnos que todavía no acreditaron el medio/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/1 cobro\(s\) vinieron sin comisión en el reporte/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/Pasa \$\s?500,00 de Mercado Pago a la cuenta que elijas/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/Línea 9 · WD-1/)).toBeInTheDocument()
+  })
+
+  it('aplica la diferencia tras confirmarla: manda destino nulo, avisa y vuelve a leer', async () => {
+    propuestas = [propuesta()]
+    apiPostMock.mockResolvedValue(propuesta({ estado: 'aplicada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Aplicar diferencia de comisión' }))
+    const dialogo = await screen.findByRole('alertdialog')
+    expect(apiPostMock).not.toHaveBeenCalled()
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/11/aplicar', { idCuentaDestino: null, idCuentaOrigen: null })
+    expect(await screen.findByText('Movimiento aplicado en la tesorería.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('un retiro no se aplica sin cuenta y ofrece solo cuentas activas de la empresa distintas del origen', async () => {
+    propuestas = [retiro()]
+    apiPostMock.mockResolvedValue(retiro({ estado: 'aplicada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    const selector = await within(seccion).findByLabelText('Cuenta de destino del retiro de la línea 9')
+    const boton = within(seccion).getByRole('button', { name: 'Aplicar retiro de la línea 9' })
+    expect(boton).toBeDisabled()
+    await within(selector).findByRole('option', { name: 'Banco Nación' })
+    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Elegir…', 'Banco Nación'])
+
+    await usuario.selectOptions(selector, '71')
+    expect(boton).toBeEnabled()
+    await usuario.click(boton)
+    const dialogo = await screen.findByRole('alertdialog')
+    expect(within(dialogo).getByText(/Pasa \$\s?500,00 de Mercado Pago a Banco Nación/)).toBeInTheDocument()
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: 71, idCuentaOrigen: null }))
+  })
+
+  it('un retiro sin cuenta de origen ni opciones avisa y no se puede aplicar, pero sí descartar', async () => {
+    propuestas = [retiro({ idCuentaOrigen: null, nombreCuentaOrigen: null })]
+    apiPostMock.mockResolvedValue(retiro({ estado: 'descartada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Ningún medio de pago de Mercado Pago de la empresa acredita en una cuenta/)).toBeInTheDocument()
+    expect(within(seccion).getByRole('button', { name: 'Aplicar retiro de la línea 9' })).toBeDisabled()
+
+    await usuario.click(within(seccion).getByRole('button', { name: 'Descartar retiro de la línea 9' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Descartar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/descartar', {}))
+    expect(await screen.findByText('Propuesta descartada.')).toBeInTheDocument()
+  })
+
+  it('un retiro sin origen fijo pide elegirlo entre las cuentas de los medios y lo manda con el destino', async () => {
+    propuestas = [
+      retiro({
+        idCuentaOrigen: null,
+        nombreCuentaOrigen: null,
+        origenesPosibles: [
+          { id: 70, nombre: 'Mercado Pago' },
+          { id: 74, nombre: 'Mercado Pago 2' },
+        ],
+      }),
+    ]
+    cuentas = [...cuentas, cuenta({ id: 74, nombre: 'Mercado Pago 2' })]
+    apiPostMock.mockResolvedValue(retiro({ estado: 'aplicada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    const origen = await within(seccion).findByLabelText('Cuenta de origen del retiro de la línea 9')
+    const destino = within(seccion).getByLabelText('Cuenta de destino del retiro de la línea 9')
+    const boton = within(seccion).getByRole('button', { name: 'Aplicar retiro de la línea 9' })
+    await within(destino).findByRole('option', { name: 'Banco Nación' })
+    await usuario.selectOptions(destino, '71')
+    expect(boton).toBeDisabled()
+
+    await usuario.selectOptions(origen, '74')
+    expect(boton).toBeEnabled()
+    await usuario.click(boton)
+    const dialogo = await screen.findByRole('alertdialog')
+    expect(within(dialogo).getByText(/Pasa \$\s?500,00 de Mercado Pago 2 a Banco Nación/)).toBeInTheDocument()
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: 71, idCuentaOrigen: 74 }),
+    )
+  })
+
+  it('una cuenta de destino elegida que deja de ofrecerse al cambiar el origen se descarta y Aplicar queda inerte', async () => {
+    propuestas = [
+      retiro({
+        idCuentaOrigen: null,
+        nombreCuentaOrigen: null,
+        origenesPosibles: [
+          { id: 70, nombre: 'Mercado Pago' },
+          { id: 71, nombre: 'Banco Nación' },
+        ],
+      }),
+    ]
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    const origen = await within(seccion).findByLabelText('Cuenta de origen del retiro de la línea 9')
+    const destino = within(seccion).getByLabelText('Cuenta de destino del retiro de la línea 9')
+    const boton = within(seccion).getByRole('button', { name: 'Aplicar retiro de la línea 9' })
+    await within(destino).findByRole('option', { name: 'Banco Nación' })
+    await usuario.selectOptions(origen, '70')
+    await usuario.selectOptions(destino, '71')
+    expect(boton).toBeEnabled()
+
+    await usuario.selectOptions(origen, '71')
+
+    await waitFor(() => expect(destino).toHaveValue(''))
+    expect(boton).toBeDisabled()
+    await usuario.selectOptions(origen, '70')
+    expect(destino).toHaveValue('')
+    expect(boton).toBeDisabled()
+  })
+
+  it('una propuesta descartada se puede reabrir: confirma, llama al endpoint y vuelve a leer', async () => {
+    propuestas = [retiro({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
+    apiPostMock.mockResolvedValue(retiro())
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Descartada el .* por admin/)).toBeInTheDocument()
+    expect(within(seccion).queryByText('Cancelado por Mercado Pago')).toBeNull()
+    expect(within(seccion).queryByRole('button', { name: /Aplicar|Descartar/ })).toBeNull()
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(within(seccion).getByRole('button', { name: 'Reabrir retiro de la línea 9' }))
+    const dialogo = await screen.findByRole('alertdialog')
+    expect(within(dialogo).getByText(/vuelve a quedar pendiente/)).toBeInTheDocument()
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Reabrir' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/reabrir', {}))
+    expect(await screen.findByText('Propuesta reabierta.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('una propuesta que Mercado Pago canceló muestra la insignia y no ofrece reabrir', async () => {
+    propuestas = [
+      retiro({
+        estado: 'descartada',
+        resueltaEl: '2026-11-01T12:00:00Z',
+        resueltaPor: 'admin',
+        motivo: 'cancelado por Mercado Pago',
+        canceladoPorMercadoPago: true,
+      }),
+    ]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Descartada el .* por admin · cancelado por Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).getByText('Cancelado por Mercado Pago')).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Reabrir/ })).toBeNull()
+  })
+
+  it('el rechazo 409 por cancelación de Mercado Pago al reabrir se explica en el diálogo', async () => {
+    propuestas = [retiro({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'propuesta_cancelada_por_mercadopago', 'x'))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Reabrir retiro de la línea 9' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reabrir' }))
+
+    expect(await within(await screen.findByRole('alertdialog')).findByText(/Mercado Pago canceló esta operación: la propuesta no se puede reabrir/)).toBeInTheDocument()
+  })
+
+  it('un rechazo 409 al reabrir deja el diálogo con el error y vuelve a leer', async () => {
+    propuestas = [propuesta({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'propuesta_no_descartada', 'x'))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Reabrir diferencia de comisión' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reabrir' }))
+
+    expect(await within(await screen.findByRole('alertdialog')).findByText('La propuesta ya no está descartada: no se puede reabrir.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('la reversión de un retiro cancelado dice a dónde vuelve el dinero y se aplica sin elegir cuentas', async () => {
+    propuestas = [
+      retiro({ tipo: 'retiro_cancelado', idCuentaOrigen: 70, nombreCuentaOrigen: 'Mercado Pago', idCuentaDestino: 71, nombreCuentaDestino: 'Banco Nación' }),
+    ]
+    apiPostMock.mockResolvedValue(retiro({ tipo: 'retiro_cancelado', estado: 'aplicada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Devuelve \$\s?500,00 de Banco Nación a Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).queryByLabelText(/Cuenta de (origen|destino)/)).toBeNull()
+    await usuario.click(within(seccion).getByRole('button', { name: 'Aplicar reversión del retiro de la línea 9' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: null, idCuentaOrigen: null }))
+  })
+
+  it('el Supervisor ve una propuesta descartada sin el botón de reabrir', async () => {
+    usuarioActual = usuarioFixture(ROL.Supervisor)
+    propuestas = [propuesta({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Descartada el/)).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Reabrir/ })).toBeNull()
+  })
+
+  it('una propuesta ya resuelta no ofrece botones y dice cuándo y quién', async () => {
+    propuestas = [propuesta({ estado: 'aplicada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin', idMovimientoCuenta: 5 })]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Aplicada el .* por admin/)).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Aplicar|Descartar/ })).toBeNull()
+  })
+
+  it.each([
+    ['propuesta_ya_aplicada', 'La propuesta ya se aplicó.'],
+    ['periodo_conciliado', 'período de tesorería ya conciliado'],
+    ['cuenta_destino_invalida', 'cuenta activa de la misma empresa'],
+  ])('un 409 %s deja el diálogo abierto con su copia y vuelve a leer', async (codigo, copia) => {
+    propuestas = [propuesta()]
+    apiPostMock.mockRejectedValue(new ErrorApi(409, codigo, 'x'))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Aplicar diferencia de comisión' }))
+    const dialogo = await screen.findByRole('alertdialog')
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Aplicar' }))
+
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(copia)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('dos clics seguidos en Aplicar escriben una sola vez y toda la pantalla queda inerte mientras tanto', async () => {
+    propuestas = [propuesta()]
+    const escritura = diferido<PropuestaDeTesoreria>()
+    apiPostMock.mockReturnValue(escritura.promesa)
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Aplicar diferencia de comisión' }))
+    const dialogo = await screen.findByRole('alertdialog')
+
+    const boton = within(dialogo).getByRole('button', { name: 'Aplicar' })
+    act(() => {
+      fireEvent.click(boton)
+      fireEvent.click(boton)
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(await within(dialogo).findByRole('button', { name: 'Aplicando…' })).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByLabelText('Empresa')).toBeDisabled()
+    expect(within(seccion).getByRole('button', { name: 'Descartar diferencia de comisión' })).toBeDisabled()
+
+    await act(async () => escritura.resolver(propuesta({ estado: 'aplicada' })))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+  })
+
+  it('el Supervisor ve las propuestas pero ni los botones ni las cuentas: no las pide', async () => {
+    usuarioActual = usuarioFixture(ROL.Supervisor)
+    propuestas = [propuesta(), retiro()]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Debita/)).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Aplicar|Descartar/ })).toBeNull()
+    expect(within(seccion).queryByLabelText(/Cuenta de destino/)).toBeNull()
+    expect(llamadasA('/cuentas-tesoreria')).toHaveLength(0)
+  })
+
+  it('una lectura que falla muestra el error con Reintentar', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.endsWith('/propuestas')) return Promise.reject(new ErrorApi(500, 'x', 'caído'))
+      if (ruta === '/cuentas-tesoreria') return Promise.resolve(cuentas)
+      if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
+      if (ruta.startsWith('/mercadopago/conciliaciones?')) return Promise.resolve(lista)
+      return detalles(ruta)
+    })
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByRole('alert')).toBeInTheDocument()
+    expect(within(seccion).getByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
   })
 })

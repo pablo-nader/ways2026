@@ -3,9 +3,11 @@ import {
   clienteDeConciliacionMercadoPago,
   mensajeDeErrorDeConciliacion,
   validarArchivo,
+  type AccionDePropuesta,
   type CandidatoDeConfirmacion,
   type ConciliacionImportada,
   type FilaDeConciliacion,
+  type PropuestaDeTesoreria,
 } from '../api/conciliacionMercadoPago'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
@@ -16,7 +18,9 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { toast } from '../toasts/toasts'
 import { DialogoDeConfirmacionDeFila } from './tesoreria/DialogoDeConfirmacionDeFila'
+import { DialogoDeResolucionDePropuesta } from './tesoreria/DialogoDeResolucionDePropuesta'
 import { SeccionConciliaciones } from './tesoreria/SeccionConciliaciones'
+import type { DestinoElegido } from './tesoreria/SeccionDePropuestas'
 import { SeccionImportar } from './tesoreria/SeccionImportar'
 import { SeccionParaRevisar } from './tesoreria/SeccionParaRevisar'
 import { useLectura } from './tesoreria/useLectura'
@@ -30,6 +34,8 @@ const TITULO_DE_PESTANA: Record<Pestana, string> = {
 }
 
 type Confirmacion = { idConciliacion: number; fila: FilaDeConciliacion; candidato: CandidatoDeConfirmacion }
+
+type Resolucion = { idConciliacion: number; propuesta: PropuestaDeTesoreria; accion: AccionDePropuesta; destino: DestinoElegido | null; origen: DestinoElegido | null }
 
 type EmpresaElegible = { id: number; nombre: string }
 
@@ -78,9 +84,13 @@ export function ConciliacionMercadoPago() {
   const [confirmando, setConfirmando] = useState(false)
   const [errorDeConfirmacion, setErrorDeConfirmacion] = useState('')
 
+  const [resolucion, setResolucion] = useState<Resolucion | null>(null)
+  const [resolviendo, setResolviendo] = useState(false)
+  const [errorDeResolucion, setErrorDeResolucion] = useState('')
+
   /** Espejo síncrono de "hay una escritura en vuelo" (subir o confirmar): la única guarda de re-entrancia válida. */
   const ocupadoRef = useRef(false)
-  const bloqueado = subiendo || confirmando
+  const bloqueado = subiendo || confirmando || resolviendo
 
   useEffect(() => {
     let vigente = true
@@ -192,6 +202,58 @@ export function ConciliacionMercadoPago() {
     }
   }
 
+  function pedirResolucion(
+    idConciliacion: number,
+    propuesta: PropuestaDeTesoreria,
+    accion: AccionDePropuesta,
+    destino: DestinoElegido | null,
+    origen: DestinoElegido | null,
+  ) {
+    if (ocupadoRef.current || !esAdmin) return
+    setErrorDeResolucion('')
+    setResolucion({ idConciliacion, propuesta, accion, destino, origen })
+  }
+
+  function cancelarResolucion() {
+    if (ocupadoRef.current) return
+    setResolucion(null)
+    setErrorDeResolucion('')
+  }
+
+  async function resolver() {
+    if (ocupadoRef.current || resolucion === null || !esAdmin) return
+
+    const { idConciliacion, propuesta, accion, destino, origen } = resolucion
+    ocupadoRef.current = true
+    setResolviendo(true)
+    setErrorDeResolucion('')
+    try {
+      try {
+        if (accion === 'aplicar') {
+          await clienteDeConciliacionMercadoPago.aplicarPropuesta(idConciliacion, propuesta.id, destino?.id ?? null, origen?.id ?? null)
+        } else if (accion === 'reabrir') {
+          await clienteDeConciliacionMercadoPago.reabrirPropuesta(idConciliacion, propuesta.id)
+        } else {
+          await clienteDeConciliacionMercadoPago.descartarPropuesta(idConciliacion, propuesta.id)
+        }
+      } catch (e) {
+        setErrorDeResolucion(mensajeDeErrorDeConciliacion(e, 'resolucion'))
+        // Un rechazo por estado (404/409) quiere decir que lo que se ve ya cambió: se vuelve a leer detrás del diálogo.
+        if (e instanceof ErrorApi && (e.estado === 404 || e.estado === 409)) setVersion((v) => v + 1)
+        return
+      }
+
+      setResolucion(null)
+      setVersion((v) => v + 1)
+      toast.exito(
+        accion === 'aplicar' ? 'Movimiento aplicado en la tesorería.' : accion === 'reabrir' ? 'Propuesta reabierta.' : 'Propuesta descartada.',
+      )
+    } finally {
+      ocupadoRef.current = false
+      setResolviendo(false)
+    }
+  }
+
   return (
     <div className="container-fluid py-4">
       <Box titulo="Conciliación Mercado Pago" variante="inverse">
@@ -212,7 +274,7 @@ export function ConciliacionMercadoPago() {
                   id="conciliacion-empresa"
                   className="form-select"
                   value={idEmpresa ?? ''}
-                  disabled={bloqueado || pendiente !== null}
+                  disabled={bloqueado || pendiente !== null || resolucion !== null}
                   onChange={(e) => elegirEmpresa(e.target.value)}
                 >
                   <option value="">Elegir…</option>
@@ -269,8 +331,11 @@ export function ConciliacionMercadoPago() {
                     onReintentar={conciliaciones.recargar}
                     version={version}
                     puedeConfirmar={esAdmin}
-                    bloqueado={bloqueado || pendiente !== null}
+                    bloqueado={bloqueado || pendiente !== null || resolucion !== null}
                     onConfirmar={pedirConfirmacion}
+                    idEmpresa={idEmpresa}
+                    puedeResolver={esAdmin}
+                    onResolver={pedirResolucion}
                   />
                 )}
                 {pestana === 'revisar' && (
@@ -280,7 +345,7 @@ export function ConciliacionMercadoPago() {
                     conciliaciones={conciliaciones.datos}
                     version={version}
                     puedeConfirmar={esAdmin}
-                    bloqueado={bloqueado || pendiente !== null}
+                    bloqueado={bloqueado || pendiente !== null || resolucion !== null}
                     onConfirmar={pedirConfirmacion}
                   />
                 )}
@@ -289,6 +354,19 @@ export function ConciliacionMercadoPago() {
           </>
         )}
       </Box>
+
+      {resolucion && (
+        <DialogoDeResolucionDePropuesta
+          propuesta={resolucion.propuesta}
+          accion={resolucion.accion}
+          nombreDeDestino={resolucion.destino?.nombre ?? null}
+          nombreDeOrigen={resolucion.origen?.nombre ?? null}
+          ocupado={resolviendo}
+          error={errorDeResolucion}
+          onConfirmar={() => void resolver()}
+          onCancelar={cancelarResolucion}
+        />
+      )}
 
       {pendiente && (
         <DialogoDeConfirmacionDeFila
