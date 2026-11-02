@@ -10,7 +10,7 @@ import {
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { puedeGestionarCatalogos } from '../api/tipos'
-import type { EmpresaListado } from '../api/tipos'
+import type { PuntoVentaListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -31,6 +31,20 @@ const TITULO_DE_PESTANA: Record<Pestana, string> = {
 
 type Confirmacion = { idConciliacion: number; fila: FilaDeConciliacion; candidato: CandidatoDeConfirmacion }
 
+type EmpresaElegible = { id: number; nombre: string }
+
+/**
+ * Las empresas que ve el usuario salen de sus puntos de venta (`GET /api/puntos-venta`, legible por Supervisor): `GET /api/empresas`
+ * es solo de Root/Admin y daría 403 al Supervisor, que sí lee la conciliación.
+ */
+function empresasDeLosPuntosDeVenta(puntosVenta: readonly PuntoVentaListado[]): EmpresaElegible[] {
+  const porId = new Map<number, EmpresaElegible>()
+  for (const pv of puntosVenta) {
+    if (!porId.has(pv.idEmpresa)) porId.set(pv.idEmpresa, { id: pv.idEmpresa, nombre: pv.razonSocialEmpresa ?? `Empresa ${pv.idEmpresa}` })
+  }
+  return [...porId.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+}
+
 const mensajeDeLectura = (e: unknown) => mensajeDeErrorDeConciliacion(e, 'lectura')
 
 /**
@@ -48,7 +62,7 @@ export function ConciliacionMercadoPago() {
   const esAdmin = usuario !== null && puedeGestionarCatalogos(usuario.rolId)
   const pestanas: Pestana[] = esAdmin ? ['importar', 'conciliaciones', 'revisar'] : ['conciliaciones', 'revisar']
 
-  const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
+  const [empresas, setEmpresas] = useState<EmpresaElegible[] | null>(null)
   const [errorEmpresas, setErrorEmpresas] = useState('')
   const [idEmpresa, setIdEmpresa] = useState<number | null>(null)
   const [pestana, setPestana] = useState<Pestana>(esAdmin ? 'importar' : 'conciliaciones')
@@ -70,9 +84,10 @@ export function ConciliacionMercadoPago() {
   useEffect(() => {
     let vigente = true
     clienteDeOrganizacion
-      .listarEmpresas()
-      .then((cargadas) => {
+      .listarPuntosVenta()
+      .then((puntosVenta) => {
         if (!vigente) return
+        const cargadas = empresasDeLosPuntosDeVenta(puntosVenta)
         setEmpresas(cargadas)
         if (cargadas.length === 1) setIdEmpresa(cargadas[0].id)
       })
@@ -103,6 +118,7 @@ export function ConciliacionMercadoPago() {
 
   function elegirPestana(nueva: Pestana) {
     if (ocupadoRef.current) return
+    if (nueva !== 'importar') setArchivo(null)
     setPestana(nueva)
   }
 
@@ -201,7 +217,7 @@ export function ConciliacionMercadoPago() {
                   <option value="">Elegir…</option>
                   {empresas.map((emp) => (
                     <option key={emp.id} value={emp.id}>
-                      {emp.razonSocial}
+                      {emp.nombre}
                     </option>
                   ))}
                 </select>
@@ -231,6 +247,7 @@ export function ConciliacionMercadoPago() {
 
                 {pestana === 'importar' && esAdmin && (
                   <SeccionImportar
+                    key={idEmpresa}
                     archivo={archivo}
                     subiendo={subiendo}
                     error={errorDeSubida}
@@ -244,6 +261,7 @@ export function ConciliacionMercadoPago() {
                 )}
                 {pestana === 'conciliaciones' && (
                   <SeccionConciliaciones
+                    key={idEmpresa}
                     conciliaciones={conciliaciones.datos}
                     cargando={conciliaciones.cargando}
                     error={conciliaciones.error}
@@ -256,6 +274,7 @@ export function ConciliacionMercadoPago() {
                 )}
                 {pestana === 'revisar' && (
                   <SeccionParaRevisar
+                    key={idEmpresa}
                     idEmpresa={idEmpresa}
                     conciliaciones={conciliaciones.datos}
                     version={version}

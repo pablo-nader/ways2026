@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConciliacionMercadoPago } from './ConciliacionMercadoPago'
 import { Toaster } from '../toasts/Toaster'
 import { ROL } from '../api/tipos'
-import type { EmpresaListado, UsuarioAutenticado } from '../api/tipos'
+import type { EmpresaListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import type {
   CandidatoDeConfirmacion,
   CobroSinVenta,
@@ -77,6 +77,24 @@ function empresa(id: number, razonSocial: string): EmpresaListado {
     alicuotaPercepcionIibb: null,
     alicuotaPercepcionIva: null,
   }
+}
+
+function puntosVentaDe(lista: EmpresaListado[]): PuntoVentaListado[] {
+  return lista.map((e) => ({
+    id: e.id * 10,
+    idTenant: e.idTenant,
+    idEmpresa: e.id,
+    nombre: `PV de ${e.razonSocial}`,
+    domicilio: null,
+    horario: null,
+    whatsapp: null,
+    instagram: null,
+    facebook: null,
+    web: null,
+    nombreTenant: e.nombreTenant,
+    razonSocialEmpresa: e.razonSocial,
+    modo: 'Web',
+  }))
 }
 
 function conciliacion(sobrescribir: Partial<ConciliacionListado> = {}): ConciliacionListado {
@@ -153,7 +171,7 @@ let pagosSinVerificar: PagosSinVerificar
 
 function mockearRutas() {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/empresas') return Promise.resolve(empresas)
+    if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
     if (ruta.startsWith('/mercadopago/conciliaciones?')) return Promise.resolve(lista)
     if (ruta.startsWith('/mercadopago/conciliaciones/')) return detalles(ruta)
     if (ruta.startsWith('/mercadopago/cobros-sin-venta')) return Promise.resolve(cobrosSinVenta)
@@ -355,7 +373,7 @@ describe('ConciliacionMercadoPago — conciliaciones', () => {
     empresas = [empresa(1, 'Empresa Demo'), empresa(2, 'Otra SA')]
     const tardia = diferido<ConciliacionListado[]>()
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/empresas') return Promise.resolve(empresas)
+      if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
       if (ruta === '/mercadopago/conciliaciones?idEmpresa=1') return tardia.promesa
       if (ruta === '/mercadopago/conciliaciones?idEmpresa=2') return Promise.resolve([conciliacion({ id: 4, nombreArchivo: 'de-otra-sa.csv' })])
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
@@ -508,6 +526,18 @@ describe('ConciliacionMercadoPago — Supervisor', () => {
     expect(screen.queryByRole('button', { name: 'Importar' })).toBeNull()
   })
 
+  it('arma el selector de empresa con los puntos de venta y no pide /empresas (solo Root/Admin)', async () => {
+    empresas = [empresa(2, 'Otra SA'), empresa(1, 'Empresa Demo')]
+    renderPagina()
+
+    const selector = await screen.findByLabelText('Empresa')
+    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Elegir…', 'Empresa Demo', 'Otra SA'])
+    expect(llamadasA('/empresas')).toHaveLength(0)
+    await userEvent.setup().selectOptions(selector, '1')
+    expect(await screen.findByRole('tab', { name: 'Conciliaciones' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Importar' })).toBeNull()
+  })
+
   it('ve los candidatos pero ningún botón Confirmar', async () => {
     renderPagina()
 
@@ -515,5 +545,55 @@ describe('ConciliacionMercadoPago — Supervisor', () => {
 
     expect(await screen.findByText(/Venta 0001-00000042/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Confirmar/ })).toBeNull()
+  })
+})
+
+describe('ConciliacionMercadoPago — cambio de empresa y de pestaña', () => {
+  it('al cambiar de empresa con un detalle abierto no queda el detalle ni el Confirmar de la anterior', async () => {
+    empresas = [empresa(1, 'Empresa Demo'), empresa(2, 'Otra SA')]
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
+      if (ruta === '/mercadopago/conciliaciones?idEmpresa=1') return Promise.resolve([conciliacion()])
+      if (ruta === '/mercadopago/conciliaciones?idEmpresa=2') return Promise.resolve([conciliacion({ id: 4, idEmpresa: 2, nombreArchivo: 'de-otra-sa.csv' })])
+      if (ruta.startsWith('/mercadopago/conciliaciones/3')) return Promise.resolve(detalle([fila()]))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    renderPagina()
+    const usuario = userEvent.setup()
+
+    await usuario.selectOptions(await screen.findByLabelText('Empresa'), '1')
+    await usuario.click(await screen.findByRole('tab', { name: 'Conciliaciones' }))
+    await usuario.click(await screen.findByRole('button', { name: /Ver reporte-octubre/ }))
+    expect(await screen.findByText('SRC-777')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /Confirmar/ }).length).toBeGreaterThan(0)
+
+    await usuario.selectOptions(screen.getByLabelText('Empresa'), '2')
+
+    expect(await screen.findByText('de-otra-sa.csv')).toBeInTheDocument()
+    expect(screen.queryByText('SRC-777')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Confirmar/ })).toBeNull()
+  })
+
+  it('el archivo elegido no sobrevive a una vuelta por otra pestaña: no hay nada que subir', async () => {
+    renderPagina()
+    const usuario = userEvent.setup()
+
+    await elegirArchivo(csv())
+    expect(screen.getByRole('button', { name: 'Importar' })).toBeEnabled()
+
+    await irAPestana('Conciliaciones')
+    await irAPestana('Importar')
+
+    expect(screen.getByRole('button', { name: 'Importar' })).toBeDisabled()
+    await usuario.click(screen.getByRole('button', { name: 'Importar' }))
+    expect(apiPostFormularioMock).not.toHaveBeenCalled()
+  })
+
+  it('avisa que el rango de pagos sin verificar se interpreta en la zona horaria de la empresa', async () => {
+    renderPagina()
+
+    await irAPestana('Para revisar')
+
+    expect(await screen.findByText('Las fechas se interpretan en la zona horaria de la empresa.')).toBeInTheDocument()
   })
 })

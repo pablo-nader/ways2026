@@ -126,6 +126,7 @@ function PagosSinVerificar({ idEmpresa, version }: Pick<Props, 'idEmpresa' | 've
           <CampoFecha id="sin-verificar-hasta" className="form-control" value={rango.hasta} onChange={(valor) => setRango((r) => ({ ...r, hasta: valor }))} />
         </div>
       </div>
+      <p className="small text-muted">Las fechas se interpretan en la zona horaria de la empresa.</p>
       {motivo && <div className="alert alert-warning py-1 px-2 small">{motivo}</div>}
       {lectura.error && <AvisoDeError texto={lectura.error} onReintentar={lectura.recargar} />}
       {lectura.cargando && !lectura.datos && motivo === null && <Cargando />}
