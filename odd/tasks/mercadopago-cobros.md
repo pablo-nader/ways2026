@@ -782,3 +782,28 @@ Confirmed issues fixed in `dd110a0a` (`fix(mercadopago): un retiro se propone un
 - Mutation (one per run, restored with identical hash): R1 cross-file dedupe (existing claves ignored) fails the overlapping-reports test; R1 UNIQUE (index removed from the migration)
   fails the 23505 test; R2 origin resolution (`Count >= 1` instead of `== 1`) fails the several-accounts test; R2 required/valid origin (membership check removed) fails 2 tests; R3
   per-payment rounding fails 2 domain tests; R4 (`Emitido` filter removed) fails the annulled-sale test (-3.00 instead of -1.50); R5 (`seleccionVigente` returns the raw selection) fails the unit and the page tests.
+
+## Judgment-day E7 round 2 (2026-11-02, final)
+
+Confirmed issues fixed in the `fix(mercadopago): una propuesta descartada se puede reabrir y la cancelación de un retiro lo revierte` commit; the E7 migration was still unshipped and was edited
+in place (Designer and snapshot too; `has-pending-model-changes` clean).
+
+- S1 (both judges): discarding was irreversible and a discarded retiro is never proposed again. New `POST …/propuestas/{idPropuesta}/reabrir` (Admin): descartada -> pendiente under the
+  proposal row lock (single read under the lock), clears `id_usuario_resolucion`, `fecha_resolucion` and the new `motivo_resolucion`, audit `conciliacion.propuestareabierta`
+  (valorAnterior = estado + motivo), 409 `propuesta_no_descartada` otherwise. The existing CHECK `_resolucion` already holds for the cleared fields; a new CHECK `_motivo` keeps the reason only on a
+  descartada. Web: "Reabrir" button on discarded proposals (Admin only) with the same confirm dialog, `ocupadoRef` guard and re-read on 404/409.
+- S2 (both judges): `WITHDRAWAL_CANCEL` was ignored. Matched by SOURCE_ID (assumption, documented in the generator and docs/10: the report repeats the cancelled operation's id on the cancel row). Under the
+  row lock of the retiro proposal: pendiente -> descartada with `motivo_resolucion = 'cancelado por Mercado Pago'` (audited, no money); aplicada -> new tipo `retiro_cancelado` (same amount, origin and
+  destination as the retiro, `clave_origen` = SOURCE_ID, partial UNIQUE `ux_propuestas_tesoreria_mercadopago_retiro_cancelado`) that the Admin applies without choosing accounts (two inverse adjustments in one
+  transaction, same writer; body accounts rejected with `cuenta_destino_no_aplica`/`cuenta_origen_no_aplica`); descartada or no proposal -> only counted. Same file with the retiro and its cancel ->
+  the retiro is not proposed (decision: proposing and discarding in one step is noise). Counted in `ConciliacionImportada.RetirosCancelados` and the import audit (`retiros_cancelados`,
+  `retiros_descartados_por_cancelacion`, `reversiones_propuestas`). Tipo CHECK, `_forma` and `_aplicada` CHECKs, docs/10 and the web labels/effect text updated. Limit: a retiro imported AFTER a cancel that was already
+  imported is still proposed (the cancel is not remembered).
+- S3 (judge B): stale OpenAPI summaries in `MercadoPagoEndpoints.cs` fixed (origin description, error codes `cuenta_origen_requerida|cuenta_origen_no_aplica|cuenta_origen_invalida`, `idCuentaOrigen`, the reabrir route
+  and the `retiro_cancelado` tipo; `propuesta_sin_cuenta_origen` removed).
+- Suggestions: the largest-remainder spread is keyed by the sale payment id (`cobros` row id), not by `IdCobroMercadoPago`, so several payments of one MP cobro no longer repeat the spare cents and lines always sum
+  to the group estimate; docs/generator now say a sale annulled after the shift close is excluded (annulment flows are not reconciled here).
+- Verification: build 0 errors; no pending model changes; Domain 2610, Application 1660; integration (whole `MercadoPagoVentaTests` + Tesoreria + SuperficieDeAutorizacion + UpDownUp + AislamientoDeTenant) 323 passed;
+  web: tsc clean, 160 tests (api, page, tesoreria), `npm run build` ok.
+- Mutation (one per run, restored with identical content): reopen guard disabled fails 2 tests; cancel of a pendiente (branch disabled) fails 1; cancel of an aplicada (branch disabled) fails 1; a descartada treated as
+  pendiente fails 1; same-file exclusion removed fails 1; duplicate reversion allowed (`Add || true`) fails 1; spread keyed by `IdCobroMercadoPago` fails the new domain test.
