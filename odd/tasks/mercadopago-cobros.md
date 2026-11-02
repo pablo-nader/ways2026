@@ -843,6 +843,20 @@ in place (Designer and snapshot too; `has-pending-model-changes` clean).
   backfill `SET LOCAL` removed fails the `ways_app` test (the StartsWith guard).
 - Deviation: `src/Ways.Web/src/paginas/ConciliacionMercadoPago.test.tsx` was also edited (fixture needs the new field; reopen tests updated), outside the listed surface but required by the verification command.
 
+## Judgment-day E7b round 1 fixes (2026-11-02)
+
+- F1 (index identity collapse): both partial unique indexes on `{IdTenant, IdEmpresa, ClaveOrigen}` are declared with the named `HasIndex(..., name)` overload; the E7b Designer and the
+  snapshot now carry both (`HasIndex(new[] {...}, "ux_..._retiro")` and `..._retiro_cancelado`). The E7 migration was not touched. Evidence: `dotnet ef migrations add Probe` after the
+  fix yields an EMPTY Up/Down (before the fix it wanted to create `ux_..._retiro`); the probe files were deleted by hand because `migrations remove` needs a database and none was listening.
+- F2 (backfill gap): `SqlDeBackfill` now consults `filas_conciliacion_mercadopago` (`WITHDRAWAL_CANCEL`, same tenant and empresa, `source_id = clave_origen`, any conciliacion): a pending
+  retiro with a cancel row is discarded (motivo "cancelado por Mercado Pago", `fecha_resolucion = now()`, no user: the resolution CHECK only needs the date), an applied retiro with
+  a cancel row and no reversion gets a pending `retiro_cancelado` (first cancel row, accounts and amount of the retiro, flagged, `ON CONFLICT DO NOTHING`), and every retiro with a
+  cancel row is flagged. Still under `SET LOCAL app.acceso = 'plataforma'`, idempotent. Remaining limitation: no audit records are written for the discards (SQL cannot reach the audit service).
+  Tests (`MercadoPagoPropuestasCanceladasMigracionTests`, 4 pass): hand-discarded 9005 flagged, pending 9006 discarded + flagged, 9003 (only a WITHDRAWAL row) and 9004 (cancel in another empresa)
+  untouched; reversion created once with the retiro's accounts (owner connection with FKs off, since parents are not seeded). Mutation: `SET LOCAL` removed fails the `ways_app` test.
+- F3 (missing index): `ix_filas_conciliacion_mercadopago_cancelaciones` on `(id_empresa, tipo_transaccion, source_id)`, added to the E7b migration (Up/Down), Designer and snapshot.
+- Verification: build 0 errors; Application.Tests 1660 pass; migration tests 4 pass; `MercadoPagoVentaTests` + `AislamientoDeTenant` + `UpDownUp` pass.
+
 ## Next step
 
 Program complete; production setup pending (owner).

@@ -25,8 +25,9 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// La migración <c>CanceladoPorMercadoPagoEnPropuestas</c> sobre una base que ya corrió la de las propuestas de tesorería: marca como canceladas por Mercado Pago
-/// las reversiones, los retiros que una cancelación descartó y los retiros aplicados que tienen su reversión, y deja sin marca el resto (un retiro descartado a
-/// mano, uno pendiente y el de otra empresa con la misma clave). El UPDATE corre bajo <c>ways_app</c> con el GUC de plataforma (<c>rls-migration-backfills</c>).
+/// las reversiones, los retiros que una cancelación descartó, los aplicados que tienen su reversión y los que una fila <c>WITHDRAWAL_CANCEL</c> de la empresa
+/// cancela (descartándolos si estaban pendientes y proponiendo la reversión de los aplicados que no la tenían), y deja sin marca el resto (un retiro descartado
+/// a mano sin fila de cancelación, uno pendiente y el de otra empresa con la misma clave). El UPDATE corre bajo <c>ways_app</c> con el GUC de plataforma (<c>rls-migration-backfills</c>).
 /// Base AISLADA con las filas sembradas por SQL crudo.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -48,7 +49,7 @@ public class MercadoPagoPropuestasCanceladasMigracionTests(WaysApiFixture fixtur
         await entorno.MigrarAsync();
 
         Assert.Equal(
-            new[] { "9001:retiro", "9001:retiro_cancelado", "9002:retiro" },
+            new[] { "9001:retiro", "9001:retiro_cancelado", "9002:retiro", "9005:retiro", "9006:retiro" },
             await MarcadasAsync(owner));
     }
 
@@ -67,6 +68,8 @@ public class MercadoPagoPropuestasCanceladasMigracionTests(WaysApiFixture fixtur
             preparacion.CommandText =
                 """
                 UPDATE propuestas_tesoreria_mercadopago SET cancelado_por_mercadopago = false;
+                UPDATE propuestas_tesoreria_mercadopago SET estado = 'pendiente', fecha_resolucion = NULL, id_usuario_resolucion = NULL,
+                    motivo_resolucion = NULL WHERE clave_origen = '9006';
                 GRANT USAGE ON SCHEMA public TO ways_app;
                 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ways_app;
                 """;
@@ -80,13 +83,120 @@ public class MercadoPagoPropuestasCanceladasMigracionTests(WaysApiFixture fixtur
 
         // Sin el GUC, ways_app no ve ninguna fila y el UPDATE no escribe nada, sin error.
         Assert.Equal(0, await EjecutarSobreWaysAppAsync(entorno, sinElSetLocal));
-        Assert.Equal(3, await EjecutarSobreWaysAppAsync(entorno, bloque));
+        // Un descarte (el 9006 pendiente con cancelación) y cuatro marcas (las dos del 9001, el 9002 y el 9005 descartado a mano con cancelación).
+        Assert.Equal(5, await EjecutarSobreWaysAppAsync(entorno, bloque));
         Assert.Equal(0, await EjecutarSobreWaysAppAsync(entorno, bloque));
 
         await using var verificacion = new NpgsqlConnection(entorno.CadenaOwner);
         await verificacion.OpenAsync();
-        Assert.Equal(new[] { "9001:retiro", "9001:retiro_cancelado", "9002:retiro" }, await MarcadasAsync(verificacion));
+        Assert.Equal(
+            new[] { "9001:retiro", "9001:retiro_cancelado", "9002:retiro", "9005:retiro", "9006:retiro" }, await MarcadasAsync(verificacion));
     }
+
+    // Clausula: un retiro pendiente que una cancelacion de otra conciliacion ya cancelo queda descartado con el motivo de la cancelacion, sin usuario y con fecha
+    // (el CHECK de resolucion lo exige), y el descartado a mano con cancelacion solo recibe la marca; el 9003 sin cancelacion y el 9004 (cancelado solo en otra
+    // empresa) quedan intactos.
+    [Fact]
+    public async Task UnRetiroPendienteCanceladoEnOtraConciliacionQuedaDescartadoYMarcado()
+    {
+        await using var entorno = await EntornoAislado.CrearAsync(fixture);
+        await entorno.MigrarAsync(MigracionAnterior);
+        await using var owner = new NpgsqlConnection(entorno.CadenaOwner);
+        await owner.OpenAsync();
+        await SembrarAsync(owner);
+
+        await entorno.MigrarAsync();
+
+        Assert.Equal(
+            new[] { "9003:descartada::false", "9004:pendiente::false", "9005:descartada::true", "9006:descartada:cancelado por Mercado Pago:true" },
+            await EstadosDeRetirosAsync(owner));
+        Assert.Equal(
+            1L,
+            await EscalarAsync<long>(
+                owner,
+                "SELECT count(*) FROM propuestas_tesoreria_mercadopago WHERE clave_origen = '9006' AND fecha_resolucion IS NOT NULL AND id_usuario_resolucion IS NULL"));
+    }
+
+    // Clausula: un retiro aplicado que una fila de cancelacion cancela y no tiene reversion recibe la suya (pendiente, marcada, con las cuentas del retiro y
+    // apuntando a la primera fila de cancelacion), el que ya la tiene no recibe una segunda, y volver a correr el backfill no agrega nada.
+    [Fact]
+    public async Task UnRetiroAplicadoCanceladoSinReversionRecibeSuReversionUnaSolaVez()
+    {
+        await using var entorno = await EntornoAislado.CrearAsync(fixture);
+        await entorno.MigrarAsync();
+        await using var owner = new NpgsqlConnection(entorno.CadenaOwner);
+        await owner.OpenAsync();
+        await EscalarAsync<object>(owner, "SET session_replication_role = replica");
+
+        await InsertarAsync(owner, 1, 1, "retiro", "9010", "aplicada", 1, null, 10, 11, 1, 2, "u", null);
+        await InsertarAsync(owner, 1, 1, "retiro", "9011", "aplicada", 1, null, 12, 13, 3, 4, "u", null);
+        await InsertarAsync(owner, 1, 2, "retiro_cancelado", "9011", "pendiente", 1, null, 12, 13, null, null, null, null);
+        var primera = await InsertarFilaAsync(owner, 1, 30, 2, "9010", "WITHDRAWAL_CANCEL");
+        await InsertarFilaAsync(owner, 1, 31, 2, "9010", "WITHDRAWAL_CANCEL");
+        await InsertarFilaAsync(owner, 1, 30, 3, "9011", "WITHDRAWAL_CANCEL");
+
+        var bloque = CanceladoPorMercadoPagoEnPropuestas.SqlDeBackfill;
+        await EjecutarSobreOwnerAsync(owner, bloque);
+        await EjecutarSobreOwnerAsync(owner, bloque);
+
+        await using var comando = owner.CreateCommand();
+        comando.CommandText =
+            "SELECT id_conciliacion_mercadopago, id_fila_conciliacion_mercadopago, id_cuenta_origen, id_cuenta_destino, estado, cancelado_por_mercadopago, importe " +
+            "FROM propuestas_tesoreria_mercadopago WHERE tipo = 'retiro_cancelado' AND clave_origen = '9010'";
+        await using (var lector = await comando.ExecuteReaderAsync())
+        {
+            Assert.True(await lector.ReadAsync());
+            Assert.Equal(30, lector.GetInt32(0));
+            Assert.Equal(primera, lector.GetInt32(1));
+            Assert.Equal(10, lector.GetInt32(2));
+            Assert.Equal(11, lector.GetInt32(3));
+            Assert.Equal("pendiente", lector.GetString(4));
+            Assert.True(lector.GetBoolean(5));
+            Assert.Equal(40m, lector.GetDecimal(6));
+            Assert.False(await lector.ReadAsync());
+        }
+
+        Assert.Equal(
+            2L,
+            await EscalarAsync<long>(owner, "SELECT count(*) FROM propuestas_tesoreria_mercadopago WHERE tipo = 'retiro_cancelado' AND cancelado_por_mercadopago"));
+        Assert.Equal(
+            2L,
+            await EscalarAsync<long>(owner, "SELECT count(*) FROM propuestas_tesoreria_mercadopago WHERE tipo = 'retiro' AND cancelado_por_mercadopago"));
+    }
+
+    private static async Task<List<string>> EstadosDeRetirosAsync(NpgsqlConnection owner)
+    {
+        var estados = new List<string>();
+        await using var comando = owner.CreateCommand();
+        comando.CommandText =
+            "SELECT clave_origen || ':' || estado || ':' || coalesce(motivo_resolucion, '') || ':' || cancelado_por_mercadopago::text " +
+            "FROM propuestas_tesoreria_mercadopago WHERE tipo = 'retiro' AND id_empresa = 1 AND clave_origen IN ('9003', '9004', '9005', '9006') ORDER BY clave_origen";
+        await using var lector = await comando.ExecuteReaderAsync();
+        while (await lector.ReadAsync())
+        {
+            estados.Add(lector.GetString(0));
+        }
+
+        return estados;
+    }
+
+    private static async Task EjecutarSobreOwnerAsync(NpgsqlConnection owner, string sql)
+    {
+        await using var comando = owner.CreateCommand();
+        comando.CommandText = sql;
+        await comando.ExecuteNonQueryAsync();
+    }
+
+    private static Task<int> InsertarFilaAsync(NpgsqlConnection owner, int idEmpresa, int idConciliacion, int numeroLinea, string sourceId, string tipoTransaccion) =>
+        EscalarAsync<int>(
+            owner,
+            "INSERT INTO filas_conciliacion_mercadopago (id_tenant, id_empresa, id_conciliacion_mercadopago, numero_linea, resultado, source_id, tipo_transaccion, " +
+            "importe, fecha_transaccion, created_at, updated_at) VALUES (1, $1, $2, $3, 'retiro', $4, $5, 40, now(), now(), now()) RETURNING id_fila_conciliacion_mercadopago",
+            idEmpresa,
+            idConciliacion,
+            numeroLinea,
+            sourceId,
+            tipoTransaccion);
 
     private static async Task<List<string>> MarcadasAsync(NpgsqlConnection owner)
     {
@@ -113,7 +223,9 @@ public class MercadoPagoPropuestasCanceladasMigracionTests(WaysApiFixture fixtur
     }
 
     /// <summary>Empresa 1: 9001 aplicado + su reversión (marcados), 9002 descartado por cancelación (marcado), 9003 descartado a mano y 9004 pendiente (sin
-    /// marca). Empresa 2: 9001 aplicado sin reversión (sin marca: la reversión de la empresa 1 no es suya). Sin los padres: la sesión de siembra no dispara las FK.</summary>
+    /// marca), 9005 descartado a mano y 9006 pendiente, ambos con una fila WITHDRAWAL_CANCEL en otra conciliación (marcados; el 9006 queda descartado).
+    /// Empresa 2: 9001 aplicado sin reversión (sin marca: la reversión de la empresa 1 no es suya) y una cancelación del 9004 que no toca al de la empresa 1.
+    /// El 9003 tiene una fila de tipo WITHDRAWAL, no de cancelación. Sin los padres: la sesión de siembra no dispara las FK.</summary>
     private static async Task SembrarAsync(NpgsqlConnection owner)
     {
         await EscalarAsync<object>(owner, "SET session_replication_role = replica");
@@ -124,6 +236,13 @@ public class MercadoPagoPropuestasCanceladasMigracionTests(WaysApiFixture fixtur
         await InsertarAsync(owner, 1, 4, "retiro", "9003", "descartada", 4, null, null, null, null, null, "u", null);
         await InsertarAsync(owner, 1, 5, "retiro", "9004", "pendiente", 5, null, null, null, null, null, null, null);
         await InsertarAsync(owner, 2, 6, "retiro", "9001", "aplicada", 6, null, 20, 21, 3, 4, "u", null);
+        await InsertarAsync(owner, 1, 7, "retiro", "9005", "descartada", 7, null, null, null, null, null, "u", null);
+        await InsertarAsync(owner, 1, 8, "retiro", "9006", "pendiente", 8, null, null, null, null, null, null, null);
+
+        await InsertarFilaAsync(owner, 1, 20, 2, "9005", "WITHDRAWAL_CANCEL");
+        await InsertarFilaAsync(owner, 1, 20, 3, "9006", "WITHDRAWAL_CANCEL");
+        await InsertarFilaAsync(owner, 1, 20, 4, "9003", "WITHDRAWAL");
+        await InsertarFilaAsync(owner, 2, 21, 2, "9004", "WITHDRAWAL_CANCEL");
     }
 
     private static Task InsertarAsync(

@@ -4197,6 +4197,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_filas_conciliacion_mercadopago_empresa");
 
+                    b.HasIndex("IdEmpresa", "TipoTransaccion", "SourceId")
+                        .HasDatabaseName("ix_filas_conciliacion_mercadopago_cancelaciones");
+
                     b.ToTable("filas_conciliacion_mercadopago", null, t =>
                         {
                             t.HasCheckConstraint("ck_filas_conciliacion_mercadopago_confirmada", "id_cobro IS NULL OR resultado = 'sin_cobro_en_ways'");
@@ -4421,9 +4424,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdCuentaOrigen", "IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_propuestas_tesoreria_mercadopago_cuenta_origen");
 
-                    b.HasIndex("IdTenant", "IdEmpresa", "ClaveOrigen")
+                    b.HasIndex(new[] { "IdTenant", "IdEmpresa", "ClaveOrigen" }, "ux_propuestas_tesoreria_mercadopago_retiro")
                         .IsUnique()
-                        .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro_cancelado")
+                        .HasFilter("tipo = 'retiro'");
+
+                    b.HasIndex(new[] { "IdTenant", "IdEmpresa", "ClaveOrigen" }, "ux_propuestas_tesoreria_mercadopago_retiro_cancelado")
+                        .IsUnique()
                         .HasFilter("tipo = 'retiro_cancelado'");
 
                     b.ToTable("propuestas_tesoreria_mercadopago", null, t =>
