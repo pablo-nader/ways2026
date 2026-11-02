@@ -34,7 +34,10 @@ public sealed class ConciliadorMercadoPago
     private readonly Dictionary<string, CobroParaConciliar> _porReferencia = new(StringComparer.Ordinal);
     private readonly Dictionary<long, CobroParaConciliar> _porReferenciaDePago = [];
     private readonly Dictionary<string, CobroParaConciliar> _porIdDePago = new(StringComparer.Ordinal);
-    private readonly HashSet<(string SourceId, string Tipo, decimal Importe, DateTimeOffset Fecha)> _vistas = [];
+    /// <summary>Una fila es duplicada solo si repite todos sus montos y fechas: dos cuotas de un pago comparten importe y fecha de la
+    /// transacción y se distinguen por la liberación, la comisión o el neto.</summary>
+    private readonly HashSet<(string SourceId, string Tipo, decimal Importe, DateTimeOffset Fecha, decimal? Comision, decimal? Neto,
+        DateTimeOffset? Liberacion)> _vistas = [];
 
     public ConciliadorMercadoPago(IEnumerable<CobroParaConciliar> cobros)
     {
@@ -55,7 +58,8 @@ public sealed class ConciliadorMercadoPago
 
     public ClasificacionDeFilaMercadoPago Clasificar(FilaDeReporteMercadoPago fila)
     {
-        if (!_vistas.Add((fila.SourceId, fila.TipoTransaccion, fila.Importe, fila.FechaTransaccion)))
+        if (!_vistas.Add((fila.SourceId, fila.TipoTransaccion, fila.Importe, fila.FechaTransaccion, fila.Comision, fila.Neto,
+            fila.FechaLiberacion)))
         {
             return new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.Duplicada, Buscar(fila)?.Id, false);
         }

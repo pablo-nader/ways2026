@@ -75,8 +75,8 @@ public class ConciliadorMercadoPagoTests
         Assert.Equal(ResultadosDeConciliacionMercadoPago.ImporteDistinto, clasificacion.Resultado);
     }
 
-    // Clausula: varias filas del mismo cobro (cuotas: otra fecha) se aplican todas; una fila identica a otra del archivo (mismo SOURCE_ID,
-    // tipo, importe y fecha) es duplicada y no se aplica, y la clave incluye cada uno de los cuatro campos.
+    // Clausula: varias filas del mismo cobro (cuotas) se aplican todas; una fila identica a otra del archivo (mismo SOURCE_ID, tipo,
+    // importe, fecha, comision, neto y liberacion) es duplicada y no se aplica, y la clave incluye cada uno de esos campos.
     [Fact]
     public void LasFilasDeUnCobroSeAplicanTodasPeroLaIdenticaEsDuplicada()
     {
@@ -89,6 +89,10 @@ public class ConciliadorMercadoPagoTests
 
         Assert.True(conciliador.Clasificar(primera with { FechaTransaccion = Fecha.AddDays(30), NumeroLinea = 4 }).AplicaAlCobro);
         Assert.True(conciliador.Clasificar(primera with { SourceId = "OTRO", NumeroLinea = 5 }).AplicaAlCobro);
+        // Cuotas con el mismo importe y fecha de la transaccion, distintas solo en la liberacion, la comision o el neto.
+        Assert.True(conciliador.Clasificar(primera with { FechaLiberacion = Fecha.AddDays(60), NumeroLinea = 7 }).AplicaAlCobro);
+        Assert.True(conciliador.Clasificar(primera with { Comision = 9.99m, NumeroLinea = 8 }).AplicaAlCobro);
+        Assert.True(conciliador.Clasificar(primera with { Neto = 1.23m, NumeroLinea = 9 }).AplicaAlCobro);
         Assert.Equal(
             ResultadosDeConciliacionMercadoPago.ImporteDistinto, conciliador.Clasificar(primera with { Importe = 50m, NumeroLinea = 6 }).Resultado);
         Assert.Equal(
