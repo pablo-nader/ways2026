@@ -126,6 +126,7 @@ import {
   type ComboParaCargar,
 } from '../pos/cargaDeCombos'
 import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineSintetico'
+import { elegirFuenteDeArticulos } from '../pos/fuenteDeArticulos'
 import { elegirFuenteDeCombos, fuenteDesdeApi, type ComboDeLista } from '../pos/fuenteDeCombos'
 import {
   aClienteListado,
@@ -1307,6 +1308,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       }),
     [instantaneaDelPuntoVenta, idListaDeLaVenta, idEmpresaDeLaVenta, enLineaParaCombos, fuenteDeCombosDeLaApi],
   )
+
+  const fuenteDeArticulos = useMemo(() => elegirFuenteDeArticulos(instantaneaDelPuntoVenta), [instantaneaDelPuntoVenta])
 
   // Datos locales para el POS de escritorio (decisiones 6 y 7 del dueño): medios de pago y
   // tolerancia salen de la instantánea mientras el servidor no respondió o si falló por falta de
@@ -4967,6 +4970,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       {buscadorAbierto && !modoPresupuesto && (
         <ModalDeBusquedaDeArticulos
+          fuente={fuenteDeArticulos}
           idListaPrecio={clienteSeleccionado?.idListaPrecio ?? null}
           idEmpresa={puntoVentaSeleccionada?.idEmpresa ?? null}
           motivoSinAgregar={motivoSinAgregarEnBuscador}
