@@ -22,7 +22,7 @@ namespace Ways.IntegrationTests;
 /// el 401 que deja la conexión en <c>requiere_reconexion</c> y los backstops de <c>cobros_mercadopago</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string Ruta = "/api/pos/mercadopago/cobros";
     private const string PasswordCajero = "una-contraseña-de-cajero";

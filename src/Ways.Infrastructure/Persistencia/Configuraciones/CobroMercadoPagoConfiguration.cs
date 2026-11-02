@@ -95,6 +95,13 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
             .HasDatabaseName("ux_cobros_mercadopago_intento")
             .IsUnique();
 
+        // El id de la orden de Mercado Pago es único en toda la tabla (todos los tenants): el webhook localiza el cobro por él sin conocer
+        // el tenant. Los nulos (creando, expirado sin orden) no chocan.
+        builder.HasIndex(c => c.IdOrdenMercadoPago)
+            .HasDatabaseName("ux_cobros_mercadopago_orden")
+            .IsUnique()
+            .HasFilter("id_orden_mercadopago IS NOT NULL");
+
         // Una venta liga a lo sumo un cobro (a lo sumo un cobro vivo por número) y un cobro paga una sola venta. Los nulos no chocan.
         // Incluye el tenant para servir también de índice de la FK compuesta; el id de la venta ya es único por sí solo.
         builder.HasIndex(c => new { c.IdComprobanteVenta, c.IdTenant })

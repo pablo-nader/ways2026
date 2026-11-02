@@ -51,7 +51,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 - [x] E3-T3b — Apartar en el servidor: estado `sin_venta`, apartado del dispositivo con sincronización diferida, listado para el
   back office, cierre de turno y cobros con Mercado Pago bloqueados mientras haya un apartado sin sincronizar, `reponerBloque` bajo
   el candado de la reserva.
-- [ ] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
+- [x] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
 - [ ] E4 — Point: same charge with `type:"point"` on the PV's terminal.
 - [ ] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
@@ -64,7 +64,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E3-T4: webhook `POST /api/integraciones/mercadopago/webhook` (signature check, refresh the charge). E3-T3b is built and awaits its own judgment-day before the PR. Pending before it ships to the cajas: the POS bundle of E3-T3 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call).
+E4: Point (same charge with `type:"point"` on the PV's terminal). E3-T4 is built and awaits its own judgment-day before the PR; E3-T3b is already approved. Pending before it ships to the cajas: the POS bundle of E3-T3 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress).
 
 ## E3-T1 design (2026-11-01)
 
@@ -339,3 +339,61 @@ Done on `pnader/mercadopago-e3-t3b`, commit `feat(mercadopago): un cobro apartad
 - Open (one judge each, not fixed): `reponerBloque`'s recheck runs after the server already reserved the new block (narrow
   window, server keeps an orphan block); the web `CierreDeCaja` route is not gated on pending apartados (the POS close is); the
   `cobros-sin-venta` list has no paging; apartar holds the row lock across the Mercado Pago calls.
+
+## E3-T4 design (2026-11-01)
+
+Branch `pnader/mercadopago-e3-t4`, stacked on E3-T3b. Backend only.
+
+- `POST /api/integraciones/mercadopago/webhook` (anonymous; in the authorization-surface allowlist). Only `type=order` (from
+  the query string `type` or the body) is processed; anything else answers 200 and is ignored.
+- Signature: header `x-signature: ts=<ts>,v1=<hex>`; manifest `id:{data.id};request-id:{x-request-id};ts:{ts};` where
+  `data.id` comes from the URL query (lowercased when alphanumeric, Mercado Pago's rule for ids in the manifest) and
+  `x-request-id` from its header; HMAC-SHA256 with the secret `Ways:MercadoPago:SecretoWebhook` (options + DI; never logged),
+  compared in constant time. Missing/invalid headers or signature -> 401 (Mercado Pago retries); `ts` older than 10 minutes or
+  more than 2 minutes in the future (accept seconds or milliseconds) -> 401. Secret not configured -> 503
+  `mercadopago_no_configurado`.
+- Valid notification: find the charge by `id_orden_mercadopago` across tenants with a platform-mode lookup (new UNIQUE index on
+  `id_orden_mercadopago` where not null; RLS platform GUC like the OAuth callback / jobs do), then switch to that tenant and run
+  the existing refresh path for that charge, respecting the same 2 s per-charge minimum interval as polling (superseded: the
+  first design ignored the throttle, which let a replayed signed notification amplify calls; see judgment-day round 1), under the same
+  locks. Unknown order -> 200 (another integration's order, or not ours). Refresh errors are logged (no tokens) and still answer
+  200 when the signature was valid, so Mercado Pago does not hammer a temporarily failing Mercado Pago API; polling remains the
+  source of truth.
+- Answer within Mercado Pago's 22 s: the refresh uses the existing 15 s client timeout.
+- Tests: valid signature applies the order (charge becomes `aprobado`); wrong secret / tampered id / missing headers / stale ts
+  -> 401 and no change; unknown order -> 200; non-order type -> 200 and no MP call; the charge of tenant B is updated while the
+  request has no tenant; not configured -> 503; the unique index backstop.
+
+## E3-T4 progress (2026-11-01)
+
+Done on `pnader/mercadopago-e3-t4`, commit `feat(mercadopago): webhook firmado que actualiza el cobro apenas Mercado Pago avisa` (hash in git log). Own judgment-day pending. Nothing was exercised against the real Mercado Pago API.
+
+**What the owner must configure before it works (Ways does nothing until then; polling keeps working):**
+- In the Mercado Pago Developers panel (the application used for OAuth), Webhooks: URL `https://aipos.site/api/integraciones/mercadopago/webhook`, topic "Order (Mercado Pago)"; copy the "clave secreta" the panel shows.
+- In EasyPanel, environment `Ways__MercadoPago__SecretoWebhook=<that secret>` (config key `Ways:MercadoPago:SecretoWebhook`). Without it the endpoint answers 503 `mercadopago_no_configurado`.
+
+- Model summary (docs/10 part 07): new partial UNIQUE index `ux_cobros_mercadopago_orden` on `cobros_mercadopago(id_orden_mercadopago) WHERE id_orden_mercadopago IS NOT NULL`, global across tenants (migration `CobroMercadoPagoOrdenUnica`; it fails to apply if a database already holds two rows with the same order id, which Mercado Pago never produces). 23505 -> 409 `cobro_mercadopago_orden_duplicada` in `ManejadorDeErrores`. No RLS backfill (index only).
+- Signature: pure `FirmaDeWebhookMercadoPago.Verificar` in Domain (HMAC-SHA256 of `id:{data.id};request-id:{x-request-id};ts:{ts};`, id lowercased when alphanumeric, `CryptographicOperations.FixedTimeEquals`, hex in any case, `ts` in seconds or milliseconds, window 10 min back / 2 min ahead, duplicate or malformed parts, missing request-id/id/secret all invalid). `ServicioDeAvisosDeMercadoPago` (Application): 503 without secret, 401 `mercadopago_firma_invalida` (same answer for a bad or a stale signature), then only `type=order` (query, else body, read bounded to 16 KB) is processed; lookup of the charge by order id with the platform-keyed context, then a fresh scope with `ITenantActual.Suplantar(idTenant)` runs `ServicioDeCobrosMercadoPago.ActualizarPorAvisoAsync` (lock of the charge, one read after the lock, `RefrescarAsync(respetarIntervalo: false)`, only for a `pendiente` charge). Unknown order, other topic or resolved charge -> 200 with no MP call; a refresh failure is logged (no secret, no tokens) and still 200. Endpoint `AllowAnonymous`, added to the authorization-surface allowlist; the secret never appears in responses or logs (asserted in the 401 and 200 tests).
+- Verification: `dotnet build Ways.slnx -c Release` 0 errors, `has-pending-model-changes` clean, Domain 2491, Application 1654, integration filter (`MercadoPago|UpDownUp|AislamientoDeTenant|SuperficieDeAutorizacion`) 377 green (20 m 14 s). New: 39 domain tests, 20 integration tests (24 cases) in `MercadoPagoWebhookTests.cs` (a `partial` of `MercadoPagoCobrosTests` to reuse its scenario).
+- Mutation evidence (one per run, each killed): HMAC compare forced true (6 domain tests), manifest without request-id (17), no lowercase (2), no ts window (4); platform lookup without the order filter (2 integration tests), tenant switch skipped (2), throttle not bypassed (`ElAvisoRefrescaAunque...`). 
+- Deviations / open: the webhook tests live in a `partial` of `MercadoPagoCobrosTests` (the helpers are private there); the OAuth-seller webhook routing is still unverified against the real panel, so polling stays the source of truth; Point (E4), manual approval offline (E5) and reconciliation (E6) are not covered; a webhook for an `aprobado` charge never re-reads it (a later `refunded` is not picked up here, same as polling).
+
+## Judgment-day E3-T4 round 1 (2026-11-01)
+
+Fix commit `fix(mercadopago): el webhook respeta el intervalo de consulta y no lee el cuerpo antes de validar la firma` (hash in git log). Both findings were confirmed by both judges.
+
+- T4-1 replay amplification: `ActualizarPorAvisoAsync` now refreshes with `respetarIntervalo: true`, so N replays of a captured notification cause at most one Mercado Pago call per 2 s per charge (`fecha_ultima_consulta`). The doc comment and the design bullet above are updated. The test that asserted the bypass was replaced by `ElAvisoRespetaElIntervaloDeConsultaDelCobro` (a notification right after a device poll does not call; one after 3 s does) and `DiezAvisosRepetidosCausanUnaSolaConsultaAMercadoPago`.
+- T4-2 work before the signature: `AvisoDeMercadoPago` carries a lazy `LectorDeTipo`; the service invokes it only after `Verificar` succeeds and only when the query has no `type`. The endpoint no longer reads or parses the body up front. Rejected signatures log at Debug; Warning stays for "secret not configured" and Error for refresh failures after a valid signature. Tests: `ServicioDeAvisosDeMercadoPagoTests` (reader never invoked with an invalid signature or without secret; deterministic, service level) and `UnCuerpoEnormeConFirmaInvalidaEsUn401`.
+- Mutation evidence (one per run, each killed): `respetarIntervalo: false` in the webhook refresh (2 integration tests); reader invoked before the signature check (3 application tests).
+
+## Judgment-day E3-T4 verdict
+
+- 2026-11-01: **APPROVED** after one fix round. Both judges confirmed two WARNINGs: replaying a captured signed notification
+  forced unthrottled Mercado Pago calls, and the endpoint read the body (and logged at Warning) before the signature; fixed in
+  527f3823 (the webhook refresh respects the 2 s interval; a lazy body reader runs only after a valid signature; rejections log at
+  Debug). Scoped re-judgment: both clean.
+- Accepted (both, by design): a valid notification within 2 s of the last consultation is acknowledged and dropped; the device
+  poll (source of truth) refreshes the charge on its next tick.
+- Owner configuration for production: MP Developers -> Webhooks: URL `https://aipos.site/api/integraciones/mercadopago/webhook`,
+  topic "Order (Mercado Pago)", copy the secret; EasyPanel: `Ways__MercadoPago__SecretoWebhook=<secret>`. Until then the endpoint
+  answers 503 and polling keeps working.
