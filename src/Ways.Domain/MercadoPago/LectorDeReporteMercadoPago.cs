@@ -65,6 +65,9 @@ public static partial class LectorDeReporteMercadoPago
     /// <summary>Tope de filas de un reporte (sin contar el encabezado ni las líneas en blanco).</summary>
     public const int MaximoDeFilas = 100_000;
 
+    /// <summary>Más filas ilegibles que esto rechazan el archivo: casi seguro no es un reporte de transacciones.</summary>
+    public const int MaximoDeInvalidas = 1_000;
+
     public const int LargoMaximoDeSourceId = 64;
 
     public const int LargoMaximoDeExternalReference = 128;
@@ -81,22 +84,38 @@ public static partial class LectorDeReporteMercadoPago
     [GeneratedRegex(@"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}(?::?\d{2})?)$", RegexOptions.IgnoreCase)]
     private static partial Regex FormatoDeFecha();
 
-    public static ResultadoDeLecturaDeReporteMercadoPago Leer(string? texto)
+    public static ResultadoDeLecturaDeReporteMercadoPago Leer(string? texto) =>
+        string.IsNullOrWhiteSpace(texto)
+            ? ResultadoDeLecturaDeReporteMercadoPago.ConError("El archivo está vacío.")
+            : Leer(() => new StringReader(texto));
+
+    /// <summary>Lee los bytes del archivo como UTF-8 sin copiarlos a un texto entero.</summary>
+    public static ResultadoDeLecturaDeReporteMercadoPago Leer(byte[] contenido) =>
+        Leer(() => new StreamReader(new MemoryStream(contenido, writable: false), new UTF8Encoding(false), detectEncodingFromByteOrderMarks: true));
+
+    /// <summary>
+    /// Lee el reporte en streaming: <paramref name="abrir"/> se invoca dos veces (la primera solo para elegir el separador con el
+    /// encabezado) y los registros se parten y leen de a uno. Se corta en cuanto el archivo pasa de <see cref="MaximoDeFilas"/> registros
+    /// o de <see cref="MaximoDeInvalidas"/> filas ilegibles: un archivo de millones de líneas no se materializa entero.
+    /// </summary>
+    public static ResultadoDeLecturaDeReporteMercadoPago Leer(Func<TextReader> abrir)
     {
-        if (string.IsNullOrWhiteSpace(texto))
+        char separador;
+        using (var muestra = abrir())
+        {
+            SaltarMarcaDeOrden(muestra);
+            separador = ElegirSeparador(muestra);
+        }
+
+        using var lector = abrir();
+        SaltarMarcaDeOrden(lector);
+        using var registros = Partir(lector, separador).Where(r => r.Campos.Any(c => c.Trim().Length > 0)).GetEnumerator();
+        if (!registros.MoveNext())
         {
             return ResultadoDeLecturaDeReporteMercadoPago.ConError("El archivo está vacío.");
         }
 
-        texto = texto.TrimStart('﻿');
-        var separador = ElegirSeparador(texto);
-        var registros = Partir(texto, separador).Where(r => r.Campos.Any(c => c.Trim().Length > 0)).ToList();
-        if (registros.Count == 0)
-        {
-            return ResultadoDeLecturaDeReporteMercadoPago.ConError("El archivo está vacío.");
-        }
-
-        var encabezado = registros[0].Campos.Select(c => c.Trim().ToUpperInvariant()).ToList();
+        var encabezado = registros.Current.Campos.Select(c => c.Trim().ToUpperInvariant()).ToList();
         var columnas = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < encabezado.Count; i++)
         {
@@ -118,15 +137,18 @@ public static partial class LectorDeReporteMercadoPago
                 $"Faltan las columnas obligatorias: {string.Join(", ", faltan)}.");
         }
 
-        if (registros.Count - 1 > MaximoDeFilas)
-        {
-            return ResultadoDeLecturaDeReporteMercadoPago.ConError($"El reporte supera las {MaximoDeFilas} filas.");
-        }
-
         var filas = new List<FilaDeReporteMercadoPago>();
         var invalidas = new List<FilaInvalidaDeReporteMercadoPago>();
-        foreach (var registro in registros.Skip(1))
+        var cantidad = 0;
+        while (registros.MoveNext())
         {
+            cantidad++;
+            if (cantidad > MaximoDeFilas)
+            {
+                return ResultadoDeLecturaDeReporteMercadoPago.ConError($"El reporte supera las {MaximoDeFilas} filas.");
+            }
+
+            var registro = registros.Current;
             var (fila, motivo) = LeerFila(registro, columnas, encabezado.Count);
             if (fila is not null)
             {
@@ -135,10 +157,23 @@ public static partial class LectorDeReporteMercadoPago
             else
             {
                 invalidas.Add(new FilaInvalidaDeReporteMercadoPago(registro.Linea, motivo!));
+                if (invalidas.Count > MaximoDeInvalidas)
+                {
+                    return ResultadoDeLecturaDeReporteMercadoPago.ConError(
+                        $"El reporte tiene más de {MaximoDeInvalidas} filas que no se pueden leer.");
+                }
             }
         }
 
         return new ResultadoDeLecturaDeReporteMercadoPago(filas, invalidas, null);
+    }
+
+    private static void SaltarMarcaDeOrden(TextReader lector)
+    {
+        while (lector.Peek() == '\uFEFF')
+        {
+            lector.Read();
+        }
     }
 
     private static (FilaDeReporteMercadoPago? Fila, string? Motivo) LeerFila(
@@ -294,13 +329,15 @@ public static partial class LectorDeReporteMercadoPago
             out fecha);
     }
 
-    private static char ElegirSeparador(string texto)
+    private static char ElegirSeparador(TextReader lector)
     {
         var comas = 0;
         var puntosYComas = 0;
         var entreComillas = false;
-        foreach (var c in texto)
+        int leido;
+        while ((leido = lector.Read()) >= 0)
         {
+            var c = (char)leido;
             if (c == '"')
             {
                 entreComillas = !entreComillas;
@@ -330,7 +367,7 @@ public static partial class LectorDeReporteMercadoPago
 
     private sealed record Registro(int Linea, List<string> Campos);
 
-    private static IEnumerable<Registro> Partir(string texto, char separador)
+    private static IEnumerable<Registro> Partir(TextReader lector, char separador)
     {
         var linea = 1;
         var lineaDelRegistro = 1;
@@ -339,17 +376,18 @@ public static partial class LectorDeReporteMercadoPago
         var entreComillas = false;
         var campoConComillas = false;
 
-        for (var i = 0; i < texto.Length; i++)
+        int leido;
+        while ((leido = lector.Read()) >= 0)
         {
-            var c = texto[i];
+            var c = (char)leido;
             if (entreComillas)
             {
                 if (c == '"')
                 {
-                    if (i + 1 < texto.Length && texto[i + 1] == '"')
+                    if (lector.Peek() == '"')
                     {
                         actual.Append('"');
-                        i++;
+                        lector.Read();
                     }
                     else
                     {
@@ -382,9 +420,9 @@ public static partial class LectorDeReporteMercadoPago
             }
             else if (c is '\n' or '\r')
             {
-                if (c == '\r' && i + 1 < texto.Length && texto[i + 1] == '\n')
+                if (c == '\r' && lector.Peek() == '\n')
                 {
-                    i++;
+                    lector.Read();
                 }
 
                 campos.Add(actual.ToString());

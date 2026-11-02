@@ -110,11 +110,67 @@ public class LectorDeReporteMercadoPagoTests
     {
         Assert.NotNull(LectorDeReporteMercadoPago.Leer(string.Empty).ErrorDeArchivo);
         Assert.NotNull(LectorDeReporteMercadoPago.Leer("  \n \r\n").ErrorDeArchivo);
-        Assert.NotNull(LectorDeReporteMercadoPago.Leer(null).ErrorDeArchivo);
+        Assert.NotNull(LectorDeReporteMercadoPago.Leer((string?)null).ErrorDeArchivo);
         Assert.Contains("SOURCE_ID", Leer(Encabezado + ",source_id", "1").ErrorDeArchivo);
 
         var enormes = new[] { Encabezado }.Concat(Enumerable.Repeat("1,,SETTLEMENT,1.00,,,2026-10-31T00:00:00Z,,", LectorDeReporteMercadoPago.MaximoDeFilas + 1));
         Assert.Contains(LectorDeReporteMercadoPago.MaximoDeFilas.ToString(), Leer([.. enormes]).ErrorDeArchivo);
+    }
+
+    // Clausula: el lector corta en streaming: pasado el maximo de filas deja de leer (no materializa un archivo de millones de lineas).
+    [Fact]
+    public void ElLectorSeCortaAlPasarElMaximoDeFilasSinLeerElResto()
+    {
+        const string fila = "1,,SETTLEMENT,1.00,,,2026-10-31T00:00:00Z,,\n";
+        LectorInfinito? usado = null;
+
+        var lectura = LectorDeReporteMercadoPago.Leer(() => usado = new LectorInfinito(Encabezado + "\n", fila));
+
+        Assert.Contains(LectorDeReporteMercadoPago.MaximoDeFilas.ToString(), lectura.ErrorDeArchivo);
+        Assert.InRange(usado!.Leidos, 1, (long)(LectorDeReporteMercadoPago.MaximoDeFilas + 3) * fila.Length + Encabezado.Length);
+        Assert.True(usado.Leidos < LectorInfinito.Tope);
+    }
+
+    // Clausula: pasado el maximo de filas ilegibles tambien corta: error de archivo en la primera ilegible de mas, sin leer el resto.
+    [Fact]
+    public void ElLectorSeCortaAlPasarElMaximoDeFilasIlegibles()
+    {
+        const string ilegible = "x\n";
+        LectorInfinito? usado = null;
+
+        var lectura = LectorDeReporteMercadoPago.Leer(() => usado = new LectorInfinito(Encabezado + "\n", ilegible));
+
+        Assert.Contains(LectorDeReporteMercadoPago.MaximoDeInvalidas.ToString(), lectura.ErrorDeArchivo);
+        Assert.Empty(lectura.Filas);
+        Assert.Empty(lectura.Invalidas);
+        Assert.InRange(usado!.Leidos, 1, (long)(LectorDeReporteMercadoPago.MaximoDeInvalidas + 3) * ilegible.Length + Encabezado.Length);
+    }
+
+    // Clausula: los bytes se leen como UTF-8 con o sin marca de orden y dan lo mismo que el texto.
+    [Fact]
+    public void LosBytesSeLeenComoElTextoConOSinMarcaDeOrden()
+    {
+        var texto = Encabezado + "\n1,ñ,SETTLEMENT,1.00,,,2026-10-31T00:00:00Z,,\n";
+        var sinMarca = System.Text.Encoding.UTF8.GetBytes(texto);
+        var conMarca = System.Text.Encoding.UTF8.GetPreamble().Concat(sinMarca).ToArray();
+
+        Assert.Equal("ñ", Assert.Single(LectorDeReporteMercadoPago.Leer(sinMarca).Filas).ExternalReference);
+        Assert.Equal("ñ", Assert.Single(LectorDeReporteMercadoPago.Leer(conMarca).Filas).ExternalReference);
+    }
+
+    /// <summary>Un reporte que no termina: un encabezado y una fila que se repite hasta <see cref="Tope"/> caracteres; cuenta lo que se leyó.</summary>
+    private sealed class LectorInfinito(string encabezado, string fila) : TextReader
+    {
+        public const long Tope = 50_000_000;
+
+        public long Leidos { get; private set; }
+
+        public override int Peek() => Leidos >= Tope ? -1 : Caracter(Leidos);
+
+        public override int Read() => Leidos >= Tope ? -1 : Caracter(Leidos++);
+
+        private char Caracter(long posicion) =>
+            posicion < encabezado.Length ? encabezado[(int)posicion] : fila[(int)((posicion - encabezado.Length) % fila.Length)];
     }
 
     // Clausula: una fila mal formada no se lanza ni rechaza el archivo: se informa con su línea y su motivo y las demás se leen.

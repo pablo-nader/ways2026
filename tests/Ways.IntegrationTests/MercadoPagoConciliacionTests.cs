@@ -38,11 +38,26 @@ public partial class MercadoPagoVentaTests
 
     private static string Iso(DateTimeOffset fecha) => fecha.ToString("yyyy-MM-dd'T'HH:mm:ss.fffzzz", CultureInfo.InvariantCulture);
 
-    private static async Task<HttpResponseMessage> ConcSubirAsync(HttpClient cliente, int idEmpresa, string csv, string nombre = "reporte.csv")
+    private static async Task<HttpResponseMessage> ConcSubirAsync(
+        HttpClient cliente, int idEmpresa, string csv, string nombre = "reporte.csv", Action<HttpRequestMessage>? ajustar = null, bool origenPropio = true)
     {
         using var contenido = new MultipartFormDataContent();
         contenido.Add(new ByteArrayContent(Encoding.UTF8.GetBytes(csv)), "archivo", nombre);
-        return await cliente.PostAsync($"{RutaConciliaciones}?idEmpresa={idEmpresa}", contenido);
+        return await ConcEnviarAsync(cliente, idEmpresa, contenido, ajustar, origenPropio);
+    }
+
+    /// <summary>Un POST de subida con el encabezado que manda la web propia (salvo que <paramref name="origenPropio"/> sea falso).</summary>
+    private static async Task<HttpResponseMessage> ConcEnviarAsync(
+        HttpClient cliente, int idEmpresa, HttpContent contenido, Action<HttpRequestMessage>? ajustar = null, bool origenPropio = true)
+    {
+        using var solicitud = new HttpRequestMessage(HttpMethod.Post, $"{RutaConciliaciones}?idEmpresa={idEmpresa}") { Content = contenido };
+        if (origenPropio)
+        {
+            solicitud.Headers.Add("X-Ways-Origen", "web");
+        }
+
+        ajustar?.Invoke(solicitud);
+        return await cliente.SendAsync(solicitud);
     }
 
     private static async Task<ConciliacionImportada> ConcSubirOkAsync(HttpClient cliente, int idEmpresa, string csv) =>
@@ -129,7 +144,7 @@ public partial class MercadoPagoVentaTests
         Assert.Equal(-6.50m, fila.Comision);
 
         var guardado = await ConcCobroMercadoPagoAsync(cobro.IdCobro);
-        Assert.Equal(-6.50m, guardado["comision_real"]);
+        Assert.Equal(6.50m, guardado["comision_real"]);
         Assert.Equal(93.50m, guardado["neto_real"]);
         Assert.Equal(libera, guardado["fecha_liberacion"] is DateTimeOffset conZona ? conZona : new DateTimeOffset(DateTime.SpecifyKind((DateTime)guardado["fecha_liberacion"]!, DateTimeKind.Utc)));
         Assert.Equal(fila.Id, guardado["id_fila_conciliacion"]);
@@ -168,13 +183,13 @@ public partial class MercadoPagoVentaTests
         var filas = (await ConcDetalleAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Filas;
         Assert.Equal(uno.IdCobro, filas[0].IdCobroMercadoPago);
         Assert.Equal(otro.IdCobro, filas[1].IdCobroMercadoPago);
-        Assert.Equal(-1.00m, (await ConcCobroMercadoPagoAsync(uno.IdCobro))["comision_real"]);
-        Assert.Equal(-2.00m, (await ConcCobroMercadoPagoAsync(otro.IdCobro))["comision_real"]);
+        Assert.Equal(1.00m, (await ConcCobroMercadoPagoAsync(uno.IdCobro))["comision_real"]);
+        Assert.Equal(2.00m, (await ConcCobroMercadoPagoAsync(otro.IdCobro))["comision_real"]);
     }
 
     // Clausula: cada resultado se clasifica (conciliado, importe_distinto, sin_venta, sin_cobro_en_ways, devolucion, contracargo, retiro),
-    // una fila ilegible queda invalida con su linea y su motivo sin rechazar el archivo, solo la fila conciliada toca el cobro (la primera
-    // que lo concilia gana) y una devolucion se liga al cobro sin modificarlo.
+    // una fila ilegible queda invalida con su linea y su motivo sin rechazar el archivo, solo la fila conciliada toca el cobro (las filas
+    // conciliadas de un mismo cobro se suman) y una devolucion se liga al cobro sin modificarlo.
     [Fact]
     public async Task CadaResultadoSeClasificaYSoloLaFilaConciliadaTocaElCobro()
     {
@@ -222,7 +237,8 @@ public partial class MercadoPagoVentaTests
         Assert.Contains("TRANSACTION_AMOUNT", filas[7].Motivo);
 
         var primero = await ConcCobroMercadoPagoAsync(conciliado.IdCobro);
-        Assert.Equal(-5.00m, primero["comision_real"]);
+        Assert.Equal(14.00m, primero["comision_real"]);
+        Assert.Equal(186.00m, primero["neto_real"]);
         Assert.Equal(filas[0].Id, primero["id_fila_conciliacion"]);
         Assert.Null((await ConcCobroMercadoPagoAsync(distinto.IdCobro))["id_fila_conciliacion"]);
         Assert.Null((await ConcCobroMercadoPagoAsync(apartado.IdCobro))["id_fila_conciliacion"]);
@@ -471,6 +487,279 @@ public partial class MercadoPagoVentaTests
         Assert.Equal("conciliacion_pago_ya_verificado", codigo);
     }
 
+    // ---- Origen propio (CSRF de un subdominio hermano) -------------------------------------------------------------------------------
+
+    // Clausula: la subida exige el encabezado X-Ways-Origen: un formulario HTML de un sitio hermano no puede ponerlo; sin el, 403
+    // solicitud_no_permitida y no se escribe nada.
+    [Fact]
+    public async Task SubirSinElEncabezadoDeOrigenPropioEs403YNoEscribeNada()
+    {
+        var e = await PrepararAsync("mp-conc-origen-sin-encabezado");
+        var csv = Reporte(FilaDelReporte("15001", null, "SETTLEMENT", "100.00", "-5.00", "95.00", FechaDelReporte));
+
+        await AssertCodigoAsync(
+            await ConcSubirAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, csv, origenPropio: false), HttpStatusCode.Forbidden, "solicitud_no_permitida");
+        await AssertCodigoAsync(
+            await ConcSubirAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, csv, ajustar: s => s.Headers.Add("X-Ways-Origen", "otro"), origenPropio: false),
+            HttpStatusCode.Forbidden,
+            "solicitud_no_permitida");
+
+        Assert.Empty(await LeerAsync<List<ConciliacionListado>>(await e.Ctx.Admin.GetAsync($"{RutaConciliaciones}?idEmpresa={e.Ctx.IdEmpresa}")));
+    }
+
+    // Clausula: aun con el encabezado, un Origin ajeno o un Sec-Fetch-Site que no es del mismo origen (cross-site, same-site de un
+    // subdominio hermano) se rechaza con 403.
+    [Fact]
+    public async Task SubirDesdeUnOrigenAjenoEs403AunConElEncabezado()
+    {
+        var e = await PrepararAsync("mp-conc-origen-ajeno");
+        var csv = Reporte(FilaDelReporte("15002", null, "SETTLEMENT", "100.00", "-5.00", "95.00", FechaDelReporte));
+
+        foreach (var ajeno in new Action<HttpRequestMessage>[]
+        {
+            s => s.Headers.Add("Origin", "https://hermano.aipos.site"),
+            s => s.Headers.Add("Origin", "null"),
+            s => s.Headers.Add("Origin", e.Ctx.Admin.BaseAddress!.GetLeftPart(UriPartial.Authority) + ".otro.site"),
+            s => s.Headers.Add("Sec-Fetch-Site", "same-site"),
+            s => s.Headers.Add("Sec-Fetch-Site", "cross-site")
+        })
+        {
+            await AssertCodigoAsync(
+                await ConcSubirAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, csv, ajustar: ajeno), HttpStatusCode.Forbidden, "solicitud_no_permitida");
+        }
+
+        Assert.Empty(await LeerAsync<List<ConciliacionListado>>(await e.Ctx.Admin.GetAsync($"{RutaConciliaciones}?idEmpresa={e.Ctx.IdEmpresa}")));
+    }
+
+    // Clausula: con el encabezado y el mismo origen (Origin igual al scheme y host propios, o Sec-Fetch-Site same-origin|none) la subida pasa.
+    [Fact]
+    public async Task SubirDelMismoOrigenConElEncabezadoFunciona()
+    {
+        var e = await PrepararAsync("mp-conc-origen-propio");
+        var propio = e.Ctx.Admin.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        var csv = Reporte(FilaDelReporte("15003", null, "SETTLEMENT", "100.00", "-5.00", "95.00", FechaDelReporte));
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await ConcSubirAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, csv, ajustar: s => s.Headers.Add("Origin", propio))).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await ConcSubirAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, csv + " ", ajustar: s => s.Headers.Add("Sec-Fetch-Site", "same-origin"))).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await ConcSubirAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, csv + "  ", ajustar: s => s.Headers.Add("Sec-Fetch-Site", "none"))).StatusCode);
+    }
+
+    // ---- Un cobro con varias filas, repetidas o ya conciliadas ------------------------------------------------------------------------
+
+    // Clausula: las filas SETTLEMENT conciliadas de un mismo cobro se suman: la comision real es la suma de los valores ABSOLUTOS de
+    // FEE_AMOUNT (queda positiva aunque el reporte la informe negativa o positiva), el neto la suma tal como viene y la liberacion la mas tardia;
+    // el cobro guarda la primera fila; el resumen conserva los importes del reporte.
+    [Fact]
+    public async Task LasFilasDeUnMismoCobroSeSumanYLaComisionRealQuedaPositiva()
+    {
+        var e = await PrepararAsync("mp-conc-suma");
+        var (cobro, _) = await ConcVentaConMercadoPagoAsync(e, e.Desde);
+        var datos = await ConcDatosDelCobroAsync(cobro.IdCobro);
+        var tardia = FechaDelReporte.AddDays(44);
+
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin,
+            e.Ctx.IdEmpresa,
+            Reporte(
+                FilaDelReporte("16001", datos.Referencia, "SETTLEMENT", "100.00", "-3.00", "47.00", FechaDelReporte, FechaDelReporte.AddDays(14)),
+                FilaDelReporte("16001", datos.Referencia, "SETTLEMENT", "100.00", "-2.50", "46.50", FechaDelReporte.AddDays(30), tardia),
+                FilaDelReporte("16002", datos.Referencia, "SETTLEMENT", "100.00", "2.00", "48.00", FechaDelReporte.AddDays(60), FechaDelReporte.AddDays(20))));
+
+        var filas = (await ConcDetalleAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Filas;
+        Assert.All(filas, f =>
+        {
+            Assert.Equal("conciliado", f.Resultado);
+            Assert.True(f.AplicadaAlCobro);
+        });
+        var guardado = await ConcCobroMercadoPagoAsync(cobro.IdCobro);
+        Assert.Equal(7.50m, guardado["comision_real"]);
+        Assert.Equal(141.50m, guardado["neto_real"]);
+        Assert.Equal(tardia, new DateTimeOffset((DateTime)guardado["fecha_liberacion"]!, TimeSpan.Zero));
+        Assert.Equal(filas[0].Id, guardado["id_fila_conciliacion"]);
+        Assert.Equal(new ResumenDeResultadoDeConciliacion("conciliado", 3, 300m, -3.50m, 141.50m), Assert.Single(importada.Conciliacion.Resumen));
+    }
+
+    // Clausula: una fila identica a otra del archivo (mismo SOURCE_ID, tipo, importe y fecha) es duplicada: no se suma al cobro, no suma en el
+    // resumen y el DTO dice que no se aplico.
+    [Fact]
+    public async Task UnaFilaIdenticaDelMismoArchivoEsDuplicadaYNoSeSuma()
+    {
+        var e = await PrepararAsync("mp-conc-duplicada");
+        var (cobro, _) = await ConcVentaConMercadoPagoAsync(e, e.Desde);
+        var datos = await ConcDatosDelCobroAsync(cobro.IdCobro);
+        var fila = FilaDelReporte("17001", datos.Referencia, "SETTLEMENT", "100.00", "-3.00", "97.00", FechaDelReporte, FechaDelReporte.AddDays(14));
+
+        var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(fila, fila));
+
+        var filas = (await ConcDetalleAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Filas;
+        Assert.Equal(new[] { "conciliado", "duplicada" }, filas.Select(f => f.Resultado));
+        Assert.Equal(new[] { true, false }, filas.Select(f => f.AplicadaAlCobro));
+        var guardado = await ConcCobroMercadoPagoAsync(cobro.IdCobro);
+        Assert.Equal(3.00m, guardado["comision_real"]);
+        Assert.Equal(97.00m, guardado["neto_real"]);
+        var resumen = importada.Conciliacion.Resumen.ToDictionary(r => r.Resultado);
+        Assert.Equal(new ResumenDeResultadoDeConciliacion("conciliado", 1, 100m, -3.00m, 97.00m), resumen["conciliado"]);
+        Assert.Equal(new ResumenDeResultadoDeConciliacion("duplicada", 1, 0m, 0m, 0m), resumen["duplicada"]);
+    }
+
+    // Clausula: un cobro que un archivo ANTERIOR ya concilio queda ya_conciliado: la fila no se aplica, el cobro conserva lo guardado, el
+    // detalle muestra lo guardado para compararlo y los totales del resumen no la cuentan.
+    [Fact]
+    public async Task UnCobroConciliadoPorUnArchivoAnteriorEsYaConciliadoYNoSePisa()
+    {
+        var e = await PrepararAsync("mp-conc-ya-conciliado");
+        var (cobro, _) = await ConcVentaConMercadoPagoAsync(e, e.Desde);
+        var datos = await ConcDatosDelCobroAsync(cobro.IdCobro);
+        var primera = await ConcSubirOkAsync(
+            e.Ctx.Admin,
+            e.Ctx.IdEmpresa,
+            Reporte(FilaDelReporte("18001", datos.Referencia, "SETTLEMENT", "100.00", "-5.00", "95.00", FechaDelReporte, FechaDelReporte.AddDays(14))));
+        var idPrimeraFila = (await ConcDetalleAsync(e.Ctx.Admin, primera.Conciliacion.Id)).Filas.Single().Id;
+
+        var segunda = await ConcSubirOkAsync(
+            e.Ctx.Admin,
+            e.Ctx.IdEmpresa,
+            Reporte(FilaDelReporte("18001", datos.Referencia, "SETTLEMENT", "100.00", "-7.00", "93.00", FechaDelReporte.AddDays(1), FechaDelReporte.AddDays(30))));
+
+        var fila = (await ConcDetalleAsync(e.Ctx.Admin, segunda.Conciliacion.Id)).Filas.Single();
+        Assert.Equal("ya_conciliado", fila.Resultado);
+        Assert.False(fila.AplicadaAlCobro);
+        Assert.Equal(cobro.IdCobro, fila.IdCobroMercadoPago);
+        Assert.Equal(-7.00m, fila.Comision);
+        Assert.Equal(5.00m, fila.ComisionGuardada);
+        Assert.Equal(95.00m, fila.NetoGuardado);
+        var guardado = await ConcCobroMercadoPagoAsync(cobro.IdCobro);
+        Assert.Equal(5.00m, guardado["comision_real"]);
+        Assert.Equal(95.00m, guardado["neto_real"]);
+        Assert.Equal(idPrimeraFila, guardado["id_fila_conciliacion"]);
+        Assert.Equal(new ResumenDeResultadoDeConciliacion("ya_conciliado", 1, 0m, 0m, 0m), Assert.Single(segunda.Conciliacion.Resumen));
+    }
+
+    // Clausula: la comision real se guarda positiva y el neto tal como viene: FEE_AMOUNT con signo negativo o positivo da el mismo valor
+    // absoluto; el neto negativo se conserva.
+    [Fact]
+    public async Task LaComisionRealSeNormalizaAPositivaYElNetoSeConservaTalCualVieneDelReporte()
+    {
+        var e = await PrepararAsync("mp-conc-signo");
+        var (negativa, _) = await ConcVentaConMercadoPagoAsync(e, e.Desde);
+        var (positiva, _) = await ConcVentaConMercadoPagoAsync(e, e.Desde + 1);
+        var datosNegativa = await ConcDatosDelCobroAsync(negativa.IdCobro);
+        var datosPositiva = await ConcDatosDelCobroAsync(positiva.IdCobro);
+
+        await ConcSubirOkAsync(
+            e.Ctx.Admin,
+            e.Ctx.IdEmpresa,
+            Reporte(
+                FilaDelReporte("19001", datosNegativa.Referencia, "SETTLEMENT", "100.00", "-4.20", "-4.20", FechaDelReporte),
+                FilaDelReporte("19002", datosPositiva.Referencia, "SETTLEMENT", "100.00", "4.20", "95.80", FechaDelReporte)));
+
+        var uno = await ConcCobroMercadoPagoAsync(negativa.IdCobro);
+        var otro = await ConcCobroMercadoPagoAsync(positiva.IdCobro);
+        Assert.Equal(4.20m, uno["comision_real"]);
+        Assert.Equal(-4.20m, uno["neto_real"]);
+        Assert.Equal(4.20m, otro["comision_real"]);
+        Assert.Equal(95.80m, otro["neto_real"]);
+    }
+
+    // ---- Los cobros se leen bajo lock --------------------------------------------------------------------------------------------------
+
+    // Clausula: la importacion toma FOR UPDATE sobre los cobros que nombran las filas ANTES de leerlos: mientras otra transaccion tiene la fila
+    // tomada espera, y al soltarse clasifica con lo que la otra dejo (importe pagado distinto: importe_distinto) en vez de con una lectura vieja.
+    [Fact]
+    public async Task ImportarEsperaElLockDelCobroYLuegoClasificaConLoQueLaOtraTransaccionDejo()
+    {
+        var e = await PrepararAsync("mp-conc-lock-cobro");
+        var (cobro, _) = await ConcVentaConMercadoPagoAsync(e, e.Desde);
+        var datos = await ConcDatosDelCobroAsync(cobro.IdCobro);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var transaccion = await conexion.BeginTransactionAsync();
+        await using (var tomar = new NpgsqlCommand(
+            $"UPDATE cobros_mercadopago SET importe_pagado = 90 WHERE id_cobro_mercadopago = {cobro.IdCobro}", conexion, transaccion))
+        {
+            await tomar.ExecuteNonQueryAsync();
+        }
+
+        var subida = ConcSubirAsync(
+            e.Ctx.Admin,
+            e.Ctx.IdEmpresa,
+            Reporte(FilaDelReporte("20001", datos.Referencia, "SETTLEMENT", "100.00", "-5.00", "95.00", FechaDelReporte)));
+        await Task.Delay(1500);
+        Assert.False(subida.IsCompleted, "La importacion tendria que esperar el lock de la fila del cobro.");
+
+        await transaccion.CommitAsync();
+        var importada = await LeerAsync<ConciliacionImportada>(await subida);
+        Assert.Equal("importe_distinto", Assert.Single(importada.Conciliacion.Resumen).Resultado);
+        Assert.Null((await ConcCobroMercadoPagoAsync(cobro.IdCobro))["id_fila_conciliacion"]);
+    }
+
+    // ---- Confirmar: venta anulada, importe y rastro ---------------------------------------------------------------------------------------
+
+    // Clausula: no se confirma contra el pago de una venta anulada (409 venta_anulada) y el pago sigue sin verificar.
+    [Fact]
+    public async Task ConfirmarContraUnaVentaAnuladaEs409()
+    {
+        var e = await PrepararAsync("mp-conc-confirmar-anulada");
+        var (idVenta, idPago) = await ConcVentaManualAsync(e, e.Desde, FechaDelReporte);
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(FilaDelReporte("21001", null, "SETTLEMENT", "100.00", "-5.00", "95.00", FechaDelReporte)));
+        var idFila = (await ConcDetalleAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Filas.Single().Id;
+        await EjecutarAsync("UPDATE comprobantes_venta SET estado = 'anulado'::estado_comprobante WHERE id_comprobante_venta = $1", idVenta);
+
+        await AssertCodigoAsync(
+            await ConcConfirmarAsync(e.Ctx.Admin, importada.Conciliacion.Id, idFila, idPago), HttpStatusCode.Conflict, "venta_anulada");
+
+        Assert.Equal("sin_verificar", await ConcVerificacionDelPagoAsync(idPago));
+        Assert.Equal(0, await ConcAuditoriasAsync("conciliacion.confirmacion", importada.Conciliacion.Id));
+    }
+
+    // Clausula: el importe del pago tiene que ser el de la fila (409 importe_distinto); nada cambia.
+    [Fact]
+    public async Task ConfirmarConOtroImporteQueElDeLaFilaEs409()
+    {
+        var e = await PrepararAsync("mp-conc-confirmar-importe");
+        var (_, idPago) = await ConcVentaManualAsync(e, e.Desde, FechaDelReporte);
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(FilaDelReporte("22001", null, "SETTLEMENT", "100.01", "-5.00", "95.01", FechaDelReporte)));
+        var idFila = (await ConcDetalleAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Filas.Single().Id;
+
+        await AssertCodigoAsync(
+            await ConcConfirmarAsync(e.Ctx.Admin, importada.Conciliacion.Id, idFila, idPago), HttpStatusCode.Conflict, "importe_distinto");
+
+        Assert.Equal("sin_verificar", await ConcVerificacionDelPagoAsync(idPago));
+        Assert.Null((await ConsultarAsync("SELECT id_cobro FROM filas_conciliacion_mercadopago WHERE id_fila_conciliacion_mercadopago = $1", idFila)).Single()["id_cobro"]);
+    }
+
+    // Clausula: la auditoria de la confirmacion guarda el importe y la fecha de la fila, su SOURCE_ID y el importe del pago y la fecha de su venta.
+    [Fact]
+    public async Task LaConfirmacionAuditaLosDatosDeLaFilaYDelPago()
+    {
+        var e = await PrepararAsync("mp-conc-confirmar-rastro");
+        var (_, idPago) = await ConcVentaManualAsync(e, e.Desde, FechaDelReporte);
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(FilaDelReporte("23001", null, "SETTLEMENT", "100.00", "-5.00", "95.00", FechaDelReporte)));
+        var idFila = (await ConcDetalleAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Filas.Single().Id;
+
+        Assert.Equal(HttpStatusCode.OK, (await ConcConfirmarAsync(e.Ctx.Admin, importada.Conciliacion.Id, idFila, idPago)).StatusCode);
+
+        var rastro = (await ConsultarAsync(
+            "SELECT (valor_nuevo->>'importe_fila')::numeric AS importe_fila, (valor_nuevo->>'importe_pago')::numeric AS importe_pago, " +
+            "valor_nuevo->>'source_id' AS source_id, valor_nuevo->>'fecha_transaccion' AS fecha_transaccion, valor_nuevo->>'fecha_venta' AS fecha_venta " +
+            "FROM auditoria WHERE accion = 'conciliacion.confirmacion' AND id_entidad = $1",
+            importada.Conciliacion.Id)).Single();
+        Assert.Equal(100m, rastro["importe_fila"]);
+        Assert.Equal(100m, rastro["importe_pago"]);
+        Assert.Equal("23001", rastro["source_id"]);
+        Assert.False(string.IsNullOrEmpty(rastro["fecha_transaccion"] as string));
+        Assert.False(string.IsNullOrEmpty(rastro["fecha_venta"] as string));
+    }
+
     // ---- El mismo archivo dos veces ---------------------------------------------------------------------------------------------------
 
     // Clausula: el mismo archivo (mismos bytes) dos veces en la misma empresa es 409 conciliacion_ya_importada y no escribe nada; en otra
@@ -573,13 +862,11 @@ public partial class MercadoPagoVentaTests
         using (var sinCampo = new MultipartFormDataContent { { new StringContent("x"), "otro" } })
         {
             await AssertCodigoAsync(
-                await e.Ctx.Admin.PostAsync($"{RutaConciliaciones}?idEmpresa={e.Ctx.IdEmpresa}", sinCampo),
-                HttpStatusCode.BadRequest,
-                "conciliacion_archivo_requerido");
+                await ConcEnviarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, sinCampo), HttpStatusCode.BadRequest, "conciliacion_archivo_requerido");
         }
 
         await AssertCodigoAsync(
-            await e.Ctx.Admin.PostAsJsonAsync($"{RutaConciliaciones}?idEmpresa={e.Ctx.IdEmpresa}", new { archivo = "x" }),
+            await ConcEnviarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, JsonContent.Create(new { archivo = "x" })),
             HttpStatusCode.BadRequest,
             "conciliacion_archivo_requerido");
 

@@ -57,14 +57,43 @@ public class ConciliadorMercadoPagoTests
         Assert.Equal(new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.Conciliado, 1, true), clasificacion);
     }
 
-    // Clausula: un cobro que ya estaba conciliado sigue siendo conciliado pero no se vuelve a escribir (la primera fila gana).
+    // Clausula: un cobro que un archivo anterior ya conciliaba queda ya_conciliado: se liga al cobro pero no se aplica.
     [Fact]
-    public void UnCobroYaConciliadoSigueConciliadoPeroNoAplica()
+    public void UnCobroYaConciliadoPorOtroArchivoEsYaConciliadoYNoAplica()
     {
         var clasificacion = new ConciliadorMercadoPago([Cobro(yaConciliado: true)]).Clasificar(Fila(referencia: "W1P1N1I1"));
 
-        Assert.Equal(ResultadosDeConciliacionMercadoPago.Conciliado, clasificacion.Resultado);
-        Assert.False(clasificacion.AplicaAlCobro);
+        Assert.Equal(new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.YaConciliado, 1, false), clasificacion);
+    }
+
+    // Clausula: un cobro ya conciliado por otro archivo con otro importe sigue siendo importe_distinto (el importe se mira antes).
+    [Fact]
+    public void UnCobroYaConciliadoConOtroImporteEsImporteDistinto()
+    {
+        var clasificacion = new ConciliadorMercadoPago([Cobro(yaConciliado: true)]).Clasificar(Fila(referencia: "W1P1N1I1", importe: 90m));
+
+        Assert.Equal(ResultadosDeConciliacionMercadoPago.ImporteDistinto, clasificacion.Resultado);
+    }
+
+    // Clausula: varias filas del mismo cobro (cuotas: otra fecha) se aplican todas; una fila identica a otra del archivo (mismo SOURCE_ID,
+    // tipo, importe y fecha) es duplicada y no se aplica, y la clave incluye cada uno de los cuatro campos.
+    [Fact]
+    public void LasFilasDeUnCobroSeAplicanTodasPeroLaIdenticaEsDuplicada()
+    {
+        var conciliador = new ConciliadorMercadoPago([Cobro()]);
+        var primera = Fila(referencia: "W1P1N1I1");
+
+        Assert.Equal(ResultadosDeConciliacionMercadoPago.Conciliado, conciliador.Clasificar(primera).Resultado);
+        Assert.Equal(
+            new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.Duplicada, 1, false), conciliador.Clasificar(primera with { NumeroLinea = 3 }));
+
+        Assert.True(conciliador.Clasificar(primera with { FechaTransaccion = Fecha.AddDays(30), NumeroLinea = 4 }).AplicaAlCobro);
+        Assert.True(conciliador.Clasificar(primera with { SourceId = "OTRO", NumeroLinea = 5 }).AplicaAlCobro);
+        Assert.Equal(
+            ResultadosDeConciliacionMercadoPago.ImporteDistinto, conciliador.Clasificar(primera with { Importe = 50m, NumeroLinea = 6 }).Resultado);
+        Assert.Equal(
+            ResultadosDeConciliacionMercadoPago.Devolucion,
+            conciliador.Clasificar(primera with { TipoTransaccion = TiposDeTransaccionMercadoPago.Refund, NumeroLinea = 7 }).Resultado);
     }
 
     // Clausula: el importe se compara contra el esperado del cobro; con otro importe es importe_distinto y no aplica.

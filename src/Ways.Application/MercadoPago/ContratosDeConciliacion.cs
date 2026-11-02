@@ -1,6 +1,7 @@
 namespace Ways.Application.MercadoPago;
 
-/// <summary>Cuántas filas de una conciliación cayeron en un resultado y cuánto suman (importe, comisión y neto tal como los informa el reporte).</summary>
+/// <summary>Cuántas filas de una conciliación cayeron en un resultado y cuánto suman (importe, comisión y neto tal como los informa el reporte). Las filas
+/// <c>duplicada</c> y <c>ya_conciliado</c> se cuentan pero no suman: los totales son solo de lo que el reporte informa una vez y se aplica.</summary>
 public sealed record ResumenDeResultadoDeConciliacion(string Resultado, int Cantidad, decimal Importe, decimal Comision, decimal Neto);
 
 /// <summary>
@@ -33,7 +34,9 @@ public sealed record CandidatoDeConfirmacion(
     int IdCobro, int IdComprobanteVenta, string NumeroVisible, DateTimeOffset Fecha, decimal Importe, string? Referencia);
 
 /// <summary>Una fila del reporte con su resultado. <see cref="Candidatos"/> solo viene en una fila <c>sin_cobro_en_ways</c> todavía no
-/// confirmada; <see cref="IdCobro"/> es el pago de venta que un Admin confirmó contra ella.</summary>
+/// confirmada; <see cref="IdCobro"/> es el pago de venta que un Admin confirmó contra ella. <see cref="AplicadaAlCobro"/> dice si la fila se
+/// sumó a la comisión y el neto reales del cobro (solo las <c>conciliado</c>); <see cref="ComisionGuardada"/> y <see cref="NetoGuardado"/> son lo
+/// que un archivo anterior dejó en el cobro y solo vienen en una fila <c>ya_conciliado</c>. <see cref="Comision"/> va con el signo del reporte; el cobro guarda su valor absoluto.</summary>
 public sealed record FilaDeConciliacion(
     int Id,
     int NumeroLinea,
@@ -50,7 +53,10 @@ public sealed record FilaDeConciliacion(
     string? Motivo,
     int? IdCobroMercadoPago,
     int? IdCobro,
-    IReadOnlyList<CandidatoDeConfirmacion> Candidatos);
+    IReadOnlyList<CandidatoDeConfirmacion> Candidatos,
+    bool AplicadaAlCobro,
+    decimal? ComisionGuardada,
+    decimal? NetoGuardado);
 
 public sealed record DetalleDeConciliacion(
     ConciliacionListado Conciliacion, IReadOnlyList<FilaDeConciliacion> Filas, int Total, int Pagina, int Tamano);
@@ -82,4 +88,8 @@ public static class CodigosDeErrorDeConciliacion
     public const string PagoNoEstaSinVerificar = "conciliacion_pago_no_esta_sin_verificar";
 
     public const string PagoYaVerificado = "conciliacion_pago_ya_verificado";
+
+    public const string VentaAnulada = "venta_anulada";
+
+    public const string ImporteDistinto = "importe_distinto";
 }

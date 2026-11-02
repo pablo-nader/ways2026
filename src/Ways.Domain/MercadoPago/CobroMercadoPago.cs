@@ -155,15 +155,19 @@ public class CobroMercadoPago : EntidadTenant
     /// Anular la venta lo deja ligado (el dinero entró; su devolución es de la conciliación).</summary>
     public int? IdComprobanteVenta { get; set; }
 
-    /// <summary>La comisión real (con IVA) que el reporte de transacciones de Mercado Pago informó para este cobro (E6); nulo hasta conciliarlo.</summary>
+    /// <summary>La comisión real (con IVA) que el reporte de transacciones de Mercado Pago informó para este cobro (E6); nulo hasta conciliarlo.
+    /// Siempre positiva: es la suma de los valores absolutos de <c>FEE_AMOUNT</c> de todas las filas SETTLEMENT del archivo que conciliaron el
+    /// cobro (el reporte la informa negativa).</summary>
     public decimal? ComisionReal { get; set; }
 
-    /// <summary>El neto real que Mercado Pago acredita por este cobro (<c>SETTLEMENT_NET_AMOUNT</c>); nulo hasta conciliarlo.</summary>
+    /// <summary>El neto real que Mercado Pago acredita por este cobro: la suma de <c>SETTLEMENT_NET_AMOUNT</c>, tal como vienen, de las mismas
+    /// filas; nulo hasta conciliarlo.</summary>
     public decimal? NetoReal { get; set; }
 
-    /// <summary>Cuándo Mercado Pago libera el dinero (<c>MONEY_RELEASE_DATE</c>); nulo hasta conciliarlo o si el reporte no lo trae.</summary>
+    /// <summary>Cuándo Mercado Pago libera el dinero: la <c>MONEY_RELEASE_DATE</c> más tardía de esas filas; nulo hasta conciliarlo o si el reporte no la trae.</summary>
     public DateTimeOffset? FechaLiberacion { get; set; }
 
-    /// <summary>La fila del reporte que concilió este cobro (<c>filas_conciliacion_mercadopago</c>); la primera que lo concilia gana.</summary>
+    /// <summary>La primera fila del reporte (por línea) que concilió este cobro (<c>filas_conciliacion_mercadopago</c>). Un cobro se concilia una sola
+    /// vez: otro archivo lo encuentra ya conciliado (<c>ya_conciliado</c>) y no lo vuelve a escribir.</summary>
     public int? IdFilaConciliacion { get; set; }
 }

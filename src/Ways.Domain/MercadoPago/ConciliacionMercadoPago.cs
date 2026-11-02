@@ -5,8 +5,16 @@ namespace Ways.Domain.MercadoPago;
 /// <summary>Qué resultó de cotejar una fila del reporte de transacciones de Mercado Pago con Ways (<c>filas_conciliacion_mercadopago.resultado</c>).</summary>
 public static class ResultadosDeConciliacionMercadoPago
 {
-    /// <summary>Un cobro aprobado y ligado a una venta, por el mismo importe: se le guardan la comisión y el neto reales.</summary>
+    /// <summary>Un cobro aprobado y ligado a una venta, por el mismo importe: se le guardan la comisión y el neto reales (la suma de todas las
+    /// filas del archivo que lo concilian, por ejemplo las cuotas de un mismo pago).</summary>
     public const string Conciliado = "conciliado";
+
+    /// <summary>La fila repite exactamente otra del mismo archivo (mismos <c>SOURCE_ID</c>, <c>TRANSACTION_TYPE</c>, <c>TRANSACTION_AMOUNT</c> y
+    /// <c>TRANSACTION_DATE</c>): no se suma al cobro ni a los totales del resumen.</summary>
+    public const string Duplicada = "duplicada";
+
+    /// <summary>El cobro ya lo había conciliado un archivo anterior: la fila no se aplica y muestra lo guardado para compararlo.</summary>
+    public const string YaConciliado = "ya_conciliado";
 
     /// <summary>El dinero entró y el cobro de Ways no pagó ninguna venta (apartado, fallido con pago, sin liga o sin aprobar): lo resuelve el supervisor.</summary>
     public const string SinVenta = "sin_venta";
@@ -30,7 +38,7 @@ public static class ResultadosDeConciliacionMercadoPago
     public const string Invalida = "invalida";
 
     public static readonly IReadOnlyList<string> Todos =
-        [Conciliado, SinVenta, ImporteDistinto, SinCobroEnWays, Devolucion, Contracargo, Retiro, Invalida];
+        [Conciliado, YaConciliado, Duplicada, SinVenta, ImporteDistinto, SinCobroEnWays, Devolucion, Contracargo, Retiro, Invalida];
 }
 
 /// <summary>Los <c>TRANSACTION_TYPE</c> del reporte de transacciones que Ways entiende.</summary>
@@ -115,7 +123,7 @@ public class FilaConciliacionMercadoPago : EntidadTenant
 
     public decimal? Importe { get; set; }
 
-    /// <summary><c>FEE_AMOUNT</c> tal como lo informa el reporte (con el IVA incluido).</summary>
+    /// <summary><c>FEE_AMOUNT</c> tal como lo informa el reporte (con el IVA incluido), con su signo: el cobro guarda su valor absoluto.</summary>
     public decimal? Comision { get; set; }
 
     /// <summary><c>SETTLEMENT_NET_AMOUNT</c>.</summary>

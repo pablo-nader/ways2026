@@ -25,6 +25,11 @@ public static class MercadoPagoEndpoints
     /// <summary>Lo que el multipart suma al archivo (límites, encabezados de parte) dentro del tope del cuerpo de la subida de un reporte.</summary>
     private const int MargenDelMultipart = 64 * 1024;
 
+    /// <summary>Encabezado que la web propia manda en la subida de un reporte; una petición con otro origen no puede agregarlo sin un preflight de CORS.</summary>
+    public const string EncabezadoDeOrigenPropio = "X-Ways-Origen";
+
+    public const string ValorDeOrigenPropio = "web";
+
     /// <summary>Pantalla del back office donde el Admin ve y administra las empresas; vuelve acá con
     /// <c>#mercadopago=&lt;completar|cancelado&gt;&amp;empresa=&lt;id&gt;</c>.</summary>
     public const string RutaDeRetorno = "/organizacion/empresas";
@@ -222,6 +227,7 @@ public static class MercadoPagoEndpoints
         conciliaciones.MapPost("/", async (
             HttpContext contexto, ServicioDeConciliacionMercadoPago servicio, int idEmpresa, CancellationToken ct) =>
         {
+            ExigirOrigenPropio(contexto.Request);
             var (nombre, contenido) = await LeerArchivoAsync(contexto.Request, ct);
             return Results.Ok(await servicio.ImportarAsync(idEmpresa, nombre, contenido, ct));
         })
@@ -232,7 +238,8 @@ public static class MercadoPagoEndpoints
             "(conciliado, sin_venta, importe_distinto, sin_cobro_en_ways, devolucion, contracargo, retiro) y, en los cobros conciliados, la " +
             "comisión y el neto reales. Las filas ilegibles quedan como invalida con su línea y su motivo. 404 empresa inexistente, 400 " +
             "conciliacion_archivo_requerido|conciliacion_reporte_invalido, 413 conciliacion_archivo_demasiado_grande, 409 " +
-            "conciliacion_ya_importada (mismo archivo en la misma empresa).");
+            "conciliacion_ya_importada (mismo archivo en la misma empresa). Exige el encabezado X-Ways-Origen: web y que la petición sea del " +
+            "mismo origen (Sec-Fetch-Site same-origin|none, o Origin igual al scheme y host propios): si no, 403 solicitud_no_permitida.");
 
         conciliaciones.MapGet("/", (ServicioDeConciliacionMercadoPago servicio, int idEmpresa, CancellationToken ct) =>
             servicio.ListarAsync(idEmpresa, ct))
@@ -317,9 +324,43 @@ public static class MercadoPagoEndpoints
         return app;
     }
 
+    /// <summary>Rechaza (403 <c>solicitud_no_permitida</c>) lo que un formulario HTML podría mandar: exige el encabezado propio
+    /// <see cref="EncabezadoDeOrigenPropio"/> (un formulario no puede ponerlo y <c>fetch</c> desde otro origen necesita un preflight que el CORS de
+    /// la API no concede) y, además, que el navegador diga que la petición es del mismo origen (<c>Sec-Fetch-Site</c> <c>same-origin</c> o
+    /// <c>none</c>; un <c>same-site</c> de un subdominio hermano se rechaza) o, si el navegador no manda ese dato, que el <c>Origin</c> presente
+    /// sea exactamente el scheme y host propios.</summary>
+    private static void ExigirOrigenPropio(HttpRequest solicitud)
+    {
+        var rechazo = new ErrorDominio(
+            "solicitud_no_permitida", "La subida del reporte solo se acepta desde la web de Ways.", StatusCodes.Status403Forbidden);
+
+        if (!string.Equals(solicitud.Headers[EncabezadoDeOrigenPropio].ToString(), ValorDeOrigenPropio, StringComparison.Ordinal))
+        {
+            throw rechazo;
+        }
+
+        var sitio = solicitud.Headers["Sec-Fetch-Site"].ToString();
+        if (sitio.Length > 0)
+        {
+            if (sitio is not ("same-origin" or "none"))
+            {
+                throw rechazo;
+            }
+
+            return;
+        }
+
+        var origen = solicitud.Headers.Origin.ToString();
+        if (origen.Length > 0 && !string.Equals(origen, $"{solicitud.Scheme}://{solicitud.Host}", StringComparison.OrdinalIgnoreCase))
+        {
+            throw rechazo;
+        }
+    }
+
     /// <summary>El archivo del campo <c>archivo</c> de un multipart, acotado: el cuerpo entero no pasa de 10 MB más el encabezado del multipart
     /// (413 <c>conciliacion_archivo_demasiado_grande</c>) y sin ese campo es 400 <c>conciliacion_archivo_requerido</c>. Se lee a mano y no
-    /// con <c>IFormFile</c>: no hace falta antiforgery porque la cookie de sesión es <c>SameSite=Lax</c> y nunca viaja en un POST de otro sitio.</summary>
+    /// con <c>IFormFile</c>, así que no hay antiforgery. <c>SameSite=Lax</c> no alcanza: un formulario HTML de un subdominio hermano (mismo sitio) sí
+    /// manda la cookie en un POST multipart, y el reporte se importa con la sesión del Admin; por eso <see cref="ExigirOrigenPropio"/> corre antes.</summary>
     private static async Task<(string? Nombre, byte[] Contenido)> LeerArchivoAsync(HttpRequest solicitud, CancellationToken ct)
     {
         var requerido = new ErrorDominio(

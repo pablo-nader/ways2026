@@ -4202,7 +4202,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                             t.HasCheckConstraint("ck_filas_conciliacion_mercadopago_linea", "numero_linea >= 2");
 
-                            t.HasCheckConstraint("ck_filas_conciliacion_mercadopago_resultado", "resultado IN ('conciliado', 'sin_venta', 'importe_distinto', 'sin_cobro_en_ways', 'devolucion', 'contracargo', 'retiro', 'invalida')");
+                            t.HasCheckConstraint("ck_filas_conciliacion_mercadopago_resultado", "resultado IN ('conciliado', 'ya_conciliado', 'duplicada', 'sin_venta', 'importe_distinto', 'sin_cobro_en_ways', 'devolucion', 'contracargo', 'retiro', 'invalida')");
                         });
                 });
 

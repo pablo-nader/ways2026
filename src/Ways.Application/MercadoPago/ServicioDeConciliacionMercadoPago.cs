@@ -20,16 +20,22 @@ namespace Ways.Application.MercadoPago;
 /// 400 reporte ilegible (<c>conciliacion_reporte_invalido</c>), 409 mismo archivo ya importado en la empresa. Una fila que no se puede
 /// leer no rechaza el archivo: queda guardada como <c>invalida</c> con su línea y su motivo. Todo ocurre en una transacción con el lock
 /// de la empresa (<see cref="ClaveDeLockDeConciliacion"/>): dos subidas del mismo archivo no se cruzan, y el índice único de la huella
-/// respalda el 409. Los cobros se leen UNA vez, dentro de la transacción y después del lock. Si un cobro ya estaba conciliado por otra
-/// fila, o aparece en dos filas del mismo archivo, la primera gana: la fila queda <c>conciliado</c> y el cobro no se vuelve a escribir
-/// (una compra en cuotas con varias filas por pago guarda solo la primera).
+/// respalda el 409. Los cobros que alguna fila nombra se leen UNA vez, dentro de la transacción y después del lock de la empresa, con
+/// <c>FOR UPDATE</c> en orden ascendente de id: ni un webhook ni otra escritura del cobro se cuela entre la lectura y la comisión real que
+/// se escribe. Orden de locks: lock de la empresa, después las filas de los cobros; el servicio de cobros toma sus advisory (punto de venta,
+/// cobro) y después la fila, y la importación no toma ningún advisory de cobro, así que un webhook solo espera por la fila y no hay ciclo.
+/// Las filas SETTLEMENT conciliadas de un mismo cobro se suman: la comisión real es la suma de los valores absolutos de <c>FEE_AMOUNT</c>
+/// (siempre positiva), el neto real la suma de <c>SETTLEMENT_NET_AMOUNT</c> tal como vienen y la liberación la más tardía. Una fila
+/// idéntica a otra del archivo es <c>duplicada</c> (no se suma) y un cobro que un archivo anterior ya conciliaba deja la fila en
+/// <c>ya_conciliado</c> (no se aplica; el detalle muestra lo guardado). Los totales del resumen no cuentan esas dos clases de fila.
 ///
 /// <b>Sin reintento</b> (<c>ef-retry-safe-writes</c>, forma (b)): una importación no es idempotente más que por la huella, y un
 /// reintento tras un commit ambiguo la volvería a insertar.
 ///
 /// <b>Confirmar.</b> Une una fila <c>sin_cobro_en_ways</c> con un pago de venta <c>sin_verificar</c> de la misma empresa: el pago pasa a
 /// <c>verificado_manualmente</c> y la fila lo recuerda. El pago tiene que ser de la empresa de la fila; los candidatos del listado
-/// (importe, fecha y caja) son una sugerencia que no se vuelve a exigir: el Admin decide. Toma los locks fila → pago (<c>FOR UPDATE</c>) y lee cada uno una sola
+/// (importe, fecha y caja) son una sugerencia: confirmar exige que la venta no esté anulada (409 <c>venta_anulada</c>) y que el importe del pago
+/// sea el de la fila (409 <c>importe_distinto</c>); la fecha y la caja las decide el Admin. Toma los locks fila → pago (<c>FOR UPDATE</c>) y lee cada uno una sola
 /// vez después; un pago se confirma contra a lo sumo una fila (<c>ux_filas_conciliacion_mercadopago_cobro</c>).
 /// </summary>
 public class ServicioDeConciliacionMercadoPago(
@@ -41,7 +47,7 @@ public class ServicioDeConciliacionMercadoPago(
     public const int TamanoMaximoDelArchivo = 10 * 1024 * 1024;
 
     /// <summary>Más filas ilegibles que esto rechazan el archivo: casi seguro no es un reporte de transacciones.</summary>
-    public const int MaximoDeInvalidas = 1_000;
+    public const int MaximoDeInvalidas = LectorDeReporteMercadoPago.MaximoDeInvalidas;
 
     public const int MaximoDeInvalidasDevueltas = 200;
 
@@ -74,7 +80,7 @@ public class ServicioDeConciliacionMercadoPago(
 
         await ExigirEmpresaAsync(idEmpresa, ct);
 
-        var lectura = LectorDeReporteMercadoPago.Leer(Encoding.UTF8.GetString(contenido));
+        var lectura = LectorDeReporteMercadoPago.Leer(contenido);
         if (lectura.ErrorDeArchivo is { } error)
         {
             throw ReporteInvalido(error);
@@ -84,11 +90,6 @@ public class ServicioDeConciliacionMercadoPago(
         {
             throw ReporteInvalido(
                 "El reporte no tiene ninguna fila válida" + (lectura.Invalidas.Count > 0 ? $": {lectura.Invalidas[0].Motivo}" : "."));
-        }
-
-        if (lectura.Invalidas.Count > MaximoDeInvalidas)
-        {
-            throw ReporteInvalido($"El reporte tiene más de {MaximoDeInvalidas} filas que no se pueden leer.");
         }
 
         var huella = Convert.ToHexStringLower(SHA256.HashData(contenido));
@@ -137,7 +138,8 @@ public class ServicioDeConciliacionMercadoPago(
         db.ConciliacionesMercadoPago.Add(cabecera);
         await db.SaveChangesAsync(ct);
 
-        var filas = new List<(FilaConciliacionMercadoPago Fila, ClasificacionDeFilaMercadoPago? Clasificacion, FilaDeReporteMercadoPago? Origen)>();
+        var filas = new List<(FilaConciliacionMercadoPago Fila, ClasificacionDeFilaMercadoPago? Clasificacion, FilaDeReporteMercadoPago? Origen)>(
+            lectura.Filas.Count + lectura.Invalidas.Count);
         foreach (var origen in lectura.Filas)
         {
             var clasificacion = conciliador.Clasificar(origen);
@@ -189,18 +191,18 @@ public class ServicioDeConciliacionMercadoPago(
         await db.SaveChangesAsync(ct);
 
         var porId = cobros.ToDictionary(c => c.Id);
-        var aplicados = new HashSet<int>();
-        foreach (var (fila, clasificacion, origen) in filas)
+        var aplicados = filas
+            .Where(f => f.Clasificacion is { AplicaAlCobro: true, IdCobroMercadoPago: not null })
+            .GroupBy(f => f.Clasificacion!.IdCobroMercadoPago!.Value)
+            .ToList();
+        foreach (var grupo in aplicados)
         {
-            if (clasificacion is { AplicaAlCobro: true, IdCobroMercadoPago: { } idCobro } && aplicados.Add(idCobro))
-            {
-                var cobro = porId[idCobro];
-                cobro.ComisionReal = origen!.Comision;
-                cobro.NetoReal = origen.Neto;
-                cobro.FechaLiberacion = origen.FechaLiberacion;
-                cobro.IdFilaConciliacion = fila.Id;
-                cobro.UpdatedAt = ahora;
-            }
+            var cobro = porId[grupo.Key];
+            cobro.ComisionReal = grupo.Any(f => f.Origen!.Comision is not null) ? grupo.Sum(f => Math.Abs(f.Origen!.Comision ?? 0m)) : null;
+            cobro.NetoReal = grupo.Any(f => f.Origen!.Neto is not null) ? grupo.Sum(f => f.Origen!.Neto ?? 0m) : null;
+            cobro.FechaLiberacion = grupo.Max(f => f.Origen!.FechaLiberacion);
+            cobro.IdFilaConciliacion = grupo.First().Fila.Id;
+            cobro.UpdatedAt = ahora;
         }
 
         var resumen = Resumir(filas.Select(f => f.Fila));
@@ -229,7 +231,8 @@ public class ServicioDeConciliacionMercadoPago(
             Mapear(cabecera, contexto.NombreUsuario, resumen), invalidas, lectura.Invalidas.Count > MaximoDeInvalidasDevueltas);
     }
 
-    /// <summary>Los cobros de la empresa que alguna fila puede nombrar por referencia externa, id de pago o referencia numérica del pago.</summary>
+    /// <summary>Los cobros de la empresa que alguna fila puede nombrar por referencia externa, id de pago o referencia numérica del pago,
+    /// bloqueados con <c>FOR UPDATE</c> en orden ascendente de id: la ÚNICA lectura, dentro de la transacción y después del lock de la empresa.</summary>
     private async Task<List<CobroMercadoPago>> LeerCobrosAsync(
         int idEmpresa, IReadOnlyList<FilaDeReporteMercadoPago> filas, CancellationToken ct)
     {
@@ -247,11 +250,19 @@ public class ServicioDeConciliacionMercadoPago(
             .Distinct()
             .ToList();
 
+        var porReferencia = referencias.ToArray();
+        var porId = ids.ToArray();
+        var porNumero = numericos.ToArray();
         return await db.CobrosMercadoPago
-            .Where(c => c.IdEmpresa == idEmpresa
-                && (referencias.Contains(c.ExternalReference)
-                    || (c.IdPagoMercadoPago != null && ids.Contains(c.IdPagoMercadoPago))
-                    || (c.ReferenciaPagoMercadoPago != null && numericos.Contains(c.ReferenciaPagoMercadoPago.Value))))
+            .FromSql($"""
+                SELECT * FROM cobros_mercadopago
+                WHERE id_empresa = {idEmpresa}
+                    AND (external_reference = ANY({porReferencia})
+                        OR id_pago_mercadopago = ANY({porId})
+                        OR referencia_pago_mercadopago = ANY({porNumero}))
+                ORDER BY id_cobro_mercadopago
+                FOR UPDATE
+                """)
             .ToListAsync(ct);
     }
 
@@ -311,14 +322,39 @@ public class ServicioDeConciliacionMercadoPago(
             .ToListAsync(ct);
 
         var candidatos = await CandidatosDeLasFilasAsync(conciliacion.IdEmpresa, filas, ct);
+        var guardados = await ValoresGuardadosAsync(filas, ct);
         var cabecera = (await MapearAsync([conciliacion], ct)).Single();
 
         return new DetalleDeConciliacion(
             cabecera,
-            filas.Select(f => Mapear(f, candidatos.GetValueOrDefault(f.Id, []))).ToList(),
+            filas.Select(f => Mapear(f, candidatos.GetValueOrDefault(f.Id, []), guardados.GetValueOrDefault(f.Id))).ToList(),
             total,
             numeroDePagina,
             tamanoDePagina);
+    }
+
+    /// <summary>Para cada fila <c>ya_conciliado</c>, lo que el archivo anterior dejó guardado en el cobro, para compararlo con la fila.</summary>
+    private async Task<Dictionary<int, (decimal? Comision, decimal? Neto)>> ValoresGuardadosAsync(
+        IReadOnlyList<FilaConciliacionMercadoPago> filas, CancellationToken ct)
+    {
+        var ids = filas
+            .Where(f => f.Resultado == ResultadosDeConciliacionMercadoPago.YaConciliado && f.IdCobroMercadoPago is not null)
+            .Select(f => f.IdCobroMercadoPago!.Value)
+            .Distinct()
+            .ToList();
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var cobros = await db.CobrosMercadoPago
+            .AsNoTracking()
+            .Where(c => ids.Contains(c.Id))
+            .Select(c => new { c.Id, c.ComisionReal, c.NetoReal })
+            .ToDictionaryAsync(c => c.Id, ct);
+        return filas
+            .Where(f => f.Resultado == ResultadosDeConciliacionMercadoPago.YaConciliado && f.IdCobroMercadoPago is not null)
+            .ToDictionary(f => f.Id, f => (cobros[f.IdCobroMercadoPago!.Value].ComisionReal, cobros[f.IdCobroMercadoPago!.Value].NetoReal));
     }
 
     /// <summary>Para cada fila <c>sin_cobro_en_ways</c> sin confirmar, los pagos de venta sin verificar de la empresa que podrían ser suyos
@@ -415,7 +451,7 @@ public class ServicioDeConciliacionMercadoPago(
                         from c in db.ComprobantesVenta.AsNoTracking().SinEspejosFiscales()
                         join pv in db.PuntosVenta.IgnoreQueryFilters(["BajaLogica"]) on c.IdPuntoVenta equals pv.Id
                         where c.Id == pago.IdComprobanteVenta && pv.IdEmpresa == fila.IdEmpresa
-                        select new { c.Id, c.IdPuntoVenta })
+                        select new { c.Id, c.IdPuntoVenta, c.Estado, c.Fecha })
                     .FirstOrDefaultAsync(ct);
             if (pago is null || venta is null)
             {
@@ -442,6 +478,17 @@ public class ServicioDeConciliacionMercadoPago(
             {
                 throw ErrorDominio.Conflicto(
                     CodigosDeErrorDeConciliacion.PagoNoEstaSinVerificar, "El pago no es una aprobación manual sin verificar.");
+            }
+
+            if (venta.Estado == EstadoComprobante.Anulado)
+            {
+                throw ErrorDominio.Conflicto(CodigosDeErrorDeConciliacion.VentaAnulada, "La venta del pago está anulada.");
+            }
+
+            if (pago.Importe != fila.Importe)
+            {
+                throw ErrorDominio.Conflicto(
+                    CodigosDeErrorDeConciliacion.ImporteDistinto, "El importe del pago no es el que informa la fila del reporte.");
             }
 
             var ahora = reloj.Ahora;
@@ -476,8 +523,11 @@ public class ServicioDeConciliacionMercadoPago(
                     ["numero_linea"] = fila.NumeroLinea,
                     ["id_cobro"] = pago.Id,
                     ["id_comprobante_venta"] = venta.Id,
-                    ["importe"] = pago.Importe,
+                    ["importe_fila"] = fila.Importe,
+                    ["fecha_transaccion"] = fila.FechaTransaccion,
                     ["source_id"] = fila.SourceId,
+                    ["importe_pago"] = pago.Importe,
+                    ["fecha_venta"] = venta.Fecha,
                     ["verificacion_mercadopago"] = VerificacionDePagoMercadoPago.VerificadoManualmente
                 }));
 
@@ -531,26 +581,39 @@ public class ServicioDeConciliacionMercadoPago(
                 usuarios.GetValueOrDefault(c.IdUsuario),
                 sumas
                     .Where(s => s.IdConciliacion == c.Id)
-                    .Select(s => new ResumenDeResultadoDeConciliacion(s.Resultado, s.Cantidad, s.Importe, s.Comision, s.Neto))
+                    .Select(s => CuentaEnLosTotales(s.Resultado)
+                        ? new ResumenDeResultadoDeConciliacion(s.Resultado, s.Cantidad, s.Importe, s.Comision, s.Neto)
+                        : new ResumenDeResultadoDeConciliacion(s.Resultado, s.Cantidad, 0m, 0m, 0m))
                     .OrderBy(s => OrdenDeResultados.IndexOf(s.Resultado))
                     .ToList()))
             .ToList();
     }
+
+    /// <summary>Una fila repetida o de un cobro que un archivo anterior ya conciliaba se cuenta, pero no suma importes: sumarla duplicaría el
+    /// dinero que el reporte informa una sola vez.</summary>
+    private static bool CuentaEnLosTotales(string resultado) =>
+        resultado is not (ResultadosDeConciliacionMercadoPago.Duplicada or ResultadosDeConciliacionMercadoPago.YaConciliado);
 
     private static ConciliacionListado Mapear(
         ConciliacionMercadoPago c, string? usuario, IReadOnlyList<ResumenDeResultadoDeConciliacion> resumen) =>
         new(c.Id, c.IdEmpresa, c.NombreArchivo, c.FechaDesde, c.FechaHasta, c.IdUsuario, usuario, c.CreatedAt, c.CantidadFilas,
             c.CantidadInvalidas, resumen);
 
-    private static FilaDeConciliacion Mapear(FilaConciliacionMercadoPago f, IReadOnlyList<CandidatoDeConfirmacion> candidatos) =>
+    private static FilaDeConciliacion Mapear(
+        FilaConciliacionMercadoPago f, IReadOnlyList<CandidatoDeConfirmacion> candidatos, (decimal? Comision, decimal? Neto) guardado = default) =>
         new(f.Id, f.NumeroLinea, f.Resultado, f.SourceId, f.ExternalReference, f.TipoTransaccion, f.Importe, f.Comision, f.Neto,
-            f.FechaTransaccion, f.FechaLiberacion, f.ExternalPosId, f.Motivo, f.IdCobroMercadoPago, f.IdCobro, candidatos);
+            f.FechaTransaccion, f.FechaLiberacion, f.ExternalPosId, f.Motivo, f.IdCobroMercadoPago, f.IdCobro, candidatos,
+            f.Resultado == ResultadosDeConciliacionMercadoPago.Conciliado, guardado.Comision, guardado.Neto);
 
     private static List<ResumenDeResultadoDeConciliacion> Resumir(IEnumerable<FilaConciliacionMercadoPago> filas) =>
         filas
             .GroupBy(f => f.Resultado)
             .Select(g => new ResumenDeResultadoDeConciliacion(
-                g.Key, g.Count(), g.Sum(f => f.Importe ?? 0m), g.Sum(f => f.Comision ?? 0m), g.Sum(f => f.Neto ?? 0m)))
+                g.Key,
+                g.Count(),
+                CuentaEnLosTotales(g.Key) ? g.Sum(f => f.Importe ?? 0m) : 0m,
+                CuentaEnLosTotales(g.Key) ? g.Sum(f => f.Comision ?? 0m) : 0m,
+                CuentaEnLosTotales(g.Key) ? g.Sum(f => f.Neto ?? 0m) : 0m))
             .OrderBy(r => OrdenDeResultados.IndexOf(r.Resultado))
             .ToList();
 

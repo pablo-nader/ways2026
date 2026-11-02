@@ -14,8 +14,8 @@ public sealed record CobroParaConciliar(
     bool YaConciliado);
 
 /// <summary>El resultado de cotejar una fila: <see cref="AplicaAlCobro"/> es verdadero cuando la comisión, el neto y la liberación de la
-/// fila se guardan en el cobro (solo una fila <see cref="ResultadosDeConciliacionMercadoPago.Conciliado"/> de un cobro todavía no
-/// conciliado).</summary>
+/// fila se suman en el cobro (solo una fila <see cref="ResultadosDeConciliacionMercadoPago.Conciliado"/>, de un cobro que ningún archivo
+/// anterior conciliaba y que no repite otra fila).</summary>
 public sealed record ClasificacionDeFilaMercadoPago(string Resultado, int? IdCobroMercadoPago, bool AplicaAlCobro);
 
 /// <summary>
@@ -23,14 +23,18 @@ public sealed record ClasificacionDeFilaMercadoPago(string Resultado, int? IdCob
 /// cobro; si no hay cobro, <c>SOURCE_ID</c> contra la <c>referencia_pago_mercadopago</c> (numérica) o el <c>id_pago_mercadopago</c>.
 /// Un cobro aprobado y ligado a una venta, por el importe que Mercado Pago dice (<see cref="CobroParaConciliar.ImporteEsperado"/>), es
 /// <see cref="ResultadosDeConciliacionMercadoPago.Conciliado"/>; con otro importe, <c>importe_distinto</c>; cualquier otro estado, o
-/// aprobado sin venta, es <c>sin_venta</c>; sin cobro, <c>sin_cobro_en_ways</c>. Devoluciones y contracargos se ligan al cobro como un pago
-/// pero nunca lo modifican; los retiros no se cotejan.
+/// aprobado sin venta, es <c>sin_venta</c>; sin cobro, <c>sin_cobro_en_ways</c>. Un cobro que un archivo anterior ya conciliaba es
+/// <c>ya_conciliado</c> (no se aplica). Una fila idéntica a otra anterior del mismo archivo (mismos SOURCE_ID, TRANSACTION_TYPE,
+/// TRANSACTION_AMOUNT y TRANSACTION_DATE) es <c>duplicada</c> y no se aplica; las demás filas de un mismo cobro conciliado se aplican todas
+/// (el servicio suma sus comisiones y netos). Devoluciones y contracargos se ligan al cobro como un pago pero nunca lo modifican; los
+/// retiros no se cotejan. Es con estado (recuerda las filas vistas): una instancia por archivo y las filas en el orden del archivo.
 /// </summary>
 public sealed class ConciliadorMercadoPago
 {
     private readonly Dictionary<string, CobroParaConciliar> _porReferencia = new(StringComparer.Ordinal);
     private readonly Dictionary<long, CobroParaConciliar> _porReferenciaDePago = [];
     private readonly Dictionary<string, CobroParaConciliar> _porIdDePago = new(StringComparer.Ordinal);
+    private readonly HashSet<(string SourceId, string Tipo, decimal Importe, DateTimeOffset Fecha)> _vistas = [];
 
     public ConciliadorMercadoPago(IEnumerable<CobroParaConciliar> cobros)
     {
@@ -51,6 +55,11 @@ public sealed class ConciliadorMercadoPago
 
     public ClasificacionDeFilaMercadoPago Clasificar(FilaDeReporteMercadoPago fila)
     {
+        if (!_vistas.Add((fila.SourceId, fila.TipoTransaccion, fila.Importe, fila.FechaTransaccion)))
+        {
+            return new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.Duplicada, Buscar(fila)?.Id, false);
+        }
+
         if (TiposDeTransaccionMercadoPago.EsRetiro(fila.TipoTransaccion))
         {
             return new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.Retiro, null, false);
@@ -75,9 +84,14 @@ public sealed class ConciliadorMercadoPago
             return new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.SinVenta, cobro.Id, false);
         }
 
-        return fila.Importe == cobro.ImporteEsperado
-            ? new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.Conciliado, cobro.Id, !cobro.YaConciliado)
-            : new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.ImporteDistinto, cobro.Id, false);
+        if (fila.Importe != cobro.ImporteEsperado)
+        {
+            return new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.ImporteDistinto, cobro.Id, false);
+        }
+
+        return cobro.YaConciliado
+            ? new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.YaConciliado, cobro.Id, false)
+            : new ClasificacionDeFilaMercadoPago(ResultadosDeConciliacionMercadoPago.Conciliado, cobro.Id, true);
     }
 
     private CobroParaConciliar? Buscar(FilaDeReporteMercadoPago fila)

@@ -117,7 +117,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     table.CheckConstraint("ck_filas_conciliacion_mercadopago_confirmada", "id_cobro IS NULL OR resultado = 'sin_cobro_en_ways'");
                     table.CheckConstraint("ck_filas_conciliacion_mercadopago_datos", "(resultado = 'invalida' AND motivo IS NOT NULL AND source_id IS NULL AND importe IS NULL AND fecha_transaccion IS NULL AND id_cobro_mercadopago IS NULL AND id_cobro IS NULL) OR (resultado <> 'invalida' AND motivo IS NULL AND source_id IS NOT NULL AND tipo_transaccion IS NOT NULL AND importe IS NOT NULL AND fecha_transaccion IS NOT NULL)");
                     table.CheckConstraint("ck_filas_conciliacion_mercadopago_linea", "numero_linea >= 2");
-                    table.CheckConstraint("ck_filas_conciliacion_mercadopago_resultado", "resultado IN ('conciliado', 'sin_venta', 'importe_distinto', 'sin_cobro_en_ways', 'devolucion', 'contracargo', 'retiro', 'invalida')");
+                    table.CheckConstraint("ck_filas_conciliacion_mercadopago_resultado", "resultado IN ('conciliado', 'ya_conciliado', 'duplicada', 'sin_venta', 'importe_distinto', 'sin_cobro_en_ways', 'devolucion', 'contracargo', 'retiro', 'invalida')");
                     table.ForeignKey(
                         name: "fk_filas_conciliacion_mercadopago_cobro",
                         columns: x => new { x.id_cobro, x.id_tenant },
