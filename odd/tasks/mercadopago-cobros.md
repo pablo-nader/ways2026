@@ -698,3 +698,19 @@ Branch `pnader/mercadopago-e7`, stacked on E6-T2. Backend + web.
   and page header tests; removing `ocupadoRef` from `subir` fails the double-click upload test; from `confirmar` fails the
   double-click confirm test; ungating `useLectura` fails the stale-empresa test.
 - Verification: tsc clean, oxlint clean on touched files, 211 tests pass (api, page, menu, Tesoreria, cliente), `npm run build` ok.
+
+## Judgment-day E6-T2 round 1 (2026-11-02)
+
+Confirmed issues fixed in `fix(web): la conciliación se ve como Supervisor, ...`:
+
+- F1 (critical): the empresa picker called `GET /api/empresas` (Root/Admin only), so the Supervisor got a 403 and an empty screen. The
+  empresas are now derived from `GET /api/puntos-venta` (`LecturaDePuntosVenta`, readable by Supervisor), deduplicated by `idEmpresa`
+  and named by `razonSocialEmpresa`. Limit: an empresa with no punto de venta does not appear.
+- F2: `SeccionImportar`, `SeccionConciliaciones` and `SeccionParaRevisar` carry `key={idEmpresa}`, so every empresa change starts clean
+  (no previous detail or Confirmar buttons).
+- F3: leaving the Importar tab clears `archivo` (the uncontrolled input remounts, so the state no longer outlives it).
+- Suggestion accepted: the page does not know the empresa's time zone, so the pagos-sin-verificar range keeps the browser date and a
+  helper line says the dates are interpreted in the empresa's zone.
+- Mutation evidence (one per run, restored): back to `listarEmpresas` fails the page tests (route not mocked / picker empty); removing
+  the three `key` fails the empresa-switch test; removing the `setArchivo(null)` fails the tab round-trip test.
+- Verification: tsc clean, oxlint no errors, 168 tests pass (api, page, tesoreria, menu), `npm run build` ok.
