@@ -447,3 +447,13 @@ Both judges confirmed P1-P3; one judge each P4-P6 (accepted). Fix commit `fix(me
 - P5 — el modal Point (en la terminal y revisar la terminal) ofrece «Cerrar y dejarlo en curso» (resultado `en_curso`: detiene la venta con un aviso, conserva la reserva y el cobro; el próximo cobrar() lo retoma) y `revisar_terminal` muestra la cuenta regresiva. Tests RTL y de `resolverResultadoDelCobro`.
 - P6 — un 409 de Mercado Pago al cancelar cuya relectura deja el cobro pendiente, fuera de la terminal y sin pago informado responde 409 `mercadopago_cancelacion_no_aplicada` (para QR y Point; el test QR que esperaba el 200 se actualizó); copia de error del POS agregada.
 - Evidencia de mutación (una por corrida): P1 `SeSigueVigilando` solo pendiente -> 4 tests rojos; P2 sin marcar `cancelado` -> 2 rojos; P3 `total_amount` de vuelta -> 1 rojo; P4 sin el lock de la caja -> 1 rojo; P5 sin el botón en `revisar_terminal` -> 1 rojo.
+
+## Judgment-day E4 round 2 (2026-11-01, final)
+
+Fix commit `fix(mercadopago): la terminal ocupada cancela solo en el primer envío y un Point rechazado con pago informado no se pierde`.
+
+- R1 — el 409 `already_queued_order_for_terminal` cancela la fila solo en su primer envío (el de la misma llamada de `CrearAsync` que insertó el `creando`; la bandera `primerEnvio` sale de la reserva, sin columna nueva). En un reenvío de una fila que quedó `creando` tras una respuesta perdida, Mercado Pago pudo mirar la cola de la terminal antes de reconocer la clave: la fila sigue `creando` (retiene el número), responde 409 `mercadopago_terminal_ocupada` y las bandas de tiempo de E3 la liberan. Tests: el de primer envío ya existente (cancelado + otro intento) y uno nuevo de reenvío (sigue creando, 409 en curso a los 10 min, expirada a los 25 y número libre).
+- R2 — releer un `fallido` es de mejor esfuerzo: un error de Mercado Pago o de la red (5xx, tiempo agotado, 404 antes del plazo) se registra sin tokens y se devuelve el estado guardado (consultar, apartar, aviso); la cancelación del request no se captura. Test con 503 y 404.
+- R3 — un `fallido` cuya orden se informa `processed` sin pago legible se sigue vigilando mientras `fecha_procesada_mercadopago` esté marcada, con tope de 24 h desde la reserva, y `GET /api/mercadopago/cobros-sin-venta` lo lista con `pagoInformadoSinDatos: true`. Tests de vigilancia, listado, paso a `sin_venta` al volverse legible y tope de 24 h.
+- Evidencia de mutación (una por corrida): R1 sin la guarda `primerEnvio` -> 1 rojo; R2 sin el catch del fallido -> 2 rojos; R3 sin la cláusula de `fecha_procesada` -> 1 rojo.
+- Verificación: build Release 0 errores; sin cambios pendientes del modelo; Domain 2493, Application 1658, integración filtrada (Cobros/Venta/Webhook) 189 en verde. Web sin cambios.
