@@ -57,7 +57,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
   account.
   - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
-  - [ ] E6-T2 — Back-office web screen.
+  - [x] E6-T2 — Back-office web screen (commit 9cda93a5).
 - [ ] E7 — Withdrawals/payouts from the report into treasury.
 
 ## Delivery strategy
@@ -66,7 +66,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E6-T2: back-office web screen (Tesorería → "Conciliación Mercado Pago": upload, summary, rows with filters, cobros sin venta / pagos sin verificar lists, confirm candidates) over the E6-T1 endpoints. E6-T1 awaits its judgment-day before the PR.
+E7: Mercado Pago movements into treasury (fee-difference adjustment and withdrawals proposals, apply/discard; design in "E7 design"). E6-T2 awaits its judgment-day before the PR.
 
 ## E3-T1 design (2026-11-01)
 
@@ -644,3 +644,83 @@ Fix commit 7119f1bf for the confirmed findings (C1-C5); the migration 2026110205
   release date; mutation: the 4-field key fails the installments test). Final re-judgment: both clean (doc comment fixed).
 - Accepted: a charge already reconciled by an earlier file is never re-applied (`ya_conciliado`, stored values shown); the confirm
   reads the sale state without locking it (small window, the payment row is locked).
+
+## E6-T2 design (2026-11-02) — reconciliation screen
+
+Branch `pnader/mercadopago-e6-t2`, stacked on E6-T1. Web only (back office), Admin uploads/confirms, Supervisor reads.
+
+- New page "Conciliación Mercado Pago" under Tesorería (route `/tesoreria/conciliacion-mercadopago`, nav entry next to the treasury
+  pages; same role gating pattern as other treasury pages), with an empresa selector like the other treasury screens.
+- Tabs/sections:
+  1. **Importar**: file input (CSV, ≤ 10 MB, client-side size check), upload with progress/disabled state, result summary (period,
+     counts per result, totals: gross, real fee, net; real fee vs the medio's estimated `comision_porcentaje` when available), and the
+     invalid rows (line + reason). Duplicate file → the 409 message.
+  2. **Conciliaciones**: list of uploads (date, period, file, counts) → detail with the rows table (filters by `resultado`, paging),
+     each row: date, SOURCE_ID, external reference, type, amount, fee, net, result badge, linked charge/sale when any.
+  3. **Para revisar**: `cobros-sin-venta` (E3-T3b/E4: charges with money and no sale, including `pagoInformadoSinDatos`) and
+     `pagos-sin-verificar` (E5: date range, `idsCobroEnConflicto` shown as a warning), plus the manual-approval candidates of the latest
+     reconciliation with a "Confirmar" action (Admin; confirmation dialog stating the amounts and dates; 409 copies).
+- api client `src/Ways.Web/src/api/conciliacionMercadoPago.ts` with the exact contracts; Spanish copies for every code.
+- react-async-state for reads (generation tokens) and writes (re-entrancy ref, full-window disabled); colocated Vitest for helpers;
+  RTL tests: upload success/409/invalid rows, filters, confirm flow, role gating (Supervisor cannot upload/confirm).
+
+## E7 design (2026-11-02) — Mercado Pago movements into treasury
+
+Branch `pnader/mercadopago-e7`, stacked on E6-T2. Backend + web.
+
+- Context: treasury accounts exist per empresa (memory "cuentas-de-tesoreria" / "libro-de-tesoreria"): the close credits net of the
+  medio's estimated commission and withholdings; manual adjustments exist. E7 does not change those rules; it adds proposals from the
+  reconciliation.
+- From a reconciliation (E6-T1 rows): (1) **fee difference**: for `conciliado` rows, the difference between the real fee
+  (`comision_real`) and the estimated one already applied for that sale's payment → a proposed treasury adjustment on the Mercado
+  Pago medio's treasury account (one per reconciliation, aggregated, with the detail); (2) **retiros** (`WITHDRAWAL`/`PAYOUT` rows) →
+  a proposed transfer from the Mercado Pago treasury account to a bank account chosen by the Admin. Nothing is posted automatically:
+  `POST /api/mercadopago/conciliaciones/{id}/movimientos/{idPropuesta}/aplicar` (Admin) posts the movement through the existing
+  treasury writers (manual adjustment / transfer), idempotent per proposal (UNIQUE), audited; `descartar` marks it ignored.
+- Web: a "Movimientos a tesorería" section in the reconciliation detail listing the proposals with apply/discard.
+- Tests: proposal computation (fee difference sign, aggregation, retiros), apply idempotency and race, treasury ledger effect,
+  scoping/roles.
+- E6-T2 note from E6-T1: the upload must send the header `X-Ways-Origen: web` (CSRF guard) and the result codes include `duplicada`,
+  `ya_conciliado` and `invalida`; rows carry `aplicadaAlCobro`, and `ya_conciliado` rows carry the stored fee/net for comparison.
+
+## E6-T2 progress (2026-11-02)
+
+- Commit 9cda93a5 `feat(web): pantalla de conciliación de Mercado Pago`. Page `paginas/ConciliacionMercadoPago.tsx` (+ parts in
+  `paginas/tesoreria/`: `SeccionImportar`, `SeccionConciliaciones`, `SeccionParaRevisar`, `TablaDeFilasDeConciliacion`,
+  `DialogoDeConfirmacionDeFila`, `useLectura`), client and pure helpers `api/conciliacionMercadoPago.ts`, `api.postFormulario` in
+  `api/cliente.ts` (FormData without a forced Content-Type), route and menu entry.
+- Route `/caja/conciliacion-mercadopago` (not `/tesoreria/...`): hangs from `/caja` like the other treasury pages, so no new first
+  segment in the server route list; menu entry in Reportes, `puedeVerReportes` (Supervisor and Admin read; upload/confirm Admin only,
+  the Supervisor does not see the Importar tab or the Confirmar buttons).
+- Not shown: the real fee against the medio's estimated `comision_porcentaje` (no contract field exposes it; the summary shows the
+  real fee and net as the server reports them).
+- Mutation evidence (one per run, then restored): role gating `esAdmin = true` fails 2 Supervisor tests; header `{}` fails the api
+  and page header tests; removing `ocupadoRef` from `subir` fails the double-click upload test; from `confirmar` fails the
+  double-click confirm test; ungating `useLectura` fails the stale-empresa test.
+- Verification: tsc clean, oxlint clean on touched files, 211 tests pass (api, page, menu, Tesoreria, cliente), `npm run build` ok.
+
+## Judgment-day E6-T2 round 1 (2026-11-02)
+
+Confirmed issues fixed in `fix(web): la conciliación se ve como Supervisor, ...`:
+
+- F1 (critical): the empresa picker called `GET /api/empresas` (Root/Admin only), so the Supervisor got a 403 and an empty screen. The
+  empresas are now derived from `GET /api/puntos-venta` (`LecturaDePuntosVenta`, readable by Supervisor), deduplicated by `idEmpresa`
+  and named by `razonSocialEmpresa`. Limit: an empresa with no punto de venta does not appear.
+- F2: `SeccionImportar`, `SeccionConciliaciones` and `SeccionParaRevisar` carry `key={idEmpresa}`, so every empresa change starts clean
+  (no previous detail or Confirmar buttons).
+- F3: leaving the Importar tab clears `archivo` (the uncontrolled input remounts, so the state no longer outlives it).
+- Suggestion accepted: the page does not know the empresa's time zone, so the pagos-sin-verificar range keeps the browser date and a
+  helper line says the dates are interpreted in the empresa's zone.
+- Mutation evidence (one per run, restored): back to `listarEmpresas` fails the page tests (route not mocked / picker empty); removing
+  the three `key` fails the empresa-switch test; removing the `setArchivo(null)` fails the tab round-trip test.
+- Verification: tsc clean, oxlint no errors, 168 tests pass (api, page, tesoreria, menu), `npm run build` ok.
+
+## Judgment-day E6-T2 verdict
+
+- 2026-11-02: **APPROVED** after one fix round. Round 1: both judges confirmed that switching empresa with a detail open kept the
+  previous empresa's rows and Confirm buttons; judge B (CRITICAL): the Supervisor got 403 from GET /api/empresas (the picker); judge B:
+  a selected file survived a tab switch; fixed in 5bee09f6 (empresas from GET /api/puntos-venta, key per empresa on the sections, file
+  cleared on tab change, time-zone helper text). Scoped re-judgment: both clean. Applied after it (judge A + suggestion): an empresa whose
+  PVs come without razón social (dada de baja) is not offered; the empresa select is disabled while the confirm dialog is open.
+- Accepted: an empresa with no punto de venta is not offered (no Mercado Pago charges without a PV); Root sees every tenant's
+  empresas in the picker.

@@ -88,6 +88,8 @@ const MODELO: EntradaDelModelo[] = [
           // Configuración de las cuentas digitales de la tesorería: admin-only como el resto del ABM
           // (Politicas.GestionDeCatalogo, también para leer).
           enlace(puedeGestionarCatalogos, 'Cuentas de tesorería', '/caja/cuentas-tesoreria'),
+          // Lectura de Supervisor y Admin (Politicas.LecturaDeReportes); subir y confirmar son del Admin y la pantalla los oculta al Supervisor.
+          enlace(puedeVerReportes, 'Conciliación Mercado Pago', '/caja/conciliacion-mercadopago'),
           enlace(puedeVerReportes, 'Existencias', '/reportes/existencias'),
           enlace(puedeVerReportes, 'Vencimientos', '/reportes/stock/vencimientos'),
           enlace(puedeVerReportes, 'Reposición', '/reportes/stock/reposicion'),
