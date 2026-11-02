@@ -554,8 +554,11 @@ Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-p
 
 - Option (b) chosen after the ESCALATED verdict: the late-approval double-charge check (`LeerVentaDelNumeroBloqueandoAsync`) only counts a
   non-annulled sale with the same (punto de venta, `numero_preasignado`) that has at least one `cobros` row with
-  `verificacion_mercadopago = 'sin_verificar'`. A sale of another tipo with the same number, a cash-only sale, or a sale without that
-  payment no longer affects the charge: it stays `aprobado` (no false audit) and the real sale can link it.
+  `verificacion_mercadopago = 'sin_verificar'`. A cash-only sale, or a sale (of any tipo) without that payment, no longer affects the
+  charge: it stays `aprobado` (no false audit) and the real sale can link it. Known limit: the match is (punto de venta, número)
+  without tipo, so a sale of ANOTHER tipo with the same number AND a `sin_verificar` payment would still send the charge to
+  `sin_venta` (rare: two tipos reaching the same number at one PV, one of them approved by hand); closing it needs the tipo on the
+  charge (option a).
 - The plain-sale race the judges noted no longer applies: only sales with a `sin_verificar` payment count, and those take the number-wide
   charge lock in `LeerDelNumeroBloqueadoAsync`, so the `FOR UPDATE` read sees their result.
 - The extra "medio with a Mercado Pago provider" condition was dropped: no test can kill it, because the sale rule only admits `sin_verificar`
@@ -563,5 +566,10 @@ Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-p
 - Tests (`MercadoPagoVentaTests`): other tipo (NCX) with the same number stays `aprobado` and the real sale links it; cash-only sale stays
   `aprobado`; a sale whose payment has no mark stays `aprobado`. Mutation: dropping the `sin_verificar` condition fails the no-mark test;
   dropping the whole check fails the two existing late-approval tests (poll and webhook).
-- Found, not fixed: `cobros.verificacion_mercadopago` is `varchar(20)` while the allowed value `verificado_manualmente` has 22 characters, so
-  E6 cannot store it (22001). Needs a column widening before E6.
+- Found and fixed (d472225f): `cobros.verificacion_mercadopago` was `varchar(20)` while `verificado_manualmente` has 22 characters; widened to
+  `varchar(30)` in the unshipped E5 migration (never applied outside test databases), with a schema test.
+
+## Judgment-day E5 verdict (after the owner decision)
+
+- 2026-11-02: **APPROVED**. Scoped re-judgment of option (b) (9364eda2) and the column widening (d472225f): both judges confirm the frozen
+  finding resolved, no CRITICAL or WARNING; suggestions applied (doc states the residual same-number-other-tipo limit; widening recorded).

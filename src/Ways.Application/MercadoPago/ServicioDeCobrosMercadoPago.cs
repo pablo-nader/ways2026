@@ -819,8 +819,8 @@ public class ServicioDeCobrosMercadoPago(
     }
 
     /// <summary>La venta vigente (no anulada) que ya usó el número del cobro y tiene al menos un pago <c>sin_verificar</c> (la aprobación
-    /// manual del cajero en un medio con proveedor de Mercado Pago, que la regla de venta exige: el doble cobro real), si hay. Otra venta con
-    /// el mismo número no cuenta. Antes toma la fila del cobro con <c>FOR UPDATE</c>: la venta con ese pago tomó el bloqueo del número y lo
+    /// manual del cajero en un medio con proveedor de Mercado Pago, que la regla de venta exige: el doble cobro real), si hay. Una venta con
+    /// el mismo número sin ese pago no cuenta; como el cobro no guarda el tipo de comprobante, una de otro tipo con ese pago sí contaría. Antes toma la fila del cobro con <c>FOR UPDATE</c>: la venta con ese pago tomó el bloqueo del número y lo
     /// tiene hasta confirmar, así que esta lectura ve su resultado.</summary>
     private async Task<VentaDelNumero?> LeerVentaDelNumeroBloqueandoAsync(CobroMercadoPago cobro, CancellationToken ct)
     {
