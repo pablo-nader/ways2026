@@ -58,7 +58,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   account.
   - [x] E6-T1 — Backend: tables, parser, matching, upload/list/detail/confirm endpoints, real fee/net on the charge (commit 55374961).
   - [x] E6-T2 — Back-office web screen (commit 9cda93a5).
-- [ ] E7 — Withdrawals/payouts from the report into treasury.
+- [x] E7 — Withdrawals/payouts from the report into treasury (commit 43ba5d2e).
 
 ## Delivery strategy
 
@@ -66,7 +66,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E7: Mercado Pago movements into treasury (fee-difference adjustment and withdrawals proposals, apply/discard; design in "E7 design"). E6-T2 awaits its judgment-day before the PR.
+Program complete; production setup pending (owner).
 
 ## E3-T1 design (2026-11-01)
 
@@ -724,3 +724,31 @@ Confirmed issues fixed in `fix(web): la conciliación se ve como Supervisor, ...
   PVs come without razón social (dada de baja) is not offered; the empresa select is disabled while the confirm dialog is open.
 - Accepted: an empresa with no punto de venta is not offered (no Mercado Pago charges without a PV); Root sees every tenant's
   empresas in the picker.
+
+## E7 progress (2026-11-02)
+
+- Commit 43ba5d2e `feat(mercadopago): la conciliación propone a tesorería la diferencia de comisión y los retiros`. Table
+  `propuestas_tesoreria_mercadopago` (operativa, RLS, FK compuestas a empresa, conciliación, fila, cuentas origen/destino con la empresa y los dos movimientos
+  del libro; `movimientos_cuenta` gana `ak_movimientos_cuenta_id_id_tenant`); UNIQUE `(conciliación, tipo, clave_origen)`; CHECKs de forma, cuentas, aplicada y resolución.
+  Migración `20261102070932_PropuestasDeTesoreriaMercadoPago`.
+- Cálculo AL IMPORTAR (dentro de la transacción, después de fijar la comisión real; elegido sobre el cálculo perezoso porque ve una foto consistente bajo el lock de la
+  empresa y deja el GET como lectura pura). Consecuencia documentada: un turno que se cierra después de importar no se suma, y un cobro cuyo turno no acreditó el medio
+  no entra (se cuenta en el `detalle` y en la auditoría de la importación).
+- Comisión estimada: NO está guardada por pago. Se rearma con el `porcentaje_aplicado` de la fila `comision` de `movimientos_cuenta` del turno y medio de la venta (la
+  cuenta sale de su fila `cobro`), aplicado al importe del pago con el redondeo del cierre. Aproximación a centavos: el cierre redondea sobre el bruto del turno y medio,
+  esto lo hace pago por pago. Pura en Domain (`CalculadorDeDiferenciaDeComisionMercadoPago`).
+- Un retiro por fila `WITHDRAWAL`/`PAYOUT` (importe absoluto; `WITHDRAWAL_CANCEL` no propone, se descarta a mano el retiro cancelado; montos que no entran en `numeric(14,2)` no proponen).
+  Origen del retiro: cuenta de la conexión con Mercado Pago (nula sin conexión: 409 `propuesta_sin_cuenta_origen`, se puede descartar).
+- Asiento: la tesorería NO tiene transferencia entre cuentas. Diferencia = UN ajuste en la cuenta del medio (signo del cálculo); retiro = ajuste de salida en la cuenta de
+  Mercado Pago + ajuste de entrada en la cuenta elegida, en UNA transacción, con `EscriturasDeCuentaDeTesoreria.AgregarAjuste` (extraído del ajuste manual, que ahora lo usa; el libro solo muestra
+  `ajuste`, por eso no se usaron los tipos `retiro`/`deposito`). Locks: guarda de conciliación de tesorería (compartida) → fila de la propuesta `FOR UPDATE` → cuentas `FOR NO KEY UPDATE` por id.
+- Endpoints: `GET …/{id}/propuestas` (Supervisor/Admin), `POST …/propuestas/{id}/aplicar` `{idCuentaDestino?}` y `…/descartar` (Admin). 404 primero; 400 `cuenta_destino_requerida|cuenta_destino_no_aplica|cuenta_destino_invalida|cuentas_iguales`;
+  409 `propuesta_ya_aplicada|propuesta_descartada|propuesta_ya_descartada|propuesta_sin_cuenta_origen|cuenta_origen_no_disponible|periodo_conciliado`. Auditoría `conciliacion.propuestaaplicada|propuestadescartada` (catálogo 48).
+  Sin traducción 23505 de `ux_propuestas_tesoreria_mercadopago_origen`: solo la importación escribe, dentro de la transacción que crea la conciliación (guardas-inmatables); la base la hace cumplir y un test lo prueba con SQL crudo.
+- Web: sección "Movimientos a tesorería" en el detalle de la conciliación (`SeccionDePropuestas`, `DialogoDeResolucionDePropuesta`), Aplicar (con selector de cuenta en un retiro: activas, de la empresa, distintas del origen) y Descartar solo para el Admin, con diálogo de confirmación;
+  la escritura comparte `ocupadoRef` y deja inerte toda la pantalla.
+- Guards tocados: inventario golden (+3 líneas), `AccionAuditadaTests` (48), `SuperficieDeAutorizacionTests` (3 rutas). `LectoresDeComprobantesVentaEstructuralesTests` obligó a renombrar un campo `Cobros`.
+- Verificación: build 0 errores; sin cambios de modelo pendientes; Domain 2606; Application 1660; integración (E7 + 31 de conciliación + Tesoreria + SuperficieDeAutorizacion + AislamientoDeTenant + UpDownUp + Cobertura) 257 pass; web: tsc, oxlint sin errores, 150 tests (api, página, tesoreria), `npm run build` ok.
+- Mutación (una por corrida, restaurada con hash idéntico): signo de la diferencia (5 rojos) y redondeo ToEven (1) en Domain; quitar `Payout` (retiro por fila); quitar `ExigirPendiente` en aplicar (3 rojos: idempotencia, carrera, descartar); `FOR UPDATE`→`FOR SHARE` de la propuesta (carrera: rojo 2 de 2 corridas; la primera corrida de la combinación con el test mixto cayó 1 de 2);
+  destino inactivo; destino de otra empresa (filtro de empresa del lock); signo del asiento de origen; descartar sin `ExigirPendiente`; sin UNIQUE; sin RLS (`AislamientoDeTenant` rojo); sin guarda de período en la cuenta de origen (rojo solo con el test de la diferencia: en el retiro la guarda del destino la tapa); web: `puedeResolver` sin gate de Admin, sin `ocupadoRef` en `resolver`, cuentas inactivas en el selector.
+- Open: pendiente producción (dueño): registrar la app en Mercado Pago, probar con un reporte real (columnas del CSV de la documentación, WITHDRAWAL con signo negativo supuesto) y release del POS; límites conocidos: turno cerrado después de importar no se suma, `WITHDRAWAL_CANCEL` no propone, la comisión estimada es una aproximación a centavos.
