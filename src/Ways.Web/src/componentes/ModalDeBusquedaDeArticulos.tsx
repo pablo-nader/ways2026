@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeOfertas } from '../api/ofertas'
 import type { ArticuloParaCarrito } from '../api/carrito'
-import type { ArticuloListado, LineaDeResolucion, ResultadoDeResolucion } from '../api/tipos'
+import type { ResultadoDeResolucion } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
-import { obtenerOfertasVigentes, type OfertaVigente } from '../api/ofertasVigentes'
+import type { OfertaVigente } from '../api/ofertasVigentes'
+import type { ArticuloDeBusqueda, FuenteDeArticulos } from '../pos/fuenteDeArticulos'
 import { MarcaDeOfertas } from './MarcaDeOfertas'
 import { Modal } from './Modal'
 
@@ -23,6 +22,8 @@ function formatearMoneda(valor: number | null): string {
 }
 
 export type PropsModalDeBusquedaDeArticulos = {
+  /** De dónde salen los resultados y su precio: la instantánea local o la API (`pos/fuenteDeArticulos`). */
+  fuente: FuenteDeArticulos
   /** Contexto de precio de la venta en curso — mismo par que alimenta la resolución del carrito
    * (`Pos.tsx`): lista de precio del cliente, empresa del punto de venta. `null` mientras
    * cualquiera de los dos todavía no cargó — el buscador queda inerte en vez de resolver contra
@@ -58,6 +59,7 @@ export type PropsModalDeBusquedaDeArticulos = {
  * donde el Enter final de una pistola reabriría el buscador.
  */
 export function ModalDeBusquedaDeArticulos({
+  fuente,
   idListaPrecio,
   idEmpresa,
   motivoSinAgregar,
@@ -69,7 +71,7 @@ export function ModalDeBusquedaDeArticulos({
   const puedeAgregar = motivoSinAgregar === undefined
   const [termino, setTermino] = useState('')
   const [buscando, setBuscando] = useState(false)
-  const [resultados, setResultados] = useState<ArticuloListado[] | null>(null)
+  const [resultados, setResultados] = useState<ArticuloDeBusqueda[] | null>(null)
   const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>({})
   const [vigentes, setVigentes] = useState<Record<number, OfertaVigente[]>>({})
   const [error, setError] = useState('')
@@ -103,9 +105,9 @@ export function ModalDeBusquedaDeArticulos({
 
   // Degradación silenciosa: sin marcas de oferta la búsqueda sigue sirviendo, así que un fallo no muestra error.
   async function cargarVigentes(generacion: number, idsArticulos: number[], empresa: number | null, idListaPrecio: number) {
-    if (empresa === null) return
+    if (empresa === null || fuente.ofertasVigentes === undefined) return
     try {
-      const respuesta = await obtenerOfertasVigentes({ idsArticulos, idEmpresa: empresa, idListaPrecio })
+      const respuesta = await fuente.ofertasVigentes(idsArticulos, empresa, idListaPrecio)
       if (generacionRef.current !== generacion) return
       const indice: Record<number, OfertaVigente[]> = {}
       if (Array.isArray(respuesta)) for (const v of respuesta) if (v.ofertas.length > 0) indice[v.idArticulo] = v.ofertas
@@ -133,24 +135,22 @@ export function ModalDeBusquedaDeArticulos({
     setVigentes({})
 
     try {
-      const pagina = await clienteDeArticulos.listar(propio, false, undefined, { soloVendibles: true })
+      const items = await fuente.buscar(propio)
       if (generacionRef.current !== generacion) return
-      setResultados(pagina.items)
+      setResultados(items)
 
-      if (pagina.items.length === 0 || idListaPrecio === null) {
+      if (items.length === 0 || idListaPrecio === null) {
         setPrecios({})
         return
       }
 
-      void cargarVigentes(generacion, pagina.items.slice(0, MAXIMO_DE_ARTICULOS_CON_OFERTAS).map((a) => a.id), idEmpresa, idListaPrecio)
+      void cargarVigentes(generacion, items.slice(0, MAXIMO_DE_ARTICULOS_CON_OFERTAS).map((a) => a.id), idEmpresa, idListaPrecio)
 
-      const lineas: LineaDeResolucion[] = pagina.items.map((a) => ({
-        idArticulo: a.id,
-        idEmpresa,
+      const resueltos = await fuente.resolverPrecios(
+        items.map((a) => a.id),
         idListaPrecio,
-        cantidad: CANTIDAD_POR_DEFECTO,
-      }))
-      const resueltos = await clienteDeOfertas.resolver(lineas, 'PorLinea')
+        idEmpresa,
+      )
       if (generacionRef.current !== generacion) return
       const indice: Record<number, ResultadoDeResolucion> = {}
       for (const r of resueltos) indice[r.idArticulo] = r
@@ -177,7 +177,7 @@ export function ModalDeBusquedaDeArticulos({
     void buscar(termino)
   }
 
-  function agregar(articulo: ArticuloListado) {
+  function agregar(articulo: ArticuloDeBusqueda) {
     if (!puedeAgregar) return
     if (agregadoRef.current) return
     agregadoRef.current = true

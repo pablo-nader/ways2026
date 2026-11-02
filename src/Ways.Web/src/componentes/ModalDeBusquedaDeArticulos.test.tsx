@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDeBusquedaDeArticulos } from './ModalDeBusquedaDeArticulos'
-import type { ArticuloListado, PaginaDe, ResultadoDeResolucion } from '../api/tipos'
+import type { ArticuloDeInstantanea, ArticuloListado, InstantaneaDePos, PaginaDe, ResultadoDeResolucion } from '../api/tipos'
+import { fuenteDeArticulosDesdeApi, fuenteDeArticulosDesdeInstantanea } from '../pos/fuenteDeArticulos'
 import type { OfertasVigentesDeArticulo } from '../api/ofertasVigentes'
 
 const apiGetMock = vi.fn()
@@ -64,6 +65,7 @@ function paginaDe(items: ArticuloListado[]): PaginaDe<ArticuloListado> {
 
 function propsDe(sobrescribir: Partial<Parameters<typeof ModalDeBusquedaDeArticulos>[0]> = {}) {
   return {
+    fuente: fuenteDeArticulosDesdeApi(),
     idListaPrecio: 1,
     idEmpresa: 1,
     onAgregar: vi.fn(),
@@ -114,6 +116,46 @@ describe('ModalDeBusquedaDeArticulos — contexto de precio', () => {
         agregacion: 'PorLinea',
       }),
     )
+  })
+})
+
+describe('ModalDeBusquedaDeArticulos — fuente local (instantánea)', () => {
+  const articuloLocal: ArticuloDeInstantanea = {
+    idArticulo: 9,
+    codigoInterno: 'A0009',
+    nombre: 'Fanta 1.5L',
+    codigosBarra: [],
+    idAlicuotaIva: 1,
+    porcentajeIva: 21,
+    unidadVenta: 'Unidad',
+    preciosPorLista: [{ idListaPrecio: 3, precioOriginal: 1500, precioFinal: 1500, descuentoUnitario: 0, aplicadas: [] }],
+  }
+  const instantanea: InstantaneaDePos = {
+    momento: '2026-10-11T12:00:00Z',
+    idPuntoVenta: 1,
+    articulos: [articuloLocal],
+    clientes: [],
+    mediosDePago: [],
+    toleranciaPago: 0,
+  }
+
+  it('con una fuente de instantánea lista, muestra el precio y agrega sin pedirle nada al servidor', async () => {
+    const onAgregar = vi.fn()
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea), idListaPrecio: 3, idEmpresa: 7, onAgregar })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fan' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('Fanta 1.5L')).toBeInTheDocument()
+    expect(await screen.findByText(/1\.500/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    expect(onAgregar).toHaveBeenCalledWith(
+      { idArticulo: 9, codigoInterno: 'A0009', nombre: 'Fanta 1.5L', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Unidad' },
+      1,
+    )
+    expect(apiGetMock).not.toHaveBeenCalled()
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 })
 
