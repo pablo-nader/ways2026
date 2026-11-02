@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import type { ComponentProps } from 'react'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -21,6 +21,7 @@ import {
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
 import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta } from '../impresion/plantillas'
+import type { CobroMercadoPago } from '../api/cobrosMercadoPago'
 import type {
   ArticuloDeInstantanea,
   ArticuloEscaneado,
@@ -53,7 +54,8 @@ import { claveIndexedDbDeBorrador, ProveedorDeBorradoresDeTicket } from '../pos/
 import { ProveedorDeAccionesDePos, useAccionesDePos } from '../pos/AccionesDePosContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
-import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
+import { agregarAOutbox, agregarARechazada, guardarBloque, leerBloque, leerOutbox } from '../pos/outboxOffline'
+import { guardarReservaDeCobro, leerCobrosSinVenta, leerReservaDeCobro } from '../pos/reservaDeCobro'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 /** `Pos()` (stage-17-presupuestos-y-remitos, Slice 7) lee `useSearchParams` — necesita un Router
@@ -529,6 +531,12 @@ async function comoPosDeEscritorio(prueba: () => Promise<void>) {
 vi.mock('../pos/turnoConfirmadoLocal', async (importarOriginal) => ({
   ...(await importarOriginal<typeof import('../pos/turnoConfirmadoLocal')>()),
   LIMITE_DE_ESPERA_DEL_TURNO_MS: 300,
+}))
+
+/** La consulta del cobro con QR espera 2 s entre lecturas: en los tests se acorta para esperar al dato y no al reloj. */
+vi.mock('../pos/cobroMercadoPago', async (importarOriginal) => ({
+  ...(await importarOriginal<typeof import('../pos/cobroMercadoPago')>()),
+  esperaHastaLaProximaConsulta: () => 15,
 }))
 
 vi.mock('../puntoVenta/usePuntoVenta', () => ({
@@ -11497,5 +11505,629 @@ describe('Pos — venta con envío', () => {
     expect(await screen.findByText('Calculando el importe del envío…')).toBeInTheDocument()
     expect(screen.queryByText('Envío', { selector: 'td' })).not.toBeInTheDocument()
     expect(botonCobrar()).toBeDisabled()
+  })
+})
+
+describe('Pos — cobro con QR de Mercado Pago', () => {
+  const medioMercadoPago = medioFixture({
+    id: 4,
+    nombre: 'Mercado Pago QR',
+    comportamiento: 'Electronico',
+    admiteVuelto: false,
+    requiereReferencia: true,
+    proveedor: 'mercadopago_qr',
+  })
+  const RUTA_COBROS = '/pos/mercadopago/cobros/'
+  const QR = '00020101021243650016com.mercadolibre0201'
+
+  function cobroDeServidor(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
+    return {
+      idCobro: 31,
+      estado: 'pendiente',
+      qrData: QR,
+      expiraEn: new Date(Date.now() + 10 * 60_000).toISOString(),
+      importe: 100,
+      importePagado: null,
+      importeDistinto: false,
+      verificandoPago: false,
+      pagoInformadoSinDatos: false,
+      usadoEnVenta: false,
+      ...sobrescribir,
+    }
+  }
+
+  const cobroAprobado = (sobrescribir: Partial<CobroMercadoPago> = {}) =>
+    cobroDeServidor({ estado: 'aprobado', qrData: null, importePagado: 100, ...sobrescribir })
+
+  /** Lo que el servidor contesta a la creación, a cada lectura y a la cancelación: lo cambia cada test. */
+  const servidor = {
+    crear: vi.fn<(cuerpo: unknown) => Promise<CobroMercadoPago>>(),
+    leer: vi.fn<() => Promise<CobroMercadoPago>>(),
+    cancelar: vi.fn<() => Promise<CobroMercadoPago>>(),
+  }
+
+  beforeEach(() => {
+    servidor.crear.mockReset().mockResolvedValue(cobroDeServidor())
+    servidor.leer.mockReset().mockResolvedValue(cobroDeServidor())
+    servidor.cancelar.mockReset().mockResolvedValue(cobroDeServidor({ estado: 'cancelado', qrData: null }))
+    mockearApiGet((ruta) => {
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioMercadoPago])
+      if (ruta.startsWith(RUTA_COBROS)) return servidor.leer()
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+      if (ruta === RUTA_COBROS) return servidor.crear(cuerpo)
+      if (ruta.startsWith(RUTA_COBROS) && ruta.endsWith('/cancelar')) return servidor.cancelar()
+      if (ruta === '/ventas') return new Promise(() => {})
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  })
+
+  const crearCobroLlamadas = () => apiPostMock.mock.calls.filter(([ruta]) => ruta === RUTA_COBROS)
+  const lecturasDelCobro = () => apiGetMock.mock.calls.filter(([ruta]) => typeof ruta === 'string' && ruta.startsWith(RUTA_COBROS))
+  const botonCobrar = () => screen.getByRole('button', { name: /Cobrar/ })
+  const qrEnPantalla = () => screen.queryByRole('img', { name: 'Código QR de Mercado Pago' })
+
+  async function montar(props: ComponentProps<typeof Pos> = {}) {
+    renderPos('/pos', props)
+    await esperarAlConsumidorFinal()
+    await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+  }
+
+  async function prepararAlmacenConBloque() {
+    await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+  }
+
+  async function cargarLinea() {
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
+  }
+
+  async function cargarLineaYMedio(nombreDelMedio = medioMercadoPago.nombre, importe = '100', cubreElTotal = true) {
+    await cargarLinea()
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), nombreDelMedio)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${nombreDelMedio} (fila 1)`), importe)
+    if (cubreElTotal) await waitFor(() => expect(botonCobrar()).toBeEnabled())
+  }
+
+  async function cobrarConQr(props: ComponentProps<typeof Pos> = {}) {
+    await prepararAlmacenConBloque()
+    await montar(props)
+    await cargarLineaYMedio()
+    await userEvent.click(botonCobrar())
+  }
+
+  it('un medio con proveedor no pide referencia', async () => {
+    await prepararAlmacenConBloque()
+    await montar()
+    await esperarMediosDePago()
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioMercadoPago.nombre)
+
+    expect(screen.queryByLabelText(`Referencia de ${medioMercadoPago.nombre} (fila 1)`)).not.toBeInTheDocument()
+  })
+
+  it('reserva el número, crea el cobro con él y muestra el QR sin encolar todavía la venta', async () => {
+    await cobrarConQr()
+
+    expect(await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })).toBeInTheDocument()
+    expect(crearCobroLlamadas()).toHaveLength(1)
+    expect(crearCobroLlamadas()[0][1]).toEqual({ idMedioPago: medioMercadoPago.id, numeroPreasignado: 500, importe: 100 })
+    expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+    expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, estado: 'en_curso', idCobro: 31 })
+  })
+
+  it('aprobado: cierra el modal, encola la venta UNA vez con el número reservado y el cobro, e imprime una sola vez', async () => {
+    const alEmitir = vi.fn()
+    await cobrarConQr({ alEmitir })
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+
+    servidor.leer.mockResolvedValue(cobroAprobado())
+
+    expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+    expect(qrEnPantalla()).not.toBeInTheDocument()
+    const almacen = crearAlmacenIndexedDb()
+    const outbox = await leerOutbox(almacen)
+    expect(outbox).toHaveLength(1)
+    expect(outbox[0].numeroPreasignado).toBe(500)
+    expect(outbox[0].solicitud.pagos).toEqual([{ idMedioPago: medioMercadoPago.id, importe: 100, referencia: null, vuelto: 0, idCobroMercadoPago: 31 }])
+    expect(alEmitir).toHaveBeenCalledTimes(1)
+    expect((alEmitir.mock.calls[0][0] as ComprobanteEmitido).numeroVisible).toBe('0007-00000500')
+    expect((await leerBloque(almacen))?.proximo).toBe(501)
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    expect(crearCobroLlamadas()).toHaveLength(1)
+
+    const lecturas = lecturasDelCobro().length
+    await new Promise((r) => setTimeout(r, 120))
+    expect(lecturasDelCobro()).toHaveLength(lecturas)
+    expect(alEmitir).toHaveBeenCalledTimes(1)
+  })
+
+  it('un doble click en Cobrar crea un solo cobro', async () => {
+    await prepararAlmacenConBloque()
+    await montar()
+    await cargarLineaYMedio()
+
+    await act(async () => {
+      botonCobrar().click()
+      botonCobrar().click()
+    })
+
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+    expect(crearCobroLlamadas()).toHaveLength(1)
+  })
+
+  it('"Cancelar cobro" con el cobro todavía pendiente vuelve al pago, suelta la reserva y no consume el número', async () => {
+    await cobrarConQr()
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar cobro' }))
+
+    expect(await screen.findByText(/El cobro con Mercado Pago se canceló/)).toBeInTheDocument()
+    expect(qrEnPantalla()).not.toBeInTheDocument()
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+    expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+    expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toBeNull()
+    expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
+  })
+
+  // F1: un número apartado y nunca vendido no deja un hueco: la próxima venta lo lleva y lo declarado coincide con lo vendido.
+  it('cobro cancelado y después una venta en efectivo: la venta lleva el mismo número y no queda ningún hueco', async () => {
+    await cobrarConQr()
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar cobro' }))
+    await screen.findByText(/El cobro con Mercado Pago se canceló/)
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+    await userEvent.click(botonCobrar())
+
+    expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+    const almacen = crearAlmacenIndexedDb()
+    const vendidos = (await leerOutbox(almacen)).map((v) => v.numeroPreasignado)
+    expect(vendidos).toEqual([500])
+    expect(((await leerBloque(almacen))?.proximo ?? 0) - 1).toBe(Math.max(...vendidos))
+  })
+
+  // F4: la baja de la reserva en la emisión online se espera: el cajero no ve la venta terminada con la reserva todavía viva.
+  it('la venta emitida online con el número del cobro consume la reserva antes de terminar: el bloque deja atrás el número', async () => {
+    // Una copia local sin `proveedor` en los medios electrónicos no admite la venta local (F6): sale por el camino online con el número.
+    await prepararAlmacenOffline({
+      instantanea: instantaneaFixture({
+        mediosDePago: [{ idMedioPago: medioMercadoPago.id, nombre: medioMercadoPago.nombre, comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true }],
+      }),
+      bloque: { desde: 500, hasta: 599, proximo: 500 },
+    })
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+      if (ruta === RUTA_COBROS) return servidor.crear(cuerpo)
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ numeroVisible: '0007-00000500' }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    servidor.leer.mockResolvedValue(cobroAprobado())
+    // Lo que el almacén tiene en el instante en que la pantalla da la venta por terminada (cuando se imprime el ticket).
+    const bloquesAlTerminar: ReturnType<typeof leerBloque>[] = []
+    const alEmitir = vi.fn(() => {
+      bloquesAlTerminar.push(leerBloque(crearAlmacenIndexedDb()))
+    })
+    await montar({ alEmitir })
+    await cargarLineaYMedio()
+    await userEvent.click(botonCobrar())
+
+    const alertasDeVenta = () => apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')
+    await waitFor(() => expect(alertasDeVenta()).toHaveLength(1))
+    expect(alertasDeVenta()[0][1]).toMatchObject({ numeroPreasignado: 500, pagos: [{ idCobroMercadoPago: 31 }] })
+    expect(await screen.findByText('Venta finalizada')).toBeInTheDocument()
+    expect(alEmitir).toHaveBeenCalledTimes(1)
+    expect((await bloquesAlTerminar[0])?.proximo).toBe(501)
+    const almacen = crearAlmacenIndexedDb()
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    expect((await leerBloque(almacen))?.proximo).toBe(501)
+  })
+
+  // F6: una copia local anterior a `proveedor` no deja vender offline con un medio electrónico hasta refrescarse.
+  it('sin conexión, una copia local sin `proveedor` en los medios electrónicos no admite la venta y lo dice', async () => {
+    const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({
+          mediosDePago: [{ idMedioPago: medioTarjeta.id, nombre: medioTarjeta.nombre, comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true }],
+        }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      await montar()
+      await cargarLinea()
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioTarjeta.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioTarjeta.nombre} (fila 1)`), '100')
+      await userEvent.type(await screen.findByLabelText(`Referencia de ${medioTarjeta.nombre} (fila 1)`), 'R1')
+      await waitFor(() => expect(botonCobrar()).toBeEnabled())
+
+      await userEvent.click(botonCobrar())
+
+      expect(await screen.findByText(/anterior a los cobros con Mercado Pago/, { selector: '.alert' })).toBeInTheDocument()
+      const almacen = crearAlmacenIndexedDb()
+      expect(await leerOutbox(almacen)).toEqual([])
+      expect((await leerBloque(almacen))?.proximo).toBe(500)
+    } finally {
+      sinRed.mockRestore()
+    }
+  })
+
+  it('cancelar con el cliente ya pagado (la respuesta es aprobado) continúa la venta', async () => {
+    servidor.cancelar.mockResolvedValue(cobroAprobado())
+    await cobrarConQr()
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar cobro' }))
+
+    expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+    const outbox = await leerOutbox(crearAlmacenIndexedDb())
+    expect(outbox).toHaveLength(1)
+    expect(outbox[0].solicitud.pagos?.[0]).toMatchObject({ idCobroMercadoPago: 31 })
+  })
+
+  it('vencido: vuelve al pago y el reintento crea el cobro con el MISMO número, sin consumir otro', async () => {
+    const alEmitir = vi.fn()
+    await cobrarConQr({ alEmitir })
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+
+    servidor.leer.mockResolvedValue(cobroDeServidor({ estado: 'expirado', qrData: null }))
+    expect(await screen.findByText(/venció sin pagarse/)).toBeInTheDocument()
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+    expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
+
+    servidor.crear.mockResolvedValue(cobroDeServidor({ idCobro: 32 }))
+    servidor.leer.mockResolvedValue(cobroDeServidor({ idCobro: 32 }))
+    await userEvent.click(botonCobrar())
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+    servidor.leer.mockResolvedValue(cobroAprobado({ idCobro: 32 }))
+
+    expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+    expect(crearCobroLlamadas().map(([, cuerpo]) => (cuerpo as { numeroPreasignado: number }).numeroPreasignado)).toEqual([500, 500])
+    const almacen = crearAlmacenIndexedDb()
+    expect((await leerOutbox(almacen))[0].numeroPreasignado).toBe(500)
+    expect((await leerBloque(almacen))?.proximo).toBe(501)
+    expect(alEmitir).toHaveBeenCalledTimes(1)
+  })
+
+  it('"verificando el pago" no muestra el QR', async () => {
+    servidor.crear.mockResolvedValue(cobroDeServidor({ verificandoPago: true }))
+    servidor.leer.mockResolvedValue(cobroDeServidor({ verificandoPago: true }))
+
+    await cobrarConQr()
+
+    expect(await screen.findByText('Verificando el pago…')).toBeInTheDocument()
+    expect(qrEnPantalla()).not.toBeInTheDocument()
+  })
+
+  it('un pago informado sin datos no muestra el QR ni deja cancelar', async () => {
+    const informado = cobroDeServidor({ pagoInformadoSinDatos: true, verificandoPago: true, qrData: null })
+    servidor.crear.mockResolvedValue(informado)
+    servidor.leer.mockResolvedValue(informado)
+
+    await cobrarConQr()
+
+    expect(await screen.findByText(/Mercado Pago informa el pago, falta confirmarlo/)).toBeInTheDocument()
+    expect(qrEnPantalla()).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancelar cobro' })).toBeDisabled()
+  })
+
+  it('un importe distinto del pedido bloquea la venta: no se encola, el cobro sigue vivo y se avisa', async () => {
+    await cobrarConQr()
+    await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+    servidor.leer.mockResolvedValue(cobroAprobado({ importePagado: 90, importeDistinto: true }))
+
+    expect(await screen.findByText(/aprobó \$\s?90,00 y la venta pide \$\s?100,00/, { selector: 'p.text-danger' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Entendido' }))
+
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+    expect(screen.getByText(/La venta no se cerró\. El cobro aprobado se conserva: ajustá la fila de Mercado Pago a \$\s?90,00/, { selector: '.alert' })).toBeInTheDocument()
+    expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+    expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, estado: 'en_curso' })
+  })
+
+  it('sin conexión muestra el aviso, no reserva ningún número y no crea el cobro', async () => {
+    const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      await prepararAlmacenConBloque()
+      await montar()
+      await cargarLineaYMedio()
+
+      await userEvent.click(botonCobrar())
+
+      expect(await screen.findByText(/Mercado Pago necesita conexión/)).toBeInTheDocument()
+      expect(crearCobroLlamadas()).toHaveLength(0)
+      const almacen = crearAlmacenIndexedDb()
+      expect((await leerBloque(almacen))?.proximo).toBe(500)
+      expect(await leerReservaDeCobro(almacen)).toBeNull()
+    } finally {
+      sinRed.mockRestore()
+    }
+  })
+
+  it('dos filas con Mercado Pago se rechazan antes de reservar o crear nada', async () => {
+    await prepararAlmacenConBloque()
+    await montar()
+    await cargarLineaYMedio(medioMercadoPago.nombre, '40', false)
+    await userEvent.click(screen.getByRole('button', { name: /Agregar medio de pago/ }))
+    await userEvent.selectOptions(screen.getAllByLabelText('Medio de pago')[1], medioMercadoPago.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioMercadoPago.nombre} (fila 2)`), '60')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+
+    await userEvent.click(botonCobrar())
+
+    expect(await screen.findByText(/Una venta admite un solo cobro con Mercado Pago/)).toBeInTheDocument()
+    expect(crearCobroLlamadas()).toHaveLength(0)
+    expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
+  })
+
+  it('una venta mixta cobra con QR solo la fila de Mercado Pago y deja la otra como siempre', async () => {
+    servidor.crear.mockResolvedValue(cobroDeServidor({ importe: 60 }))
+    servidor.leer.mockResolvedValue(cobroAprobado({ importe: 60, importePagado: 60 }))
+    await prepararAlmacenConBloque()
+    await montar()
+    await cargarLineaYMedio(medioEfectivo.nombre, '40', false)
+    await userEvent.click(screen.getByRole('button', { name: /Agregar medio de pago/ }))
+    await userEvent.selectOptions(screen.getAllByLabelText('Medio de pago')[1], medioMercadoPago.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioMercadoPago.nombre} (fila 2)`), '60')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+
+    await userEvent.click(botonCobrar())
+
+    expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+    expect(crearCobroLlamadas()[0][1]).toMatchObject({ importe: 60 })
+    const [pagoEfectivo, pagoQr] = (await leerOutbox(crearAlmacenIndexedDb()))[0].solicitud.pagos ?? []
+    expect(pagoEfectivo).toEqual({ idMedioPago: medioEfectivo.id, importe: 40, referencia: null, vuelto: 0 })
+    expect(pagoQr).toMatchObject({ idMedioPago: medioMercadoPago.id, importe: 60, idCobroMercadoPago: 31 })
+  })
+
+  describe('al recargar con un cobro vivo', () => {
+    async function recargarConCobroVivo() {
+      await prepararAlmacenConBloque()
+      await guardarReservaDeCobro(crearAlmacenIndexedDb(), {
+        idPuntoVenta: 7,
+        numero: 500,
+        estado: 'en_curso',
+        idCobro: 31,
+        idMedioPago: medioMercadoPago.id,
+        importe: 100,
+        creadoEn: '2026-11-01T12:00:00.000Z',
+      })
+      await montar()
+    }
+
+    it('ofrece retomar o cancelar, y retomar vuelve a mostrar el QR', async () => {
+      await recargarConCobroVivo()
+
+      expect(await screen.findByText(/Quedó un cobro de Mercado Pago sin cerrar por \$\s?100,00/)).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: 'Retomar cobro' }))
+
+      expect(await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })).toBeInTheDocument()
+      expect(crearCobroLlamadas()).toHaveLength(0)
+    })
+
+    it('cancelar el cobro vivo lo cierra, suelta la reserva sin consumir el número y avisa', async () => {
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Cancelar cobro' }))
+
+      expect(await screen.findByText(/El cobro con Mercado Pago se canceló/, { selector: '.alert' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toBeNull()
+      expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
+    })
+
+    // R1a: la reserva solo frena a la venta LOCAL (tomaría su número); una venta común por el camino online lleva el número del servidor.
+    it('una venta común (efectivo) no se bloquea con un cobro vivo: sale online con el número del servidor y la reserva queda intacta', async () => {
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_COBROS) return servidor.crear(cuerpo)
+        if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ numeroVisible: '0007-00000999' }))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      await recargarConCobroVivo()
+      await screen.findByRole('button', { name: 'Retomar cobro' })
+
+      await cargarLineaYMedio(medioEfectivo.nombre)
+      await userEvent.click(botonCobrar())
+
+      expect(await screen.findByText('Venta finalizada')).toBeInTheDocument()
+      const ventas = apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')
+      expect(ventas).toHaveLength(1)
+      expect((ventas[0][1] as { numeroPreasignado?: number }).numeroPreasignado).toBeUndefined()
+      const almacen = crearAlmacenIndexedDb()
+      expect(await leerOutbox(almacen)).toEqual([])
+      expect((await leerBloque(almacen))?.proximo).toBe(500)
+      expect(await leerReservaDeCobro(almacen)).toMatchObject({ numero: 500, idCobro: 31 })
+    })
+
+    it('sin conexión, la venta local que tomaría el número del cobro se bloquea con un aviso y no toma el número', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await recargarConCobroVivo()
+        await screen.findByRole('button', { name: 'Retomar cobro' })
+
+        await cargarLineaYMedio(medioEfectivo.nombre)
+        await userEvent.click(botonCobrar())
+
+        expect(await screen.findByText(/Hay un cobro de Mercado Pago en curso: retomalo o cancelalo/, { selector: '.alert' })).toBeInTheDocument()
+        expect(apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')).toHaveLength(0)
+        const almacen = crearAlmacenIndexedDb()
+        expect(await leerOutbox(almacen)).toEqual([])
+        expect((await leerBloque(almacen))?.proximo).toBe(500)
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    // R2: una reserva vieja de un cobro que una venta ya usó se sana sola al montar, sin mostrar nada.
+    it('con conexión, si el servidor dice que una venta ya usó el cobro, la reserva se sana al montar: sin aviso y el bloque deja atrás el número', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado({ usadoEnVenta: true }))
+      await recargarConCobroVivo()
+
+      const almacen = crearAlmacenIndexedDb()
+      await waitFor(async () => expect(await leerReservaDeCobro(almacen)).toBeNull())
+      expect((await leerBloque(almacen))?.proximo).toBe(501)
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      expect(screen.queryByText(/Cargá la venta/)).not.toBeInTheDocument()
+    })
+
+    it('"Retomar cobro" consulta el cobro primero: si la venta ya se registró, consume el número y no muestra el QR ni pide cargar la venta', async () => {
+      await recargarConCobroVivo()
+      await screen.findByRole('button', { name: 'Retomar cobro' })
+      servidor.leer.mockResolvedValue(cobroAprobado({ usadoEnVenta: true }))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Retomar cobro' }))
+
+      const almacen = crearAlmacenIndexedDb()
+      await waitFor(async () => expect(await leerReservaDeCobro(almacen)).toBeNull())
+      expect((await leerBloque(almacen))?.proximo).toBe(501)
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      expect(qrEnPantalla()).not.toBeInTheDocument()
+      expect(screen.queryByText(/Cargá la venta/)).not.toBeInTheDocument()
+    })
+
+    // R1b: un cobro aprobado sin venta tiene una salida explícita que libera la caja sin dejar un hueco.
+    it('"Apartar cobro y liberar la caja" del aviso: confirma, mueve el cobro a la lista, libera la caja y la próxima venta lleva el mismo número', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Apartar cobro' }))
+
+      expect(await screen.findByText(/Cobros de Mercado Pago sin venta/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+      const almacen = crearAlmacenIndexedDb()
+      expect(await leerReservaDeCobro(almacen)).toBeNull()
+      expect((await leerBloque(almacen))?.proximo).toBe(500)
+      expect(await leerCobrosSinVenta(almacen)).toMatchObject([{ idCobro: 31, numero: 500, idPuntoVenta: 7, idMedioPago: medioMercadoPago.id, importe: 100, importePagado: 100 }])
+
+      await cargarLineaYMedio(medioEfectivo.nombre)
+      await userEvent.click(botonCobrar())
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([500])
+    })
+
+    it('la lista de cobros sin venta sobrevive a una recarga y muestra importe y cobro', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Apartar cobro' }))
+      await screen.findByText(/Cobros de Mercado Pago sin venta/)
+
+      cleanup()
+      await montar()
+
+      expect(await screen.findByText(/Cobros de Mercado Pago sin venta/)).toBeInTheDocument()
+      expect(screen.getByText(/cobro 31/)).toBeInTheDocument()
+      expect(screen.getByText(/necesitan a un supervisor/)).toBeInTheDocument()
+    })
+
+    it('si el cajero se arrepiente en la confirmación, el cobro sigue como estaba', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Volver' }))
+
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, idCobro: 31 })
+      expect(await leerCobrosSinVenta(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    it('un cobro todavía pendiente no se aparta: se avisa que se retome o cancele', async () => {
+      await recargarConCobroVivo()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+
+      expect(await screen.findByText(/El cobro sigue pendiente: retomalo o cancelalo/)).toBeInTheDocument()
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, idCobro: 31 })
+      expect(await leerCobrosSinVenta(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    it('un importe distinto detiene la venta con la salida "Apartar cobro y liberar la caja"', async () => {
+      await prepararAlmacenConBloque()
+      await montar()
+      await cargarLineaYMedio()
+      await userEvent.click(botonCobrar())
+      await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+      servidor.leer.mockResolvedValue(cobroAprobado({ importePagado: 90, importeDistinto: true }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Entendido' }))
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Apartar cobro' }))
+
+      expect(await screen.findByText(/quedó apartado y la caja puede vender/)).toBeInTheDocument()
+      const almacen = crearAlmacenIndexedDb()
+      expect(await leerReservaDeCobro(almacen)).toBeNull()
+      expect(await leerCobrosSinVenta(almacen)).toMatchObject([{ idCobro: 31, numero: 500, importe: 100, importePagado: 90 }])
+      expect((await leerBloque(almacen))?.proximo).toBe(500)
+    })
+
+    it('un cobro que ya se aprobó mientras tanto se retoma sin carrito: queda vivo para la próxima venta del mismo importe', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Retomar cobro' }))
+
+      expect(await screen.findByText(/quedó aprobado\. Cargá la venta y cobrala con Mercado Pago/)).toBeInTheDocument()
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, estado: 'en_curso' })
+      expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    it('la venta siguiente por el mismo importe usa el cobro aprobado y su número, sin crear otro cobro', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Retomar cobro' }))
+      await screen.findByText(/quedó aprobado/)
+
+      await cargarLineaYMedio()
+      await userEvent.click(botonCobrar())
+
+      // F7: reutilizar un cobro aprobado exige confirmarlo, con lo que se cobró a la vista.
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Cobro de Mercado Pago aprobado' })
+      expect(within(dialogo).getByText(/Mercado Pago ya aprobó \$\s?100,00/)).toBeInTheDocument()
+      expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Usar este cobro' }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect(crearCobroLlamadas()).toHaveLength(0)
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox[0].numeroPreasignado).toBe(500)
+      expect(outbox[0].solicitud.pagos?.[0]).toMatchObject({ idCobroMercadoPago: 31 })
+      // F5: usada la reserva, el aviso de retomar ya no existe.
+      expect(screen.queryByRole('button', { name: 'Retomar cobro' })).not.toBeInTheDocument()
+    })
+
+    it('si el cajero no confirma el reuso, no se encola nada y el cobro aprobado se conserva', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Retomar cobro' }))
+      await screen.findByText(/quedó aprobado/)
+
+      await cargarLineaYMedio()
+      await userEvent.click(botonCobrar())
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Cobro de Mercado Pago aprobado' })
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'No usarlo' }))
+
+      expect(await screen.findByText(/No se usó el cobro aprobado/, { selector: '.alert' })).toBeInTheDocument()
+      expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, estado: 'en_curso' })
+    })
+
+    // F7: un rechazo definitivo después de aprobado (límite de crédito) no pierde el cobro y dice qué hacer.
+    it('un importe distinto ya aprobado pide ajustar la fila al importe cobrado', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado({ importePagado: 90, importeDistinto: true }))
+      await recargarConCobroVivo()
+      await userEvent.click(await screen.findByRole('button', { name: 'Retomar cobro' }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Entendido' }))
+
+      await cargarLineaYMedio()
+      await userEvent.click(botonCobrar())
+
+      expect(await screen.findByText(/ajustá la fila de Mercado Pago a \$\s?90,00/, { selector: '.alert' })).toBeInTheDocument()
+      expect(screen.queryByRole('alertdialog', { name: 'Cobro de Mercado Pago aprobado' })).not.toBeInTheDocument()
+    })
   })
 })

@@ -546,6 +546,37 @@ export function pulsoDeCajon(): Uint8Array {
   return new ConstructorDeTicket().inicializar().abrirCajon().bytes()
 }
 
+/**
+ * Ticket "COBRO CON QR": el QR de Mercado Pago de una venta en curso, para que el cliente lo pague desde la térmica. No es un
+ * comprobante de venta: lleva el importe y el número de la venta que se está cobrando, nunca el cajón ni el corte de un ticket
+ * fiscal. Lanza si el contenido del QR no es ASCII imprimible (`ConstructorDeTicket.qr`): quien lo llama avisa que no se imprimió.
+ */
+export function qrDeCobroMercadoPago(datos: { qrData: string; importe: number; numeroVisible: string }, contexto: ContextoDeImpresion): Uint8Array {
+  const ticket = new ConstructorDeTicket()
+  encabezado(ticket, contexto)
+
+  ticket
+    .alinear('centro')
+    .negrita(true)
+    .linea('PAGO CON MERCADO PAGO')
+    .negrita(false)
+    .linea(`Venta ${datos.numeroVisible}`)
+    .tamanioDoble(true)
+    .negrita(true)
+    .linea(formatearMoneda(datos.importe))
+    .tamanioDoble(false)
+    .negrita(false)
+    .avanzar(1)
+    .qr(datos.qrData)
+    .avanzar(1)
+    .linea('Escaneá el QR con la app de')
+    .linea('Mercado Pago o tu banco')
+    .avanzar(2)
+    .cortar()
+
+  return ticket.bytes()
+}
+
 /** Datos que ya resolvió la pantalla para el ticket "RETIRO DE EFECTIVO" — `vendedor` es siempre
  * `contexto.cajero` (quien opera la caja en el momento del retiro), nunca se vuelve a pedir acá. */
 export type DatosTicketRetiro = { fecha: string; importe: number }

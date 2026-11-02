@@ -496,6 +496,37 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(0m, Assert.Single(instantanea.MediosDePago, m => m.IdMedioPago == efectivo.Id).PorcentajeFacturacion);
     }
 
+    [Fact]
+    public async Task LosMediosDePagoDeLaInstantaneaTraenSuProveedorDeCobro()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LosMediosDePagoDeLaInstantaneaTraenSuProveedorDeCobro));
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "proveedor");
+        using var _cajero = cajero;
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var efectivo = await db.MediosPago.Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).FirstAsync();
+        var electronico = await db.MediosPago.Where(m => m.Comportamiento == ComportamientoMedioPago.Electronico).FirstAsync();
+
+        var put = await admin.PutAsJsonAsync(
+            $"/api/catalogos/medios-pago/{electronico.Id}",
+            new MedioPagoAlta(
+                electronico.Nombre, electronico.IdEmpresa, electronico.Orden, electronico.Comportamiento,
+                electronico.AdmiteVuelto, electronico.RequiereReferencia, electronico.RecargoPorcentaje)
+            {
+                Proveedor = CampoOpcional<string?>.De("mercadopago_qr")
+            });
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        admin.Dispose();
+        VaciarCacheDeInstantaneas();
+
+        var respuesta = await cajero.GetAsync(RutaV2);
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+
+        Assert.Equal("mercadopago_qr", Assert.Single(instantanea.MediosDePago, m => m.IdMedioPago == electronico.Id).Proveedor);
+        Assert.Null(Assert.Single(instantanea.MediosDePago, m => m.IdMedioPago == efectivo.Id).Proveedor);
+    }
+
     // --- version=2: precios por lista, clientes, ETag/304 ---
 
     private const string RutaV2 = "/api/pos/instantanea?version=2";

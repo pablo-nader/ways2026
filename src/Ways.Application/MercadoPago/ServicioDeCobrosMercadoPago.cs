@@ -489,7 +489,8 @@ public class ServicioDeCobrosMercadoPago(
             cobro.ImportePagado,
             cobro.Estado == EstadosDeCobroMercadoPago.Aprobado && cobro.ImportePagado is { } pagado && pagado != cobro.Importe,
             pendiente && (cobro.QrData is null || pagoInformadoSinDatos),
-            pagoInformadoSinDatos);
+            pagoInformadoSinDatos,
+            cobro.IdComprobanteVenta is not null);
     }
 
     private static void ValidarSolicitud(SolicitudDeCobroMercadoPago solicitud)

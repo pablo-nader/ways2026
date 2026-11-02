@@ -177,6 +177,16 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
     expect(admisibilidadDeVentaOffline({ ...admitida, pagos: [{ comportamiento: 'Electronico' }] })).toBeNull()
   })
 
+  // F6: una copia guardada antes de que los medios trajeran `proveedor` (campo ausente) no dice cuál electrónico cobra con QR.
+  it('instantanea_sin_integracion: un medio electrónico sin el campo `proveedor` en la copia local no admite pagos electrónicos', () => {
+    const vieja = { ...instantanea, mediosDePago: [{ idMedioPago: 3, nombre: 'Tarjeta', comportamiento: 'Electronico' as const, admiteVuelto: false, requiereReferencia: true }] }
+    const actual = { ...instantanea, mediosDePago: [{ ...vieja.mediosDePago[0], proveedor: null }] }
+
+    expect(admisibilidadDeVentaOffline({ ...admitida, instantanea: vieja, pagos: [{ comportamiento: 'Electronico' }] })).toBe('instantanea_sin_integracion')
+    expect(admisibilidadDeVentaOffline({ ...admitida, instantanea: actual, pagos: [{ comportamiento: 'Electronico' }] })).toBeNull()
+    expect(admisibilidadDeVentaOffline({ ...admitida, instantanea: vieja, pagos: [{ comportamiento: 'Efectivo' }] })).toBeNull()
+  })
+
   it('sin_instantanea sin instantánea local (Consumidor Final)', () => {
     expect(admisibilidadDeVentaOffline({ ...admitida, instantanea: null })).toBe('sin_instantanea')
   })
@@ -244,6 +254,8 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
   })
 
   it('rechazoOfflineEsDefinitivo solo para los rechazos que el servidor ya contestó', () => {
+    expect(rechazoOfflineEsDefinitivo('cobro_en_curso')).toBe(false)
+    expect(rechazoOfflineEsDefinitivo('instantanea_sin_integracion')).toBe(false)
     expect(rechazoOfflineEsDefinitivo('limite_credito_excedido')).toBe(true)
     expect(rechazoOfflineEsDefinitivo('cuenta_corriente_no_verificada')).toBe(true)
     for (const motivo of [

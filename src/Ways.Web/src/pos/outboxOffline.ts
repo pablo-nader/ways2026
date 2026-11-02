@@ -14,6 +14,9 @@ import { MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL } from './envio'
 import { clienteAdmitidoOffline, pagosAdmitidosOffline } from './reglasOffline'
 import type { ComportamientoMedioPago, InstantaneaDePos, SolicitudDeVenta } from '../api/tipos'
 
+/** Otra venta mientras un cobro de Mercado Pago está apartado: tomaría su número o lo dejaría atrás. */
+export const MENSAJE_DE_COBRO_EN_CURSO = 'Hay un cobro de Mercado Pago en curso: retomalo o cancelalo.'
+
 const CLAVE_OUTBOX = 'outbox'
 const CLAVE_BLOQUE = 'bloqueNumeracion'
 
@@ -196,6 +199,9 @@ export type MotivoRechazoOffline =
   | 'cuenta_corriente_no_verificada'
   | 'envio_sin_cliente_con_domicilio'
   | 'envio_sin_importe'
+  | 'reserva_de_cobro_perdida'
+  | 'cobro_en_curso'
+  | 'instantanea_sin_integracion'
 
 const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   cliente_no_admitido: 'Sin conexión solo se puede vender al Consumidor Final o a un cliente de la copia local de este dispositivo.',
@@ -213,12 +219,23 @@ const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   envio_sin_cliente_con_domicilio:
     'Una venta con envío necesita un cliente identificado con domicilio en la copia local de este dispositivo — elegí otro cliente o destildá "Con envío".',
   envio_sin_importe: MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL,
+  reserva_de_cobro_perdida:
+    'El número reservado para el cobro con Mercado Pago ya no está disponible en este dispositivo: la venta no se registró. Avisá a un supervisor, porque el cobro puede haber quedado aprobado.',
+  cobro_en_curso: MENSAJE_DE_COBRO_EN_CURSO,
+  instantanea_sin_integracion:
+    'La copia local de este dispositivo es anterior a los cobros con Mercado Pago y no distingue qué medios cobran con QR: no se puede vender con medios electrónicos sin conexión. Recuperá la señal para actualizarla.',
 }
 
 /** Rechazos que el servidor ya contestó: la venta no se registra, ni local ni por el camino online
  * (`Pos.tsx` no la reintenta sin número — un envío online sin número arriesga un duplicado). */
 export function rechazoOfflineEsDefinitivo(motivo: MotivoRechazoOffline): boolean {
   return motivo === 'limite_credito_excedido' || motivo === 'cuenta_corriente_no_verificada'
+}
+
+/** Una copia local guardada antes de que los medios trajeran `proveedor` (campo ausente, no `null`) no dice cuál medio electrónico
+ * cobra con QR de Mercado Pago: vender offline con uno cobraría sin el QR. Se refresca con la próxima instantánea. */
+export function instantaneaSinIntegracionDeCobro(instantanea: InstantaneaDePos): boolean {
+  return instantanea.mediosDePago.some((m) => m.comportamiento === 'Electronico' && m.proveedor === undefined)
 }
 
 export function mensajeDeRechazoOffline(motivo: MotivoRechazoOffline): string {
@@ -248,6 +265,9 @@ export function admisibilidadDeVentaOffline(params: {
   }
   if (!pagosAdmitidosOffline(params.pagos, params.cliente.esConsumidorFinal)) return 'medio_no_admitido'
   if (!params.instantanea) return 'sin_instantanea'
+  if (params.pagos.some((p) => p.comportamiento === 'Electronico') && instantaneaSinIntegracionDeCobro(params.instantanea)) {
+    return 'instantanea_sin_integracion'
+  }
   if (!params.todasLasLineasConPrecio) return 'linea_sin_precio'
   if (!params.hayNumeroDisponible) return 'sin_numeracion'
   return null

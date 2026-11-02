@@ -1,0 +1,135 @@
+import { describe, expect, it } from 'vitest'
+import type { CobroMercadoPago } from '../api/cobrosMercadoPago'
+import type { MedioPagoListado } from '../api/tipos'
+import {
+  esperaHastaLaProximaConsulta,
+  formatearCuentaRegresiva,
+  INTERVALO_DE_CONSULTA_MS,
+  INTERVALO_TRAS_FALLO_MS,
+  medioConCobroIntegrado,
+  planDeCobroMercadoPago,
+  segundosParaExpirar,
+  vistaDelCobro,
+} from './cobroMercadoPago'
+
+function cobro(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
+  return {
+    idCobro: 1,
+    estado: 'pendiente',
+    qrData: '00020101021243650016com.mercadolibre',
+    expiraEn: '2026-11-01T12:10:00Z',
+    importe: 1500,
+    importePagado: null,
+    importeDistinto: false,
+    verificandoPago: false,
+    pagoInformadoSinDatos: false,
+    usadoEnVenta: false,
+    ...sobrescribir,
+  }
+}
+
+function medio(id: number, proveedor: string | null): MedioPagoListado {
+  return {
+    id,
+    nombre: `Medio ${id}`,
+    activo: true,
+    idEmpresa: null,
+    orden: id,
+    comportamiento: 'Electronico',
+    admiteVuelto: false,
+    requiereReferencia: true,
+    recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
+    proveedor,
+  }
+}
+
+describe('vistaDelCobro', () => {
+  it('un cobro pendiente con QR muestra el QR', () => {
+    expect(vistaDelCobro(cobro())).toEqual({ tipo: 'qr', qrData: '00020101021243650016com.mercadolibre' })
+  })
+
+  it('"verificando el pago" no muestra el QR aunque el servidor lo mande', () => {
+    expect(vistaDelCobro(cobro({ verificandoPago: true }))).toEqual({ tipo: 'verificando' })
+  })
+
+  it('un pendiente sin QR (o con QR vacío) tampoco lo muestra', () => {
+    expect(vistaDelCobro(cobro({ qrData: null })).tipo).toBe('verificando')
+    expect(vistaDelCobro(cobro({ qrData: '' })).tipo).toBe('verificando')
+  })
+
+  it('el pago informado sin datos manda sobre "verificando" y no muestra el QR', () => {
+    expect(vistaDelCobro(cobro({ pagoInformadoSinDatos: true, verificandoPago: true, qrData: null }))).toEqual({ tipo: 'informado_sin_datos' })
+    expect(vistaDelCobro(cobro({ pagoInformadoSinDatos: true })).tipo).toBe('informado_sin_datos')
+  })
+
+  it('aprobado con el importe pedido cierra la venta', () => {
+    expect(vistaDelCobro(cobro({ estado: 'aprobado', importePagado: 1500, qrData: null }))).toEqual({ tipo: 'aprobado' })
+  })
+
+  it('aprobado con otro importe pagado nunca cierra: lo marca el servidor o lo detecta la diferencia', () => {
+    expect(vistaDelCobro(cobro({ estado: 'aprobado', importePagado: 1400, importeDistinto: true }))).toEqual({
+      tipo: 'importe_distinto',
+      importe: 1500,
+      importePagado: 1400,
+    })
+    expect(vistaDelCobro(cobro({ estado: 'aprobado', importePagado: 1400, importeDistinto: false })).tipo).toBe('importe_distinto')
+    expect(vistaDelCobro(cobro({ estado: 'aprobado', importePagado: 1500, importeDistinto: true })).tipo).toBe('importe_distinto')
+  })
+
+  it.each(['cancelado', 'expirado', 'devuelto'] as const)('un cobro %s vuelve al pago', (estado) => {
+    expect(vistaDelCobro(cobro({ estado, qrData: null }))).toEqual({ tipo: 'sin_aprobar', estado })
+  })
+
+  it('un cobro todavía "creando" espera', () => {
+    expect(vistaDelCobro(cobro({ estado: 'creando', qrData: null })).tipo).toBe('esperando')
+  })
+})
+
+describe('esperaHastaLaProximaConsulta', () => {
+  it('consulta cada 2 s y espera 5 s tras un fallo', () => {
+    expect(esperaHastaLaProximaConsulta(0)).toBe(INTERVALO_DE_CONSULTA_MS)
+    expect(INTERVALO_DE_CONSULTA_MS).toBe(2_000)
+    expect(esperaHastaLaProximaConsulta(1)).toBe(INTERVALO_TRAS_FALLO_MS)
+    expect(esperaHastaLaProximaConsulta(7)).toBe(5_000)
+  })
+})
+
+describe('planDeCobroMercadoPago', () => {
+  const medios = { 1: medio(1, null), 2: medio(2, 'mercadopago_qr'), 3: medio(3, 'mercadopago_qr') }
+
+  it('sin ningún medio con proveedor es una venta de siempre', () => {
+    expect(planDeCobroMercadoPago([{ idMedioPago: 1 }], medios)).toEqual({ tipo: 'ninguno' })
+  })
+
+  it('un medio con proveedor se cobra con QR y entrega su pago', () => {
+    const pago = { idMedioPago: 2, importe: 10 }
+    expect(planDeCobroMercadoPago([{ idMedioPago: 1 }, pago], medios)).toEqual({ tipo: 'uno', pago })
+  })
+
+  it('dos filas con proveedor (aunque sean el mismo medio) se rechazan', () => {
+    expect(planDeCobroMercadoPago([{ idMedioPago: 2 }, { idMedioPago: 2 }], medios)).toEqual({ tipo: 'varios' })
+    expect(planDeCobroMercadoPago([{ idMedioPago: 2 }, { idMedioPago: 3 }], medios)).toEqual({ tipo: 'varios' })
+  })
+
+  it('un medio que no está en la lista no cuenta', () => {
+    expect(planDeCobroMercadoPago([{ idMedioPago: 99 }], medios)).toEqual({ tipo: 'ninguno' })
+    expect(medioConCobroIntegrado(undefined)).toBe(false)
+  })
+})
+
+describe('cuenta regresiva', () => {
+  it('cuenta segundos hacia arriba hasta el vencimiento y nunca baja de cero', () => {
+    const ahora = Date.parse('2026-11-01T12:00:00.000Z')
+    expect(segundosParaExpirar('2026-11-01T12:10:00Z', ahora)).toBe(600)
+    expect(segundosParaExpirar('2026-11-01T12:00:00.500Z', ahora)).toBe(1)
+    expect(segundosParaExpirar('2026-11-01T11:59:00Z', ahora)).toBe(0)
+    expect(segundosParaExpirar('no es una fecha', ahora)).toBeNull()
+  })
+
+  it('formatea mm:ss', () => {
+    expect(formatearCuentaRegresiva(600)).toBe('10:00')
+    expect(formatearCuentaRegresiva(65)).toBe('01:05')
+    expect(formatearCuentaRegresiva(0)).toBe('00:00')
+  })
+})

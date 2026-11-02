@@ -435,6 +435,21 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal($"PAY{idOrden}", Assert.Single(emitido.Pagos).Referencia);
     }
 
+    // Clausula: el GET del cobro avisa usadoEnVenta cuando una venta ya quedo ligada; el dispositivo descarta con eso su reserva local.
+    [Fact]
+    public async Task ElCobroConsultadoAvisaCuandoUnaVentaYaLoUso()
+    {
+        var e = await PrepararAsync("mp-venta-usado");
+        var cobro = await CobroAprobadoAsync(e, e.Desde);
+        Assert.False(cobro.UsadoEnVenta);
+
+        var emitido = await LeerAsync<ComprobanteEmitido>(await VenderAsync(e, Venta(e, e.Desde, PagoMp(e, cobro.IdCobro))), HttpStatusCode.Created);
+
+        var consultado = await LeerAsync<CobroDeMercadoPago>(await e.Cajero.GetAsync($"{Ruta}/{cobro.IdCobro}"));
+        Assert.Equal(emitido.Id, await VentaLigadaAsync(cobro.IdCobro));
+        Assert.True(consultado.UsadoEnVenta);
+    }
+
     // Clausula: el importe se compara contra lo que Mercado Pago cobro (importe_pagado) y no contra el pedido; una venta mixta con
     // efectivo por el resto es valida.
     [Fact]

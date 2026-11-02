@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, lineasDeTicketDeVenta, notaDeCreditoDeVenta, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, lineasDeTicketDeVenta, notaDeCreditoDeVenta, pulsoDeCajon, qrDeCobroMercadoPago, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -1497,5 +1497,25 @@ describe('notaDeCreditoDeVenta (T8c)', () => {
     expect(fact).not.toContain('Comprobante asociado')
     expect(fact).toContain('Gracias por su compra')
     expect(fact).toContain('Pagos:')
+  })
+})
+
+describe('qrDeCobroMercadoPago', () => {
+  const contexto = { empresa: 'Kiosco', puntoVenta: 'Caja 1', cajero: 'Ana' }
+  const QR = '00020101021243650016com.mercadolibre0201'
+  const texto = (bytes: Uint8Array) => new TextDecoder('latin1').decode(bytes)
+
+  it('imprime el QR nativo con su contenido, el importe y el número de la venta, sin abrir el cajón', () => {
+    const bytes = qrDeCobroMercadoPago({ qrData: QR, importe: 1500, numeroVisible: '0007-00000500' }, contexto)
+
+    expect(texto(bytes)).toContain(QR)
+    expect(texto(bytes)).toContain('PAGO CON MERCADO PAGO')
+    expect(texto(bytes)).toContain('Venta 0007-00000500')
+    expect(texto(bytes)).toContain('1.500,00')
+    expect(texto(bytes)).not.toContain('p')
+  })
+
+  it('un contenido que no es ASCII imprimible no se imprime: lanza en vez de emitir un QR ilegible', () => {
+    expect(() => qrDeCobroMercadoPago({ qrData: 'cobro ñandú', importe: 10, numeroVisible: '0007-00000500' }, contexto)).toThrow(RangeError)
   })
 })
