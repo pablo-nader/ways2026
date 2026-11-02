@@ -28,16 +28,38 @@ Usá el **host interno** (`aipos_aipos-postgres`), no el público: el tráfico n
 
 | Campo | Valor |
 |---|---|
-| Source | GitHub → `pablo-nader/ways2026`, rama `main` |
-| Build method | **Dockerfile** |
-| Dockerfile path | `docker/Dockerfile` |
-| Build context | `/` (la raíz del repo, **no** `docker/`) |
+| Source | **Docker Image** → `ghcr.io/pablo-nader/ways2026:latest` |
 | Port | `8080` |
 
-Dos cosas que se equivocan siempre:
+El servidor no compila. La imagen la arma el workflow `deploy-produccion` en GitHub Actions
+cuando el `ci` de `main` pasa: la publica en GHCR con las etiquetas `latest` y el SHA del
+commit, y recién después llama al Deployment Trigger de EasyPanel, que descarga `latest` y
+reinicia el contenedor. Compilar .NET en el servidor (1,9 GB de RAM) colgaba el build
+durante horas con la app caída.
 
-- **El build context.** El `Dockerfile` copia `src/` y `Ways.slnx` desde la raíz.
-  Si le ponés `docker/` como contexto, el build falla en el primer `COPY`.
+Requisitos, una sola vez:
+
+- El secret `EASYPANEL_DEPLOY_URL` del repo con la Deployment Trigger URL del servicio.
+- El paquete `ways2026` de GHCR en **Public** (GitHub → Packages → ways2026 → Package
+  settings). Un paquete nuevo nace privado y EasyPanel no lo puede descargar sin
+  credenciales. Es público como el repo, así que la imagen no lleva secretos: toda la
+  configuración entra por las variables de entorno de EasyPanel.
+
+El disparo manual (Actions → deploy-produccion → Run workflow) solo corre sobre `main`.
+Con `disparar_deploy` apagado publica la imagen sin avisar a EasyPanel.
+
+Para volver a una versión anterior, cambiá en EasyPanel la etiqueta `latest` por el SHA
+de ese commit y redeployá. Mientras esté fijada, los deploys automáticos siguen
+publicando `latest` pero EasyPanel descarga el SHA fijado: cuando el arreglo llegue a
+`main`, volvé a poner `latest`.
+
+Si alguna vez hay que volver a compilar en el servidor: Source GitHub →
+`pablo-nader/ways2026`, rama `main`, build method Dockerfile, path `docker/Dockerfile` y
+build context `/` (la raíz del repo, **no** `docker/`: el `Dockerfile` copia `src/` y
+`Ways.slnx` desde la raíz).
+
+Lo que se equivoca siempre:
+
 - **El puerto.** EasyPanel asume 3000 por defecto. Si el build sale bien, el contenedor
   loguea `Now listening on: http://[::]:8080` y aun así el dominio devuelve
   **502 "Service is not reachable"**, es esto: el proxy está golpeando el puerto equivocado.
