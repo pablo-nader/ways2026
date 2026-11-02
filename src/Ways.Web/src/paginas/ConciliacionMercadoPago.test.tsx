@@ -369,6 +369,21 @@ describe('ConciliacionMercadoPago — conciliaciones', () => {
     expect(screen.getByText(/Guardado: comisión/)).toBeInTheDocument()
   })
 
+  it('una empresa dada de baja (su punto de venta llega sin razón social) no se ofrece', async () => {
+    empresas = [empresa(1, 'Empresa Demo'), empresa(2, 'Baja SA')]
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta')
+        return Promise.resolve(puntosVentaDe(empresas).map((pv) => (pv.idEmpresa === 2 ? { ...pv, razonSocialEmpresa: null } : pv)))
+      if (ruta.startsWith('/mercadopago/conciliaciones')) return Promise.resolve([])
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    renderPagina()
+
+    const selector = await screen.findByLabelText('Empresa')
+    expect(within(selector).queryByRole('option', { name: /Empresa 2|Baja SA/ })).toBeNull()
+    expect(within(selector).getByRole('option', { name: 'Empresa Demo' })).toBeInTheDocument()
+  })
+
   it('una respuesta tardía de otra empresa no se pinta (generación)', async () => {
     empresas = [empresa(1, 'Empresa Demo'), empresa(2, 'Otra SA')]
     const tardia = diferido<ConciliacionListado[]>()

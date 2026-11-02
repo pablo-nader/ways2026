@@ -714,3 +714,13 @@ Confirmed issues fixed in `fix(web): la conciliación se ve como Supervisor, ...
 - Mutation evidence (one per run, restored): back to `listarEmpresas` fails the page tests (route not mocked / picker empty); removing
   the three `key` fails the empresa-switch test; removing the `setArchivo(null)` fails the tab round-trip test.
 - Verification: tsc clean, oxlint no errors, 168 tests pass (api, page, tesoreria, menu), `npm run build` ok.
+
+## Judgment-day E6-T2 verdict
+
+- 2026-11-02: **APPROVED** after one fix round. Round 1: both judges confirmed that switching empresa with a detail open kept the
+  previous empresa's rows and Confirm buttons; judge B (CRITICAL): the Supervisor got 403 from GET /api/empresas (the picker); judge B:
+  a selected file survived a tab switch; fixed in 5bee09f6 (empresas from GET /api/puntos-venta, key per empresa on the sections, file
+  cleared on tab change, time-zone helper text). Scoped re-judgment: both clean. Applied after it (judge A + suggestion): an empresa whose
+  PVs come without razón social (dada de baja) is not offered; the empresa select is disabled while the confirm dialog is open.
+- Accepted: an empresa with no punto de venta is not offered (no Mercado Pago charges without a PV); Root sees every tenant's
+  empresas in the picker.

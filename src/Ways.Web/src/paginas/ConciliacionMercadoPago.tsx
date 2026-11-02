@@ -40,7 +40,8 @@ type EmpresaElegible = { id: number; nombre: string }
 function empresasDeLosPuntosDeVenta(puntosVenta: readonly PuntoVentaListado[]): EmpresaElegible[] {
   const porId = new Map<number, EmpresaElegible>()
   for (const pv of puntosVenta) {
-    if (!porId.has(pv.idEmpresa)) porId.set(pv.idEmpresa, { id: pv.idEmpresa, nombre: pv.razonSocialEmpresa ?? `Empresa ${pv.idEmpresa}` })
+    // Sin razón social la empresa está dada de baja: no se ofrece.
+    if (pv.razonSocialEmpresa != null && !porId.has(pv.idEmpresa)) porId.set(pv.idEmpresa, { id: pv.idEmpresa, nombre: pv.razonSocialEmpresa })
   }
   return [...porId.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 }
@@ -211,7 +212,7 @@ export function ConciliacionMercadoPago() {
                   id="conciliacion-empresa"
                   className="form-select"
                   value={idEmpresa ?? ''}
-                  disabled={bloqueado}
+                  disabled={bloqueado || pendiente !== null}
                   onChange={(e) => elegirEmpresa(e.target.value)}
                 >
                   <option value="">Elegir…</option>
