@@ -752,3 +752,33 @@ Confirmed issues fixed in `fix(web): la conciliación se ve como Supervisor, ...
 - Mutación (una por corrida, restaurada con hash idéntico): signo de la diferencia (5 rojos) y redondeo ToEven (1) en Domain; quitar `Payout` (retiro por fila); quitar `ExigirPendiente` en aplicar (3 rojos: idempotencia, carrera, descartar); `FOR UPDATE`→`FOR SHARE` de la propuesta (carrera: rojo 2 de 2 corridas; la primera corrida de la combinación con el test mixto cayó 1 de 2);
   destino inactivo; destino de otra empresa (filtro de empresa del lock); signo del asiento de origen; descartar sin `ExigirPendiente`; sin UNIQUE; sin RLS (`AislamientoDeTenant` rojo); sin guarda de período en la cuenta de origen (rojo solo con el test de la diferencia: en el retiro la guarda del destino la tapa); web: `puedeResolver` sin gate de Admin, sin `ocupadoRef` en `resolver`, cuentas inactivas en el selector.
 - Open: pendiente producción (dueño): registrar la app en Mercado Pago, probar con un reporte real (columnas del CSV de la documentación, WITHDRAWAL con signo negativo supuesto) y release del POS; límites conocidos: turno cerrado después de importar no se suma, `WITHDRAWAL_CANCEL` no propone, la comisión estimada es una aproximación a centavos.
+
+## Judgment-day E7 round 1 (2026-11-02)
+
+Confirmed issues fixed in `dd110a0a` (`fix(mercadopago): un retiro se propone una sola vez por empresa, ...`); the E7 migration was unshipped and was edited in place
+(Designer and snapshot too; `has-pending-model-changes` clean).
+
+- R1 (critical, both judges): a retiro that appeared in two reports (overlapping ranges) got two proposals and could be applied twice. The retiro `clave_origen` is now the
+  Mercado Pago `SOURCE_ID` (column widened to varchar(64), the report's limit) with a partial UNIQUE `ux_propuestas_tesoreria_mercadopago_retiro` on
+  `(id_tenant, id_empresa, clave_origen) WHERE tipo = 'retiro'`, next to the per-reconciliation one (which stays for the diferencia). The generator skips a retiro whose
+  SOURCE_ID already has a proposal in ANY reconciliation of the empresa (pending, applied or discarded) or is repeated inside the same file, and counts it:
+  `ConciliacionImportada.RetirosYaPropuestos` (web shows a note in the import result) and audit `retiros_ya_propuestos`. The UNIQUE is the race backstop (imports are already
+  serialized by the empresa advisory lock); a 23505 test covers it. Limit: a retiro over `ImporteMaximo` is never proposed, so it is not "already proposed" either.
+- R2 (both judges): the retiro origin was the MP connection's account, which can differ from the one the MP medios credit. It is now the account of the empresa's active medios
+  with a Mercado Pago proveedor (active account of the empresa): exactly one distinct account -> fixed origin; none or several -> `id_cuenta_origen` NULL, and `aplicar` requires
+  `idCuentaOrigen` (400 `cuenta_origen_requerida`; 400 `cuenta_origen_invalida` if it is not one of those accounts, checked under the account locks; 400 `cuenta_origen_no_aplica` for a
+  diferencia or a retiro that already has its origin). The chosen origin is written to the proposal. `propuesta_sin_cuenta_origen` (409) is gone: with no account the retiro can only be
+  discarded (400 requerida/invalida otherwise). The DTO carries `origenesPosibles` (pending retiro without fixed origin) and the web dialog shows an origin picker; the
+  destination options exclude the chosen origin.
+- R3 (both judges): the estimated fee is rounded once per (turno, medio) group like the close: `round(porcentaje x sum of the group's applied payments)`, spread among the lines by
+  largest remainder (ties by id) so lines add up to the group total; the per-account difference is sum of real fees minus sum of group estimates. Remaining approximation
+  (documented in the calculator and in docs/10): a group only partly present in the report is rounded over the part. Unit tests: 3 x 10.01 at 0.55 % (0.17, not 0.18), an asymmetric pair
+  and two groups of one account.
+- R4 (judge B): the payments query only counts payments of `Emitido` comprobantes, like `BrutoDelTurnoPorMedioAsync`; a payment of a sale annulled before the close is counted as a charge outside the calculation.
+- R5 (judge A, suggestion): the audit's `propuestas_diferencia_comision` counts only created proposals (amounts over `ImporteMaximo` excluded); `SeccionDePropuestas` derives the selected
+  destination/origin through `seleccionVigente` and prunes stale entries, so an account that is no longer offered disables Aplicar and clears the selection.
+- Verification: build 0 errors; no pending model changes; Domain 2609, Application 1660; integration (E7 + conciliation methods + Tesoreria + SuperficieDeAutorizacion + UpDownUp + AislamientoDeTenant + Cobertura) 263 pass;
+  web: tsc clean, 155 tests (api, page, tesoreria), `npm run build` ok.
+- Mutation (one per run, restored with identical hash): R1 cross-file dedupe (existing claves ignored) fails the overlapping-reports test; R1 UNIQUE (index removed from the migration)
+  fails the 23505 test; R2 origin resolution (`Count >= 1` instead of `== 1`) fails the several-accounts test; R2 required/valid origin (membership check removed) fails 2 tests; R3
+  per-payment rounding fails 2 domain tests; R4 (`Emitido` filter removed) fails the annulled-sale test (-3.00 instead of -1.50); R5 (`seleccionVigente` returns the raw selection) fails the unit and the page tests.
