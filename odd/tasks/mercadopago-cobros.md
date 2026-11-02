@@ -634,3 +634,13 @@ Fix commit 7119f1bf for the confirmed findings (C1-C5); the migration 2026110205
 - C5: the matched charges are read once with `FROM ... FOR UPDATE ORDER BY id` right after the empresa advisory lock (lock order: conciliation advisory -> charge rows; the import takes no charge advisory, so a webhook only waits on the row, no cycle with advisory PV -> advisory charge -> row).
 - Verification: build 0 errors; no pending model changes; Domain 2598 pass; Application 1660 pass; integration (31 conciliation tests + SuperficieDeAutorizacion + AislamientoDeTenant + UpDownUp + Cobertura) 60 pass; whole `MercadoPagoVentaTests` class 96 pass. The orchestrator's `MercadoPagoConciliacion` name filter matches nothing (the tests are a partial of `MercadoPagoVentaTests`), so the conciliation methods were filtered by name. The 34-minute full MercadoPago filter was not run.
 - Mutation evidence (each reverted, diff hash identical before/after): header check, Origin comparison, Sec-Fetch-Site check, sum -> first row, Math.Abs removal, duplicate detection, ya_conciliado swap, annulled check, importe check, `FOR UPDATE` removal, `MaximoDeFilas` stop, `MaximoDeInvalidas` stop; each turned red exactly the tests that claim it.
+
+## Judgment-day E6-T1 verdict
+
+- 2026-11-02: **APPROVED** after two fix rounds. Round 1 (both judges): CSRF from a same-site sibling on the multipart upload,
+  installments storing only the first fee, confirm without importe/annulled checks; judge A: the parser materialized everything
+  before the caps and charges were read without a lock; judge B: unnormalized fee sign; fixed in 7119f1bf. Re-judgment (both): the
+  duplicate key collapsed genuine installments sharing amount and transaction date; fixed in edef985c (key includes fee, net and
+  release date; mutation: the 4-field key fails the installments test). Final re-judgment: both clean (doc comment fixed).
+- Accepted: a charge already reconciled by an earlier file is never re-applied (`ya_conciliado`, stored values shown); the confirm
+  reads the sale state without locking it (small window, the payment row is locked).

@@ -25,7 +25,7 @@ public sealed record ClasificacionDeFilaMercadoPago(string Resultado, int? IdCob
 /// <see cref="ResultadosDeConciliacionMercadoPago.Conciliado"/>; con otro importe, <c>importe_distinto</c>; cualquier otro estado, o
 /// aprobado sin venta, es <c>sin_venta</c>; sin cobro, <c>sin_cobro_en_ways</c>. Un cobro que un archivo anterior ya conciliaba es
 /// <c>ya_conciliado</c> (no se aplica). Una fila idéntica a otra anterior del mismo archivo (mismos SOURCE_ID, TRANSACTION_TYPE,
-/// TRANSACTION_AMOUNT y TRANSACTION_DATE) es <c>duplicada</c> y no se aplica; las demás filas de un mismo cobro conciliado se aplican todas
+/// TRANSACTION_AMOUNT, TRANSACTION_DATE, comisión, neto y liberación) es <c>duplicada</c> y no se aplica; las demás filas de un mismo cobro conciliado se aplican todas
 /// (el servicio suma sus comisiones y netos). Devoluciones y contracargos se ligan al cobro como un pago pero nunca lo modifican; los
 /// retiros no se cotejan. Es con estado (recuerda las filas vistas): una instancia por archivo y las filas en el orden del archivo.
 /// </summary>
