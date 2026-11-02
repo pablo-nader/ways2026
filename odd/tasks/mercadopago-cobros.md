@@ -52,7 +52,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
   back office, cierre de turno y cobros con Mercado Pago bloqueados mientras haya un apartado sin sincronizar, `reponerBloque` bajo
   el candado de la reserva.
 - [x] E3-T4 — Webhook `POST /api/integraciones/mercadopago/webhook`: signature check, refresh the charge.
-- [ ] E4 — Point: same charge with `type:"point"` on the PV's terminal.
+- [x] E4 — Point: same charge with `type:"point"` on the PV's terminal.
 - [ ] E5 — Offline manual approval flagged `sin_verificar`, carried in the offline queue.
 - [ ] E6 — Reconciliation: import the release report, match charges (verified and unverified), real fees, net to the treasury
   account.
@@ -64,7 +64,7 @@ withdrawals). Builds on E1 (OAuth per empresa) and E2 (stores, POS, Point termin
 
 ## Next step
 
-E4: Point (same charge with `type:"point"` on the PV's terminal). E3-T4 is built and awaits its own judgment-day before the PR; E3-T3b is already approved. Pending before it ships to the cajas: the POS bundle of E3-T3 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress).
+E5: offline manual approval flagged `sin_verificar`, carried in the offline queue (Point and QR charges both need it; the POS shows "Mercado Pago necesita conexión" until then). E4 is built and awaits its own judgment-day before the PR; E3-T4 and E3-T3b are already approved. Pending before it ships to the cajas: the POS bundle of E3-T3/E4 reaches them only with a Ways.Desktop bump + `pos-v*` tag (owner's call). Owner configuration for the webhook (see E3-T4 progress). Nothing of E4 was exercised against the real Mercado Pago API or a real terminal.
 
 ## E3-T1 design (2026-11-01)
 
@@ -421,3 +421,17 @@ Branch `pnader/mercadopago-e4`, stacked on E3-T4. Backend + POS + medios ABM. On
 - Webhook (E3-T4) and apartar (E3-T3b) apply unchanged.
 - Tests: create without terminal 409; terminal busy 409; each status mapping; cancel at_terminal 409; fallido then retry with a new
   intento; POS modal texts per state; ABM select.
+
+## E4 progress (2026-11-01)
+
+Done on `pnader/mercadopago-e4`, commit `feat(mercadopago): cobro con la terminal Point que cierra la venta` (`7fb475e3`). Own judgment-day pending. Migration `CobroMercadoPagoPoint`.
+
+- Model summary (docs/10 part 07): `cobros_mercadopago.id_terminal_point varchar(80) NULL` (the caja's terminal as requested; a retry re-sends the same one), `situacion_terminal varchar(20) NULL` (`en_terminal` | `revisar_terminal`, only a pending Point), estado CHECK gains `fallido`, new CHECKs `ck_cobros_mercadopago_terminal` (`(tipo = 'point') = (id_terminal_point IS NOT NULL)`) and `ck_cobros_mercadopago_situacion_terminal`. No CHECK assumed `qr_data` for every created charge, so none changed. `Down` converts `fallido` rows to `cancelado` under the platform GUC.
+- Create: the medio's `proveedor` (read again under the medio's `FOR KEY SHARE`) decides `tipo`; Point needs `cajas_mercadopago.id_terminal_point` (409 `mercadopago_caja_sin_terminal`, no reservation, no call). Body: `type:"point"`, `external_reference`, `total_amount` "123.45" (kept: documented for QR, assumed required for Point too), `expiration_time` PT10M, `transactions.payments[{amount}]`, `config.point.{terminal_id, print_on_terminal:"no_ticket"}`; same reserve-then-call, time bands and idempotency key (hash of the body). A 2xx Point order needs an id but no `type_response`. 409 `already_queued_order_for_terminal` -> 409 `mercadopago_terminal_ocupada`; the row stays `creando` (a 4xx proves nothing), so the next create re-sends the same order with the same key once the terminal frees up.
+- Status mapping (`AplicarOrden`): `created` -> pendiente; `at_terminal` -> pendiente + `situacion_terminal = en_terminal` (response `enTerminal`); `action_required` -> pendiente + `revisar_terminal` (`revisarTerminal`); `processed` -> E3 rules; `failed` (Point only) -> `fallido`, not live, frees the number and the medio guard (`EsVivo` unchanged); canceled/expired/refunded as before. The situation is cleared on every non-pending outcome (and in the 404-expiry branch, which does not go through `AplicarOrden`). `verificandoPago` for Point is only true with the payment informed without data (no QR to wait for).
+- Cancel: `CancelarPendienteAsync` rejects with 409 `mercadopago_cancelar_en_la_terminal` when the last read puts a Point order in the terminal, before calling Mercado Pago; if the order moved after the last read, Mercado Pago's own 409 refreshes the charge and the same 409 is answered. Apartar of a pending Point charge in the terminal answers that 409 too (it shares the cancel step).
+- Response contract: `CobroDeMercadoPago` gains `Tipo`, `IdTerminal`, `EnTerminal`, `RevisarTerminal` (TS twin updated; fixtures too).
+- POS: `medioConCobroIntegrado` covers Point; `vistaDelCobro` has `cobrando_en_terminal` ("Cobrando en la terminal {id}…", countdown, cancel disabled once in the terminal with "Para cancelarlo, hacelo en la terminal.") and `revisar_terminal` ("Revisá el resultado en la terminal."); no QR and no "Imprimir QR" for Point; `fallido` is a `sin_aprobar` state with "El pago fue rechazado en la terminal: probá de nuevo u otro medio." and releases the reservation exactly like cancelado/expirado: the number was only peeked (never consumed), so the retry takes the same number. Error copies for the three new codes. ABM select "Mercado Pago Point" (backend ABM already accepted it).
+- Tests: `MercadoPagoPointTests.cs` (partial of `MercadoPagoCobrosTests`: body, QR intact, no terminal 409, busy 409 + same-key retry, other 409 is 502, status mappings and situations, finals clear the situation, processed approval, failed on QR ignored, fallido frees the number (intento 2), fallido final, cancel created/at_terminal/409-at-terminal, cancelled-at-terminal refresh, 404 expiry clears the situation, CHECKs, lost commit keeps the original terminal, webhook, apartar); the old test that expected a Point medio to be invalid became "cobrar con Mercado Pago". Domain: `Fallido` not live / not approvable. Web: `vistaDelCobro`, plan, modal texts per state, `cobrarConMercadoPago` fallido flow, `Pos.test.tsx` Point flow (terminal text, aprobado, rechazado + retry with the same number), descriptor tests.
+- Deviations / open: the numbered reservation is released on `fallido` (design said "stays reserved"; with the peek model releasing and re-reserving yields the same number and does not block offline sales); `total_amount` is sent next to `transactions.payments` (not in the design text); a Point charge left `at_terminal` after the cashier walked away is cancelled only on the terminal (or it expires after 10 min); the POS bundle needs a release; nothing was exercised against real Mercado Pago or a real terminal.
+
