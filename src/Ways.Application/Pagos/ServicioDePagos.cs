@@ -10,6 +10,7 @@ using Ways.Application.Caja;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Parametros;
+using Ways.Application.Plantel;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
@@ -473,8 +474,9 @@ public partial class ServicioDePagos(
         var momento = reloj.Ahora;
 
         var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        await ExigirPersonalDeLaConversionAsync(solicitud.IdPersonal, ct);
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
-        ExigirConceptoValido(solicitud.Concepto);
+        ExigirDatosDeLaEdicion(solicitud);
 
         ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         if (inmutables.IdTurnoCaja is null)
@@ -500,8 +502,9 @@ public partial class ServicioDePagos(
         var momento = reloj.Ahora;
 
         var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        await ExigirPersonalDeLaConversionAsync(solicitud.IdPersonal, ct);
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
-        ExigirConceptoValido(solicitud.Concepto);
+        ExigirDatosDeLaEdicion(solicitud);
 
         ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
@@ -539,7 +542,8 @@ public partial class ServicioDePagos(
     /// <summary>Columnas que ninguna escritura cambia después del alta, así que se pueden leer
     /// antes de los locks (single-read-under-lock regla 6): el turno es la clave del primer lock.
     /// <c>id_comprobante_compra</c> NO está acá: la vinculación posterior lo cambia.
-    /// <c>id_movimiento_personal</c> sí: se escribe al insertar el pago y no hay escritor que lo cambie.</summary>
+    /// <c>id_movimiento_personal</c> sí lo está solo como lectura rápida: la conversión de un pago de sueldos común en pago de
+    /// personal lo cambia, así que cada escritura lo vuelve a decidir sobre el pago leído bajo su lock.</summary>
     private sealed record DatosInmutablesDePago(
         int? IdTurnoCaja, int IdEmpresa, OrigenFondosPago OrigenFondos, int? IdMovimientoPersonal);
 
@@ -580,6 +584,47 @@ public partial class ServicioDePagos(
             throw new ErrorDominio(
                 "gasto_de_pago_de_personal",
                 "El gasto pertenece a un pago de personal y no se puede modificar por separado.", 409);
+        }
+    }
+
+    /// <summary>update-404-first: asignar un empleado inexistente (o de otro tenant, o dado de baja) responde 404 antes de
+    /// validar el cuerpo. La lectura es solo la respuesta rápida: el <c>UPDATE</c> atómico del saldo bajo el lock decide.</summary>
+    private async Task ExigirPersonalDeLaConversionAsync(int? idPersonal, CancellationToken ct)
+    {
+        if (idPersonal is { } id && !await db.Personal.AnyAsync(p => p.Id == id, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe el personal {id}.");
+        }
+    }
+
+    /// <summary>Validaciones puras del cuerpo de la edición. Con empleado, el pago pasa a ser un pago de personal: tiene que ser de
+    /// sueldos, sin proveedor, y su concepto lo genera el servidor, así que el enviado tiene que venir vacío (un campo
+    /// aceptado y descartado sería una promesa falsa).</summary>
+    private static void ExigirDatosDeLaEdicion(ComandoDeEdicionDePago solicitud)
+    {
+        if (solicitud.IdPersonal is null)
+        {
+            ExigirConceptoValido(solicitud.Concepto);
+            return;
+        }
+
+        if (solicitud.Categoria != CategoriaPago.Sueldos)
+        {
+            throw new ErrorDominio(
+                "pago_personal_requiere_sueldos", "Solo un pago de categoría sueldos se asigna a un empleado.", 400);
+        }
+
+        if (solicitud.IdProveedor is not null)
+        {
+            throw new ErrorDominio(
+                "pago_personal_sin_proveedor", "Un pago de personal no lleva proveedor.", 400);
+        }
+
+        if (!string.IsNullOrWhiteSpace(solicitud.Concepto))
+        {
+            throw new ErrorDominio(
+                "concepto_de_pago_de_personal",
+                "El concepto de un pago de personal lo genera el sistema; dejalo vacío al asignar un empleado.", 400);
         }
     }
 
@@ -678,6 +723,10 @@ public partial class ServicioDePagos(
             throw PagoCambioConcurrente();
         }
 
+        // La conversión en pago de personal es la única escritura que cambia id_movimiento_personal después del alta: la
+        // lectura previa a los locks pudo quedar vieja, así que el chequeo definitivo se hace acá, sobre el pago leído bajo su lock.
+        ExigirPagoSinPagoDePersonal(pago.IdMovimientoPersonal);
+
         // El pago cuenta para el libro en su fecha; el cierre de su turno, en la del cierre (normalmente la fecha del pago es
         // anterior, y la menor de las dos es la que decide).
         var fechaQueCuentaParaElLibro = turnoCerrado?.FechaCierre is { } cierre && cierre < pago.Fecha ? cierre : pago.Fecha;
@@ -705,6 +754,7 @@ public partial class ServicioDePagos(
             .GroupBy(a => a.IdComprobanteCompra)
             .ToDictionary(g => g.Key, g => g.Sum(a => a.Importe));
 
+        int? idMovimientoDeLaConversion = null;
         var anterior = await EstadoContableAsync(pago, ct);
         var medioAnterior = itemsVivos.FirstOrDefault()?.IdMedioPago;
         var valorAnterior = PayloadDeEdicion(pago, medioAnterior, anterior.ImportePorMedio);
@@ -730,6 +780,12 @@ public partial class ServicioDePagos(
 
             await AjustarAplicacionesAlNuevoImporteAsync(
                 pago, anterior.Importe, aplicaciones, comprasBloqueadas, momento, ct);
+
+            if (solicitud.IdPersonal is { } idPersonal)
+            {
+                idMovimientoDeLaConversion = await ConvertirEnPagoDePersonalAsync(
+                    idTenant, pago, idPersonal, plan.Total, idEmpleado, momento, ct);
+            }
         }
         else
         {
@@ -791,6 +847,12 @@ public partial class ServicioDePagos(
             valorNuevo["deleted_at"] = pago.DeletedAt;
         }
 
+        if (idMovimientoDeLaConversion is { } idMovimientoConvertido)
+        {
+            valorNuevo["id_personal"] = solicitud!.IdPersonal;
+            valorNuevo["id_movimiento_personal"] = idMovimientoConvertido;
+        }
+
         auditoria.Registrar(new RegistroDeAuditoria(
             idTenant, pago.IdPuntoVenta, solicitud is null ? AccionAuditada.PagoBaja : AccionAuditada.PagoEdicion,
             pago.Id, valorAnterior, valorNuevo));
@@ -799,6 +861,49 @@ public partial class ServicioDePagos(
         await transaccion.CommitAsync(ct);
 
         return pago;
+    }
+
+    /// <summary>
+    /// Convierte el pago de sueldos que se está editando en un pago de personal, dentro de la transacción de la edición y sin
+    /// volver a escribir el dinero: el pago y sus ítems conservan medios, importes, origen, turno y fecha, así que el arqueo y la
+    /// tesorería no se mueven. Escribe lo mismo que <c>ServicioDePagoDePersonal</c> para un pago nuevo: el saldo del personal
+    /// baja por el total (<c>UPDATE ... RETURNING</c> crudo, que toma el lock de la fila y responde 404 si el empleado no
+    /// existe, es de otro tenant o está dado de baja) y el asiento de tipo <c>pago</c> lleva la fecha de negocio del pago.
+    /// Después apunta el pago a ese asiento y le pone el concepto de un pago de personal.
+    /// Orden de locks: la fila del personal es posterior al lock del pago. Sin ciclo con la reasignación, que lockea
+    /// personal y después pago: solo opera sobre pagos que ya tienen asiento, y esta conversión rechaza esos pagos bajo el lock
+    /// del pago, antes de tomar el del personal.
+    /// </summary>
+    private async Task<int> ConvertirEnPagoDePersonalAsync(
+        int idTenant, Pago pago, int idPersonal, decimal total, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var personal = await EscriturasDePersonal.ActualizarSaldoYLeerVinculoAsync(
+            conexion, transaccionCruda, idTenant, idPersonal, -total, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el personal {idPersonal}.");
+
+        var nombre = await db.Personal.Where(p => p.Id == idPersonal).Select(p => p.Nombre).FirstAsync(ct);
+        var zona = await ResolverZonaAsync(pago.IdEmpresa, pago.IdPuntoVenta, ct);
+        var fecha = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(pago.Fecha, zona).DateTime);
+
+        var idMovimiento = await EscriturasDePersonal.InsertarMovimientoAsync(
+            conexion, transaccionCruda, idTenant, idPersonal, idEmpleado, fecha, TipoMovimientoPersonal.Pago,
+            horas: null, valorHora: null, -total, personal.Saldo, detalle: null, momento, ct);
+
+        pago.IdMovimientoPersonal = idMovimiento;
+        pago.Concepto = $"Pago de personal: {nombre}";
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText = "UPDATE movimientos_tesoreria SET concepto = $1 WHERE id_pago = $2 AND id_tenant = $3";
+        ParametrosDeComando.Agregar(comando, pago.Concepto);
+        ParametrosDeComando.Agregar(comando, pago.Id);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        await comando.ExecuteNonQueryAsync(ct);
+
+        return idMovimiento;
     }
 
     private static ErrorDominio PagoCambioConcurrente() =>

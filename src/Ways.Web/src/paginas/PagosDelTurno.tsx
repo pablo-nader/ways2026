@@ -211,7 +211,8 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
 
   // El personal solo se pide con Sueldos y con conexión. regla 2 (react-async-state): una respuesta de una elección anterior
   // nunca pisa a la vigente; un fallo no frena el resto de la pantalla (queda el sueldo sin empleado).
-  const pideElPersonal = ofreceElegirPersonal(categoria) && enLinea
+  // La edición también lo pide: asignar un empleado a un sueldo común es un pago de personal, que solo existe con conexión.
+  const pideElPersonal = (ofreceElegirPersonal(categoria) || edicion !== null) && enLinea
   useEffect(() => {
     if (!pideElPersonal) return
 
@@ -696,6 +697,9 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
           key={edicion.id}
           pago={edicion}
           ligadoACompra={edicion.idComprobanteCompra !== null}
+          personal={personal ?? []}
+          personalDisponible={pagoDePersonal}
+          errorDePersonal={errorPersonal}
           medios={mediosParaPago}
           proveedores={proveedores ?? []}
           areas={areas ?? []}
