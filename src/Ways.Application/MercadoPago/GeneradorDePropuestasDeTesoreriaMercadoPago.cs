@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.MercadoPago;
@@ -9,9 +11,13 @@ using Ways.Domain.Ventas;
 namespace Ways.Application.MercadoPago;
 
 /// <summary>Cuántas propuestas generó una importación (solo las que se crearon), qué cobros quedaron fuera del cálculo de la comisión y cuántos retiros
-/// del reporte ya tenían propuesta en otra conciliación de la empresa (o repetidos en el mismo archivo) y no se volvieron a proponer.</summary>
+/// del reporte ya tenían propuesta en otra conciliación de la empresa (o repetidos en el mismo archivo) y no se volvieron a proponer.
+/// <see cref="RetirosCancelados"/> son las operaciones distintas que el reporte cancela (<c>WITHDRAWAL_CANCEL</c>); de ellas,
+/// <see cref="RetirosDescartadosPorCancelacion"/> eran propuestas pendientes que se descartaron y <see cref="Reversiones"/> son las reversiones que se
+/// propusieron porque el retiro ya estaba aplicado.</summary>
 public sealed record PropuestasGeneradas(
-    int Diferencias, int Retiros, int CobrosSinCierre, int CobrosSinComisionReal, int RetirosYaPropuestos);
+    int Diferencias, int Retiros, int CobrosSinCierre, int CobrosSinComisionReal, int RetirosYaPropuestos,
+    int RetirosCancelados = 0, int RetirosDescartadosPorCancelacion = 0, int Reversiones = 0);
 
 /// <summary>
 /// Genera las propuestas de tesorería de una conciliación recién importada (E7). Corre dentro de la transacción de la importación, después de
@@ -28,8 +34,18 @@ public sealed record PropuestasGeneradas(
 ///
 /// <b>Retiros.</b> Un retiro se propone UNA vez por empresa: su clave es el SOURCE_ID de Mercado Pago y un índice parcial único por empresa lo respalda, así
 /// que dos reportes de rangos que se pisan no lo duplican (un retiro que ya tiene propuesta en cualquier conciliación de la empresa, pendiente, aplicada o
-/// descartada, no se vuelve a proponer y se cuenta). La cuenta de origen es la de los medios de pago con proveedor Mercado Pago de la empresa cuando es
-/// una sola; si hay varias o ninguna queda nula y el Admin la elige al aplicar (<see cref="CuentasDeOrigenAsync"/>).
+/// descartada, no se vuelve a proponer y se cuenta; el Admin puede reabrir una descartada). La cuenta de origen es la de los medios de pago con proveedor
+/// Mercado Pago de la empresa cuando es una sola; si hay varias o ninguna queda nula y el Admin la elige al aplicar (<see cref="CuentasDeOrigenAsync"/>).
+///
+/// <b>Cancelaciones.</b> Una fila <c>WITHDRAWAL_CANCEL</c> cancela el retiro de su mismo SOURCE_ID (supuesto: el reporte repite en la cancelación el id de
+/// la operación que cancela; no hay otro dato para emparejarlas). Según el estado de la propuesta de ese retiro en la empresa, que se lee bajo el lock de su
+/// fila: pendiente, se descarta con el motivo "cancelado por Mercado Pago" (auditado, no mueve dinero); aplicada, se propone una reversión
+/// (<see cref="TiposDePropuestaDeTesoreriaMercadoPago.RetiroCancelado"/>, una por operación y empresa) que el Admin aplica; descartada o inexistente, la
+/// cancelación solo se cuenta. Si el MISMO archivo trae el retiro y su cancelación no se propone el retiro (se cuenta como cancelado): proponer y descartar
+/// en el mismo paso solo dejaría ruido. Un retiro que se importa DESPUÉS de una cancelación ya importada sí se propone: la cancelación no se recuerda.
+///
+/// <b>Diferencia de comisión y anulaciones.</b> Solo cuentan los pagos de comprobantes emitidos HOY: una venta que se anula después de cerrado el turno queda
+/// fuera del cálculo aunque el cierre ya la haya acreditado (los flujos de anulación no se concilian acá; la diferencia de esa venta no se propone).
 /// </summary>
 public static class GeneradorDePropuestasDeTesoreriaMercadoPago
 {
@@ -43,7 +59,8 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         json is null ? null : JsonSerializer.Deserialize<DetalleDeDiferenciaDeComision>(json, OpcionesDeJson);
 
     /// <param name="cobrosAplicados">Los cobros de Mercado Pago que esta conciliación concilió, con la comisión real que se les guardó.</param>
-    /// <param name="filasDeRetiro">Las filas guardadas de la conciliación cuyo tipo es retiro o payout (ya con su id).</param>
+    /// <param name="filasDeRetiro">Las filas guardadas de la conciliación cuyo tipo es retiro, cancelación de retiro o payout (ya con su id).</param>
+    /// <param name="idUsuario">El usuario que importa: figura como quien resolvió las propuestas pendientes que una cancelación descarta.</param>
     public static async Task<PropuestasGeneradas> GenerarAsync(
         IWaysDbContext db,
         int idTenant,
@@ -51,13 +68,16 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         int idConciliacion,
         IReadOnlyDictionary<int, decimal?> cobrosAplicados,
         IReadOnlyList<FilaConciliacionMercadoPago> filasDeRetiro,
+        int? idUsuario,
+        ServicioDeAuditoria auditoria,
         DateTimeOffset ahora,
         CancellationToken ct)
     {
         var diferencias = await GenerarDiferenciasAsync(db, idTenant, idEmpresa, idConciliacion, cobrosAplicados, ahora, ct);
-        var retiros = await GenerarRetirosAsync(db, idTenant, idEmpresa, idConciliacion, filasDeRetiro, ahora, ct);
+        var retiros = await GenerarRetirosAsync(db, idTenant, idEmpresa, idConciliacion, filasDeRetiro, idUsuario, auditoria, ahora, ct);
         return new PropuestasGeneradas(
-            diferencias.Propuestas, retiros.Creados, diferencias.SinCierre, diferencias.SinComisionReal, retiros.YaPropuestos);
+            diferencias.Propuestas, retiros.Creados, diferencias.SinCierre, diferencias.SinComisionReal, retiros.YaPropuestos,
+            retiros.Cancelados, retiros.Descartados, retiros.Reversiones);
     }
 
     /// <summary>Las cuentas activas de la empresa a las que acreditan sus medios de pago activos con proveedor Mercado Pago, por id. Es el conjunto
@@ -111,7 +131,7 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
             creadas++;
             var lineas = lineasPorCuenta[cuenta.IdCuentaTesoreria]
                 .OrderByDescending(l => Math.Abs(l.Diferencia))
-                .ThenBy(l => l.IdCobroMercadoPago)
+                .ThenBy(l => l.IdCobro)
                 .ToList();
             var detalle = new DetalleDeDiferenciaDeComision(
                 cuenta.CantidadDeCobros, cuenta.ComisionRealTotal, cuenta.ComisionEstimadaTotal, resultado.CobrosSinCierre + sinPago,
@@ -170,59 +190,170 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         return cierres;
     }
 
-    private static async Task<(int Creados, int YaPropuestos)> GenerarRetirosAsync(
+    private sealed record ResultadoDeRetiros(int Creados, int YaPropuestos, int Cancelados, int Descartados, int Reversiones);
+
+    private static async Task<ResultadoDeRetiros> GenerarRetirosAsync(
         IWaysDbContext db, int idTenant, int idEmpresa, int idConciliacion, IReadOnlyList<FilaConciliacionMercadoPago> filasDeRetiro,
-        DateTimeOffset ahora, CancellationToken ct)
+        int? idUsuario, ServicioDeAuditoria auditoria, DateTimeOffset ahora, CancellationToken ct)
     {
+        var cancelaciones = filasDeRetiro
+            .Where(f => f.TipoTransaccion == TiposDeTransaccionMercadoPago.WithdrawalCancel && !string.IsNullOrEmpty(f.SourceId))
+            .OrderBy(f => f.NumeroLinea)
+            .GroupBy(f => f.SourceId!)
+            .Select(g => g.First())
+            .OrderBy(f => f.NumeroLinea)
+            .ToList();
+        var idsCancelados = cancelaciones.Select(f => f.SourceId!).ToHashSet();
+
         var retiros = filasDeRetiro
             .Where(f => f.TipoTransaccion is TiposDeTransaccionMercadoPago.Withdrawal or TiposDeTransaccionMercadoPago.Payout
                         && !string.IsNullOrEmpty(f.SourceId)
+                        && !(f.TipoTransaccion == TiposDeTransaccionMercadoPago.Withdrawal && idsCancelados.Contains(f.SourceId!))
                         && f.Importe is { } importe && importe != 0m && Math.Abs(importe) <= ReglasDeAjusteDeCuentaTesoreria.ImporteMaximo)
             .OrderBy(f => f.NumeroLinea)
             .ToList();
-        if (retiros.Count == 0)
+        if (retiros.Count == 0 && cancelaciones.Count == 0)
+        {
+            return new ResultadoDeRetiros(0, 0, 0, 0, 0);
+        }
+
+        var creados = 0;
+        if (retiros.Count > 0)
+        {
+            var claves = retiros.Select(f => PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(f.SourceId!)).Distinct().ToList();
+            var yaPropuestas = (await db.PropuestasTesoreriaMercadoPago
+                    .AsNoTracking()
+                    .Where(p => p.IdEmpresa == idEmpresa && p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro && claves.Contains(p.ClaveOrigen))
+                    .Select(p => p.ClaveOrigen)
+                    .ToListAsync(ct))
+                .ToHashSet();
+
+            var cuentas = await CuentasDeOrigenAsync(db, idEmpresa, ct);
+            int? idCuentaDeOrigen = cuentas.Count == 1 ? cuentas[0].Id : null;
+
+            foreach (var fila in retiros)
+            {
+                var clave = PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(fila.SourceId!);
+                if (!yaPropuestas.Add(clave))
+                {
+                    continue;
+                }
+
+                creados++;
+                db.PropuestasTesoreriaMercadoPago.Add(new PropuestaDeTesoreriaMercadoPago
+                {
+                    IdTenant = idTenant,
+                    IdEmpresa = idEmpresa,
+                    IdConciliacion = idConciliacion,
+                    Tipo = TiposDePropuestaDeTesoreriaMercadoPago.Retiro,
+                    ClaveOrigen = clave,
+                    Importe = Math.Abs(fila.Importe!.Value),
+                    IdFila = fila.Id,
+                    IdCuentaOrigen = idCuentaDeOrigen,
+                    Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente,
+                    CreatedAt = ahora,
+                    UpdatedAt = ahora
+                });
+            }
+
+            await db.SaveChangesAsync(ct);
+        }
+
+        var (descartados, reversiones) = await ProcesarCancelacionesAsync(
+            db, idTenant, idEmpresa, idConciliacion, cancelaciones, idUsuario, auditoria, ahora, ct);
+        return new ResultadoDeRetiros(creados, retiros.Count - creados, cancelaciones.Count, descartados, reversiones);
+    }
+
+    /// <summary>Aplica las cancelaciones del reporte a las propuestas de retiro de la empresa. Las filas de las propuestas se bloquean (<c>FOR UPDATE</c>, por
+    /// id ascendente, el mismo lock con el que aplican, descartan y reabren) y recién después se leen: el estado sobre el que se decide es el leído bajo el lock,
+    /// así que una aplicación simultánea o ya terminada decide entre descartar y proponer la reversión.</summary>
+    private static async Task<(int Descartados, int Reversiones)> ProcesarCancelacionesAsync(
+        IWaysDbContext db, int idTenant, int idEmpresa, int idConciliacion, IReadOnlyList<FilaConciliacionMercadoPago> cancelaciones,
+        int? idUsuario, ServicioDeAuditoria auditoria, DateTimeOffset ahora, CancellationToken ct)
+    {
+        if (cancelaciones.Count == 0)
         {
             return (0, 0);
         }
 
-        var claves = retiros.Select(f => PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(f.SourceId!)).Distinct().ToList();
-        var yaPropuestas = (await db.PropuestasTesoreriaMercadoPago
+        var claves = cancelaciones.Select(f => PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(f.SourceId!)).ToList();
+        var ids = await db.PropuestasTesoreriaMercadoPago
+            .AsNoTracking()
+            .Where(p => p.IdEmpresa == idEmpresa && p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro && claves.Contains(p.ClaveOrigen))
+            .Select(p => p.Id)
+            .OrderBy(id => id)
+            .ToListAsync(ct);
+        foreach (var id in ids)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM propuestas_tesoreria_mercadopago WHERE id_propuesta_tesoreria_mercadopago = {id} FOR UPDATE", ct);
+        }
+
+        var retiros = await db.PropuestasTesoreriaMercadoPago.Where(p => ids.Contains(p.Id)).ToListAsync(ct);
+        var yaRevertidas = (await db.PropuestasTesoreriaMercadoPago
                 .AsNoTracking()
-                .Where(p => p.IdEmpresa == idEmpresa && p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro && claves.Contains(p.ClaveOrigen))
+                .Where(p => p.IdEmpresa == idEmpresa && p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.RetiroCancelado && claves.Contains(p.ClaveOrigen))
                 .Select(p => p.ClaveOrigen)
                 .ToListAsync(ct))
             .ToHashSet();
 
-        var cuentas = await CuentasDeOrigenAsync(db, idEmpresa, ct);
-        int? idCuentaDeOrigen = cuentas.Count == 1 ? cuentas[0].Id : null;
-
-        var creados = 0;
-        foreach (var fila in retiros)
+        var descartados = 0;
+        var reversiones = 0;
+        foreach (var fila in cancelaciones)
         {
             var clave = PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(fila.SourceId!);
-            if (!yaPropuestas.Add(clave))
+            var retiro = retiros.FirstOrDefault(p => p.ClaveOrigen == clave);
+            if (retiro is null)
             {
                 continue;
             }
 
-            creados++;
-            db.PropuestasTesoreriaMercadoPago.Add(new PropuestaDeTesoreriaMercadoPago
+            if (retiro.Estado == EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente)
             {
-                IdTenant = idTenant,
-                IdEmpresa = idEmpresa,
-                IdConciliacion = idConciliacion,
-                Tipo = TiposDePropuestaDeTesoreriaMercadoPago.Retiro,
-                ClaveOrigen = clave,
-                Importe = Math.Abs(fila.Importe!.Value),
-                IdFila = fila.Id,
-                IdCuentaOrigen = idCuentaDeOrigen,
-                Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente,
-                CreatedAt = ahora,
-                UpdatedAt = ahora
-            });
+                descartados++;
+                retiro.Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Descartada;
+                retiro.IdUsuarioResolucion = idUsuario;
+                retiro.FechaResolucion = ahora;
+                retiro.MotivoResolucion = PropuestaDeTesoreriaMercadoPago.MotivoCancelado;
+                retiro.UpdatedAt = ahora;
+                auditoria.Registrar(new RegistroDeAuditoria(
+                    idTenant,
+                    null,
+                    AccionAuditada.PropuestaDeTesoreriaDescarte,
+                    retiro.Id,
+                    valorAnterior: null,
+                    valorNuevo: new Dictionary<string, object?>
+                    {
+                        ["id_conciliacion"] = retiro.IdConciliacion,
+                        ["id_conciliacion_cancelacion"] = idConciliacion,
+                        ["tipo"] = retiro.Tipo,
+                        ["importe"] = retiro.Importe,
+                        ["estado"] = retiro.Estado,
+                        ["motivo"] = retiro.MotivoResolucion
+                    }));
+            }
+            else if (retiro.Estado == EstadosDePropuestaDeTesoreriaMercadoPago.Aplicada && yaRevertidas.Add(clave))
+            {
+                reversiones++;
+                db.PropuestasTesoreriaMercadoPago.Add(new PropuestaDeTesoreriaMercadoPago
+                {
+                    IdTenant = idTenant,
+                    IdEmpresa = idEmpresa,
+                    IdConciliacion = idConciliacion,
+                    Tipo = TiposDePropuestaDeTesoreriaMercadoPago.RetiroCancelado,
+                    ClaveOrigen = clave,
+                    Importe = retiro.Importe,
+                    IdFila = fila.Id,
+                    IdCuentaOrigen = retiro.IdCuentaOrigen,
+                    IdCuentaDestino = retiro.IdCuentaDestino,
+                    Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente,
+                    CreatedAt = ahora,
+                    UpdatedAt = ahora
+                });
+            }
         }
 
         await db.SaveChangesAsync(ct);
-        return (creados, retiros.Count - creados);
+        return (descartados, reversiones);
     }
 }

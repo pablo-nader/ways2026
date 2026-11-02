@@ -168,8 +168,8 @@ public partial class MercadoPagoVentaTests
         Assert.Empty(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
     }
 
-    // Clausula: un retiro por cada fila WITHDRAWAL o PAYOUT (importe positivo aunque el reporte lo informe negativo); WITHDRAWAL_CANCEL no
-    // propone nada; el origen es la cuenta de la conexion con Mercado Pago; un monto que no entra en el libro no genera propuesta.
+    // Clausula: un retiro por cada fila WITHDRAWAL o PAYOUT (importe positivo aunque el reporte lo informe negativo); WITHDRAWAL_CANCEL de un retiro que
+    // no existe no propone nada (solo se cuenta); el origen es la cuenta de la conexion con Mercado Pago; un monto que no entra en el libro no genera propuesta.
     [Fact]
     public async Task CadaRetiroOPayoutProponeUnMovimientoYLaCancelacionNo()
     {
@@ -185,6 +185,7 @@ public partial class MercadoPagoVentaTests
                 PropFila("9004", "WITHDRAWAL", "-1000000000000.00")));
 
         var propuestas = await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id);
+        Assert.Equal(1, importada.RetirosCancelados);
         Assert.Equal(2, propuestas.Count);
         Assert.All(propuestas, p => Assert.Equal("retiro", p.Tipo));
         Assert.Equal(new[] { 500m, 250.50m }, propuestas.Select(p => p.Importe));

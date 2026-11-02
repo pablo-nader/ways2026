@@ -126,6 +126,9 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <summary>E7: el Admin descartó una propuesta de la conciliación sin escribir nada en la tesorería. <c>id_entidad</c> es la propuesta.</summary>
     public static readonly AccionAuditada PropuestaDeTesoreriaDescarte = new("conciliacion.propuestadescartada", "propuesta_tesoreria_mercadopago");
 
+    /// <summary>E7: el Admin reabrió una propuesta descartada (vuelve a pendiente, sin escribir nada en la tesorería). <c>id_entidad</c> es la propuesta.</summary>
+    public static readonly AccionAuditada PropuestaDeTesoreriaReapertura = new("conciliacion.propuestareabierta", "propuesta_tesoreria_mercadopago");
+
     /// <summary>Cierre de turno forzado por encima de la guarda de rendición de dispositivos —
     /// <c>Caja/ServicioDeTurnos.cs</c>, los DOS modos de cierre. Se escribe SIEMPRE que
     /// <c>ForzarSinRendicion</c> viene en true, incluso si la guarda no encontró nada pendiente: el
@@ -270,6 +273,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         ConciliacionConfirmacion,
         PropuestaDeTesoreriaAplicacion,
         PropuestaDeTesoreriaDescarte,
+        PropuestaDeTesoreriaReapertura,
         CierreForzadoSinRendicion,
         VentaExcedioLimiteSinValidar,
         PagoEdicion,

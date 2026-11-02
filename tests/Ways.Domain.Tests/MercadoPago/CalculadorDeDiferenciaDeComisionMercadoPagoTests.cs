@@ -126,6 +126,24 @@ public class CalculadorDeDiferenciaDeComisionMercadoPagoTests
         Assert.Empty(resultado.PorCuenta);
     }
 
+    // Un cobro de Mercado Pago puede tener varios pagos de venta: el reparto por mayor resto se indexa por el id del pago (cobros), no por el del cobro de
+    // Mercado Pago, o los centavos sobrantes se repetirían en todos los pagos del mismo cobro y las líneas no sumarían la estimada del grupo.
+    [Fact]
+    public void LosPagosDeUnMismoCobroDeMercadoPagoRepartenLaEstimadaSinRepetirCentavos()
+    {
+        var resultado = CalculadorDeDiferenciaDeComisionMercadoPago.Calcular(
+            [
+                new PagoConciliadoParaComision(1, 10, 1, 7, 10.01m, 0.06m),
+                new PagoConciliadoParaComision(1, 11, 1, 7, 10.01m, 0.06m),
+                new PagoConciliadoParaComision(1, 12, 1, 7, 10.01m, 0.05m)
+            ],
+            Cierres(((1, 7), 3, 0.55m)));
+
+        Assert.Equal(0.17m, resultado.Lineas.Sum(l => l.ComisionEstimada));
+        Assert.Equal([0.06m, 0.06m, 0.05m], resultado.Lineas.OrderBy(l => l.IdCobro).Select(l => l.ComisionEstimada));
+        Assert.Empty(resultado.PorCuenta);
+    }
+
     // Cada (turno, medio) redondea por su cuenta: dos turnos de la misma cuenta suman sus estimadas ya redondeadas.
     [Fact]
     public void LosGruposDeUnaMismaCuentaSumanSusEstimadasRedondeadasCadaUna()

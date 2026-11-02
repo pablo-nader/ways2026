@@ -692,39 +692,42 @@ filas_conciliacion_mercadopago (   -- [operativa por empresa: id_tenant + id_emp
 > `EXTERNAL_POS_ID`, de la caja con ese `external_id`; las ventas anuladas no cuentan. La sugerencia nunca se aplica sola.
 
 ```
-propuestas_tesoreria_mercadopago (   -- [operativa por empresa: id_tenant + id_empresa NOT NULL] E7: un movimiento de tesorería que una conciliación propone y un Admin aplica o descarta
+propuestas_tesoreria_mercadopago (   -- [operativa por empresa: id_tenant + id_empresa NOT NULL] E7: un movimiento de tesorería que una conciliación propone y un Admin aplica, descarta o reabre
     id_propuesta_tesoreria_mercadopago PK,
     id_empresa, id_conciliacion_mercadopago,  -- FK compuestas con id_tenant (RESTRICT)
-    tipo varchar(20),                        -- 'diferencia_comision' | 'retiro' (CHECK _tipo)
-    clave_origen varchar(64),                -- de dónde sale: 'cuenta:{id}' (diferencia de una cuenta, única por conciliación) o el SOURCE_ID de Mercado Pago (retiro, único por empresa)
+    tipo varchar(20),                        -- 'diferencia_comision' | 'retiro' | 'retiro_cancelado' (CHECK _tipo; la reversión de un retiro aplicado que Mercado Pago canceló, con las dos cuentas del retiro ya fijas)
+    clave_origen varchar(64),                -- de dónde sale: 'cuenta:{id}' (diferencia de una cuenta, única por conciliación) o el SOURCE_ID de Mercado Pago (retiro y retiro_cancelado, cada uno único por empresa)
     importe numeric(14,2),                   -- diferencia: efecto con signo sobre la cuenta de origen (negativo = Mercado Pago cobró más que el cierre); retiro: monto positivo que sale del origen (CHECK _importe <> 0, _forma)
     id_fila_conciliacion_mercadopago NULL,   -- la fila del reporte de un retiro (FK compuesta); nula en una diferencia
     id_cuenta_origen NULL, id_cuenta_destino NULL,  -- FK compuestas con la EMPRESA (ak_cuentas_tesoreria_id_..._id_empresa_id_tenant): la base rechaza una cuenta de otra empresa. Origen: la cuenta que se ajusta o de la que sale el retiro (la de los medios de pago con proveedor Mercado Pago de la empresa cuando es una sola; nula si hay varias o ninguna: el Admin la elige al aplicar y queda escrita). Destino: solo un retiro aplicado (CHECK _aplicada)
     estado varchar(12),                      -- 'pendiente' | 'aplicada' | 'descartada' (CHECK _estado)
     detalle jsonb NULL,                      -- solo la diferencia: totales, cobros que quedaron fuera y las 200 líneas que más pesan
     id_movimiento_cuenta NULL,               -- la fila del libro de la cuenta de origen que escribió la aplicación (FK compuesta a movimientos_cuenta); la de destino en id_movimiento_cuenta_destino (retiro)
-    id_usuario_resolucion NULL, fecha_resolucion NULL,  -- quién y cuándo aplicó o descartó (CHECK _resolucion: pendiente = sin ninguno)
+    id_usuario_resolucion NULL, fecha_resolucion NULL,  -- quién y cuándo aplicó o descartó (CHECK _resolucion: pendiente = sin ninguno; reabrir una descartada los borra)
+    motivo_resolucion varchar(120) NULL,     -- por qué se descartó sin que lo decidiera el Admin ('cancelado por Mercado Pago'); solo en una descartada (CHECK _motivo); reabrir lo borra
     created_at, updated_at, deleted_at
 )
 ```
 
 > Constraints: FK `fk_propuestas_tesoreria_mercadopago_tenant|_empresa|_conciliacion|_fila|_cuenta_origen|_cuenta_destino|_movimiento|_movimiento_destino|_usuario`; `movimientos_cuenta`
 > gana la clave alterna `ak_movimientos_cuenta_id_id_tenant` para la FK compuesta. RLS por tenant. Único `ux_propuestas_tesoreria_mercadopago_origen`
-> `(id_conciliacion_mercadopago, tipo, clave_origen)`: recalcular no duplica; y único parcial `ux_propuestas_tesoreria_mercadopago_retiro` `(id_tenant, id_empresa, clave_origen) WHERE tipo = 'retiro'`: un
+> `(id_conciliacion_mercadopago, tipo, clave_origen)`: recalcular no duplica; y único parcial `ux_propuestas_tesoreria_mercadopago_retiro` `(id_tenant, id_empresa, clave_origen) WHERE tipo = 'retiro'` (y lo mismo `…_retiro_cancelado` para la reversión): un
 > retiro se propone una vez por empresa aunque dos reportes de rangos que se pisan lo traigan (el generador salta el que ya tiene propuesta en cualquier conciliación; el índice es el respaldo). Lo escribe solo la importación, dentro de la transacción que crea la conciliación, así que
 > ningún cliente lo alcanza y no tiene traducción a 409 (guardas-inmatables). Índices de soporte `ix_propuestas_tesoreria_mercadopago_*` de cada FK.
 >
 > **Cómo se calculan (E7).** Al importar, en la misma transacción. *Diferencia de comisión*: por cada cobro `conciliado` por ESTE archivo, comisión real (`comision_real`) menos la
 > estimada. La estimada es la que descontó el cierre del turno de la venta: el cierre no la guarda por pago, así que se rearma con el `porcentaje_aplicado` de la fila `comision`
 > de `movimientos_cuenta` de ese turno y medio (la cuenta sale de su fila `cobro`) aplicado al bruto de los pagos del grupo (turno, medio) que ESTA conciliación trajo y redondeado UNA vez por grupo, a centavos, como el cierre (los centavos se reparten entre las líneas por mayor resto).
-> Solo cuentan los pagos de comprobantes emitidos. Aproximación que queda: si el reporte trae solo parte de los pagos de un grupo, el cierre redondeó sobre el bruto completo. Un cobro cuyo turno no acreditó el medio, o sin comisión real, no entra (se cuenta en el `detalle` y en la auditoría de la importación),
+> Solo cuentan los pagos de comprobantes emitidos HOY: una venta anulada después del cierre del turno queda fuera del cálculo aunque el cierre ya la haya acreditado (los flujos de anulación no se concilian acá). Aproximación que queda: si el reporte trae solo parte de los pagos de un grupo, el cierre redondeó sobre el bruto completo. Un cobro cuyo turno no acreditó el medio, o sin comisión real, no entra (se cuenta en el `detalle` y en la auditoría de la importación),
 > y un turno que se cierra después de importar no se suma. Una propuesta por cuenta con diferencia distinta de cero. *Retiro*: una por cada fila `WITHDRAWAL` o `PAYOUT` (importe en valor
-> absoluto; `WITHDRAWAL_CANCEL` no propone nada: se descarta a mano la del retiro cancelado), salvo que su SOURCE_ID ya tenga propuesta en otra conciliación de la empresa (pendiente, aplicada o descartada): se cuenta en `retirosYaPropuestos` y en la
-> auditoría (`retiros_ya_propuestos`). Su origen es la cuenta activa de los medios de pago activos con proveedor Mercado Pago de la empresa si es una sola; si no, queda nulo. Nada se escribe en la tesorería hasta que el Admin aplica.
+> absoluto), salvo que su SOURCE_ID ya tenga propuesta en otra conciliación de la empresa (pendiente, aplicada o descartada): se cuenta en `retirosYaPropuestos` y en la
+> auditoría (`retiros_ya_propuestos`); una descartada se puede reabrir. *Cancelación* (`WITHDRAWAL_CANCEL`, empareja por el mismo SOURCE_ID: el reporte repite el id de la operación que cancela), según la propuesta de ese retiro en la empresa, leída bajo el lock de su fila: pendiente, se descarta con `motivo_resolucion = 'cancelado por Mercado Pago'` (auditada, no mueve dinero); aplicada, se propone un
+> `retiro_cancelado` (mismo importe, origen y destino del retiro; el dinero vuelve del destino al origen; una por operación y empresa) que el Admin aplica sin elegir cuentas; descartada o sin propuesta, solo se cuenta. El reporte que trae el retiro y su cancelación juntos no propone el retiro. Se cuentan en `retirosCancelados` y en la auditoría
+> (`retiros_cancelados`, `retiros_descartados_por_cancelacion`, `reversiones_propuestas`). Un retiro que se importa después de una cancelación ya importada sí se propone (la cancelación no se recuerda). Su origen es la cuenta activa de los medios de pago activos con proveedor Mercado Pago de la empresa si es una sola; si no, queda nulo. Nada se escribe en la tesorería hasta que el Admin aplica.
 >
-> **Endpoints.** `GET /api/mercadopago/conciliaciones/{id}/propuestas` (Supervisor y Admin); `POST …/propuestas/{idPropuesta}/aplicar` `{idCuentaDestino?, idCuentaOrigen?}` (`idCuentaOrigen` solo en un retiro sin origen fijo, donde es obligatorio y la propuesta lista `origenesPosibles`) y `POST …/descartar` (Admin).
+> **Endpoints.** `GET /api/mercadopago/conciliaciones/{id}/propuestas` (Supervisor y Admin); `POST …/propuestas/{idPropuesta}/aplicar` `{idCuentaDestino?, idCuentaOrigen?}` (`idCuentaOrigen` solo en un retiro sin origen fijo, donde es obligatorio y la propuesta lista `origenesPosibles`) `POST …/descartar` y `POST …/reabrir` (Admin; reabrir devuelve una descartada a pendiente bajo el lock de su fila, sin escribir en el libro: 409 `propuesta_no_descartada` si no lo está).
 > Aplicar escribe con el escritor del ajuste manual (`EscriturasDeCuentaDeTesoreria.AgregarAjuste`): la diferencia es UN ajuste en la cuenta del medio; un retiro (tesorería no tiene transferencia
-> entre cuentas) es un ajuste de salida en la cuenta de Mercado Pago y uno de entrada en la cuenta elegida, en una sola transacción. Locks: guarda de conciliación de tesorería (compartida) → fila
+> entre cuentas) es un ajuste de salida en la cuenta de Mercado Pago y uno de entrada en la cuenta elegida, en una sola transacción; la reversión de un retiro cancelado hace lo inverso entre las dos cuentas del retiro (no lleva cuerpo: `cuenta_destino_no_aplica|cuenta_origen_no_aplica` si lo trae). Locks: guarda de conciliación de tesorería (compartida) → fila
 > de la propuesta (`FOR UPDATE`) → cuentas de la empresa (`FOR NO KEY UPDATE`, por id). 404 primero (conciliación, propuesta de esa conciliación); 400 `cuenta_destino_requerida|cuenta_destino_no_aplica|
-> cuenta_destino_invalida|cuentas_iguales|cuenta_origen_requerida|cuenta_origen_no_aplica|cuenta_origen_invalida`; 409 `propuesta_ya_aplicada|propuesta_descartada|propuesta_ya_descartada|cuenta_origen_no_disponible|periodo_conciliado`.
-> Auditoría `conciliacion.propuestaaplicada` y `conciliacion.propuestadescartada`.
+> cuenta_destino_invalida|cuentas_iguales|cuenta_origen_requerida|cuenta_origen_no_aplica|cuenta_origen_invalida`; 409 `propuesta_ya_aplicada|propuesta_descartada|propuesta_ya_descartada|propuesta_no_descartada|cuenta_origen_no_disponible|periodo_conciliado`.
+> Auditoría `conciliacion.propuestaaplicada`, `conciliacion.propuestadescartada` y `conciliacion.propuestareabierta`.

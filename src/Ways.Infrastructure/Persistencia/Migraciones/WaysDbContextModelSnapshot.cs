@@ -4363,6 +4363,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("importe");
 
+                    b.Property<string>("MotivoResolucion")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("motivo_resolucion");
+
                     b.Property<string>("Tipo")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -4406,6 +4411,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro")
                         .HasFilter("tipo = 'retiro'");
 
+                    b.HasIndex("IdTenant", "IdEmpresa", "ClaveOrigen")
+                        .IsUnique()
+                        .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro_cancelado")
+                        .HasFilter("tipo = 'retiro_cancelado'");
+
                     b.HasIndex("IdCuentaDestino", "IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_propuestas_tesoreria_mercadopago_cuenta_destino");
 
@@ -4414,19 +4424,21 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("propuestas_tesoreria_mercadopago", null, t =>
                         {
-                            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_aplicada", "(estado = 'aplicada') = (id_movimiento_cuenta IS NOT NULL) AND (estado = 'aplicada' AND tipo = 'retiro') = (id_movimiento_cuenta_destino IS NOT NULL) AND (estado = 'aplicada' AND tipo = 'retiro') = (id_cuenta_destino IS NOT NULL) AND (estado <> 'aplicada' OR id_cuenta_origen IS NOT NULL)");
+                            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_aplicada", "(estado = 'aplicada') = (id_movimiento_cuenta IS NOT NULL) AND (estado = 'aplicada' AND tipo <> 'diferencia_comision') = (id_movimiento_cuenta_destino IS NOT NULL) AND (tipo = 'retiro_cancelado' OR (estado = 'aplicada' AND tipo = 'retiro') = (id_cuenta_destino IS NOT NULL)) AND (estado <> 'aplicada' OR id_cuenta_origen IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_cuentas", "id_cuenta_origen IS NULL OR id_cuenta_destino IS NULL OR id_cuenta_origen <> id_cuenta_destino");
 
                             t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_estado", "estado IN ('pendiente', 'aplicada', 'descartada')");
 
-                            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_forma", "(tipo = 'diferencia_comision' AND id_fila_conciliacion_mercadopago IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NULL AND detalle IS NOT NULL AND id_movimiento_cuenta_destino IS NULL) OR (tipo = 'retiro' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL)");
+                            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_forma", "(tipo = 'diferencia_comision' AND id_fila_conciliacion_mercadopago IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NULL AND detalle IS NOT NULL AND id_movimiento_cuenta_destino IS NULL) OR (tipo = 'retiro' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL) OR (tipo = 'retiro_cancelado' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_importe", "importe <> 0");
 
+                            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_motivo", "motivo_resolucion IS NULL OR estado = 'descartada'");
+
                             t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_resolucion", "(estado = 'pendiente') = (id_usuario_resolucion IS NULL AND fecha_resolucion IS NULL)");
 
-                            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_tipo", "tipo IN ('diferencia_comision', 'retiro')");
+                            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_tipo", "tipo IN ('diferencia_comision', 'retiro', 'retiro_cancelado')");
                         });
                 });
 

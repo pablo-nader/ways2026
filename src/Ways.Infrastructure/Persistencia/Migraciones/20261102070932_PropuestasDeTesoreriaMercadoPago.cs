@@ -38,6 +38,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     id_movimiento_cuenta_destino = table.Column<int>(type: "integer", nullable: true),
                     id_usuario_resolucion = table.Column<int>(type: "integer", nullable: true),
                     fecha_resolucion = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    motivo_resolucion = table.Column<string>(type: "character varying(120)", maxLength: 120, nullable: true),
                     created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     deleted_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
@@ -46,13 +47,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 constraints: table =>
                 {
                     table.PrimaryKey("pk_propuestas_tesoreria_mercadopago", x => x.id_propuesta_tesoreria_mercadopago);
-                    table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_aplicada", "(estado = 'aplicada') = (id_movimiento_cuenta IS NOT NULL) AND (estado = 'aplicada' AND tipo = 'retiro') = (id_movimiento_cuenta_destino IS NOT NULL) AND (estado = 'aplicada' AND tipo = 'retiro') = (id_cuenta_destino IS NOT NULL) AND (estado <> 'aplicada' OR id_cuenta_origen IS NOT NULL)");
+                    table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_aplicada", "(estado = 'aplicada') = (id_movimiento_cuenta IS NOT NULL) AND (estado = 'aplicada' AND tipo <> 'diferencia_comision') = (id_movimiento_cuenta_destino IS NOT NULL) AND (tipo = 'retiro_cancelado' OR (estado = 'aplicada' AND tipo = 'retiro') = (id_cuenta_destino IS NOT NULL)) AND (estado <> 'aplicada' OR id_cuenta_origen IS NOT NULL)");
                     table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_cuentas", "id_cuenta_origen IS NULL OR id_cuenta_destino IS NULL OR id_cuenta_origen <> id_cuenta_destino");
                     table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_estado", "estado IN ('pendiente', 'aplicada', 'descartada')");
-                    table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_forma", "(tipo = 'diferencia_comision' AND id_fila_conciliacion_mercadopago IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NULL AND detalle IS NOT NULL AND id_movimiento_cuenta_destino IS NULL) OR (tipo = 'retiro' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL)");
+                    table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_forma", "(tipo = 'diferencia_comision' AND id_fila_conciliacion_mercadopago IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NULL AND detalle IS NOT NULL AND id_movimiento_cuenta_destino IS NULL) OR (tipo = 'retiro' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL) OR (tipo = 'retiro_cancelado' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NOT NULL)");
                     table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_importe", "importe <> 0");
+                    table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_motivo", "motivo_resolucion IS NULL OR estado = 'descartada'");
                     table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_resolucion", "(estado = 'pendiente') = (id_usuario_resolucion IS NULL AND fecha_resolucion IS NULL)");
-                    table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_tipo", "tipo IN ('diferencia_comision', 'retiro')");
+                    table.CheckConstraint("ck_propuestas_tesoreria_mercadopago_tipo", "tipo IN ('diferencia_comision', 'retiro', 'retiro_cancelado')");
                     table.ForeignKey(
                         name: "fk_propuestas_tesoreria_mercadopago_conciliacion",
                         columns: x => new { x.id_conciliacion_mercadopago, x.id_tenant },
@@ -166,6 +168,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 columns: new[] { "id_tenant", "id_empresa", "clave_origen" },
                 unique: true,
                 filter: "tipo = 'retiro'");
+
+            migrationBuilder.CreateIndex(
+                name: "ux_propuestas_tesoreria_mercadopago_retiro_cancelado",
+                table: "propuestas_tesoreria_mercadopago",
+                columns: new[] { "id_tenant", "id_empresa", "clave_origen" },
+                unique: true,
+                filter: "tipo = 'retiro_cancelado'");
 
             migrationBuilder.HabilitarRlsDeTenant("propuestas_tesoreria_mercadopago");
         }

@@ -272,8 +272,10 @@ public static class MercadoPagoEndpoints
         .WithSummary(
             "Supervisor y Admin: los movimientos de tesorería que la conciliación propone y que nada escribe hasta que un Admin los aplica: la diferencia " +
             "de comisión por cuenta (comisión real del reporte menos la que el cierre de turno descontó; importe con signo, negativo si Mercado Pago cobró " +
-            "más) y un retiro por cada WITHDRAWAL o PAYOUT del reporte (importe positivo, sale de la cuenta de la conexión con Mercado Pago). Se calculan " +
-            "al importar el reporte. 404 si la conciliación no existe.");
+            "más), un retiro por cada WITHDRAWAL o PAYOUT del reporte (importe positivo; sale de la cuenta de los medios de pago de Mercado Pago de la empresa " +
+            "cuando es una sola, y si no el Admin la elige al aplicar) y, por cada WITHDRAWAL_CANCEL de un retiro ya aplicado, una reversión (tipo retiro_cancelado) " +
+            "con las dos cuentas del retiro; un retiro pendiente que el reporte cancela se descarta (motivo 'cancelado por Mercado Pago'). Se calculan al " +
+            "importar el reporte. 404 si la conciliación no existe.");
 
         conciliaciones.MapPost("/{idConciliacion:int}/propuestas/{idPropuesta:int}/aplicar", (
             ServicioDePropuestasDeTesoreriaMercadoPago servicio, int idConciliacion, int idPropuesta,
@@ -282,9 +284,11 @@ public static class MercadoPagoEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
             "Admin: aplica una propuesta de la conciliación en la tesorería. Una diferencia de comisión es un ajuste de la cuenta del medio; un retiro (cuerpo " +
-            "{idCuentaDestino}, una cuenta activa de la misma empresa) sale de la cuenta de Mercado Pago y entra a la elegida, en una sola transacción. Queda " +
-            "auditado. 404 si la conciliación o la propuesta no existen, 400 cuenta_destino_requerida|cuenta_destino_no_aplica|cuenta_destino_invalida|" +
-            "cuentas_iguales, 409 propuesta_ya_aplicada|propuesta_descartada|propuesta_sin_cuenta_origen|cuenta_origen_no_disponible|periodo_conciliado.");
+            "{idCuentaDestino}, una cuenta activa de la misma empresa, e {idCuentaOrigen} solo cuando el retiro no trae origen fijo: una cuenta activa de los " +
+            "medios de pago de Mercado Pago de la empresa) sale de la cuenta de origen y entra a la elegida, en una sola transacción; una reversión (retiro_cancelado) " +
+            "devuelve el dinero entre las dos cuentas del retiro original y no lleva cuerpo. Queda auditado. 404 si la conciliación o la propuesta no existen, " +
+            "400 cuenta_destino_requerida|cuenta_destino_no_aplica|cuenta_destino_invalida|cuenta_origen_requerida|cuenta_origen_no_aplica|cuenta_origen_invalida|" +
+            "cuentas_iguales, 409 propuesta_ya_aplicada|propuesta_descartada|cuenta_origen_no_disponible|periodo_conciliado.");
 
         conciliaciones.MapPost("/{idConciliacion:int}/propuestas/{idPropuesta:int}/descartar", (
             ServicioDePropuestasDeTesoreriaMercadoPago servicio, int idConciliacion, int idPropuesta, CancellationToken ct) =>
@@ -293,6 +297,15 @@ public static class MercadoPagoEndpoints
         .WithSummary(
             "Admin: descarta una propuesta pendiente sin escribir nada en la tesorería; queda auditado. 404 si la conciliación o la propuesta no existen, " +
             "409 propuesta_ya_aplicada|propuesta_ya_descartada.");
+
+        conciliaciones.MapPost("/{idConciliacion:int}/propuestas/{idPropuesta:int}/reabrir", (
+            ServicioDePropuestasDeTesoreriaMercadoPago servicio, int idConciliacion, int idPropuesta, CancellationToken ct) =>
+            servicio.ReabrirAsync(idConciliacion, idPropuesta, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Admin: reabre una propuesta descartada (vuelve a pendiente, sin escribir nada en la tesorería; se borran quién y cuándo la descartó y el motivo); " +
+            "queda auditado. Es el camino de vuelta de un retiro descartado, que las importaciones no vuelven a proponer. 404 si la conciliación o la propuesta " +
+            "no existen, 409 propuesta_no_descartada.");
 
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,

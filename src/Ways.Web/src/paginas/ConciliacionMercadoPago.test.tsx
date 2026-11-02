@@ -162,7 +162,7 @@ function detalle(filas: FilaDeConciliacion[], extra: Partial<DetalleDeConciliaci
 }
 
 function importada(sobrescribir: Partial<ConciliacionImportada> = {}): ConciliacionImportada {
-  return { conciliacion: conciliacion(), invalidas: [], invalidasTruncado: false, retirosYaPropuestos: 0, ...sobrescribir }
+  return { conciliacion: conciliacion(), invalidas: [], invalidasTruncado: false, retirosYaPropuestos: 0, retirosCancelados: 0, ...sobrescribir }
 }
 
 let empresas: EmpresaListado[]
@@ -262,6 +262,17 @@ describe('ConciliacionMercadoPago — importar', () => {
 
     const region = await screen.findByRole('region', { name: 'Resultado de la importación' })
     expect(within(region).getByText(/2 retiro\(s\) ya estaban propuestos por un reporte anterior/)).toBeInTheDocument()
+  })
+
+  it('avisa los retiros que el reporte cancela', async () => {
+    apiPostFormularioMock.mockResolvedValue(importada({ retirosCancelados: 3 }))
+    renderPagina()
+
+    await elegirArchivo(csv())
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Importar' }))
+
+    const region = await screen.findByRole('region', { name: 'Resultado de la importación' })
+    expect(within(region).getByText(/3 retiro\(s\) cancelado\(s\) por Mercado Pago/)).toBeInTheDocument()
   })
 
   it('lista las filas inválidas con su línea y su motivo', async () => {
@@ -661,6 +672,7 @@ function propuesta(sobrescribir: Partial<PropuestaDeTesoreria> = {}): PropuestaD
     resueltaEl: null,
     resueltaPor: null,
     origenesPosibles: [],
+    motivo: null,
     ...sobrescribir,
   }
 }
@@ -842,6 +854,67 @@ describe('ConciliacionMercadoPago — movimientos a tesorería', () => {
     await usuario.selectOptions(origen, '70')
     expect(destino).toHaveValue('')
     expect(boton).toBeDisabled()
+  })
+
+  it('una propuesta descartada se puede reabrir: confirma, llama al endpoint y vuelve a leer', async () => {
+    propuestas = [retiro({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin', motivo: 'cancelado por Mercado Pago' })]
+    apiPostMock.mockResolvedValue(retiro())
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Descartada el .* por admin · cancelado por Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Aplicar|Descartar/ })).toBeNull()
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(within(seccion).getByRole('button', { name: 'Reabrir retiro de la línea 9' }))
+    const dialogo = await screen.findByRole('alertdialog')
+    expect(within(dialogo).getByText(/vuelve a quedar pendiente/)).toBeInTheDocument()
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Reabrir' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/reabrir', {}))
+    expect(await screen.findByText('Propuesta reabierta.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('un rechazo 409 al reabrir deja el diálogo con el error y vuelve a leer', async () => {
+    propuestas = [propuesta({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'propuesta_no_descartada', 'x'))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Reabrir diferencia de comisión' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reabrir' }))
+
+    expect(await within(await screen.findByRole('alertdialog')).findByText('La propuesta ya no está descartada: no se puede reabrir.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('la reversión de un retiro cancelado dice a dónde vuelve el dinero y se aplica sin elegir cuentas', async () => {
+    propuestas = [
+      retiro({ tipo: 'retiro_cancelado', idCuentaOrigen: 70, nombreCuentaOrigen: 'Mercado Pago', idCuentaDestino: 71, nombreCuentaDestino: 'Banco Nación' }),
+    ]
+    apiPostMock.mockResolvedValue(retiro({ tipo: 'retiro_cancelado', estado: 'aplicada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Devuelve \$\s?500,00 de Banco Nación a Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).queryByLabelText(/Cuenta de (origen|destino)/)).toBeNull()
+    await usuario.click(within(seccion).getByRole('button', { name: 'Aplicar reversión del retiro de la línea 9' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: null, idCuentaOrigen: null }))
+  })
+
+  it('el Supervisor ve una propuesta descartada sin el botón de reabrir', async () => {
+    usuarioActual = usuarioFixture(ROL.Supervisor)
+    propuestas = [propuesta({ estado: 'descartada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin' })]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Descartada el/)).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Reabrir/ })).toBeNull()
   })
 
   it('una propuesta ya resuelta no ofrece botones y dice cuándo y quién', async () => {

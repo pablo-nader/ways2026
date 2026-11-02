@@ -11,8 +11,10 @@ using Ways.Domain.MercadoPago;
 namespace Ways.Application.MercadoPago;
 
 /// <summary>
-/// Las propuestas de tesorería de una conciliación (E7): la diferencia de comisión y los retiros que la importación dejó pendientes
-/// (<see cref="GeneradorDePropuestasDeTesoreriaMercadoPago"/>). Aplicar escribe en la tesorería; descartar no escribe nada. Solo el Admin aplica o descarta.
+/// Las propuestas de tesorería de una conciliación (E7): la diferencia de comisión, los retiros y las reversiones de retiros cancelados que la importación
+/// dejó pendientes (<see cref="GeneradorDePropuestasDeTesoreriaMercadoPago"/>). Aplicar escribe en la tesorería; descartar y reabrir no escriben nada. Solo el
+/// Admin aplica, descarta o reabre. Descartar no es irreversible: <see cref="ReabrirAsync"/> devuelve una descartada a pendiente (el único camino de vuelta para
+/// un retiro, que la importación no vuelve a proponer).
 ///
 /// <b>Aplicar.</b> Orden de los errores: 404 (conciliación, propuesta de esa conciliación), 400 por el cuerpo según el tipo (<c>cuenta_destino_requerida</c>
 /// en un retiro, <c>cuenta_destino_no_aplica</c> en una diferencia; <c>cuenta_origen_requerida</c> en un retiro sin origen fijo,
@@ -22,7 +24,8 @@ namespace Ways.Application.MercadoPago;
 /// <c>cuentas_iguales</c>, y 409 <c>periodo_conciliado</c> si la fecha cae en un período congelado de tesorería.
 ///
 /// <b>Cómo se asienta.</b> La tesorería no tiene una transferencia entre cuentas: un retiro es un ajuste de salida de la cuenta de Mercado Pago y un ajuste
-/// de entrada a la cuenta elegida, los dos con <see cref="EscriturasDeCuentaDeTesoreria.AgregarAjuste"/> (el escritor del ajuste manual) dentro de UNA
+/// de entrada a la cuenta elegida (la reversión de un retiro cancelado hace lo inverso entre las dos cuentas del retiro original, que ya vienen fijas y no se
+/// eligen: <c>cuenta_destino_no_aplica</c> / <c>cuenta_origen_no_aplica</c> si el cuerpo las trae), los dos con <see cref="EscriturasDeCuentaDeTesoreria.AgregarAjuste"/> (el escritor del ajuste manual) dentro de UNA
 /// transacción, que es lo que los hace atómicos; la diferencia de comisión es un solo ajuste en la cuenta del medio, con el signo del cálculo. La propuesta
 /// recuerda las filas escritas.
 ///
@@ -30,7 +33,7 @@ namespace Ways.Application.MercadoPago;
 ///
 /// <b>Locks</b>, en este orden: guarda de conciliación de tesorería (compartida; la primera de la transacción, como en el ajuste manual) → fila de la
 /// propuesta (<c>FOR UPDATE</c>) → cuentas de la empresa (<c>FOR NO KEY UPDATE</c>, por id ascendente, el mismo lock con el que el cierre y el ajuste manual
-/// serializan la cadena de una cuenta). La propuesta se lee UNA vez, después de su lock: dos aplicaciones simultáneas se serializan en ese lock y la segunda
+/// serializan la cadena de una cuenta). Descartar y reabrir toman solo la fila de la propuesta. La propuesta se lee UNA vez, después de su lock: dos aplicaciones simultáneas se serializan en ese lock y la segunda
 /// ve la propuesta aplicada (409), sin escribir nada. Ningún otro escritor toma la fila de la propuesta junto con una cuenta en otro orden.
 /// </summary>
 public class ServicioDePropuestasDeTesoreriaMercadoPago(
@@ -109,7 +112,8 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                     pideOrigen && p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro && p.Estado == EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente
                     && p.IdCuentaOrigen is null
                         ? origenes
-                        : []);
+                        : [],
+                    p.MotivoResolucion);
             })
             .ToList();
     }
@@ -150,12 +154,12 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
         else if (idDestino is not null)
         {
             throw new ErrorDominio(
-                CodigosDeErrorDePropuestaDeTesoreria.CuentaDestinoNoAplica, "Una diferencia de comisión no lleva cuenta de destino.", 400);
+                CodigosDeErrorDePropuestaDeTesoreria.CuentaDestinoNoAplica, "Esta propuesta no lleva cuenta de destino a elegir.", 400);
         }
         else if (idOrigenElegido is not null)
         {
             throw new ErrorDominio(
-                CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenNoAplica, "Una diferencia de comisión no lleva cuenta de origen a elegir.", 400);
+                CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenNoAplica, "Esta propuesta no lleva cuenta de origen a elegir.", 400);
         }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
@@ -172,6 +176,9 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                 ?? throw Inexistente(idConciliacion, idPropuesta);
             ExigirPendiente(propuesta);
 
+            var esRetiro = propuesta.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro;
+            var esReversion = propuesta.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.RetiroCancelado;
+            var mueveDosCuentas = esRetiro || esReversion;
             var eligioOrigen = propuesta.IdCuentaOrigen is null;
             var idOrigen = propuesta.IdCuentaOrigen
                 ?? (idOrigenElegido is > 0
@@ -181,14 +188,14 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                         "Elegí la cuenta de Mercado Pago de la que sale el retiro.",
                         400));
 
-            var esRetiro = propuesta.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro;
+            var idDestinoFinal = esReversion ? propuesta.IdCuentaDestino : idDestino;
             if (esRetiro && idDestino == idOrigen)
             {
                 throw new ErrorDominio(
                     CodigosDeErrorDePropuestaDeTesoreria.CuentasIguales, "La cuenta de destino es la misma de la que sale el retiro.", 400);
             }
 
-            var idsABloquear = esRetiro ? new List<int> { idOrigen, idDestino!.Value }.Order().ToList() : [idOrigen];
+            var idsABloquear = mueveDosCuentas ? new List<int> { idOrigen, idDestinoFinal!.Value }.Order().ToList() : [idOrigen];
             var conexion = db.Database.GetDbConnection();
             var transaccionCruda = transaccion.GetDbTransaction();
             var bloqueadas = await EscriturasDeCuentaDeTesoreria.LeerYBloquearCuentasAsync(
@@ -205,10 +212,11 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                         400);
                 }
             }
-            else if (!bloqueadas.ContainsKey(idOrigen))
+            else if (!bloqueadas.ContainsKey(idOrigen) || (esReversion && !bloqueadas.ContainsKey(idDestinoFinal!.Value)))
             {
                 throw ErrorDominio.Conflicto(
-                    CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenNoDisponible, "La cuenta de Mercado Pago ya no está disponible.");
+                    CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenNoDisponible,
+                    esReversion ? "Una de las cuentas del retiro cancelado ya no está disponible." : "La cuenta de Mercado Pago ya no está disponible.");
             }
 
             string? nombreDestino = null;
@@ -240,27 +248,34 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
 
             var concepto = esRetiro
                 ? $"Retiro de Mercado Pago a {nombreDestino} - conciliación {idConciliacion}, operación {propuesta.ClaveOrigen}"
-                : $"Diferencia de comisión de Mercado Pago - conciliación {idConciliacion}";
+                : esReversion
+                    ? $"Reversión del retiro cancelado en Mercado Pago - conciliación {idConciliacion}, operación {propuesta.ClaveOrigen}"
+                    : $"Diferencia de comisión de Mercado Pago - conciliación {idConciliacion}";
             var filaOrigen = EscriturasDeCuentaDeTesoreria.AgregarAjuste(db, idTenant, idOrigen, ajusteOrigen, fechaOrigen, concepto, idEmpleado);
 
             MovimientoCuenta? filaDestino = null;
-            if (esRetiro)
+            if (mueveDosCuentas)
             {
+                var idCuentaDestino = idDestinoFinal!.Value;
                 var colaDestino = await EscriturasDeCuentaDeTesoreria.LeerColaAsync(
-                    db, idTenant, idDestino!.Value, bloqueadas[idDestino.Value].SaldoInicial, ct);
-                var ajusteDestino = ReglasDeAjusteDeCuentaTesoreria.Resolver(colaDestino.Saldo, propuesta.Importe, null);
+                    db, idTenant, idCuentaDestino, bloqueadas[idCuentaDestino].SaldoInicial, ct);
+                var ajusteDestino = ReglasDeAjusteDeCuentaTesoreria.Resolver(
+                    colaDestino.Saldo, esReversion ? -propuesta.Importe : propuesta.Importe, null);
                 var fechaDestino = EscriturasDeCuentaDeTesoreria.FechaMonotona(ahora, colaDestino.Fecha);
                 await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, propuesta.IdEmpresa, fechaDestino, ct);
                 filaDestino = EscriturasDeCuentaDeTesoreria.AgregarAjuste(
-                    db, idTenant, idDestino.Value, ajusteDestino, fechaDestino,
-                    $"Retiro desde Mercado Pago - conciliación {idConciliacion}, operación {propuesta.ClaveOrigen}", idEmpleado);
+                    db, idTenant, idCuentaDestino, ajusteDestino, fechaDestino,
+                    esReversion
+                        ? $"Reversión del retiro cancelado en Mercado Pago - conciliación {idConciliacion}, operación {propuesta.ClaveOrigen}"
+                        : $"Retiro desde Mercado Pago - conciliación {idConciliacion}, operación {propuesta.ClaveOrigen}",
+                    idEmpleado);
             }
 
             await db.SaveChangesAsync(ct);
 
             propuesta.Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Aplicada;
             propuesta.IdCuentaOrigen = idOrigen;
-            propuesta.IdCuentaDestino = esRetiro ? idDestino : null;
+            propuesta.IdCuentaDestino = mueveDosCuentas ? idDestinoFinal : null;
             propuesta.IdMovimientoCuenta = filaOrigen.Id;
             propuesta.IdMovimientoCuentaDestino = filaDestino?.Id;
             propuesta.IdUsuarioResolucion = idEmpleado;
@@ -334,6 +349,67 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                     ["tipo"] = propuesta.Tipo,
                     ["importe"] = propuesta.Importe,
                     ["estado"] = propuesta.Estado
+                }));
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
+
+        return await LeerUnaAsync(idConciliacion, idPropuesta, ct);
+    }
+
+    /// <summary>Devuelve una propuesta descartada a pendiente: borra quién y cuándo la resolvió y el motivo, sin escribir nada en la tesorería. Es el único
+    /// camino de vuelta de un retiro descartado, que la importación no vuelve a proponer. El estado se lee UNA vez, bajo el lock de la fila, así que reabrir
+    /// contra aplicar o descartar se serializa; 409 <c>propuesta_no_descartada</c> si no está descartada. Una propuesta que el reporte descartó por una cancelación
+    /// también se puede reabrir: queda en manos del Admin.</summary>
+    public async Task<PropuestaDeTesoreria> ReabrirAsync(int idConciliacion, int idPropuesta, CancellationToken ct = default)
+    {
+        var idTenant = contexto.IdTenant
+            ?? throw ErrorDominio.Prohibido("Reabrir una propuesta requiere un usuario de un tenant.");
+
+        await LeerPreviaAsync(idConciliacion, idPropuesta, ct);
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM propuestas_tesoreria_mercadopago WHERE id_propuesta_tesoreria_mercadopago = {idPropuesta} FOR UPDATE", ct);
+            var propuesta = await db.PropuestasTesoreriaMercadoPago
+                .FirstOrDefaultAsync(p => p.Id == idPropuesta && p.IdConciliacion == idConciliacion, ct)
+                ?? throw Inexistente(idConciliacion, idPropuesta);
+
+            if (propuesta.Estado != EstadosDePropuestaDeTesoreriaMercadoPago.Descartada)
+            {
+                throw ErrorDominio.Conflicto(
+                    CodigosDeErrorDePropuestaDeTesoreria.NoDescartada, "Solo se puede reabrir una propuesta descartada.");
+            }
+
+            var ahora = reloj.Ahora;
+            var motivoAnterior = propuesta.MotivoResolucion;
+            propuesta.Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente;
+            propuesta.IdUsuarioResolucion = null;
+            propuesta.FechaResolucion = null;
+            propuesta.MotivoResolucion = null;
+            propuesta.UpdatedAt = ahora;
+
+            auditoria.Registrar(new RegistroDeAuditoria(
+                idTenant,
+                null,
+                AccionAuditada.PropuestaDeTesoreriaReapertura,
+                propuesta.Id,
+                valorAnterior: new Dictionary<string, object?>
+                {
+                    ["estado"] = EstadosDePropuestaDeTesoreriaMercadoPago.Descartada,
+                    ["motivo"] = motivoAnterior
+                },
+                valorNuevo: new Dictionary<string, object?>
+                {
+                    ["id_conciliacion"] = idConciliacion,
+                    ["tipo"] = propuesta.Tipo,
+                    ["importe"] = propuesta.Importe,
+                    ["estado"] = propuesta.Estado,
+                    ["motivo"] = propuesta.MotivoResolucion
                 }));
             await db.SaveChangesAsync(ct);
             await transaccion.CommitAsync(ct);

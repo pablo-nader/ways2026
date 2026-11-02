@@ -19,22 +19,26 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
     {
         builder.ToTable("propuestas_tesoreria_mercadopago", t =>
         {
-            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_tipo", "tipo IN ('diferencia_comision', 'retiro')");
+            t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_tipo", "tipo IN ('diferencia_comision', 'retiro', 'retiro_cancelado')");
             t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_estado", "estado IN ('pendiente', 'aplicada', 'descartada')");
             t.HasCheckConstraint("ck_propuestas_tesoreria_mercadopago_importe", "importe <> 0");
             t.HasCheckConstraint(
                 "ck_propuestas_tesoreria_mercadopago_forma",
                 "(tipo = 'diferencia_comision' AND id_fila_conciliacion_mercadopago IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NULL AND detalle IS NOT NULL AND id_movimiento_cuenta_destino IS NULL) " +
-                "OR (tipo = 'retiro' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL)");
+                "OR (tipo = 'retiro' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL) " +
+                "OR (tipo = 'retiro_cancelado' AND id_fila_conciliacion_mercadopago IS NOT NULL AND importe > 0 AND detalle IS NULL AND id_cuenta_origen IS NOT NULL AND id_cuenta_destino IS NOT NULL)");
             t.HasCheckConstraint(
                 "ck_propuestas_tesoreria_mercadopago_cuentas",
                 "id_cuenta_origen IS NULL OR id_cuenta_destino IS NULL OR id_cuenta_origen <> id_cuenta_destino");
             t.HasCheckConstraint(
                 "ck_propuestas_tesoreria_mercadopago_aplicada",
                 "(estado = 'aplicada') = (id_movimiento_cuenta IS NOT NULL) " +
-                "AND (estado = 'aplicada' AND tipo = 'retiro') = (id_movimiento_cuenta_destino IS NOT NULL) " +
-                "AND (estado = 'aplicada' AND tipo = 'retiro') = (id_cuenta_destino IS NOT NULL) " +
+                "AND (estado = 'aplicada' AND tipo <> 'diferencia_comision') = (id_movimiento_cuenta_destino IS NOT NULL) " +
+                "AND (tipo = 'retiro_cancelado' OR (estado = 'aplicada' AND tipo = 'retiro') = (id_cuenta_destino IS NOT NULL)) " +
                 "AND (estado <> 'aplicada' OR id_cuenta_origen IS NOT NULL)");
+            t.HasCheckConstraint(
+                "ck_propuestas_tesoreria_mercadopago_motivo",
+                "motivo_resolucion IS NULL OR estado = 'descartada'");
             t.HasCheckConstraint(
                 "ck_propuestas_tesoreria_mercadopago_resolucion",
                 "(estado = 'pendiente') = (id_usuario_resolucion IS NULL AND fecha_resolucion IS NULL)");
@@ -61,6 +65,7 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
         builder.Property(p => p.IdMovimientoCuentaDestino).HasColumnName("id_movimiento_cuenta_destino");
         builder.Property(p => p.IdUsuarioResolucion).HasColumnName("id_usuario_resolucion");
         builder.Property(p => p.FechaResolucion).HasColumnName("fecha_resolucion");
+        builder.Property(p => p.MotivoResolucion).HasColumnName("motivo_resolucion").HasMaxLength(120);
 
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
@@ -88,6 +93,12 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
         builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.ClaveOrigen })
             .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro")
             .HasFilter("tipo = 'retiro'")
+            .IsUnique();
+
+        // Lo mismo para la reversión de un retiro cancelado: una por operación y empresa, aunque dos reportes que se pisan traigan la cancelación.
+        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.ClaveOrigen })
+            .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro_cancelado")
+            .HasFilter("tipo = 'retiro_cancelado'")
             .IsUnique();
 
         builder.HasOne<Tenant>()

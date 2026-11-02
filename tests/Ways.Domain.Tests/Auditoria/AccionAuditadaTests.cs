@@ -19,7 +19,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// <c>compra.edicion</c> la agregó la edición de una compra confirmada.
 /// <c>conciliacion.importacion</c> y <c>conciliacion.confirmacion</c> las agregó la conciliación con el reporte de Mercado Pago (E6).
-/// <c>conciliacion.propuestaaplicada</c> y <c>conciliacion.propuestadescartada</c> las agregó el paso de la conciliación a la tesorería (E7).
+/// <c>conciliacion.propuestaaplicada</c>, <c>conciliacion.propuestadescartada</c> y <c>conciliacion.propuestareabierta</c> las agregó el paso de la conciliación a la tesorería (E7).
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
 /// bajos en el dominio.
 /// </summary>
@@ -31,7 +31,7 @@ public partial class AccionAuditadaTests
     [Fact]
     public void TieneCuarentaYOchoEntradas()
     {
-        Assert.Equal(48, AccionAuditada.Todas.Count);
+        Assert.Equal(49, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -93,6 +93,7 @@ public partial class AccionAuditadaTests
             ("conciliacion.confirmacion", "conciliacion_mercadopago"),
             ("conciliacion.propuestaaplicada", "propuesta_tesoreria_mercadopago"),
             ("conciliacion.propuestadescartada", "propuesta_tesoreria_mercadopago"),
+            ("conciliacion.propuestareabierta", "propuesta_tesoreria_mercadopago"),
             ("caja.forzado", "turno_caja"),
             ("venta.sobrelimite", "comprobante_venta"),
             ("pago.edicion", "pago"),

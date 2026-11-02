@@ -329,12 +329,14 @@ describe('propuestas de tesorería', () => {
     await clienteDeConciliacionMercadoPago.aplicarPropuesta(3, 12, null)
     await clienteDeConciliacionMercadoPago.aplicarPropuesta(3, 13, 71, 70)
     await clienteDeConciliacionMercadoPago.descartarPropuesta(3, 11)
+    await clienteDeConciliacionMercadoPago.reabrirPropuesta(3, 11)
 
     expect(apiGetMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas')
     expect(apiPostMock).toHaveBeenNthCalledWith(1, '/mercadopago/conciliaciones/3/propuestas/11/aplicar', { idCuentaDestino: 71, idCuentaOrigen: null })
     expect(apiPostMock).toHaveBeenNthCalledWith(2, '/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: null, idCuentaOrigen: null })
     expect(apiPostMock).toHaveBeenNthCalledWith(3, '/mercadopago/conciliaciones/3/propuestas/13/aplicar', { idCuentaDestino: 71, idCuentaOrigen: 70 })
     expect(apiPostMock).toHaveBeenNthCalledWith(4, '/mercadopago/conciliaciones/3/propuestas/11/descartar', {})
+    expect(apiPostMock).toHaveBeenNthCalledWith(5, '/mercadopago/conciliaciones/3/propuestas/11/reabrir', {})
   })
 
   it('el efecto distingue débito, crédito y retiro', () => {
@@ -343,6 +345,7 @@ describe('propuestas de tesorería', () => {
     expect(textoDeEfecto({ ...base, tipo: 'diferencia_comision', importe: 2 })).toMatch(/^Acredita .*2,00 en Mercado Pago$/)
     expect(textoDeEfecto({ ...base, tipo: 'retiro', importe: 40 })).toMatch(/^Pasa .*40,00 de Mercado Pago a la cuenta que elijas$/)
     expect(textoDeEfecto({ ...base, nombreCuentaDestino: 'Banco', tipo: 'retiro', importe: 40 })).toMatch(/a Banco$/)
+    expect(textoDeEfecto({ ...base, nombreCuentaDestino: 'Banco', tipo: 'retiro_cancelado', importe: 40 })).toMatch(/^Devuelve .*40,00 de Banco a Mercado Pago$/)
     expect(textoDeEfecto({ tipo: 'diferencia_comision', importe: -1, nombreCuentaOrigen: null, nombreCuentaDestino: null })).toContain(
       'la cuenta de Mercado Pago',
     )

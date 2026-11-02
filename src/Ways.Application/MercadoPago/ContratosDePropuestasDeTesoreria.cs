@@ -28,7 +28,9 @@ public sealed record CuentaDeOrigenPosible(int Id, string Nombre);
 /// Pago: mientras esté pendiente, <see cref="OrigenesPosibles"/> trae las cuentas entre las que el Admin elige al aplicar (vacía si no hay ninguna, y
 /// entonces solo se puede descartar); en cualquier otro caso viene vacía. El destino, el movimiento escrito y quién resolvió solo existen cuando ya
 /// se resolvió. <see cref="NumeroLinea"/>, <see cref="SourceId"/> y <see cref="FechaTransaccion"/> son de la fila del reporte de un retiro;
-/// <see cref="Detalle"/> es solo de una diferencia de comisión.
+/// <see cref="Detalle"/> es solo de una diferencia de comisión. En una reversión de retiro cancelado (<c>retiro_cancelado</c>) el origen es la cuenta
+/// que había pagado el retiro (recupera el dinero) y el destino la que lo había recibido; ya vienen fijos y no se eligen. <see cref="Motivo"/> dice por qué
+/// se descartó cuando no fue el Admin (el retiro lo canceló Mercado Pago).
 /// </summary>
 public sealed record PropuestaDeTesoreria(
     int Id,
@@ -47,7 +49,8 @@ public sealed record PropuestaDeTesoreria(
     int? IdMovimientoCuentaDestino,
     DateTimeOffset? ResueltaEl,
     string? ResueltaPor,
-    IReadOnlyList<CuentaDeOrigenPosible> OrigenesPosibles);
+    IReadOnlyList<CuentaDeOrigenPosible> OrigenesPosibles,
+    string? Motivo = null);
 
 /// <summary>Aplica una propuesta. <see cref="IdCuentaDestino"/> es la cuenta bancaria activa de la misma empresa que recibe un retiro; es obligatoria
 /// en un retiro y se rechaza en una diferencia de comisión. <see cref="IdCuentaOrigen"/> solo se acepta en un retiro que no tiene origen fijo y entonces
@@ -62,6 +65,8 @@ public static class CodigosDeErrorDePropuestaDeTesoreria
     public const string YaDescartada = "propuesta_ya_descartada";
 
     public const string Descartada = "propuesta_descartada";
+
+    public const string NoDescartada = "propuesta_no_descartada";
 
     public const string CuentaDestinoRequerida = "cuenta_destino_requerida";
 

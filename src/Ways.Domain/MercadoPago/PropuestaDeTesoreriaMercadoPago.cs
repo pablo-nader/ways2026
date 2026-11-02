@@ -11,10 +11,14 @@ public static class TiposDePropuestaDeTesoreriaMercadoPago
     /// <summary>Un retiro o payout de la cuenta de Mercado Pago: sale de esa cuenta y entra a la cuenta bancaria que elige el Admin.</summary>
     public const string Retiro = "retiro";
 
-    public static readonly IReadOnlyList<string> Todos = [DiferenciaComision, Retiro];
+    /// <summary>Mercado Pago canceló (<c>WITHDRAWAL_CANCEL</c>) un retiro que el Admin ya había aplicado: devuelve el dinero de la cuenta que lo recibió a la de
+    /// origen. Las dos cuentas son las del retiro aplicado, así que el Admin solo confirma; aplicarla escribe los dos ajustes inversos en una transacción.</summary>
+    public const string RetiroCancelado = "retiro_cancelado";
+
+    public static readonly IReadOnlyList<string> Todos = [DiferenciaComision, Retiro, RetiroCancelado];
 }
 
-/// <summary>Estado de una propuesta (<c>propuestas_tesoreria_mercadopago.estado</c>). Aplicada y descartada son finales.</summary>
+/// <summary>Estado de una propuesta (<c>propuestas_tesoreria_mercadopago.estado</c>). Aplicada es final; una descartada se puede reabrir (vuelve a pendiente).</summary>
 public static class EstadosDePropuestaDeTesoreriaMercadoPago
 {
     public const string Pendiente = "pendiente";
@@ -75,6 +79,11 @@ public class PropuestaDeTesoreriaMercadoPago : EntidadTenant
     public int? IdUsuarioResolucion { get; set; }
 
     public DateTimeOffset? FechaResolucion { get; set; }
+
+    /// <summary>Por qué se descartó sin que lo decidiera el Admin (<see cref="MotivoCancelado"/>); nulo si se descartó a mano o no está descartada.</summary>
+    public string? MotivoResolucion { get; set; }
+
+    public const string MotivoCancelado = "cancelado por Mercado Pago";
 
     public static string ClaveDeCuenta(int idCuenta) => $"cuenta:{idCuenta}";
 

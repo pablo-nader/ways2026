@@ -50,6 +50,8 @@ export type ConciliacionImportada = {
   invalidasTruncado: boolean
   /** Retiros del reporte que ya tenían propuesta en otra conciliación de la empresa (o repetidos en el archivo) y no se volvieron a proponer. */
   retirosYaPropuestos: number
+  /** Operaciones distintas que el reporte cancela (`WITHDRAWAL_CANCEL`): descartan el retiro pendiente, proponen la reversión del aplicado o solo se cuentan. */
+  retirosCancelados: number
 }
 
 export type CandidatoDeConfirmacion = {
@@ -124,7 +126,7 @@ export type PagosSinVerificar = { items: PagoSinVerificar[]; truncado: boolean }
 
 export type ConsultaDeFilas = { resultado: string | null; pagina: number; tamano: number }
 
-export type TipoDePropuesta = 'diferencia_comision' | 'retiro'
+export type TipoDePropuesta = 'diferencia_comision' | 'retiro' | 'retiro_cancelado'
 
 export type EstadoDePropuesta = 'pendiente' | 'aplicada' | 'descartada'
 
@@ -160,6 +162,8 @@ export type CuentaDeOrigenPosible = { id: number; nombre: string }
  * cuenta de origen (negativo si Mercado Pago cobró más de lo que el cierre descontó) y, en un retiro, el monto positivo que sale de ella.
  * `idCuentaOrigen` es nulo en un retiro cuando la empresa no tiene exactamente una cuenta en sus medios de Mercado Pago: mientras esté
  * pendiente, `origenesPosibles` trae las cuentas entre las que el Admin elige al aplicar (vacía: solo se puede descartar); si no, viene vacía.
+ * `retiro_cancelado` es la reversión de un retiro ya aplicado que Mercado Pago canceló: lleva las dos cuentas del retiro (el dinero vuelve del destino
+ * al origen) y no se eligen. `motivo` dice por qué se descartó cuando no fue el Admin.
  */
 export type PropuestaDeTesoreria = {
   id: number
@@ -179,9 +183,10 @@ export type PropuestaDeTesoreria = {
   resueltaEl: string | null
   resueltaPor: string | null
   origenesPosibles: CuentaDeOrigenPosible[]
+  motivo: string | null
 }
 
-export type AccionDePropuesta = 'aplicar' | 'descartar'
+export type AccionDePropuesta = 'aplicar' | 'descartar' | 'reabrir'
 
 export const ORIGEN_WEB = 'web'
 export const ENCABEZADO_DE_ORIGEN = 'X-Ways-Origen'
@@ -216,6 +221,8 @@ export const clienteDeConciliacionMercadoPago = {
     api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/aplicar`, { idCuentaDestino, idCuentaOrigen }),
   descartarPropuesta: (idConciliacion: number, idPropuesta: number) =>
     api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/descartar`, {}),
+  reabrirPropuesta: (idConciliacion: number, idPropuesta: number) =>
+    api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/reabrir`, {}),
   cobrosSinVenta: (idEmpresa: number) => api.get<CobroSinVenta[]>(`/mercadopago/cobros-sin-venta${aQuery({ idEmpresa })}`),
   pagosSinVerificar: (idEmpresa: number, desde: string, hasta: string) =>
     api.get<PagosSinVerificar>(`/mercadopago/pagos-sin-verificar${aQuery({ idEmpresa, desde, hasta })}`),
@@ -376,8 +383,9 @@ const MENSAJE_POR_CODIGO: Record<string, string> = {
   propuesta_ya_aplicada: 'La propuesta ya se aplicó.',
   propuesta_descartada: 'La propuesta ya se descartó: no se puede aplicar.',
   propuesta_ya_descartada: 'La propuesta ya se descartó.',
+  propuesta_no_descartada: 'La propuesta ya no está descartada: no se puede reabrir.',
   cuenta_destino_requerida: 'Elegí la cuenta que recibe el retiro.',
-  cuenta_destino_no_aplica: 'Una diferencia de comisión no lleva cuenta de destino.',
+  cuenta_destino_no_aplica: 'Esta propuesta no lleva cuenta de destino a elegir.',
   cuenta_destino_invalida: 'La cuenta de destino tiene que ser una cuenta activa de la misma empresa.',
   cuentas_iguales: 'La cuenta de destino es la misma de la que sale el retiro.',
   cuenta_origen_requerida: 'Elegí la cuenta de Mercado Pago de la que sale el retiro.',
@@ -469,6 +477,7 @@ export function textoDeResumen(resumen: readonly ResumenDeResultado[]): string {
 const ETIQUETA_DE_TIPO_DE_PROPUESTA: Record<string, string> = {
   diferencia_comision: 'Diferencia de comisión',
   retiro: 'Retiro',
+  retiro_cancelado: 'Retiro cancelado',
 }
 
 export function etiquetaDeTipoDePropuesta(tipo: string): string {
@@ -493,10 +502,14 @@ export function claseDeEstadoDePropuesta(estado: string): string {
 
 /**
  * Qué hace la propuesta en la tesorería, en una frase. Una diferencia con importe negativo debita la cuenta (Mercado Pago cobró más de
- * lo que el cierre descontó); positivo, la acredita. Un retiro sale de la cuenta de origen y entra a la que se elija.
+ * lo que el cierre descontó); positivo, la acredita. Un retiro sale de la cuenta de origen y entra a la que se elija; la reversión de un retiro
+ * cancelado devuelve el dinero de la cuenta que lo recibió a la de origen.
  */
 export function textoDeEfecto(propuesta: Pick<PropuestaDeTesoreria, 'tipo' | 'importe' | 'nombreCuentaOrigen' | 'nombreCuentaDestino'>): string {
   const origen = propuesta.nombreCuentaOrigen ?? 'la cuenta de Mercado Pago'
+  if (propuesta.tipo === 'retiro_cancelado') {
+    return `Devuelve ${textoDeImporte(propuesta.importe)} de ${propuesta.nombreCuentaDestino ?? 'la cuenta que recibió el retiro'} a ${origen}`
+  }
   if (propuesta.tipo === 'retiro') {
     const destino = propuesta.nombreCuentaDestino ?? 'la cuenta que elijas'
     return `Pasa ${textoDeImporte(propuesta.importe)} de ${origen} a ${destino}`

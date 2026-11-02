@@ -22,7 +22,7 @@ type Props = {
   onCancelar: () => void
 }
 
-/** Confirmación de aplicar o descartar una propuesta de tesorería: dice qué se va a escribir antes de hacerlo. */
+/** Confirmación de aplicar, descartar o reabrir una propuesta de tesorería: dice qué se va a escribir antes de hacerlo. */
 export function DialogoDeResolucionDePropuesta({
   propuesta,
   accion,
@@ -35,6 +35,7 @@ export function DialogoDeResolucionDePropuesta({
 }: Props) {
   const idDescripcion = useId()
   const aplicar = accion === 'aplicar'
+  const reabrir = accion === 'reabrir'
   const efecto = textoDeEfecto({
     ...propuesta,
     nombreCuentaOrigen: propuesta.nombreCuentaOrigen ?? nombreDeOrigen,
@@ -43,7 +44,7 @@ export function DialogoDeResolucionDePropuesta({
 
   return (
     <Modal
-      titulo={aplicar ? 'Aplicar movimiento a tesorería' : 'Descartar propuesta'}
+      titulo={aplicar ? 'Aplicar movimiento a tesorería' : reabrir ? 'Reabrir propuesta' : 'Descartar propuesta'}
       tamano="sm"
       rol="alertdialog"
       idDescripcion={idDescripcion}
@@ -52,7 +53,17 @@ export function DialogoDeResolucionDePropuesta({
       pie={
         <>
           <button type="button" className="btn btn-primary" disabled={ocupado} onClick={onConfirmar}>
-            {ocupado ? (aplicar ? 'Aplicando…' : 'Descartando…') : aplicar ? 'Aplicar' : 'Descartar'}
+            {ocupado
+              ? aplicar
+                ? 'Aplicando…'
+                : reabrir
+                  ? 'Reabriendo…'
+                  : 'Descartando…'
+              : aplicar
+                ? 'Aplicar'
+                : reabrir
+                  ? 'Reabrir'
+                  : 'Descartar'}
           </button>
           <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={onCancelar} autoFocus>
             Cancelar
@@ -67,7 +78,9 @@ export function DialogoDeResolucionDePropuesta({
         <p className="mb-0">
           {aplicar
             ? 'Se escribe en el libro de las cuentas y no se puede deshacer desde acá.'
-            : 'No se escribe nada en la tesorería y la propuesta no se vuelve a ofrecer.'}
+            : reabrir
+              ? 'No se escribe nada en la tesorería: la propuesta vuelve a quedar pendiente.'
+              : 'No se escribe nada en la tesorería y la propuesta no se vuelve a ofrecer; se puede reabrir más tarde.'}
         </p>
       </div>
       {error && (

@@ -64,6 +64,8 @@ export function SeccionImportar({ archivo, subiendo, error, resultado, onElegir,
             {resultado.conciliacion.cantidadFilas} filas, {resultado.conciliacion.cantidadInvalidas} inválidas.
             {resultado.retirosYaPropuestos > 0 &&
               ` ${resultado.retirosYaPropuestos} retiro(s) ya estaban propuestos por un reporte anterior y no se volvieron a proponer.`}
+            {resultado.retirosCancelados > 0 &&
+              ` ${resultado.retirosCancelados} retiro(s) cancelado(s) por Mercado Pago: los pendientes se descartaron y los ya aplicados proponen su reversión.`}
           </p>
           <div className="table-responsive">
             <table className="table table-sm w-auto">

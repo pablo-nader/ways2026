@@ -231,6 +231,8 @@ export function ConciliacionMercadoPago() {
       try {
         if (accion === 'aplicar') {
           await clienteDeConciliacionMercadoPago.aplicarPropuesta(idConciliacion, propuesta.id, destino?.id ?? null, origen?.id ?? null)
+        } else if (accion === 'reabrir') {
+          await clienteDeConciliacionMercadoPago.reabrirPropuesta(idConciliacion, propuesta.id)
         } else {
           await clienteDeConciliacionMercadoPago.descartarPropuesta(idConciliacion, propuesta.id)
         }
@@ -243,7 +245,9 @@ export function ConciliacionMercadoPago() {
 
       setResolucion(null)
       setVersion((v) => v + 1)
-      toast.exito(accion === 'aplicar' ? 'Movimiento aplicado en la tesorería.' : 'Propuesta descartada.')
+      toast.exito(
+        accion === 'aplicar' ? 'Movimiento aplicado en la tesorería.' : accion === 'reabrir' ? 'Propuesta reabierta.' : 'Propuesta descartada.',
+      )
     } finally {
       ocupadoRef.current = false
       setResolviendo(false)

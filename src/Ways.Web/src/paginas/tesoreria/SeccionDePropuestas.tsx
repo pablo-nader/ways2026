@@ -25,7 +25,7 @@ type Props = {
   idEmpresa: number
   /** Cambia cuando una escritura ya aplicada pide volver a leer las propuestas. */
   version: number
-  /** Solo el Admin aplica o descarta; el Supervisor las ve. */
+  /** Solo el Admin aplica, descarta o reabre; el Supervisor las ve. */
   puedeResolver: boolean
   /** Hay una escritura en vuelo o un diálogo abierto en la pantalla: todo queda inerte. */
   bloqueado: boolean
@@ -52,7 +52,8 @@ const mismasClaves = (a: Record<number, string>, b: Record<number, string>) =>
 const mensajeDeLectura = (e: unknown) => mensajeDeErrorDeConciliacion(e, 'lectura')
 
 /**
- * "Movimientos a tesorería": lo que la conciliación propone escribir en la tesorería (la diferencia de comisión y los retiros del reporte).
+ * "Movimientos a tesorería": lo que la conciliación propone escribir en la tesorería (la diferencia de comisión, los retiros del reporte y la reversión
+ * de los que Mercado Pago canceló). Una propuesta descartada se puede reabrir.
  * Nada se escribe hasta que el Admin aplica; aplicar un retiro pide la cuenta que lo recibe. Las lecturas pasan por `useLectura`; las
  * escrituras son del padre, que las confirma en un diálogo y deja inerte la pantalla mientras están en vuelo.
  */
@@ -137,13 +138,18 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                   const opciones = cuentasDeDestino(cuentas.datos ?? [], idEmpresa, idOrigen)
                   const elegida = seleccionVigente(opciones, destinos[p.id])
                   const aplicable = sePuedeAplicar(p)
-                  const etiqueta = p.tipo === 'retiro' ? `retiro de la línea ${p.numeroLinea ?? ''}`.trim() : 'diferencia de comisión'
+                  const etiqueta =
+                    p.tipo === 'retiro'
+                      ? `retiro de la línea ${p.numeroLinea ?? ''}`.trim()
+                      : p.tipo === 'retiro_cancelado'
+                        ? `reversión del retiro de la línea ${p.numeroLinea ?? ''}`.trim()
+                        : 'diferencia de comisión'
                   return (
                     <tr key={p.id}>
                       <td className="text-nowrap">{etiquetaDeTipoDePropuesta(p.tipo)}</td>
                       <td>
                         <div>{textoDeEfecto(p)}</div>
-                        {p.tipo === 'retiro' && (
+                        {p.tipo !== 'diferencia_comision' && (
                           <div className="small text-muted">
                             Línea {p.numeroLinea} · {p.sourceId} · {textoDeFecha(p.fechaTransaccion)}
                           </div>
@@ -167,6 +173,7 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                           <div className="small text-muted">
                             {etiquetaDeEstadoDePropuesta(p.estado)} el {textoDeFecha(p.resueltaEl)}
                             {p.resueltaPor ? ` por ${p.resueltaPor}` : ''}
+                            {p.motivo ? ` · ${p.motivo}` : ''}
                           </div>
                         )}
                       </td>
@@ -191,11 +198,12 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                               ))}
                             </select>
                           )}
-                          {!eligeOrigen && p.tipo === 'retiro' && pendiente && p.nombreCuentaOrigen}
+                          {!eligeOrigen && p.tipo !== 'diferencia_comision' && pendiente && p.nombreCuentaOrigen}
                         </td>
                       )}
                       {puedeResolver && (
                         <td>
+                          {p.tipo === 'retiro_cancelado' && pendiente && p.nombreCuentaDestino}
                           {p.tipo === 'retiro' && pendiente && (
                             <select
                               className="form-select form-select-sm"
@@ -245,6 +253,17 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                                 Descartar
                               </button>
                             </>
+                          )}
+                          {p.estado === 'descartada' && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-primary"
+                              disabled={bloqueado}
+                              aria-label={`Reabrir ${etiqueta}`}
+                              onClick={() => onResolver(idConciliacion, p, 'reabrir', null, null)}
+                            >
+                              Reabrir
+                            </button>
                           )}
                         </td>
                       )}
