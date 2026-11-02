@@ -27,6 +27,10 @@ function cobro(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
     verificandoPago: false,
     pagoInformadoSinDatos: false,
     usadoEnVenta: false,
+    tipo: 'qr',
+    idTerminal: null,
+    enTerminal: false,
+    revisarTerminal: false,
     ...sobrescribir,
   }
 }
@@ -97,6 +101,7 @@ describe('ModalDeCobroMercadoPago', () => {
     ['cancelado', /se canceló/],
     ['devuelto', /devolvió el cobro/],
     ['sin_venta', /se apartó sin venta/],
+    ['fallido', /rechazado en la terminal: probá de nuevo u otro medio/],
   ] as const)('un cobro %s se resuelve sin aprobar', async (estado, texto) => {
     const consultar = vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(cobro({ estado, qrData: null }))
     const { onResuelto } = montar({ consultar })
@@ -104,6 +109,66 @@ describe('ModalDeCobroMercadoPago', () => {
     await waitFor(() => expect(onResuelto).toHaveBeenCalledTimes(1))
     expect(onResuelto.mock.calls[0][0]).toMatchObject({ tipo: 'sin_aprobar', estado })
     expect(await screen.findByText(texto)).toBeInTheDocument()
+  })
+
+  describe('cobro con la terminal Point', () => {
+    const point = (sobrescribir: Partial<CobroMercadoPago> = {}) =>
+      cobro({ tipo: 'point', idTerminal: 'PAX_A910__SMARTPOS1', qrData: null, ...sobrescribir })
+
+    it('muestra "Cobrando en la terminal {id}…", sin QR ni "Imprimir QR", y se puede cancelar mientras la orden no llegó a la terminal', () => {
+      montar({ inicial: point(), consultar: vi.fn().mockResolvedValue(point()), onImprimirQr: vi.fn() })
+
+      expect(screen.getByText('Cobrando en la terminal PAX_A910__SMARTPOS1…')).toBeInTheDocument()
+      expect(screen.queryByRole('img', { name: 'Código QR de Mercado Pago' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Imprimir QR' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Verificando el pago…')).not.toBeInTheDocument()
+      expect(screen.getByText(/Vence en/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cancelar cobro' })).toBeEnabled()
+    })
+
+    it('con la orden en la terminal el cancelar se apaga y se indica cancelar en la terminal', () => {
+      const enTerminal = point({ enTerminal: true })
+      montar({ inicial: enTerminal, consultar: vi.fn().mockResolvedValue(enTerminal) })
+
+      expect(screen.getByText('Cobrando en la terminal PAX_A910__SMARTPOS1…')).toBeInTheDocument()
+      expect(screen.getByText('Para cancelarlo, hacelo en la terminal.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cancelar cobro' })).toBeDisabled()
+    })
+
+    it('"revisar la terminal" muestra el aviso, no se resuelve y no se puede cancelar desde el POS', async () => {
+      const revisar = point({ revisarTerminal: true })
+      const { onResuelto } = montar({ inicial: revisar, consultar: vi.fn().mockResolvedValue(revisar) })
+
+      expect(screen.getByText('Revisá el resultado en la terminal.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cancelar cobro' })).toBeDisabled()
+      await new Promise((r) => setTimeout(r, 80))
+      expect(onResuelto).not.toHaveBeenCalled()
+    })
+
+    it('un cobro Point aprobado se resuelve; uno fallido vuelve al pago con el motivo', async () => {
+      const aprobadoPoint = point({ estado: 'aprobado', importePagado: 1500 })
+      const a = montar({ inicial: point(), consultar: vi.fn().mockResolvedValue(aprobadoPoint) })
+      await waitFor(() => expect(a.onResuelto).toHaveBeenCalledTimes(1))
+      expect(a.onResuelto.mock.calls[0][0]).toMatchObject({ tipo: 'aprobado' })
+      cleanup()
+
+      const f = montar({ inicial: point({ idCobro: 78 }), consultar: vi.fn().mockResolvedValue(point({ idCobro: 78, estado: 'fallido' })) })
+      await waitFor(() => expect(f.onResuelto).toHaveBeenCalledTimes(1))
+      expect(f.onResuelto.mock.calls[0][0]).toMatchObject({ tipo: 'sin_aprobar', estado: 'fallido' })
+      expect(await screen.findByText(/rechazado en la terminal/)).toBeInTheDocument()
+    })
+
+    it('si Mercado Pago contesta que ya está en la terminal, el modal muestra el motivo y sigue abierto', async () => {
+      const cancelar = vi
+        .fn<typeof clienteDeCobrosMercadoPago.cancelar>()
+        .mockRejectedValue(new ErrorApi(409, 'mercadopago_cancelar_en_la_terminal', 'x'))
+      const { onResuelto } = montar({ inicial: point(), consultar: vi.fn().mockResolvedValue(point()), cancelar })
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar cobro' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/cancelalo en la terminal/)
+      expect(onResuelto).not.toHaveBeenCalled()
+    })
   })
 
   it('"verificando el pago" no muestra el QR ni se resuelve', async () => {

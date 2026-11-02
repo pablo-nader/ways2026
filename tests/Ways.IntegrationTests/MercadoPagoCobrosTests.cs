@@ -958,16 +958,15 @@ public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixt
     // ---- Crear: validaciones y precondiciones ----------------------------------------------------------------------------
 
     [Fact]
-    public async Task ElMedioTieneQueExistirEstarActivoSerDeLaEmpresaYCobrarConQr()
+    public async Task ElMedioTieneQueExistirEstarActivoSerDeLaEmpresaYCobrarConMercadoPago()
     {
         var e = await PrepararAsync("mp-cobro-medio");
         var sinProveedor = await CrearMedioAsync(e.Ctx, "Transferencia", "Electronico", null);
-        var point = await CrearMedioAsync(e.Ctx, "Point", "Electronico", "mercadopago_point");
         var efectivo = await CrearMedioAsync(e.Ctx, "Efectivo", "Efectivo", null);
         var inactivo = await CrearMedioAsync(e.Ctx, "QR viejo", "Electronico", "mercadopago_qr", activo: false);
         var otro = await PrepararAsync("mp-cobro-medio-ajeno");
 
-        foreach (var idMedio in new[] { sinProveedor, point, efectivo, inactivo, otro.IdMedio, 987_654 })
+        foreach (var idMedio in new[] { sinProveedor, efectivo, inactivo, otro.IdMedio, 987_654 })
         {
             await AssertCodigoAsync(
                 await CrearAsync(e, 5012, 100m, idMedio), HttpStatusCode.BadRequest, "cobro_mercadopago_medio_invalido");

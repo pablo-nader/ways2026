@@ -5,6 +5,7 @@ import { clienteDeCobrosMercadoPago, mensajeDeErrorDeCobroMercadoPago, type Cobr
 import { CodigoQr } from './CodigoQr'
 import {
   esperaHastaLaProximaConsulta,
+  type EstadoSinAprobar,
   formatearCuentaRegresiva,
   mensajeDeImporteDistinto,
   segundosParaExpirar,
@@ -15,7 +16,7 @@ import {
 /** Cómo terminó el cobro: el modal se resuelve una sola vez y lo desmonta el llamador. */
 export type ResultadoDelCobro =
   | { tipo: 'aprobado'; cobro: CobroMercadoPago }
-  | { tipo: 'sin_aprobar'; estado: 'cancelado' | 'expirado' | 'devuelto' | 'sin_venta'; cobro: CobroMercadoPago }
+  | { tipo: 'sin_aprobar'; estado: EstadoSinAprobar; cobro: CobroMercadoPago }
   | { tipo: 'importe_distinto'; cobro: CobroMercadoPago }
 
 type PropsModalDeCobroMercadoPago = {
@@ -31,7 +32,7 @@ type PropsModalDeCobroMercadoPago = {
 const formatear = (valor: number) => formatearImporte(valor, { simbolo: true })
 
 /**
- * Cobro con QR de Mercado Pago: muestra el QR del cobro ya creado, lo consulta cada 2 s (una consulta en vuelo a la vez, con más
+ * Cobro con QR o con la terminal Point de Mercado Pago: muestra el QR del cobro ya creado (Point, en cambio, avisa que se cobra en la terminal), lo consulta cada 2 s (una consulta en vuelo a la vez, con más
  * espera tras un fallo) y se resuelve solo cuando el cobro termina (aprobado, cancelado, vencido) o el cajero revisa un importe
  * distinto. No se puede descartar: cerrarlo sin saber si el cliente pagó dejaría un cobro vivo sin dueño. Una respuesta que llega
  * después de resuelto o desmontado se ignora (generación).
@@ -168,6 +169,20 @@ export function ModalDeCobroMercadoPago({ cobro: cobroInicial, numeroVisible, on
             {segundos !== null && <p className="text-body-secondary mb-0">Vence en {formatearCuentaRegresiva(segundos)}</p>}
           </>
         )}
+        {vista.tipo === 'cobrando_en_terminal' && (
+          <>
+            <p className="mb-1">Cobrando en la terminal{vista.idTerminal !== null ? ` ${vista.idTerminal}` : ''}…</p>
+            <p className="mb-1">Pedile al cliente que pague en la terminal.</p>
+            {segundos !== null && <p className="text-body-secondary mb-0">Vence en {formatearCuentaRegresiva(segundos)}</p>}
+            {vista.enTerminal && <p className="text-body-secondary mb-0">Para cancelarlo, hacelo en la terminal.</p>}
+          </>
+        )}
+        {vista.tipo === 'revisar_terminal' && (
+          <>
+            <p className="mb-1">Revisá el resultado en la terminal.</p>
+            <p className="text-body-secondary mb-0">Para cancelarlo, hacelo en la terminal.</p>
+          </>
+        )}
         {vista.tipo === 'verificando' && <p className="mb-0">Verificando el pago…</p>}
         {vista.tipo === 'informado_sin_datos' && (
           <p className="mb-0">Mercado Pago informa el pago, falta confirmarlo. Esperá unos segundos: no se puede cancelar.</p>
@@ -197,7 +212,12 @@ export function ModalDeCobroMercadoPago({ cobro: cobroInicial, numeroVisible, on
               <button
                 type="button"
                 className="btn btn-outline-danger"
-                disabled={cancelando || vista.tipo === 'informado_sin_datos'}
+                disabled={
+                  cancelando ||
+                  vista.tipo === 'informado_sin_datos' ||
+                  vista.tipo === 'revisar_terminal' ||
+                  (vista.tipo === 'cobrando_en_terminal' && vista.enTerminal)
+                }
                 onClick={() => void cancelar()}
               >
                 {cancelando ? 'Cancelando…' : 'Cancelar cobro'}

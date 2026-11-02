@@ -23,6 +23,10 @@ function cobro(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
     verificandoPago: false,
     pagoInformadoSinDatos: false,
     usadoEnVenta: false,
+    tipo: 'qr',
+    idTerminal: null,
+    enTerminal: false,
+    revisarTerminal: false,
     ...sobrescribir,
   }
 }
@@ -196,6 +200,36 @@ describe('cobrarConMercadoPago', () => {
     const resultado = await cobrarConMercadoPago(deps, PAGO)
 
     expect(resultado).toMatchObject({ tipo: 'detenido', mensaje: expect.stringContaining('ya lo aprobó') })
+  })
+
+  it('un cobro Point rechazado en la terminal vuelve al pago sin consumir el número: el reintento aparta el MISMO número y crea otro cobro', async () => {
+    const point = cobro({ tipo: 'point', idTerminal: 'PAX_A910__SMARTPOS1', qrData: null })
+    const crear = vi.fn<typeof clienteDeCobrosMercadoPago.crear>().mockResolvedValue(point)
+    const { deps, reserva, clienteDeCobros, esperarCobro } = armar({ crear })
+    esperarCobro.mockResolvedValueOnce({ tipo: 'sin_aprobar', estado: 'fallido', cobro: cobro({ ...point, estado: 'fallido' }) })
+
+    const primero = await cobrarConMercadoPago(deps, PAGO)
+    const segundo = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(primero).toEqual({ tipo: 'detenido', mensaje: 'El pago fue rechazado en la terminal: probá de nuevo u otro medio.' })
+    expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
+    expect(reserva.consumirReservaDeCobro).not.toHaveBeenCalled()
+    expect(segundo).toEqual({ tipo: 'aprobado', numero: 500, idCobro: 31, importe: 1500 })
+    expect(clienteDeCobros.crear.mock.calls.map(([solicitud]) => solicitud.numeroPreasignado)).toEqual([500, 500])
+  })
+
+  it('al retomar tras una recarga un cobro Point fallido libera la reserva y sigue con uno nuevo', async () => {
+    const fallido = cobro({ tipo: 'point', idTerminal: 'T', qrData: null, estado: 'fallido' })
+    const { deps, reserva, clienteDeCobros } = armar({
+      previa: enCurso(),
+      consultar: vi.fn<typeof clienteDeCobrosMercadoPago.consultar>().mockResolvedValue(fallido),
+    })
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
+    expect(clienteDeCobros.crear).toHaveBeenCalledTimes(1)
+    expect(resultado.tipo).toBe('aprobado')
   })
 
   it('un cobro vencido suelta la reserva y el segundo intento aparta el MISMO número (el bloque no avanzó)', async () => {
