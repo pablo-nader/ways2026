@@ -129,6 +129,7 @@ export function ModalDeBusquedaDeArticulos({
   useEffect(() => {
     if (fuenteAnteriorRef.current === fuente) return
     fuenteAnteriorRef.current = fuente
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     void buscarRef.current(terminoRef.current)
   }, [fuente])
 
@@ -184,7 +185,7 @@ export function ModalDeBusquedaDeArticulos({
   function cambiarTermino(valor: string) {
     setTermino(valor)
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    timeoutRef.current = setTimeout(() => void buscar(valor), DEMORA_DEBOUNCE_MS)
+    timeoutRef.current = setTimeout(() => void buscarRef.current(valor), DEMORA_DEBOUNCE_MS)
   }
 
   function buscarInmediato() {

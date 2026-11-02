@@ -205,6 +205,21 @@ describe('ModalDeBusquedaDeArticulos — fuente local (instantánea)', () => {
     await waitFor(() => expect(screen.queryByText(/1\.500/)).not.toBeInTheDocument())
     expect(await screen.findByText('—')).toBeInTheDocument()
   })
+
+  it('una búsqueda con demora pendiente cuando cambia la fuente no trae el precio de la fuente vieja', async () => {
+    apiPostMock.mockRejectedValue(new Error('sin red'))
+    const { rerender } = render(
+      <ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea, CONSUMIDOR_FINAL), idListaPrecio: 3, idEmpresa: 7 })} />,
+    )
+    fireEvent.change(screen.getByLabelText('Buscar artículo por nombre'), { target: { value: 'fan' } })
+
+    rerender(<ModalDeBusquedaDeArticulos {...propsDe({ fuente: fuenteDeArticulosDesdeInstantanea(instantanea, CLIENTE_AJENO), idListaPrecio: 3, idEmpresa: 7 })} />)
+
+    expect(await screen.findByText('—')).toBeInTheDocument()
+    await new Promise((resolver) => setTimeout(resolver, 450))
+    expect(screen.queryByText(/1\.500/)).not.toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
 })
 
 describe('ModalDeBusquedaDeArticulos — solo artículos vendibles', () => {
