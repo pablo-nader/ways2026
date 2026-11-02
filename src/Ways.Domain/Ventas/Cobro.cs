@@ -33,4 +33,9 @@ public class Cobro : EntidadTenant
     /// <summary>El cobro aprobado de Mercado Pago (<c>cobros_mercadopago</c>) que pagó este medio; nulo en cualquier otro pago. La
     /// venta lo valida y lo liga (<c>cobros_mercadopago.id_comprobante_venta</c>) en la misma transacción.</summary>
     public int? IdCobroMercadoPago { get; set; }
+
+    /// <summary>Qué respalda un pago hecho con un medio de Mercado Pago (<see cref="Ways.Domain.MercadoPago.VerificacionDePagoMercadoPago"/>):
+    /// el cobro aprobado, o la aprobación manual del cajero sin red que espera a la conciliación. Lo fija el servidor; nulo en cualquier
+    /// otro pago.</summary>
+    public string? VerificacionMercadoPago { get; set; }
 }

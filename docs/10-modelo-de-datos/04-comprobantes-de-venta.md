@@ -72,9 +72,28 @@ cobros (                              -- antes pagos_comprobante (E7-S1)
     id_medio_pago, importe numeric(14,2),
     referencia text NULL,                    -- cupón, nro de operación
     vuelto numeric(14,2) NOT NULL DEFAULT 0, -- solo medios que admiten vuelto
-    id_cobro_mercadopago integer NULL        -- el cobro aprobado de Mercado Pago que pagó este medio (§7); FK compuesta (id, id_tenant)
+    id_cobro_mercadopago integer NULL,       -- el cobro aprobado de Mercado Pago que pagó este medio (§7); FK compuesta (id, id_tenant)
+    verificacion_mercadopago varchar(20) NULL -- qué respalda un pago de Mercado Pago: 'mercadopago' | 'sin_verificar' | 'verificado_manualmente'
 );
+-- ck_cobros_verificacion_mercadopago: NULL o uno de los tres valores.
+-- ck_cobros_verificacion_mercadopago_cobro: (id_cobro_mercadopago IS NOT NULL) = (verificacion_mercadopago = 'mercadopago').
+-- ix_cobros_sin_verificar (id_tenant, id_comprobante_venta) WHERE verificacion_mercadopago = 'sin_verificar' AND deleted_at IS NULL.
 ```
+
+**Aprobación manual sin verificar (E5).** Sin red (o con Mercado Pago caído al crear el cobro) el cajero puede dar por pagado un
+medio con proveedor a mano: el pago lleva `aprobacionManualSinVerificar = true` en lugar de `id_cobro_mercadopago`, y la venta
+queda con `verificacion_mercadopago = 'sin_verificar'`. Un pago con medio con proveedor lleva exactamente UNO de los dos (400
+`cobro_mercadopago_requerido` si falta; 400 `cobro_mercadopago_y_aprobacion_manual` si vienen ambos); la aprobación manual solo se
+admite en una venta con número preasignado, o sea la cola offline de un dispositivo (400 `aprobacion_manual_solo_offline`; el back
+office, el cambio de medios y la facturación de remitos no la tienen), solo en un medio con proveedor (400
+`aprobacion_manual_en_medio_sin_proveedor`) y nunca en una devolución (400 `cobro_mercadopago_no_admitido_en_devolucion`). No crea ni
+liga ningún cobro de Mercado Pago; su `referencia` (el número de operación que mostró el cliente) es opcional y se guarda tal cual.
+La marca la fija el servidor (`mercadopago` si el pago se apoya en un cobro, `sin_verificar` si fue manual); `verificado_manualmente`
+queda reservado para la conciliación (E6) y la migración marcó `mercadopago` los pagos que ya tenían cobro. La marca entra en la
+comparación del reenvío idempotente junto con la referencia, y el cambio de medios trata un pago `sin_verificar` como uno cobrado
+(409 `pago_mercadopago_no_editable`). `GET /api/mercadopago/pagos-sin-verificar?idEmpresa=&desde=&hasta=` (Supervisor y Admin) los
+lista por empresa del punto de venta de la venta (número, punto de venta, fecha, medio, importe, referencia, cajero y si la venta
+está anulada) para la pantalla de conciliación.
 
 **Pago cobrado con Mercado Pago (E3-T2).** Un medio con `proveedor` (§1) se cobra con una orden del proveedor: su pago en la venta
 tiene que traer `id_cobro_mercadopago` (400 `cobro_mercadopago_requerido`) y un medio sin proveedor no lo admite (400

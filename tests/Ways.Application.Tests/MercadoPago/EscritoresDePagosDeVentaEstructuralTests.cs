@@ -67,6 +67,33 @@ public class EscritoresDePagosDeVentaEstructuralTests
             conCobro);
     }
 
+    private static readonly Regex FijaLaVerificacion = new(@"(?<!string\? )\bVerificacionMercadoPago\s*=(?!=)",RegexOptions.Compiled);
+
+    internal static IReadOnlyList<string> ArchivosQueFijanLaVerificacion(IReadOnlyDictionary<string, string> fuentes) =>
+        [.. fuentes
+            .Where(f => FijaLaVerificacion.IsMatch(f.Value))
+            .Select(f => Path.GetFileName(f.Key))
+            .Order(StringComparer.Ordinal)];
+
+    // E5: la marca del pago (mercadopago | sin_verificar) la fija la venta desde el cobro o la aprobación manual y nadie más: ni el
+    // cambio de medios, ni la facturación de remitos, ni los recibos pueden escribirla (un recibo o un remito nunca respalda un pago).
+    [Fact]
+    public void SoloLaVentaFijaLaVerificacionDelPago() =>
+        Assert.Equal(["ServicioDeVentas.cs"], ArchivosQueFijanLaVerificacion(FuentesDeLaAplicacion()));
+
+    [Fact]
+    public void LaClasificacionDeLaVerificacionDetectaUnaAsignacionYNoUnaComparacion()
+    {
+        var fuentes = new Dictionary<string, string>
+        {
+            ["a/Asigna.cs"] = "new Cobro { VerificacionMercadoPago = \"x\" };",
+            ["a/Compara.cs"] = "if (c.VerificacionMercadoPago == null) { }",
+            ["a/Lee.cs"] = "var v = c.VerificacionMercadoPago;"
+        };
+
+        Assert.Equal(["Asigna.cs"], ArchivosQueFijanLaVerificacion(fuentes));
+    }
+
     [Fact]
     public void ExentosNoAcumulaFantasmas() =>
         Assert.All(Exentos.Keys, archivo => Assert.True(

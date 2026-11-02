@@ -54,6 +54,23 @@ public sealed record CobroSinVentaListado(
     DateTimeOffset? FechaApartado,
     bool PagoInformadoSinDatos = false);
 
+/// <summary>
+/// Un pago de venta aprobado a mano sin red (<c>verificacion_mercadopago = sin_verificar</c>) tal como lo lista el back office para la
+/// conciliación: el cajero dio por pagado un medio de Mercado Pago y todavía nadie cotejó que el dinero haya entrado.
+/// </summary>
+public sealed record PagoSinVerificarListado(
+    int IdPago,
+    int IdComprobanteVenta,
+    string NumeroVisible,
+    int IdPuntoVenta,
+    DateTimeOffset Fecha,
+    int IdMedioPago,
+    decimal Importe,
+    string? Referencia,
+    int IdEmpleado,
+    string? Empleado,
+    bool Anulada);
+
 public static class CodigosDeErrorDeCobrosMercadoPago
 {
     public const string EnCurso = "cobro_mercadopago_en_curso";

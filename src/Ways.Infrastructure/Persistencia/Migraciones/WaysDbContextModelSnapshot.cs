@@ -5968,6 +5968,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<string>("VerificacionMercadoPago")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("verificacion_mercadopago");
+
                     b.Property<decimal>("Vuelto")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("numeric(14,2)")
@@ -5992,9 +5997,17 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdMedioPago", "IdTenant")
                         .HasDatabaseName("ix_cobros_medio_pago");
 
+                    b.HasIndex("IdTenant", "IdComprobanteVenta")
+                        .HasDatabaseName("ix_cobros_sin_verificar")
+                        .HasFilter("verificacion_mercadopago = 'sin_verificar' AND deleted_at IS NULL");
+
                     b.ToTable("cobros", null, t =>
                         {
                             t.HasCheckConstraint("ck_cobros_importe_no_negativo", "importe >= 0");
+
+                            t.HasCheckConstraint("ck_cobros_verificacion_mercadopago", "verificacion_mercadopago IS NULL OR verificacion_mercadopago IN ('mercadopago', 'sin_verificar', 'verificado_manualmente')");
+
+                            t.HasCheckConstraint("ck_cobros_verificacion_mercadopago_cobro", "(id_cobro_mercadopago IS NOT NULL) = (verificacion_mercadopago IS NOT DISTINCT FROM 'mercadopago')");
 
                             t.HasCheckConstraint("ck_cobros_vuelto_no_negativo", "vuelto >= 0");
                         });

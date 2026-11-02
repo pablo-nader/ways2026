@@ -482,7 +482,8 @@ public class ServicioDeVentas(
         {
             ReglaDeCobroEnVenta.ExigirFormaDelPago(
                 medioPorId[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia,
-                traeNumeroPreasignado: solicitud.NumeroPreasignado is not null, esDevolucion: tipo.Signo <= 0);
+                traeNumeroPreasignado: solicitud.NumeroPreasignado is not null, esDevolucion: tipo.Signo <= 0,
+                aprobacionManualSinVerificar: pago.AprobacionManualSinVerificar);
         }
 
         ReglaDeCobroEnVenta.ExigirUnSoloCobro(
@@ -496,7 +497,7 @@ public class ServicioDeVentas(
                 var medio = medioPorId[p.IdMedioPago];
                 return new PagoAValidar(
                     p.IdMedioPago, medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia,
-                    p.Importe, p.Vuelto, p.IdCobroMercadoPago is null ? p.Referencia : ReferenciaDeMercadoPago);
+                    p.Importe, p.Vuelto, ReferenciaParaValidar(p));
             })
             .ToList();
 
@@ -512,7 +513,8 @@ public class ServicioDeVentas(
 
         var pagosDelPlan = pagos
             .Select(p => new PagoDelPlan(
-                p.IdMedioPago, medioPorId[p.IdMedioPago].Comportamiento, p.Importe, p.Referencia, p.Vuelto, p.IdCobroMercadoPago))
+                p.IdMedioPago, medioPorId[p.IdMedioPago].Comportamiento, p.Importe, p.Referencia, p.Vuelto, p.IdCobroMercadoPago,
+                p.AprobacionManualSinVerificar))
             .ToList();
 
         var plan = new PlanDeVenta(
@@ -743,7 +745,7 @@ public class ServicioDeVentas(
     /// Compara contra los propios items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(
         ComprobanteEmitido existente, PlanDeVenta plan, decimal? importeEnvioDelDispositivo,
-        IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia, int? IdCobroMercadoPago)> cobrosOriginalesReemplazados)
+        IReadOnlyList<PagoParaIdentidad> cobrosOriginalesReemplazados)
     {
         var lineasExistentes = existente.Items
             .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, ImporteTipeado: i.PorImporte ? i.PrecioUnitario : (decimal?)null))
@@ -768,31 +770,20 @@ public class ServicioDeVentas(
         //
         // El cobro de Mercado Pago también identifica el pago: otro cobro es otra transacción. Su referencia la pone el servidor (el
         // id del pago de Mercado Pago) y el pedido no la trae, así que en un pago con cobro la referencia no se compara.
-        var pagosExistentes = existente.Pagos
-            .Select(p => (p.IdMedioPago, p.Importe, Referencia: ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago))
-            .OrderBy(p => p.IdMedioPago)
-            .ThenBy(p => p.Importe)
-            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
-            .ThenBy(p => p.IdCobroMercadoPago)
-            .ToList();
+        //
+        // E5: la aprobación manual sin verificar también identifica el pago (la referencia que tipeó el cajero ya entra arriba): el
+        // mismo carrito aprobado a mano y cobrado con Mercado Pago son dos ventas distintas, no el mismo reenvío.
+        var pagosExistentes = Ordenados(existente.Pagos.Select(p => new PagoParaIdentidad(
+            p.IdMedioPago, p.Importe, ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago,
+            VerificacionDePagoMercadoPago.NacioDeAprobacionManual(p.VerificacionMercadoPago))));
 
-        var pagosSolicitados = plan.Pagos
-            .Select(p => (p.IdMedioPago, p.Importe, Referencia: ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago))
-            .OrderBy(p => p.IdMedioPago)
-            .ThenBy(p => p.Importe)
-            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
-            .ThenBy(p => p.IdCobroMercadoPago)
-            .ToList();
+        var pagosSolicitados = Ordenados(plan.Pagos.Select(p => new PagoParaIdentidad(
+            p.IdMedioPago, p.Importe, ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago,
+            p.AprobacionManualSinVerificar)));
 
         // Una venta cuyos medios se cambiaron después de ingerirla (ServicioDeCambioDeMedios) ya no tiene vivos los cobros que
         // mandó el dispositivo: su reenvío coincide con los cobros originales, los que el cambio dio de baja.
-        var pagosOriginales = cobrosOriginalesReemplazados
-            .Select(p => (p.IdMedioPago, p.Importe, Referencia: ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago))
-            .OrderBy(p => p.IdMedioPago)
-            .ThenBy(p => p.Importe)
-            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
-            .ThenBy(p => p.IdCobroMercadoPago)
-            .ToList();
+        var pagosOriginales = Ordenados(cobrosOriginalesReemplazados);
         var mismosPagos = pagosExistentes.SequenceEqual(pagosSolicitados)
             || (pagosOriginales.Count > 0 && pagosOriginales.SequenceEqual(pagosSolicitados));
 
@@ -853,16 +844,32 @@ public class ServicioDeVentas(
     /// <summary>Los cobros con los que la venta se ingirió, si un cambio de medios los reemplazó: los dados de baja que nacieron con
     /// el comprobante (misma marca de creación). Una sola consulta, solo en el reenvío de un número pre-asignado que ya tiene
     /// comprobante; vacía si los medios nunca se cambiaron.</summary>
-    private async Task<IReadOnlyList<(int IdMedioPago, decimal Importe, string? Referencia, int? IdCobroMercadoPago)>> LeerCobrosOriginalesReemplazadosAsync(
+    private async Task<IReadOnlyList<PagoParaIdentidad>> LeerCobrosOriginalesReemplazadosAsync(
         int idComprobante, CancellationToken ct) =>
         (await (
                 from p in db.Cobros.IgnoreQueryFilters(["BajaLogica"])
                 join c in db.ComprobantesVenta.SinEspejosFiscales() on p.IdComprobanteVenta equals c.Id
                 where p.IdComprobanteVenta == idComprobante && p.DeletedAt != null && p.CreatedAt == c.CreatedAt
-                select new { p.IdMedioPago, p.Importe, p.Referencia, p.IdCobroMercadoPago })
+                select new { p.IdMedioPago, p.Importe, p.Referencia, p.IdCobroMercadoPago, p.VerificacionMercadoPago })
             .ToListAsync(ct))
-        .Select(p => (p.IdMedioPago, p.Importe, (string?)p.Referencia, p.IdCobroMercadoPago))
+        .Select(p => new PagoParaIdentidad(
+            p.IdMedioPago, p.Importe, ReferenciaQueIdentifica(p.IdCobroMercadoPago, p.Referencia), p.IdCobroMercadoPago,
+            VerificacionDePagoMercadoPago.NacioDeAprobacionManual(p.VerificacionMercadoPago)))
         .ToList();
+
+    /// <summary>Lo que identifica un pago en el reenvío de una venta con número preasignado: medio, importe, la referencia que cuenta,
+    /// el cobro de Mercado Pago y si se aprobó a mano.</summary>
+    private readonly record struct PagoParaIdentidad(
+        int IdMedioPago, decimal Importe, string? Referencia, int? IdCobroMercadoPago, bool ManualSinVerificar);
+
+    private static List<PagoParaIdentidad> Ordenados(IEnumerable<PagoParaIdentidad> pagos) =>
+        pagos
+            .OrderBy(p => p.IdMedioPago)
+            .ThenBy(p => p.Importe)
+            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
+            .ThenBy(p => p.IdCobroMercadoPago)
+            .ThenBy(p => p.ManualSinVerificar)
+            .ToList();
 
     /// <summary>La referencia de un pago que cuenta para la identidad de la venta: la que tipeó el cajero, o ninguna si el pago lo
     /// cobró Mercado Pago (la referencia la fija el servidor desde el cobro, que ya identifica al pago).</summary>
@@ -1824,6 +1831,7 @@ public class ServicioDeVentas(
                 Referencia = p.IdCobroMercadoPago is { } idCobro ? cobrosDeMercadoPago[idCobro].IdPagoMercadoPago : p.Referencia,
                 Vuelto = p.Vuelto,
                 IdCobroMercadoPago = p.IdCobroMercadoPago,
+                VerificacionMercadoPago = VerificacionDePagoMercadoPago.Resolver(p.IdCobroMercadoPago, p.AprobacionManualSinVerificar),
                 CreatedAt = plan.Momento,
                 UpdatedAt = plan.Momento
             })
@@ -2992,7 +3000,8 @@ public class ServicioDeVentas(
         comprobante.DireccionEntrega, comprobante.Observaciones,
         items,
         pagos
-            .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto, p.IdCobroMercadoPago))
+            .Select(p => new PagoEmitido(
+                p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto, p.IdCobroMercadoPago, p.VerificacionMercadoPago))
             .ToList(),
         comprobante.IdPresupuestoOrigen, comprobante.FacturaForzada);
 
@@ -3029,10 +3038,17 @@ public class ServicioDeVentas(
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto,
-        int? IdCobroMercadoPago = null);
+        int? IdCobroMercadoPago = null, bool AprobacionManualSinVerificar = false);
 
     /// <summary>Lo que ve <see cref="ValidadorDePagos"/> en lugar de la referencia de un pago con cobro de Mercado Pago.</summary>
     private const string ReferenciaDeMercadoPago = "mercadopago";
+
+    /// <summary>La referencia que ve el validador: la del cajero, salvo en un pago con cobro o con aprobación manual sin referencia
+    /// —en esos la referencia no es obligatoria porque el pago no la tipea nadie o es opcional—.</summary>
+    private static string? ReferenciaParaValidar(PagoDeVenta pago) =>
+        pago.IdCobroMercadoPago is not null || (pago.AprobacionManualSinVerificar && string.IsNullOrWhiteSpace(pago.Referencia))
+            ? ReferenciaDeMercadoPago
+            : pago.Referencia;
 
     private sealed record PlanDeVenta(
         int IdTenant,

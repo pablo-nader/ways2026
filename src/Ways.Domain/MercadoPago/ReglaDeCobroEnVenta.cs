@@ -31,6 +31,35 @@ public static class CodigosDePagoConMercadoPago
 
     /// <summary>Un pago ya cobrado con Mercado Pago no se cambia: el dinero entró por ese medio y su devolución es de la conciliación.</summary>
     public const string NoEditable = "pago_mercadopago_no_editable";
+
+    public const string CobroYAprobacionManual = "cobro_mercadopago_y_aprobacion_manual";
+
+    public const string AprobacionManualSoloOffline = "aprobacion_manual_solo_offline";
+
+    public const string AprobacionManualEnMedioSinProveedor = "aprobacion_manual_en_medio_sin_proveedor";
+}
+
+/// <summary>
+/// Qué se sabe de un pago de venta hecho con un medio de Mercado Pago (<c>cobros.verificacion_mercadopago</c>): lo fija el servidor al
+/// emitir la venta y nunca lo manda el cliente. NULL en cualquier otro pago.
+/// </summary>
+public static class VerificacionDePagoMercadoPago
+{
+    /// <summary>El pago se apoya en un cobro aprobado de Mercado Pago ligado a la venta.</summary>
+    public const string MercadoPago = "mercadopago";
+
+    /// <summary>Aprobación manual del cajero sin red: no hay cobro, el pago espera a la conciliación.</summary>
+    public const string SinVerificar = "sin_verificar";
+
+    /// <summary>Reservado para la conciliación (E6): un pago sin verificar que se cotejó a mano.</summary>
+    public const string VerificadoManualmente = "verificado_manualmente";
+
+    public static string? Resolver(int? idCobroMercadoPago, bool aprobacionManualSinVerificar) =>
+        idCobroMercadoPago is not null ? MercadoPago : aprobacionManualSinVerificar ? SinVerificar : null;
+
+    /// <summary>El pago nació de una aprobación manual (todavía sin verificar o ya verificado a mano).</summary>
+    public static bool NacioDeAprobacionManual(string? verificacion) =>
+        verificacion is SinVerificar or VerificadoManualmente;
 }
 
 /// <summary>Lo que la venta necesita saber de un cobro de Mercado Pago, leído bajo su lock.</summary>
@@ -48,28 +77,55 @@ public static class ReglaDeCobroEnVenta
     /// <summary>La forma del pago, antes de tocar la base: el medio con proveedor exige un cobro, el medio sin proveedor no lo admite,
     /// el cobro solo existe para un número de venta que el dispositivo reservó y su referencia sale del pago de Mercado Pago (la que
     /// trajo el cliente no tiene destino). En una devolución (<paramref name="esDevolucion"/>) el medio con proveedor es solo el medio por
-    /// el que se devuelve el dinero —su reintegro es de la conciliación— y no admite un cobro.</summary>
+    /// el que se devuelve el dinero —su reintegro es de la conciliación— y no admite un cobro. El medio con proveedor exige UNO de los
+    /// dos: el cobro aprobado o la aprobación manual sin verificar (<paramref name="aprobacionManualSinVerificar"/>), esta última solo
+    /// en una venta con número preasignado (la cola offline del dispositivo) y con referencia opcional.</summary>
     public static void ExigirFormaDelPago(
-        string? proveedorDelMedio, int? idCobro, string? referencia, bool traeNumeroPreasignado, bool esDevolucion = false)
+        string? proveedorDelMedio, int? idCobro, string? referencia, bool traeNumeroPreasignado, bool esDevolucion = false,
+        bool aprobacionManualSinVerificar = false)
     {
         if (esDevolucion)
         {
-            if (idCobro is not null)
+            if (idCobro is not null || aprobacionManualSinVerificar)
             {
                 throw new ErrorDominio(
                     CodigosDePagoConMercadoPago.NoAdmitidoEnDevolucion,
-                    "Una devolución no lleva un cobro de Mercado Pago.",
+                    "Una devolución no lleva un cobro ni una aprobación manual de Mercado Pago.",
                     400);
             }
 
             return;
         }
 
-        if (proveedorDelMedio is not null && idCobro is null)
+        if (proveedorDelMedio is not null && idCobro is null && !aprobacionManualSinVerificar)
         {
             throw new ErrorDominio(
                 CodigosDePagoConMercadoPago.Requerido,
-                "Un pago con un medio de Mercado Pago tiene que traer el cobro aprobado.",
+                "Un pago con un medio de Mercado Pago tiene que traer el cobro aprobado o la aprobación manual.",
+                400);
+        }
+
+        if (idCobro is not null && aprobacionManualSinVerificar)
+        {
+            throw new ErrorDominio(
+                CodigosDePagoConMercadoPago.CobroYAprobacionManual,
+                "Un pago lleva el cobro de Mercado Pago o la aprobación manual, no los dos.",
+                400);
+        }
+
+        if (proveedorDelMedio is null && aprobacionManualSinVerificar)
+        {
+            throw new ErrorDominio(
+                CodigosDePagoConMercadoPago.AprobacionManualEnMedioSinProveedor,
+                "La aprobación manual solo se admite en un medio de pago con proveedor.",
+                400);
+        }
+
+        if (aprobacionManualSinVerificar && !traeNumeroPreasignado)
+        {
+            throw new ErrorDominio(
+                CodigosDePagoConMercadoPago.AprobacionManualSoloOffline,
+                "La aprobación manual solo se admite en una venta del dispositivo con número preasignado.",
                 400);
         }
 

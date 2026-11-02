@@ -544,6 +544,61 @@ describe('cobros aprobados sin venta ofrecen apartarse', () => {
     expect(resultado).not.toHaveProperty('apartable')
   })
 
+  // E5: aprobar a mano se ofrece solo cuando el cobro no se pudo crear y no queda ningún cobro sin resolver.
+  describe('aprobación manual (E5)', () => {
+    it('sin conexión y sin cobro vivo ofrece aprobar a mano y no reserva ni crea nada', async () => {
+      const { deps, reserva, clienteDeCobros } = armar()
+
+      const resultado = await cobrarConMercadoPago({ ...deps, enLinea: false }, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido', aprobableAMano: true })
+      expect(reserva.reservarNumeroParaCobro).not.toHaveBeenCalled()
+      expect(clienteDeCobros.crear).not.toHaveBeenCalled()
+    })
+
+    it('sin conexión pero con un cobro vivo en el dispositivo NO ofrece aprobar a mano', async () => {
+      const { deps } = armar({ previa: enCurso() })
+
+      const resultado = await cobrarConMercadoPago({ ...deps, enLinea: false }, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido' })
+      expect(resultado).not.toHaveProperty('aprobableAMano')
+    })
+
+    it.each([
+      ['Mercado Pago no disponible', new ErrorApi(503, 'mercadopago_no_disponible', 'x')],
+      ['sin respuesta de la red', new ErrorDeRed(new TypeError('x'))],
+    ])('si crear el cobro falla por %s ofrece aprobar a mano', async (_caso, error) => {
+      const crear = vi.fn<typeof clienteDeCobrosMercadoPago.crear>().mockRejectedValue(error)
+      const { deps, reserva } = armar({ crear })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido', aprobableAMano: true })
+      expect(reserva.soltarReservaDeCobro).toHaveBeenCalledWith(500)
+    })
+
+    it('un rechazo de configuración al crear (caja sin registrar) no ofrece aprobar a mano', async () => {
+      const crear = vi.fn<typeof clienteDeCobrosMercadoPago.crear>().mockRejectedValue(new ErrorApi(409, 'mercadopago_caja_no_registrada', 'x'))
+      const { deps } = armar({ crear })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido' })
+      expect(resultado).not.toHaveProperty('aprobableAMano')
+    })
+
+    it('un cobro que se cancela o vence no ofrece aprobar a mano', async () => {
+      const cancelado = cobro({ estado: 'cancelado', qrData: null })
+      const { deps } = armar({ resultado: { tipo: 'sin_aprobar', estado: 'cancelado', cobro: cancelado } })
+
+      const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+      expect(resultado).toMatchObject({ tipo: 'detenido' })
+      expect(resultado).not.toHaveProperty('aprobableAMano')
+    })
+  })
+
   it('la reserva presenta el dueño de la reserva anterior al soltarla', async () => {
     const { deps, reserva } = armar({
       previa: enCurso({ dueno: 'tok' }),

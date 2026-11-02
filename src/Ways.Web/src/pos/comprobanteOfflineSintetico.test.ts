@@ -845,3 +845,32 @@ describe('construirComprobanteOfflineSintetico — venta con envío', () => {
     expect(comprobante?.direccionEntrega).toBeNull()
   })
 })
+
+describe('construirComprobanteOfflineSintetico — verificación de Mercado Pago (E5)', () => {
+  const base = {
+    numero: 9,
+    numeroVisible: '0007-00000009',
+    idPuntoVenta: 7,
+    idCliente: 1,
+    lineas: [lineaFixture({ cantidad: 1 })],
+    instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 })]),
+    ahora: new Date('2026-09-20T10:05:00.000Z'),
+  }
+
+  it('la aprobación manual queda sin_verificar en el pago del comprobante', () => {
+    const comprobante = construir({
+      ...base,
+      pagos: [{ idMedioPago: 2, importe: 100, referencia: 'OP-9', vuelto: 0, aprobacionManualSinVerificar: true }],
+    })
+
+    expect(comprobante?.pagos).toEqual([{ idMedioPago: 2, importe: 100, referencia: 'OP-9', vuelto: 0, verificacionMercadoPago: 'sin_verificar' }])
+  })
+
+  it('un pago con cobro queda mercadopago y uno común no lleva la clave', () => {
+    const conCobro = construir({ ...base, pagos: [{ idMedioPago: 2, importe: 100, referencia: null, vuelto: 0, idCobroMercadoPago: 31 }] })
+    const comun = construir({ ...base, pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }] })
+
+    expect(conCobro?.pagos[0]).toMatchObject({ verificacionMercadoPago: 'mercadopago' })
+    expect(comun?.pagos[0]).not.toHaveProperty('verificacionMercadoPago')
+  })
+})

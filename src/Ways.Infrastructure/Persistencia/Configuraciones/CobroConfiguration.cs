@@ -22,6 +22,12 @@ public class CobroConfiguration : IEntityTypeConfiguration<Cobro>
         {
             t.HasCheckConstraint("ck_cobros_vuelto_no_negativo", "vuelto >= 0");
             t.HasCheckConstraint("ck_cobros_importe_no_negativo", "importe >= 0");
+            t.HasCheckConstraint(
+                "ck_cobros_verificacion_mercadopago",
+                "verificacion_mercadopago IS NULL OR verificacion_mercadopago IN ('mercadopago', 'sin_verificar', 'verificado_manualmente')");
+            t.HasCheckConstraint(
+                "ck_cobros_verificacion_mercadopago_cobro",
+                "(id_cobro_mercadopago IS NOT NULL) = (verificacion_mercadopago IS NOT DISTINCT FROM 'mercadopago')");
         });
 
         builder.HasKey(p => p.Id).HasName("pk_cobros");
@@ -51,6 +57,7 @@ public class CobroConfiguration : IEntityTypeConfiguration<Cobro>
             .IsRequired();
 
         builder.Property(p => p.IdCobroMercadoPago).HasColumnName("id_cobro_mercadopago");
+        builder.Property(p => p.VerificacionMercadoPago).HasColumnName("verificacion_mercadopago").HasMaxLength(20);
 
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
@@ -62,6 +69,11 @@ public class CobroConfiguration : IEntityTypeConfiguration<Cobro>
         builder.HasIndex(p => new { p.IdComprobanteVenta, p.IdTenant }).HasDatabaseName("ix_cobros_comprobante");
         builder.HasIndex(p => new { p.IdMedioPago, p.IdTenant }).HasDatabaseName("ix_cobros_medio_pago");
         builder.HasIndex(p => new { p.IdCobroMercadoPago, p.IdTenant }).HasDatabaseName("ix_cobros_cobro_mercadopago");
+
+        // El listado de pagos aprobados a mano sin verificar recorre solo estas filas, pocas frente al total de pagos.
+        builder.HasIndex(p => new { p.IdTenant, p.IdComprobanteVenta })
+            .HasDatabaseName("ix_cobros_sin_verificar")
+            .HasFilter("verificacion_mercadopago = 'sin_verificar' AND deleted_at IS NULL");
 
         builder.HasOne<Tenant>()
             .WithMany()

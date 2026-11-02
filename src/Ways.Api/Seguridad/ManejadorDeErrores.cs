@@ -235,6 +235,12 @@ public class ManejadorDeErrores(
             { SqlState: "23514", ConstraintName: "ck_cobros_mercadopago_sin_venta" } =>
                 (StatusCodes.Status409Conflict, "El cobro de Mercado Pago no se puede apartar: ya pagó una venta o no está aprobado.", "cobro_mercadopago_ya_usado"),
 
+            // Backstop de la verificación de un pago de Mercado Pago (E5): la venta fija la marca desde el cobro o la aprobación manual y
+            // valida su forma antes (400 cobro_mercadopago_requerido, cobro_mercadopago_y_aprobacion_manual, aprobacion_manual_*); esto
+            // atrapa una escritura cruda con una marca fuera de catálogo o que contradice el cobro ligado.
+            { SqlState: "23514", ConstraintName: "ck_cobros_verificacion_mercadopago" or "ck_cobros_verificacion_mercadopago_cobro" } =>
+                (StatusCodes.Status400BadRequest, "La verificación del pago de Mercado Pago no es válida.", "verificacion_mercadopago_invalida"),
+
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
             // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas

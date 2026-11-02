@@ -199,6 +199,16 @@ public static class MercadoPagoEndpoints
                 "Supervisor y Admin: los cobros de Mercado Pago apartados (sin_venta) de una empresa, del más reciente al más antiguo; el " +
                 "dinero entró y ninguna venta lo usó. idEmpresa es obligatorio. 404 si la empresa no existe en el tenant.");
 
+        app.MapGroup("/api/mercadopago/pagos-sin-verificar")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.LecturaDeReportes)
+            .MapGet("/", (ServicioDeCobrosMercadoPago servicio, int idEmpresa, DateTimeOffset? desde, DateTimeOffset? hasta, CancellationToken ct) =>
+                servicio.ListarPagosSinVerificarAsync(idEmpresa, desde, hasta, ct))
+            .WithSummary(
+                "Supervisor y Admin: los pagos de venta aprobados a mano sin red (sin_verificar) de una empresa, del más reciente al más " +
+                "antiguo; el cajero los dio por pagados y la conciliación los coteja. idEmpresa es obligatorio; desde y hasta (opcionales, " +
+                "inclusivos) acotan la fecha de la venta. 404 si la empresa no existe en el tenant.");
+
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,
             string? code,

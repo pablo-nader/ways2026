@@ -1519,3 +1519,35 @@ describe('qrDeCobroMercadoPago', () => {
     expect(() => qrDeCobroMercadoPago({ qrData: 'cobro ñandú', importe: 10, numeroVisible: '0007-00000500' }, contexto)).toThrow(RangeError)
   })
 })
+
+describe('ticketDeVenta — pago de Mercado Pago sin verificar (E5)', () => {
+  const MEDIOS = [medioFixture({ id: 1, nombre: 'Efectivo' }), medioFixture({ id: 2, nombre: 'Mercado Pago QR', comportamiento: 'Electronico' })]
+
+  it('imprime "Pago Mercado Pago sin verificar" debajo del pago aprobado a mano, una sola vez', () => {
+    const comprobante = comprobanteFixture({
+      pagos: [{ idMedioPago: 2, importe: 1000, referencia: 'OP-9', vuelto: 0, verificacionMercadoPago: 'sin_verificar' }],
+    })
+
+    const lineas = lineasDe(ticketDeVenta(comprobante, CONTEXTO, MEDIOS))
+
+    expect(lineas.filter((l) => l.includes('Pago Mercado Pago sin verificar'))).toHaveLength(1)
+    expect(lineas.indexOf('Pago Mercado Pago sin verificar')).toBe(lineas.findIndex((l) => l.startsWith('Mercado Pago QR')) + 1)
+    expect(textoPlano(ticketDeVenta(comprobante, CONTEXTO, MEDIOS))).toContain('Pago Mercado Pago sin verificar')
+  })
+
+  it.each([['mercadopago' as const], [null], [undefined]])('un pago con verificación %s no lleva la leyenda', (verificacion) => {
+    const comprobante = comprobanteFixture({
+      pagos: [{ idMedioPago: 2, importe: 1000, referencia: null, vuelto: 0, verificacionMercadoPago: verificacion }],
+    })
+
+    expect(textoPlano(ticketDeVenta(comprobante, CONTEXTO, MEDIOS))).not.toContain('sin verificar')
+  })
+
+  it('la leyenda sale también en la reimpresión (el pago sigue sin verificar)', () => {
+    const comprobante = comprobanteFixture({
+      pagos: [{ idMedioPago: 2, importe: 1000, referencia: null, vuelto: 0, verificacionMercadoPago: 'sin_verificar' }],
+    })
+
+    expect(textoPlano(ticketDeVenta(comprobante, CONTEXTO, MEDIOS, { reimpresion: true }))).toContain('Pago Mercado Pago sin verificar')
+  })
+})

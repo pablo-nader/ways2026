@@ -11888,6 +11888,234 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
     expect(pagoQr).toMatchObject({ idMedioPago: medioMercadoPago.id, importe: 60, idCobroMercadoPago: 31 })
   })
 
+  // E5: sin poder crear el cobro (sin red, o Mercado Pago no responde) el cajero aprueba a mano; la venta va SOLO por la cola con el pago
+  // sin verificar, sin cobro ni número apartado, y el ticket lo dice.
+  describe('aprobación manual sin verificar (E5)', () => {
+    const botonOfrecido = () => screen.queryByRole('button', { name: 'Aprobar a mano (sin verificar)' })
+    const dialogoDeAprobacion = () => screen.findByRole('alertdialog', { name: 'Aprobar a mano (sin verificar)' })
+
+    async function cobrarSinRed(props: ComponentProps<typeof Pos> = {}) {
+      await prepararAlmacenConBloque()
+      await montar(props)
+      await cargarLineaYMedio()
+      await userEvent.click(botonCobrar())
+    }
+
+    async function confirmarLaAprobacionManual(referencia?: string) {
+      await userEvent.click(await screen.findByRole('button', { name: 'Aprobar a mano (sin verificar)' }))
+      const dialogo = await dialogoDeAprobacion()
+      if (referencia !== undefined) await userEvent.type(within(dialogo).getByLabelText('Número de operación (opcional)'), referencia)
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Aprobar a mano' }))
+    }
+
+    it('sin conexión ofrece aprobar a mano; confirmar encola la venta UNA vez con el pago sin verificar, sin cobro y sin apartar el número', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        const alEmitir = vi.fn()
+        await cobrarSinRed({ alEmitir })
+        expect(await screen.findByText(/Mercado Pago necesita conexión/)).toBeInTheDocument()
+
+        await confirmarLaAprobacionManual('OP-55')
+
+        expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+        const almacen = crearAlmacenIndexedDb()
+        const outbox = await leerOutbox(almacen)
+        expect(outbox).toHaveLength(1)
+        expect(outbox[0].solicitud.pagos).toEqual([
+          { idMedioPago: medioMercadoPago.id, importe: 100, referencia: 'OP-55', vuelto: 0, aprobacionManualSinVerificar: true },
+        ])
+        expect(outbox[0].solicitud.pagos?.[0]).not.toHaveProperty('idCobroMercadoPago')
+        expect(outbox[0].numeroPreasignado).toBe(500)
+        expect(crearCobroLlamadas()).toHaveLength(0)
+        expect(await leerReservaDeCobro(almacen)).toBeNull()
+        expect((await leerBloque(almacen))?.proximo).toBe(501)
+        expect(alEmitir).toHaveBeenCalledTimes(1)
+        expect(alEmitir.mock.calls[0][0].pagos).toEqual([
+          { idMedioPago: medioMercadoPago.id, importe: 100, referencia: 'OP-55', vuelto: 0, verificacionMercadoPago: 'sin_verificar' },
+        ])
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('el número de operación es opcional: vacío viaja como null', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await cobrarSinRed()
+        await confirmarLaAprobacionManual()
+
+        expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+        expect((await leerOutbox(crearAlmacenIndexedDb()))[0].solicitud.pagos?.[0]).toMatchObject({ referencia: null, aprobacionManualSinVerificar: true })
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('el diálogo avisa que el pago no está verificado y "Volver" no encola nada', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await cobrarSinRed()
+        await userEvent.click(await screen.findByRole('button', { name: 'Aprobar a mano (sin verificar)' }))
+
+        const dialogo = await dialogoDeAprobacion()
+        expect(within(dialogo).getByText(/sin que Mercado Pago lo confirme/)).toBeInTheDocument()
+        expect(within(dialogo).getByText(/sin verificar/, { selector: 'strong' })).toBeInTheDocument()
+        await userEvent.click(within(dialogo).getByRole('button', { name: 'Volver' }))
+
+        await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+        expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+        expect((await leerBloque(crearAlmacenIndexedDb()))?.proximo).toBe(500)
+        expect(botonOfrecido()).toBeInTheDocument()
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('con Mercado Pago no disponible al crear el cobro ofrece aprobar a mano y la venta sale por la cola', async () => {
+      servidor.crear.mockRejectedValue(new ErrorApi(503, 'mercadopago_no_disponible', 'x'))
+      await cobrarSinRed()
+      expect(await screen.findByText(/Mercado Pago no responde en este momento/)).toBeInTheDocument()
+      expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toBeNull()
+
+      await confirmarLaAprobacionManual('OP-1')
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].solicitud.pagos?.[0]).toMatchObject({ referencia: 'OP-1', aprobacionManualSinVerificar: true })
+      // Con red, la cola envía la venta con el MISMO número y el pago sin verificar, sin cobro.
+      await waitFor(() => expect(apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')).toHaveLength(1))
+      const enviada = apiPostMock.mock.calls.find(([ruta]) => ruta === '/ventas')?.[1] as { numeroPreasignado: number; pagos: object[] }
+      expect(enviada.numeroPreasignado).toBe(500)
+      expect(enviada.pagos).toEqual([{ idMedioPago: medioMercadoPago.id, importe: 100, referencia: 'OP-1', vuelto: 0, aprobacionManualSinVerificar: true }])
+      expect(crearCobroLlamadas()).toHaveLength(1)
+    })
+
+    it('un rechazo que no es de disponibilidad (caja sin registrar) no ofrece aprobar a mano', async () => {
+      servidor.crear.mockRejectedValue(new ErrorApi(409, 'mercadopago_caja_no_registrada', 'x'))
+
+      await cobrarSinRed()
+
+      expect(await screen.findByText(/caja de Mercado Pago/, { selector: '.alert' })).toBeInTheDocument()
+      expect(botonOfrecido()).not.toBeInTheDocument()
+    })
+
+    it('un cobro que se cancela o vence no ofrece aprobar a mano', async () => {
+      await cobrarSinRed()
+      await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })
+      servidor.leer.mockResolvedValue(cobroDeServidor({ estado: 'expirado', qrData: null }))
+
+      expect(await screen.findByText(/venció sin pagarse/)).toBeInTheDocument()
+
+      expect(botonOfrecido()).not.toBeInTheDocument()
+    })
+
+    it('con un cobro vivo en el dispositivo no se ofrece aprobar a mano', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await prepararAlmacenConBloque()
+        await guardarReservaDeCobro(crearAlmacenIndexedDb(), {
+          idPuntoVenta: 7,
+          numero: 500,
+          estado: 'en_curso',
+          idCobro: 31,
+          idMedioPago: medioMercadoPago.id,
+          importe: 100,
+          creadoEn: '2026-11-01T12:00:00.000Z',
+        })
+        await montar()
+        await cargarLineaYMedio()
+
+        await userEvent.click(botonCobrar())
+
+        expect(await screen.findByText(/Mercado Pago necesita conexión/)).toBeInTheDocument()
+        expect(botonOfrecido()).not.toBeInTheDocument()
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('si aparece un cobro vivo después de ofrecerlo, confirmar no aprueba nada y lo explica', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await cobrarSinRed()
+        await screen.findByRole('button', { name: 'Aprobar a mano (sin verificar)' })
+        await guardarReservaDeCobro(crearAlmacenIndexedDb(), {
+          idPuntoVenta: 7,
+          numero: 500,
+          estado: 'en_curso',
+          idCobro: 31,
+          idMedioPago: medioMercadoPago.id,
+          importe: 100,
+          creadoEn: '2026-11-01T12:00:00.000Z',
+        })
+
+        await confirmarLaAprobacionManual('OP-9')
+
+        expect(await screen.findByText(/Hay un cobro de Mercado Pago sin resolver en este dispositivo/, { selector: '.alert' })).toBeInTheDocument()
+        expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+        expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, idCobro: 31 })
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('cambiar las filas de pago apaga la oferta', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await cobrarSinRed()
+        await screen.findByRole('button', { name: 'Aprobar a mano (sin verificar)' })
+
+        await userEvent.type(screen.getByLabelText(`Importe de ${medioMercadoPago.nombre} (fila 1)`), '0')
+
+        await waitFor(() => expect(botonOfrecido()).not.toBeInTheDocument())
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('una venta mixta aprobada a mano solo marca la fila de Mercado Pago', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await prepararAlmacenConBloque()
+        await montar()
+        await cargarLineaYMedio(medioEfectivo.nombre, '40', false)
+        await userEvent.click(screen.getByRole('button', { name: /Agregar medio de pago/ }))
+        await userEvent.selectOptions(screen.getAllByLabelText('Medio de pago')[1], medioMercadoPago.nombre)
+        await userEvent.type(await screen.findByLabelText(`Importe de ${medioMercadoPago.nombre} (fila 2)`), '60')
+        await waitFor(() => expect(botonCobrar()).toBeEnabled())
+        await userEvent.click(botonCobrar())
+
+        await confirmarLaAprobacionManual()
+
+        expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+        const [pagoEfectivo, pagoMp] = (await leerOutbox(crearAlmacenIndexedDb()))[0].solicitud.pagos ?? []
+        expect(pagoEfectivo).toEqual({ idMedioPago: medioEfectivo.id, importe: 40, referencia: null, vuelto: 0 })
+        expect(pagoMp).toMatchObject({ idMedioPago: medioMercadoPago.id, importe: 60, aprobacionManualSinVerificar: true })
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+
+    it('si la cola no puede guardar la venta (sin números) no se aprueba a mano ni se manda por el camino online', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 500, proximo: 501 } })
+        await montar()
+        await cargarLineaYMedio()
+        await userEvent.click(botonCobrar())
+
+        await confirmarLaAprobacionManual()
+
+        expect(await screen.findByText(/No quedan números reservados para vender sin conexión/, { selector: '.alert' })).toBeInTheDocument()
+        expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+        expect(apiPostMock.mock.calls.filter(([ruta]) => ruta === '/ventas')).toHaveLength(0)
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+  })
+
   describe('al recargar con un cobro vivo', () => {
     async function recargarConCobroVivo() {
       await prepararAlmacenConBloque()

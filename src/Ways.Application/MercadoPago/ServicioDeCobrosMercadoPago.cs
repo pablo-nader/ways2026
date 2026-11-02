@@ -10,6 +10,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.MercadoPago;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.MercadoPago;
 
@@ -478,6 +479,49 @@ public class ServicioDeCobrosMercadoPago(
                 c.Id, c.IdPuntoVenta, c.IdMedioPago, c.NumeroPreasignado, c.Importe, c.ImportePagado, c.IdPagoMercadoPago,
                 c.IdOrdenMercadoPago, c.FechaAprobacion, c.FechaApartado, c.Estado == EstadosDeCobroMercadoPago.Fallido))
             .ToListAsync(ct);
+    }
+
+    /// <summary>Los pagos de venta aprobados a mano sin verificar (<c>verificacion_mercadopago = sin_verificar</c>) de una empresa, del más
+    /// reciente al más antiguo, para que la conciliación los coteje. <paramref name="desde"/> y <paramref name="hasta"/> acotan la fecha de
+    /// la venta (ambos inclusivos, opcionales). El alcance de empresa sale del punto de venta de la venta.</summary>
+    public async Task<IReadOnlyList<PagoSinVerificarListado>> ListarPagosSinVerificarAsync(
+        int idEmpresa, DateTimeOffset? desde, DateTimeOffset? hasta, CancellationToken ct = default)
+    {
+        if (!await db.Empresas.AnyAsync(e => e.Id == idEmpresa, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la empresa {idEmpresa}.");
+        }
+
+        var filas = await (
+                from p in db.Cobros.AsNoTracking()
+                where p.VerificacionMercadoPago == VerificacionDePagoMercadoPago.SinVerificar && p.DeletedAt == null
+                join c in db.ComprobantesVenta.AsNoTracking().SinEspejosFiscales() on p.IdComprobanteVenta equals c.Id
+                join pv in db.PuntosVenta.IgnoreQueryFilters(["BajaLogica"]) on c.IdPuntoVenta equals pv.Id
+                where pv.IdEmpresa == idEmpresa
+                    && (desde == null || c.Fecha >= desde)
+                    && (hasta == null || c.Fecha <= hasta)
+                orderby c.Fecha descending, p.Id descending
+                select new
+                {
+                    p.Id,
+                    IdComprobanteVenta = c.Id,
+                    c.IdPuntoVenta,
+                    c.Numero,
+                    c.Fecha,
+                    p.IdMedioPago,
+                    p.Importe,
+                    p.Referencia,
+                    c.IdEmpleado,
+                    Empleado = db.Usuarios.Where(u => u.Id == c.IdEmpleado).Select(u => u.NombreUsuario).FirstOrDefault(),
+                    Anulada = c.Estado == EstadoComprobante.Anulado
+                })
+            .ToListAsync(ct);
+
+        return filas
+            .Select(f => new PagoSinVerificarListado(
+                f.Id, f.IdComprobanteVenta, NumeroDeComprobante.Formatear(f.IdPuntoVenta, f.Numero), f.IdPuntoVenta, f.Fecha,
+                f.IdMedioPago, f.Importe, f.Referencia, f.IdEmpleado, f.Empleado, f.Anulada))
+            .ToList();
     }
 
     /// <summary>

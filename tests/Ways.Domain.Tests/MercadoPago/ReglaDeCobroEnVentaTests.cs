@@ -146,6 +146,69 @@ public class ReglaDeCobroEnVentaTests
     }
 
     [Fact]
+    public void UnMedioConProveedorAdmiteLaAprobacionManualEnUnaVentaConNumeroPreasignado() =>
+        ReglaDeCobroEnVenta.ExigirFormaDelPago(
+            "mercadopago_qr", null, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true);
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("OP-123")]
+    public void LaAprobacionManualAdmiteLaReferenciaOpcionalDelCajero(string? referencia) =>
+        ReglaDeCobroEnVenta.ExigirFormaDelPago(
+            "mercadopago_point", null, referencia, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true);
+
+    [Fact]
+    public void LaAprobacionManualSinNumeroPreasignadoEsSoloOffline() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", null, null, traeNumeroPreasignado: false, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.AprobacionManualSoloOffline, 400);
+
+    [Fact]
+    public void ElCobroYLaAprobacionManualJuntosSeRechazan() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", 5, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.CobroYAprobacionManual, 400);
+
+    [Fact]
+    public void LaAprobacionManualEnUnMedioSinProveedorSeRechaza() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                null, null, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.AprobacionManualEnMedioSinProveedor, 400);
+
+    [Fact]
+    public void UnaDevolucionNoLlevaAprobacionManual() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", null, null, traeNumeroPreasignado: true, esDevolucion: true, aprobacionManualSinVerificar: true),
+            CodigosDePagoConMercadoPago.NoAdmitidoEnDevolucion, 400);
+
+    [Fact]
+    public void ElMedioConProveedorSinCobroNiAprobacionManualSigueSiendoRequerido() =>
+        AssertError(
+            () => ReglaDeCobroEnVenta.ExigirFormaDelPago(
+                "mercadopago_qr", null, null, traeNumeroPreasignado: true, aprobacionManualSinVerificar: false),
+            CodigosDePagoConMercadoPago.Requerido, 400);
+
+    [Theory]
+    [InlineData(5, false, "mercadopago")]
+    [InlineData(null, true, "sin_verificar")]
+    [InlineData(null, false, null)]
+    public void LaVerificacionDelPagoLaFijaElCobroOLaAprobacionManual(int? idCobro, bool manual, string? esperada) =>
+        Assert.Equal(esperada, VerificacionDePagoMercadoPago.Resolver(idCobro, manual));
+
+    [Theory]
+    [InlineData("sin_verificar", true)]
+    [InlineData("verificado_manualmente", true)]
+    [InlineData("mercadopago", false)]
+    [InlineData(null, false)]
+    public void SoloLaAprobacionManualNaceDeUnaAprobacionManual(string? verificacion, bool esperado) =>
+        Assert.Equal(esperado, VerificacionDePagoMercadoPago.NacioDeAprobacionManual(verificacion));
+
+    [Fact]
     public void UnCobroAprobadoSinIdDePagoEs409()
     {
         var cobro = new CobroParaVender(1, 7, 3, EstadosDeCobroMercadoPago.Aprobado, 100m, null, null);

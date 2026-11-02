@@ -168,11 +168,12 @@ public class ServicioDeCambioDeMedios(
             .ToListAsync(ct);
 
         // E3-T2: el dinero de un pago cobrado con Mercado Pago entró por ese medio y lo respalda un cobro ligado a la venta; cambiarlo
-        // desacoplaría ambos (la devolución es de la conciliación). Decidido sobre la única lectura de los cobros, bajo el lock de la venta.
-        if (cobrosVivos.Any(c => c.IdCobroMercadoPago is not null))
+        // desacoplaría ambos (la devolución es de la conciliación). Lo mismo un pago aprobado a mano sin verificar (E5): su dinero todavía no se cotejó
+        // y cambiarle el medio borraría la marca que la conciliación necesita. Decidido sobre la única lectura de los cobros, bajo el lock de la venta.
+        if (cobrosVivos.Any(c => c.IdCobroMercadoPago is not null || VerificacionDePagoMercadoPago.NacioDeAprobacionManual(c.VerificacionMercadoPago)))
         {
             throw ErrorDominio.Conflicto(
-                CodigosDePagoConMercadoPago.NoEditable, "Un pago cobrado con Mercado Pago no se puede cambiar.");
+                CodigosDePagoConMercadoPago.NoEditable, "Un pago cobrado o aprobado a mano con Mercado Pago no se puede cambiar.");
         }
 
         var medios = await LeerMediosAsync(cobrosVivos.Select(c => c.IdMedioPago), pagos.Select(p => p.IdMedioPago), ct);
@@ -182,7 +183,8 @@ public class ServicioDeCambioDeMedios(
         foreach (var pago in pagos)
         {
             ReglaDeCobroEnVenta.ExigirFormaDelPago(
-                medios[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia, traeNumeroPreasignado: false);
+                medios[pago.IdMedioPago].Proveedor, pago.IdCobroMercadoPago, pago.Referencia, traeNumeroPreasignado: false,
+                aprobacionManualSinVerificar: pago.AprobacionManualSinVerificar);
         }
 
         var anteriores = cobrosVivos

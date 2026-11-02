@@ -7,6 +7,7 @@ import { clienteDeCobrosMercadoPago, mensajeDeErrorDeCobroMercadoPago, type Cobr
 import { formatearImporte } from '../formato/importes'
 import { construirNumeroVisible } from './outboxOffline'
 import {
+  habilitaAprobacionManual,
   indicacionDeCobroAprobado,
   MENSAJE_SIN_CONEXION_PARA_COBRAR,
   mensajeDeImporteDistinto,
@@ -35,11 +36,12 @@ export type DependenciasDeCobroMercadoPago = {
 
 /**
  * `aprobado`: la venta puede cerrarse con ese cobro y ese número; `importe` es lo que Mercado Pago cobró. `detenido`: no hay venta;
- * `mensaje` dice por qué.
+ * `mensaje` dice por qué. `aprobableAMano`: el cobro no se pudo crear (sin red, o Mercado Pago no responde) y el dispositivo no tiene
+ * ningún cobro sin resolver, así que el cajero puede aprobar el pago a mano (queda sin verificar).
  */
 export type ResultadoDeCobroEnPos =
   | { tipo: 'aprobado'; numero: number; idCobro: number; importe: number; dueno?: string }
-  | { tipo: 'detenido'; mensaje: string; apartable?: CobroAAPartar }
+  | { tipo: 'detenido'; mensaje: string; apartable?: CobroAAPartar; aprobableAMano?: true }
 
 /** Un cobro aprobado sin venta que el cajero puede apartar (`apartarCobroSinVenta`) para liberar la caja. */
 export type CobroAAPartar = { cobro: Omit<CobroSinVenta, 'apartadoEn'>; dueno?: string }
@@ -100,10 +102,11 @@ const MENSAJE_POR_MOTIVO_DE_RESERVA = {
 export const MENSAJE_CON_APARTADOS_SIN_SINCRONIZAR =
   'Hay cobros de Mercado Pago apartados que todavía no se avisaron al servidor. Se reintenta solo cuando hay conexión: hasta entonces no se pueden iniciar cobros con Mercado Pago.'
 
-const detenido = (mensaje: string, apartable?: CobroAAPartar): ResultadoDeCobroEnPos => ({
+const detenido = (mensaje: string, apartable?: CobroAAPartar, aprobableAMano = false): ResultadoDeCobroEnPos => ({
   tipo: 'detenido',
   mensaje,
   ...(apartable === undefined ? {} : { apartable }),
+  ...(aprobableAMano ? { aprobableAMano: true as const } : {}),
 })
 
 const importeCobrado = (cobro: CobroMercadoPago) => cobro.importePagado ?? cobro.importe
@@ -240,9 +243,12 @@ export async function cobrarConMercadoPago(
   deps: DependenciasDeCobroMercadoPago,
   pago: { idMedioPago: number; importe: number },
 ): Promise<ResultadoDeCobroEnPos> {
-  if (!deps.enLinea) return detenido(MENSAJE_SIN_CONEXION_PARA_COBRAR)
   const clientes = deps.clienteDeCobros ?? clienteDeCobrosMercadoPago
   const { reserva } = deps
+
+  // Sin red no se crea ningún cobro. Aprobar a mano solo se ofrece si el dispositivo no tiene un cobro vivo: ese cobro pudo quedar
+  // pagado y aprobar a mano la venta lo cobraría dos veces.
+  if (!deps.enLinea) return detenido(MENSAJE_SIN_CONEXION_PARA_COBRAR, undefined, (await reserva.leerReservaDeCobro()) === null)
 
   // Un cobro apartado que el servidor todavía tiene aprobado seguiría ocupando su número: primero se sincroniza y, si no se puede, no se cobra.
   if ((await reserva.sincronizarApartados()) > 0) return detenido(MENSAJE_CON_APARTADOS_SIN_SINCRONIZAR)
@@ -261,7 +267,7 @@ export async function cobrarConMercadoPago(
     cobro = await clientes.crear({ idMedioPago: pago.idMedioPago, numeroPreasignado: apartado.numero, importe: pago.importe })
   } catch (e) {
     await reserva.soltarReservaDeCobro(apartado.numero, ...conDueno(apartado.dueno))
-    return detenido(mensajeDeErrorDeCobroMercadoPago(e))
+    return detenido(mensajeDeErrorDeCobroMercadoPago(e), undefined, habilitaAprobacionManual(e))
   }
 
   let anotado = false
