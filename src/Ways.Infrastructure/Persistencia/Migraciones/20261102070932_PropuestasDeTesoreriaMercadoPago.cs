@@ -27,7 +27,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     id_empresa = table.Column<int>(type: "integer", nullable: false),
                     id_conciliacion_mercadopago = table.Column<int>(type: "integer", nullable: false),
                     tipo = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
-                    clave_origen = table.Column<string>(type: "character varying(30)", maxLength: 30, nullable: false),
+                    clave_origen = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
                     importe = table.Column<decimal>(type: "numeric(14,2)", nullable: false),
                     id_fila_conciliacion_mercadopago = table.Column<int>(type: "integer", nullable: true),
                     id_cuenta_origen = table.Column<int>(type: "integer", nullable: true),
@@ -159,6 +159,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 table: "propuestas_tesoreria_mercadopago",
                 columns: new[] { "id_conciliacion_mercadopago", "tipo", "clave_origen" },
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "ux_propuestas_tesoreria_mercadopago_retiro",
+                table: "propuestas_tesoreria_mercadopago",
+                columns: new[] { "id_tenant", "id_empresa", "clave_origen" },
+                unique: true,
+                filter: "tipo = 'retiro'");
 
             migrationBuilder.HabilitarRlsDeTenant("propuestas_tesoreria_mercadopago");
         }

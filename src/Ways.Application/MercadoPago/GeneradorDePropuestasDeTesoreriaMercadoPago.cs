@@ -2,13 +2,16 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Caja;
+using Ways.Domain.Catalogos;
 using Ways.Domain.MercadoPago;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.MercadoPago;
 
-/// <summary>Cuántas propuestas generó una importación y qué cobros quedaron fuera del cálculo de la comisión.</summary>
-public sealed record PropuestasGeneradas(int Diferencias, int Retiros, int CobrosSinCierre, int CobrosSinComisionReal);
+/// <summary>Cuántas propuestas generó una importación (solo las que se crearon), qué cobros quedaron fuera del cálculo de la comisión y cuántos retiros
+/// del reporte ya tenían propuesta en otra conciliación de la empresa (o repetidos en el mismo archivo) y no se volvieron a proponer.</summary>
+public sealed record PropuestasGeneradas(
+    int Diferencias, int Retiros, int CobrosSinCierre, int CobrosSinComisionReal, int RetirosYaPropuestos);
 
 /// <summary>
 /// Genera las propuestas de tesorería de una conciliación recién importada (E7). Corre dentro de la transacción de la importación, después de
@@ -19,9 +22,14 @@ public sealed record PropuestasGeneradas(int Diferencias, int Retiros, int Cobro
 /// no se suma a una conciliación ya hecha; los dos casos se cuentan en el detalle y en la auditoría de la importación.
 ///
 /// La comisión estimada de un cobro es la que descontó el cierre del turno de su venta (<see cref="CalculadorDeDiferenciaDeComisionMercadoPago"/>):
-/// no se guarda por pago, así que se rearma con el porcentaje que la fila de comisión del cierre dejó para ese turno y medio, aplicado al importe
-/// del pago. Es una aproximación a centavos (el cierre redondea sobre el bruto de todo el turno y medio, esto lo hace pago por pago). Ver
-/// <see cref="CalculadorDeDiferenciaDeComisionMercadoPago"/>.
+/// no se guarda por pago, así que se rearma con el porcentaje que la fila de comisión del cierre dejó para ese turno y medio, aplicado al bruto de los
+/// pagos del grupo y redondeado una vez por grupo como el cierre. Solo cuentan los pagos de comprobantes emitidos (los anulados no entraron al bruto del
+/// cierre). Ver <see cref="CalculadorDeDiferenciaDeComisionMercadoPago"/> para la aproximación que queda.
+///
+/// <b>Retiros.</b> Un retiro se propone UNA vez por empresa: su clave es el SOURCE_ID de Mercado Pago y un índice parcial único por empresa lo respalda, así
+/// que dos reportes de rangos que se pisan no lo duplican (un retiro que ya tiene propuesta en cualquier conciliación de la empresa, pendiente, aplicada o
+/// descartada, no se vuelve a proponer y se cuenta). La cuenta de origen es la de los medios de pago con proveedor Mercado Pago de la empresa cuando es
+/// una sola; si hay varias o ninguna queda nula y el Admin la elige al aplicar (<see cref="CuentasDeOrigenAsync"/>).
 /// </summary>
 public static class GeneradorDePropuestasDeTesoreriaMercadoPago
 {
@@ -48,7 +56,25 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
     {
         var diferencias = await GenerarDiferenciasAsync(db, idTenant, idEmpresa, idConciliacion, cobrosAplicados, ahora, ct);
         var retiros = await GenerarRetirosAsync(db, idTenant, idEmpresa, idConciliacion, filasDeRetiro, ahora, ct);
-        return new PropuestasGeneradas(diferencias.Propuestas, retiros, diferencias.SinCierre, diferencias.SinComisionReal);
+        return new PropuestasGeneradas(
+            diferencias.Propuestas, retiros.Creados, diferencias.SinCierre, diferencias.SinComisionReal, retiros.YaPropuestos);
+    }
+
+    /// <summary>Las cuentas activas de la empresa a las que acreditan sus medios de pago activos con proveedor Mercado Pago, por id. Es el conjunto
+    /// de orígenes posibles de un retiro: una sola es el origen fijo, varias o ninguna exigen que el Admin elija.</summary>
+    public static async Task<IReadOnlyList<CuentaDeOrigenPosible>> CuentasDeOrigenAsync(IWaysDbContext db, int idEmpresa, CancellationToken ct)
+    {
+        var filas = await (
+                from m in db.MediosPago.AsNoTracking()
+                join c in db.CuentasTesoreria.AsNoTracking() on m.IdCuentaTesoreria equals (int?)c.Id
+                where (m.Proveedor == ProveedorDeCobro.MercadoPagoQr || m.Proveedor == ProveedorDeCobro.MercadoPagoPoint)
+                      && m.Activo && (m.IdEmpresa == null || m.IdEmpresa == idEmpresa)
+                      && c.IdEmpresa == idEmpresa && c.Activo
+                select new { c.Id, c.Nombre })
+            .Distinct()
+            .OrderBy(c => c.Id)
+            .ToListAsync(ct);
+        return filas.Select(c => new CuentaDeOrigenPosible(c.Id, c.Nombre)).ToList();
     }
 
     private static async Task<(int Propuestas, int SinCierre, int SinComisionReal)> GenerarDiferenciasAsync(
@@ -65,6 +91,7 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                 from p in db.Cobros.AsNoTracking()
                 where p.IdCobroMercadoPago != null && idsDeCobroMp.Contains(p.IdCobroMercadoPago.Value) && p.DeletedAt == null
                 join c in db.ComprobantesVenta.AsNoTracking().SinEspejosFiscales() on p.IdComprobanteVenta equals c.Id
+                where c.Estado == EstadoComprobante.Emitido
                 select new { IdCobroMercadoPago = p.IdCobroMercadoPago!.Value, IdCobro = p.Id, p.IdMedioPago, p.Importe, c.IdTurnoCaja })
             .ToListAsync(ct);
 
@@ -78,8 +105,10 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         var sinPago = cobrosAplicados.Count - pagos.Select(p => p.IdCobroMercadoPago).Distinct().Count();
 
         var lineasPorCuenta = resultado.Lineas.GroupBy(l => l.IdCuentaTesoreria).ToDictionary(g => g.Key, g => g.ToList());
+        var creadas = 0;
         foreach (var cuenta in resultado.PorCuenta.Where(c => Math.Abs(c.Importe) <= ReglasDeAjusteDeCuentaTesoreria.ImporteMaximo))
         {
+            creadas++;
             var lineas = lineasPorCuenta[cuenta.IdCuentaTesoreria]
                 .OrderByDescending(l => Math.Abs(l.Diferencia))
                 .ThenBy(l => l.IdCobroMercadoPago)
@@ -105,7 +134,7 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         }
 
         await db.SaveChangesAsync(ct);
-        return (resultado.PorCuenta.Count, resultado.CobrosSinCierre + sinPago, resultado.CobrosSinComisionReal);
+        return (creadas, resultado.CobrosSinCierre + sinPago, resultado.CobrosSinComisionReal);
     }
 
     /// <summary>Por cada (turno, medio) con fila de cobro en una cuenta: esa cuenta y el porcentaje de la fila de comisión (0 si el cierre no escribió
@@ -141,37 +170,52 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         return cierres;
     }
 
-    private static async Task<int> GenerarRetirosAsync(
+    private static async Task<(int Creados, int YaPropuestos)> GenerarRetirosAsync(
         IWaysDbContext db, int idTenant, int idEmpresa, int idConciliacion, IReadOnlyList<FilaConciliacionMercadoPago> filasDeRetiro,
         DateTimeOffset ahora, CancellationToken ct)
     {
         var retiros = filasDeRetiro
             .Where(f => f.TipoTransaccion is TiposDeTransaccionMercadoPago.Withdrawal or TiposDeTransaccionMercadoPago.Payout
+                        && !string.IsNullOrEmpty(f.SourceId)
                         && f.Importe is { } importe && importe != 0m && Math.Abs(importe) <= ReglasDeAjusteDeCuentaTesoreria.ImporteMaximo)
+            .OrderBy(f => f.NumeroLinea)
             .ToList();
         if (retiros.Count == 0)
         {
-            return 0;
+            return (0, 0);
         }
 
-        var cuentaDeMercadoPago = await db.ConexionesMercadoPago
-            .AsNoTracking()
-            .Where(c => c.IdEmpresa == idEmpresa)
-            .Select(c => (int?)c.IdCuentaTesoreria)
-            .FirstOrDefaultAsync(ct);
+        var claves = retiros.Select(f => PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(f.SourceId!)).Distinct().ToList();
+        var yaPropuestas = (await db.PropuestasTesoreriaMercadoPago
+                .AsNoTracking()
+                .Where(p => p.IdEmpresa == idEmpresa && p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro && claves.Contains(p.ClaveOrigen))
+                .Select(p => p.ClaveOrigen)
+                .ToListAsync(ct))
+            .ToHashSet();
 
+        var cuentas = await CuentasDeOrigenAsync(db, idEmpresa, ct);
+        int? idCuentaDeOrigen = cuentas.Count == 1 ? cuentas[0].Id : null;
+
+        var creados = 0;
         foreach (var fila in retiros)
         {
+            var clave = PropuestaDeTesoreriaMercadoPago.ClaveDeRetiro(fila.SourceId!);
+            if (!yaPropuestas.Add(clave))
+            {
+                continue;
+            }
+
+            creados++;
             db.PropuestasTesoreriaMercadoPago.Add(new PropuestaDeTesoreriaMercadoPago
             {
                 IdTenant = idTenant,
                 IdEmpresa = idEmpresa,
                 IdConciliacion = idConciliacion,
                 Tipo = TiposDePropuestaDeTesoreriaMercadoPago.Retiro,
-                ClaveOrigen = PropuestaDeTesoreriaMercadoPago.ClaveDeLinea(fila.NumeroLinea),
+                ClaveOrigen = clave,
                 Importe = Math.Abs(fila.Importe!.Value),
                 IdFila = fila.Id,
-                IdCuentaOrigen = cuentaDeMercadoPago,
+                IdCuentaOrigen = idCuentaDeOrigen,
                 Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
@@ -179,6 +223,6 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
         }
 
         await db.SaveChangesAsync(ct);
-        return retiros.Count;
+        return (creados, retiros.Count - creados);
     }
 }

@@ -33,21 +33,28 @@ public sealed record ResultadoDeDiferenciaDeComision(
 /// <summary>
 /// Diferencia entre la comisión real que informa Mercado Pago y la que el cierre de turno ya descontó de la cuenta (E7). Pura, sin base de datos.
 ///
-/// La comisión estimada de un cobro es la del cierre, no la del medio de hoy: el cierre guarda en su fila de comisión el porcentaje que aplicó
-/// (<c>porcentaje_aplicado</c>) y la cuenta que acreditó, por turno y medio. Se aplica ese porcentaje al importe del pago con el mismo
-/// redondeo del cierre (a centavos, el punto medio hacia afuera del cero), pago por pago: el cierre redondea sobre el bruto de todo el
-/// turno y medio, así que la suma de las comisiones estimadas puede diferir en centavos de lo que el cierre descontó. Un cobro cuyo turno
-/// todavía no acreditó ese medio (no hay fila de cobro en la cuenta) no entra: no hay nada estimado que corregir, y el cierre aún lo va a descontar con
-/// el porcentaje del medio; un cobro sin comisión real tampoco entra.
+/// La comisión estimada es la del cierre, no la del medio de hoy: el cierre guarda en su fila de comisión el porcentaje que aplicó
+/// (<c>porcentaje_aplicado</c>) y la cuenta que acreditó, por turno y medio. Como el cierre redondea UNA vez por (turno, medio) sobre el bruto de todos
+/// sus pagos, acá se redondea igual: la estimada de un grupo es <c>round(porcentaje × Σ importes de los pagos del grupo que esta conciliación trajo)</c>
+/// (a centavos, el punto medio hacia afuera del cero), una vez por grupo, y la diferencia de una cuenta es Σ comisiones reales − Σ estimadas de sus grupos.
+/// Las líneas reparten la estimada del grupo entre sus pagos por mayor resto (los centavos sobrantes van a los de mayor fracción, y a igual fracción
+/// al de menor id), así que las líneas suman exactamente el total.
+///
+/// Aproximación que queda: si el reporte trae solo parte de los pagos de un (turno, medio), el cierre redondeó sobre el bruto completo y acá se redondea
+/// sobre la parte, por lo que la estimada puede diferir en centavos de la porción que le corresponde al cierre. Un cobro cuyo turno todavía no acreditó
+/// ese medio (no hay fila de cobro en la cuenta) no entra: no hay nada estimado que corregir y el cierre aún lo va a descontar con el porcentaje del
+/// medio; un cobro sin comisión real tampoco entra (ni su importe se suma al bruto del grupo).
 /// </summary>
 public static class CalculadorDeDiferenciaDeComisionMercadoPago
 {
     private const int Decimales = 2;
 
+    private const decimal Centavo = 0.01m;
+
     public static ResultadoDeDiferenciaDeComision Calcular(
         IEnumerable<PagoConciliadoParaComision> pagos, IReadOnlyDictionary<(int IdTurnoCaja, int IdMedioPago), CierreDeMedioEnCuenta> cierres)
     {
-        var lineas = new List<LineaDeDiferenciaDeComision>();
+        var entran = new List<(PagoConciliadoParaComision Pago, int IdTurno, CierreDeMedioEnCuenta Cierre, decimal Real)>();
         var sinCierre = 0;
         var sinComisionReal = 0;
 
@@ -65,10 +72,13 @@ public static class CalculadorDeDiferenciaDeComisionMercadoPago
                 continue;
             }
 
-            var estimada = Math.Round(pago.Importe * cierre.PorcentajeComision / 100m, Decimales, MidpointRounding.AwayFromZero);
-            lineas.Add(new LineaDeDiferenciaDeComision(
-                pago.IdCobroMercadoPago, pago.IdCobro, idTurno, pago.IdMedioPago, cierre.IdCuentaTesoreria, pago.Importe,
-                cierre.PorcentajeComision, estimada, real, real - estimada));
+            entran.Add((pago, idTurno, cierre, real));
+        }
+
+        var lineas = new List<LineaDeDiferenciaDeComision>();
+        foreach (var grupo in entran.GroupBy(e => (e.IdTurno, e.Pago.IdMedioPago)))
+        {
+            lineas.AddRange(RepartirLaEstimadaDelGrupo([.. grupo.OrderBy(e => e.Pago.IdCobroMercadoPago)]));
         }
 
         var porCuenta = lineas
@@ -80,5 +90,39 @@ public static class CalculadorDeDiferenciaDeComisionMercadoPago
             .ToList();
 
         return new ResultadoDeDiferenciaDeComision(porCuenta, lineas, sinCierre, sinComisionReal);
+    }
+
+    private static List<LineaDeDiferenciaDeComision> RepartirLaEstimadaDelGrupo(
+        List<(PagoConciliadoParaComision Pago, int IdTurno, CierreDeMedioEnCuenta Cierre, decimal Real)> grupo)
+    {
+        var porcentaje = grupo[0].Cierre.PorcentajeComision;
+        var estimadaDelGrupo = Math.Round(grupo.Sum(e => e.Pago.Importe) * porcentaje / 100m, Decimales, MidpointRounding.AwayFromZero);
+
+        var partes = grupo
+            .Select(e =>
+            {
+                var exacta = e.Pago.Importe * porcentaje / 100m;
+                var piso = Math.Floor(exacta / Centavo) * Centavo;
+                return (e.Pago, e.IdTurno, e.Cierre, e.Real, Piso: piso, Resto: exacta - piso);
+            })
+            .ToList();
+
+        var sobrantes = (int)Math.Round((estimadaDelGrupo - partes.Sum(p => p.Piso)) / Centavo, MidpointRounding.AwayFromZero);
+        var conCentavo = partes
+            .OrderByDescending(p => p.Resto)
+            .ThenBy(p => p.Pago.IdCobroMercadoPago)
+            .Take(Math.Max(sobrantes, 0))
+            .Select(p => p.Pago.IdCobroMercadoPago)
+            .ToHashSet();
+
+        return partes
+            .Select(p =>
+            {
+                var estimada = p.Piso + (conCentavo.Contains(p.Pago.IdCobroMercadoPago) ? Centavo : 0m);
+                return new LineaDeDiferenciaDeComision(
+                    p.Pago.IdCobroMercadoPago, p.Pago.IdCobro, p.IdTurno, p.Pago.IdMedioPago, p.Cierre.IdCuentaTesoreria, p.Pago.Importe,
+                    p.Cierre.PorcentajeComision, estimada, p.Real, p.Real - estimada);
+            })
+            .ToList();
     }
 }

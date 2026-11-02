@@ -24,9 +24,11 @@ public sealed record ConciliacionListado(
 public sealed record FilaInvalidaDeConciliacion(int NumeroLinea, string Motivo);
 
 /// <summary>Lo que devuelve subir un reporte: la conciliación creada y las filas que no se pudieron leer (a lo sumo
-/// <see cref="ServicioDeConciliacionMercadoPago.MaximoDeInvalidasDevueltas"/>; <see cref="InvalidasTruncado"/> avisa si hay más).</summary>
+/// <see cref="ServicioDeConciliacionMercadoPago.MaximoDeInvalidasDevueltas"/>; <see cref="InvalidasTruncado"/> avisa si hay más).
+/// <see cref="RetirosYaPropuestos"/> cuenta los retiros del reporte que ya tenían propuesta en otra conciliación de la empresa (un reporte que se
+/// pisa con uno anterior) y no se volvieron a proponer.</summary>
 public sealed record ConciliacionImportada(
-    ConciliacionListado Conciliacion, IReadOnlyList<FilaInvalidaDeConciliacion> Invalidas, bool InvalidasTruncado);
+    ConciliacionListado Conciliacion, IReadOnlyList<FilaInvalidaDeConciliacion> Invalidas, bool InvalidasTruncado, int RetirosYaPropuestos = 0);
 
 /// <summary>Un pago de venta sin verificar que podría ser el de una fila sin cobro en Ways (mismo importe, a un día de la fecha, misma caja
 /// cuando la fila trae el id). Es una sugerencia: solo un Admin la confirma.</summary>

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   avisosDeDetalle,
   claseDeEstadoDePropuesta,
@@ -7,7 +7,9 @@ import {
   etiquetaDeEstadoDePropuesta,
   etiquetaDeTipoDePropuesta,
   mensajeDeErrorDeConciliacion,
+  pideElegirOrigen,
   sePuedeAplicar,
+  seleccionVigente,
   textoDeEfecto,
   textoDeFecha,
   textoDeImporte,
@@ -27,11 +29,25 @@ type Props = {
   puedeResolver: boolean
   /** Hay una escritura en vuelo o un diálogo abierto en la pantalla: todo queda inerte. */
   bloqueado: boolean
-  onResolver: (idConciliacion: number, propuesta: PropuestaDeTesoreria, accion: AccionDePropuesta, destino: DestinoElegido | null) => void
+  onResolver: ResolverPropuesta
 }
 
-/** La cuenta que recibe un retiro, tal como se eligió en la lista. */
+/** Pide resolver una propuesta; en un retiro lleva el destino elegido y, si no tenía origen fijo, el origen elegido. */
+export type ResolverPropuesta = (
+  idConciliacion: number,
+  propuesta: PropuestaDeTesoreria,
+  accion: AccionDePropuesta,
+  destino: DestinoElegido | null,
+  origen: DestinoElegido | null,
+) => void
+
+/** La cuenta que recibe un retiro (o de la que sale, si se eligió el origen), tal como se eligió en la lista. */
 export type DestinoElegido = { id: number; nombre: string }
+
+const seleccionarId = (valor: string): number | null => (valor === '' ? null : Number(valor))
+
+const mismasClaves = (a: Record<number, string>, b: Record<number, string>) =>
+  Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([k, v]) => b[Number(k)] === v)
 
 const mensajeDeLectura = (e: unknown) => mensajeDeErrorDeConciliacion(e, 'lectura')
 
@@ -42,6 +58,7 @@ const mensajeDeLectura = (e: unknown) => mensajeDeErrorDeConciliacion(e, 'lectur
  */
 export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeResolver, bloqueado, onResolver }: Props) {
   const [destinos, setDestinos] = useState<Record<number, string>>({})
+  const [origenes, setOrigenes] = useState<Record<number, string>>({})
 
   const leerPropuestas = useCallback(() => {
     void version
@@ -53,6 +70,22 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
   const cuentas = useLectura(puedeResolver ? leerCuentas : null, mensajeDeLectura)
 
   const lista = propuestas.datos
+
+  // Una cuenta elegida que la lectura siguiente ya no ofrece (baja, inactiva, ya no es de un medio de Mercado Pago) se descarta del estado.
+  useEffect(() => {
+    if (lista === null) return
+    const origenVigente = (p: PropuestaDeTesoreria) => p.idCuentaOrigen ?? seleccionarId(seleccionVigente(p.origenesPosibles, origenes[p.id]))
+    const origenesNuevos: Record<number, string> = {}
+    const destinosNuevos: Record<number, string> = {}
+    for (const p of lista) {
+      const origen = seleccionVigente(p.origenesPosibles, origenes[p.id])
+      if (origen !== '') origenesNuevos[p.id] = origen
+      const destino = seleccionVigente(cuentasDeDestino(cuentas.datos ?? [], idEmpresa, origenVigente(p)), destinos[p.id])
+      if (destino !== '') destinosNuevos[p.id] = destino
+    }
+    setOrigenes((previos) => (mismasClaves(previos, origenesNuevos) ? previos : origenesNuevos))
+    setDestinos((previos) => (mismasClaves(previos, destinosNuevos) ? previos : destinosNuevos))
+  }, [lista, cuentas.datos, idEmpresa, origenes, destinos])
 
   return (
     <section aria-label="Movimientos a tesorería" className="mb-4">
@@ -90,15 +123,19 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                   <th>Tipo</th>
                   <th>Qué hace</th>
                   <th>Estado</th>
+                  {puedeResolver && <th>Cuenta de origen</th>}
                   {puedeResolver && <th>Cuenta de destino</th>}
                   {puedeResolver && <th />}
                 </tr>
               </thead>
               <tbody>
                 {lista.map((p) => {
-                  const opciones = cuentasDeDestino(cuentas.datos ?? [], idEmpresa, p.idCuentaOrigen)
-                  const elegida = destinos[p.id] ?? ''
                   const pendiente = p.estado === 'pendiente'
+                  const eligeOrigen = pideElegirOrigen(p) && p.origenesPosibles.length > 0
+                  const origenElegido = seleccionVigente(p.origenesPosibles, origenes[p.id])
+                  const idOrigen = p.idCuentaOrigen ?? seleccionarId(origenElegido)
+                  const opciones = cuentasDeDestino(cuentas.datos ?? [], idEmpresa, idOrigen)
+                  const elegida = seleccionVigente(opciones, destinos[p.id])
                   const aplicable = sePuedeAplicar(p)
                   const etiqueta = p.tipo === 'retiro' ? `retiro de la línea ${p.numeroLinea ?? ''}`.trim() : 'diferencia de comisión'
                   return (
@@ -120,8 +157,11 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                             ))}
                           </div>
                         )}
-                        {p.tipo === 'retiro' && pendiente && p.idCuentaOrigen === null && (
-                          <div className="small text-danger">La empresa no tiene conexión con Mercado Pago: no hay cuenta de la que retirar.</div>
+                        {pideElegirOrigen(p) && p.origenesPosibles.length === 0 && (
+                          <div className="small text-danger">
+                            Ningún medio de pago de Mercado Pago de la empresa acredita en una cuenta de tesorería activa: no hay cuenta de la que retirar.
+                            Se puede descartar.
+                          </div>
                         )}
                         {!pendiente && p.resueltaEl && (
                           <div className="small text-muted">
@@ -133,6 +173,27 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                       <td>
                         <span className={`badge ${claseDeEstadoDePropuesta(p.estado)}`}>{etiquetaDeEstadoDePropuesta(p.estado)}</span>
                       </td>
+                      {puedeResolver && (
+                        <td>
+                          {eligeOrigen && (
+                            <select
+                              className="form-select form-select-sm"
+                              aria-label={`Cuenta de origen del ${etiqueta}`}
+                              value={origenElegido}
+                              disabled={bloqueado}
+                              onChange={(e) => setOrigenes((previos) => ({ ...previos, [p.id]: e.target.value }))}
+                            >
+                              <option value="">Elegir…</option>
+                              {p.origenesPosibles.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.nombre}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {!eligeOrigen && p.tipo === 'retiro' && pendiente && p.nombreCuentaOrigen}
+                        </td>
+                      )}
                       {puedeResolver && (
                         <td>
                           {p.tipo === 'retiro' && pendiente && (
@@ -160,9 +221,17 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                               <button
                                 type="button"
                                 className="btn btn-sm btn-primary me-1"
-                                disabled={bloqueado || !aplicable || (p.tipo === 'retiro' && elegida === '')}
+                                disabled={bloqueado || !aplicable || (p.tipo === 'retiro' && (elegida === '' || (eligeOrigen && origenElegido === '')))}
                                 aria-label={`Aplicar ${etiqueta}`}
-                                onClick={() => onResolver(idConciliacion, p, 'aplicar', p.tipo === 'retiro' ? (opciones.find((c) => c.id === Number(elegida)) ?? null) : null)}
+                                onClick={() =>
+                                  onResolver(
+                                    idConciliacion,
+                                    p,
+                                    'aplicar',
+                                    p.tipo === 'retiro' ? (opciones.find((c) => c.id === Number(elegida)) ?? null) : null,
+                                    eligeOrigen ? (p.origenesPosibles.find((c) => c.id === Number(origenElegido)) ?? null) : null,
+                                  )
+                                }
                               >
                                 Aplicar
                               </button>
@@ -171,7 +240,7 @@ export function SeccionDePropuestas({ idConciliacion, idEmpresa, version, puedeR
                                 className="btn btn-sm btn-outline-secondary"
                                 disabled={bloqueado}
                                 aria-label={`Descartar ${etiqueta}`}
-                                onClick={() => onResolver(idConciliacion, p, 'descartar', null)}
+                                onClick={() => onResolver(idConciliacion, p, 'descartar', null, null)}
                               >
                                 Descartar
                               </button>

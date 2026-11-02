@@ -15,9 +15,11 @@ namespace Ways.Application.MercadoPago;
 /// (<see cref="GeneradorDePropuestasDeTesoreriaMercadoPago"/>). Aplicar escribe en la tesorería; descartar no escribe nada. Solo el Admin aplica o descarta.
 ///
 /// <b>Aplicar.</b> Orden de los errores: 404 (conciliación, propuesta de esa conciliación), 400 por el cuerpo según el tipo (<c>cuenta_destino_requerida</c>
-/// en un retiro, <c>cuenta_destino_no_aplica</c> en una diferencia), y bajo los locks 409 <c>propuesta_ya_aplicada</c> / <c>propuesta_descartada</c>, 409
-/// <c>propuesta_sin_cuenta_origen</c> y <c>cuenta_origen_no_disponible</c>, 400 <c>cuenta_destino_invalida</c> (no existe, es de otra empresa, está dada de baja o
-/// inactiva) y <c>cuentas_iguales</c>, y 409 <c>periodo_conciliado</c> si la fecha cae en un período congelado de tesorería.
+/// en un retiro, <c>cuenta_destino_no_aplica</c> en una diferencia; <c>cuenta_origen_requerida</c> en un retiro sin origen fijo,
+/// <c>cuenta_origen_no_aplica</c> si la propuesta ya tiene origen o es una diferencia), y bajo los locks 409 <c>propuesta_ya_aplicada</c> /
+/// <c>propuesta_descartada</c>, 409 <c>cuenta_origen_no_disponible</c> (el origen fijo ya no existe), 400 <c>cuenta_origen_invalida</c> (la elegida no es una cuenta
+/// activa de los medios de Mercado Pago de la empresa), 400 <c>cuenta_destino_invalida</c> (no existe, es de otra empresa, está dada de baja o inactiva) y
+/// <c>cuentas_iguales</c>, y 409 <c>periodo_conciliado</c> si la fecha cae en un período congelado de tesorería.
 ///
 /// <b>Cómo se asienta.</b> La tesorería no tiene una transferencia entre cuentas: un retiro es un ajuste de salida de la cuenta de Mercado Pago y un ajuste
 /// de entrada a la cuenta elegida, los dos con <see cref="EscriturasDeCuentaDeTesoreria.AgregarAjuste"/> (el escritor del ajuste manual) dentro de UNA
@@ -71,6 +73,12 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
             .Where(f => idsDeFila.Contains(f.Id))
             .ToDictionaryAsync(f => f.Id, ct);
 
+        var pideOrigen = propuestas.Any(p => p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro
+                                             && p.Estado == EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente && p.IdCuentaOrigen is null);
+        IReadOnlyList<CuentaDeOrigenPosible> origenes = pideOrigen
+            ? await GeneradorDePropuestasDeTesoreriaMercadoPago.CuentasDeOrigenAsync(db, propuestas[0].IdEmpresa, ct)
+            : [];
+
         var idsDeUsuario = propuestas.Where(p => p.IdUsuarioResolucion is not null).Select(p => p.IdUsuarioResolucion!.Value).Distinct().ToList();
         var usuarios = await db.Usuarios
             .AsNoTracking()
@@ -97,7 +105,11 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                     p.IdMovimientoCuenta,
                     p.IdMovimientoCuentaDestino,
                     p.FechaResolucion,
-                    p.IdUsuarioResolucion is { } u ? usuarios.GetValueOrDefault(u) : null);
+                    p.IdUsuarioResolucion is { } u ? usuarios.GetValueOrDefault(u) : null,
+                    pideOrigen && p.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro && p.Estado == EstadosDePropuestaDeTesoreriaMercadoPago.Pendiente
+                    && p.IdCuentaOrigen is null
+                        ? origenes
+                        : []);
             })
             .ToList();
     }
@@ -112,6 +124,7 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
         var previa = await LeerPreviaAsync(idConciliacion, idPropuesta, ct);
 
         var idDestino = solicitud?.IdCuentaDestino;
+        var idOrigenElegido = solicitud?.IdCuentaOrigen;
         if (previa.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro)
         {
             if (idDestino is null or < 1)
@@ -119,11 +132,30 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                 throw new ErrorDominio(
                     CodigosDeErrorDePropuestaDeTesoreria.CuentaDestinoRequerida, "Elegí la cuenta que recibe el retiro.", 400);
             }
+
+            if (previa.IdCuentaOrigen is null && idOrigenElegido is null or < 1)
+            {
+                throw new ErrorDominio(
+                    CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenRequerida,
+                    "Elegí la cuenta de Mercado Pago de la que sale el retiro.",
+                    400);
+            }
+
+            if (previa.IdCuentaOrigen is not null && idOrigenElegido is not null)
+            {
+                throw new ErrorDominio(
+                    CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenNoAplica, "Este retiro ya tiene cuenta de origen: no se elige.", 400);
+            }
         }
         else if (idDestino is not null)
         {
             throw new ErrorDominio(
                 CodigosDeErrorDePropuestaDeTesoreria.CuentaDestinoNoAplica, "Una diferencia de comisión no lleva cuenta de destino.", 400);
+        }
+        else if (idOrigenElegido is not null)
+        {
+            throw new ErrorDominio(
+                CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenNoAplica, "Una diferencia de comisión no lleva cuenta de origen a elegir.", 400);
         }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
@@ -140,12 +172,14 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                 ?? throw Inexistente(idConciliacion, idPropuesta);
             ExigirPendiente(propuesta);
 
-            if (propuesta.IdCuentaOrigen is not { } idOrigen)
-            {
-                throw ErrorDominio.Conflicto(
-                    CodigosDeErrorDePropuestaDeTesoreria.SinCuentaOrigen,
-                    "La empresa no tiene una conexión con Mercado Pago: no hay cuenta de la que retirar. Descartá la propuesta.");
-            }
+            var eligioOrigen = propuesta.IdCuentaOrigen is null;
+            var idOrigen = propuesta.IdCuentaOrigen
+                ?? (idOrigenElegido is > 0
+                    ? idOrigenElegido.Value
+                    : throw new ErrorDominio(
+                        CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenRequerida,
+                        "Elegí la cuenta de Mercado Pago de la que sale el retiro.",
+                        400));
 
             var esRetiro = propuesta.Tipo == TiposDePropuestaDeTesoreriaMercadoPago.Retiro;
             if (esRetiro && idDestino == idOrigen)
@@ -160,7 +194,18 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
             var bloqueadas = await EscriturasDeCuentaDeTesoreria.LeerYBloquearCuentasAsync(
                 conexion, transaccionCruda, idTenant, propuesta.IdEmpresa, idsABloquear, ct);
 
-            if (!bloqueadas.ContainsKey(idOrigen))
+            if (eligioOrigen)
+            {
+                var posibles = await GeneradorDePropuestasDeTesoreriaMercadoPago.CuentasDeOrigenAsync(db, propuesta.IdEmpresa, ct);
+                if (!bloqueadas.ContainsKey(idOrigen) || posibles.All(c => c.Id != idOrigen))
+                {
+                    throw new ErrorDominio(
+                        CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenInvalida,
+                        "La cuenta de origen tiene que ser una cuenta activa de la empresa a la que acreditan sus medios de pago de Mercado Pago.",
+                        400);
+                }
+            }
+            else if (!bloqueadas.ContainsKey(idOrigen))
             {
                 throw ErrorDominio.Conflicto(
                     CodigosDeErrorDePropuestaDeTesoreria.CuentaOrigenNoDisponible, "La cuenta de Mercado Pago ya no está disponible.");
@@ -194,7 +239,7 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
             await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, propuesta.IdEmpresa, fechaOrigen, ct);
 
             var concepto = esRetiro
-                ? $"Retiro de Mercado Pago a {nombreDestino} - conciliación {idConciliacion}, línea {NumeroDeLinea(propuesta)}"
+                ? $"Retiro de Mercado Pago a {nombreDestino} - conciliación {idConciliacion}, operación {propuesta.ClaveOrigen}"
                 : $"Diferencia de comisión de Mercado Pago - conciliación {idConciliacion}";
             var filaOrigen = EscriturasDeCuentaDeTesoreria.AgregarAjuste(db, idTenant, idOrigen, ajusteOrigen, fechaOrigen, concepto, idEmpleado);
 
@@ -208,12 +253,13 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                 await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, propuesta.IdEmpresa, fechaDestino, ct);
                 filaDestino = EscriturasDeCuentaDeTesoreria.AgregarAjuste(
                     db, idTenant, idDestino.Value, ajusteDestino, fechaDestino,
-                    $"Retiro desde Mercado Pago - conciliación {idConciliacion}, línea {NumeroDeLinea(propuesta)}", idEmpleado);
+                    $"Retiro desde Mercado Pago - conciliación {idConciliacion}, operación {propuesta.ClaveOrigen}", idEmpleado);
             }
 
             await db.SaveChangesAsync(ct);
 
             propuesta.Estado = EstadosDePropuestaDeTesoreriaMercadoPago.Aplicada;
+            propuesta.IdCuentaOrigen = idOrigen;
             propuesta.IdCuentaDestino = esRetiro ? idDestino : null;
             propuesta.IdMovimientoCuenta = filaOrigen.Id;
             propuesta.IdMovimientoCuentaDestino = filaDestino?.Id;
@@ -301,12 +347,12 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
 
     /// <summary>El 404 de antes de validar el cuerpo ni tomar locks: la propuesta tiene que ser de la conciliación. La empresa no cambia, así que leerla
     /// antes del lock es seguro; el estado se vuelve a leer bajo el lock.</summary>
-    private async Task<(int IdEmpresa, string Tipo)> LeerPreviaAsync(int idConciliacion, int idPropuesta, CancellationToken ct)
+    private async Task<(int IdEmpresa, string Tipo, int? IdCuentaOrigen)> LeerPreviaAsync(int idConciliacion, int idPropuesta, CancellationToken ct)
     {
         var previa = await db.PropuestasTesoreriaMercadoPago
             .AsNoTracking()
             .Where(p => p.Id == idPropuesta && p.IdConciliacion == idConciliacion)
-            .Select(p => new { p.IdEmpresa, p.Tipo })
+            .Select(p => new { p.IdEmpresa, p.Tipo, p.IdCuentaOrigen })
             .FirstOrDefaultAsync(ct);
         if (previa is null)
         {
@@ -315,7 +361,7 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
                 : Inexistente(idConciliacion);
         }
 
-        return (previa.IdEmpresa, previa.Tipo);
+        return (previa.IdEmpresa, previa.Tipo, previa.IdCuentaOrigen);
     }
 
     private static void ExigirPendiente(PropuestaDeTesoreriaMercadoPago propuesta)
@@ -330,9 +376,6 @@ public class ServicioDePropuestasDeTesoreriaMercadoPago(
             throw ErrorDominio.Conflicto(CodigosDeErrorDePropuestaDeTesoreria.Descartada, "La propuesta se descartó: ya no se puede aplicar.");
         }
     }
-
-    private static string NumeroDeLinea(PropuestaDeTesoreriaMercadoPago propuesta) =>
-        propuesta.ClaveOrigen[(propuesta.ClaveOrigen.IndexOf(':') + 1)..];
 
     private static ErrorDominio Inexistente(int idConciliacion) =>
         ErrorDominio.NoEncontrado($"No existe la conciliación {idConciliacion}.");

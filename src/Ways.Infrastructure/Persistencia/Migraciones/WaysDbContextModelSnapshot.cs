@@ -4297,8 +4297,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.Property<string>("ClaveOrigen")
                         .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
                         .HasColumnName("clave_origen");
 
                     b.Property<DateTimeOffset>("CreatedAt")
@@ -4400,6 +4400,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdConciliacion", "Tipo", "ClaveOrigen")
                         .IsUnique()
                         .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_origen");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "ClaveOrigen")
+                        .IsUnique()
+                        .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro")
+                        .HasFilter("tipo = 'retiro'");
 
                     b.HasIndex("IdCuentaDestino", "IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_propuestas_tesoreria_mercadopago_cuenta_destino");

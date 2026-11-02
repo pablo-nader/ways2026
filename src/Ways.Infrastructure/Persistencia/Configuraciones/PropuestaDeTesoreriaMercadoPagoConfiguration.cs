@@ -50,7 +50,7 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
         builder.Property(p => p.IdEmpresa).HasColumnName("id_empresa").IsRequired();
         builder.Property(p => p.IdConciliacion).HasColumnName("id_conciliacion_mercadopago").IsRequired();
         builder.Property(p => p.Tipo).HasColumnName("tipo").HasMaxLength(20).IsRequired();
-        builder.Property(p => p.ClaveOrigen).HasColumnName("clave_origen").HasMaxLength(30).IsRequired();
+        builder.Property(p => p.ClaveOrigen).HasColumnName("clave_origen").HasMaxLength(64).IsRequired();
         builder.Property(p => p.Importe).HasColumnName("importe").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(p => p.IdFila).HasColumnName("id_fila_conciliacion_mercadopago");
         builder.Property(p => p.IdCuentaOrigen).HasColumnName("id_cuenta_origen");
@@ -81,6 +81,13 @@ public class PropuestaDeTesoreriaMercadoPagoConfiguration : IEntityTypeConfigura
         // Una propuesta por origen dentro de la conciliación: recalcular no duplica.
         builder.HasIndex(p => new { p.IdConciliacion, p.Tipo, p.ClaveOrigen })
             .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_origen")
+            .IsUnique();
+
+        // Un retiro se propone una sola vez por empresa, aunque dos reportes de rangos que se pisan lo traigan: su clave es el SOURCE_ID de
+        // Mercado Pago y vale para toda propuesta de la empresa, pendiente, aplicada o descartada. Respalda la carrera de dos importaciones.
+        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.ClaveOrigen })
+            .HasDatabaseName("ux_propuestas_tesoreria_mercadopago_retiro")
+            .HasFilter("tipo = 'retiro'")
             .IsUnique();
 
         builder.HasOne<Tenant>()

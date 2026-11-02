@@ -229,6 +229,7 @@ public class ServicioDeConciliacionMercadoPago(
             ["cobros_conciliados"] = aplicados.Count,
             ["propuestas_diferencia_comision"] = propuestas.Diferencias,
             ["propuestas_retiro"] = propuestas.Retiros,
+            ["retiros_ya_propuestos"] = propuestas.RetirosYaPropuestos,
             ["cobros_sin_cierre"] = propuestas.CobrosSinCierre,
             ["cobros_sin_comision_real"] = propuestas.CobrosSinComisionReal
         };
@@ -246,7 +247,8 @@ public class ServicioDeConciliacionMercadoPago(
             .Select(i => new FilaInvalidaDeConciliacion(i.NumeroLinea, i.Motivo))
             .ToList();
         return new ConciliacionImportada(
-            Mapear(cabecera, contexto.NombreUsuario, resumen), invalidas, lectura.Invalidas.Count > MaximoDeInvalidasDevueltas);
+            Mapear(cabecera, contexto.NombreUsuario, resumen), invalidas, lectura.Invalidas.Count > MaximoDeInvalidasDevueltas,
+            propuestas.RetirosYaPropuestos);
     }
 
     /// <summary>Los cobros de la empresa que alguna fila puede nombrar por referencia externa, id de pago o referencia numérica del pago,

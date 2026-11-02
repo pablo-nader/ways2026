@@ -12,12 +12,10 @@ import {
   textoDeResumen,
   type CandidatoDeConfirmacion,
   type ConciliacionListado,
-  type AccionDePropuesta,
   type FilaDeConciliacion,
-  type PropuestaDeTesoreria,
 } from '../../api/conciliacionMercadoPago'
 import { Cargando } from '../../componentes/Cargando'
-import { SeccionDePropuestas, type DestinoElegido } from './SeccionDePropuestas'
+import { SeccionDePropuestas, type ResolverPropuesta } from './SeccionDePropuestas'
 import { TablaDeFilasDeConciliacion } from './TablaDeFilasDeConciliacion'
 import { useLectura } from './useLectura'
 
@@ -34,7 +32,7 @@ type Props = {
   idEmpresa: number
   /** Solo el Admin aplica o descarta las propuestas de tesorería. */
   puedeResolver: boolean
-  onResolver: (idConciliacion: number, propuesta: PropuestaDeTesoreria, accion: AccionDePropuesta, destino: DestinoElegido | null) => void
+  onResolver: ResolverPropuesta
 }
 
 const mensajeDeLectura = (e: unknown) => mensajeDeErrorDeConciliacion(e, 'lectura')

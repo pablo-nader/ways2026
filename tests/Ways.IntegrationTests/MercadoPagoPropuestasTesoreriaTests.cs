@@ -19,8 +19,13 @@ public partial class MercadoPagoVentaTests
 {
     private static string RutaPropuestas(int idConciliacion) => $"{RutaConciliaciones}/{idConciliacion}/propuestas";
 
-    private static Task<HttpResponseMessage> PropAplicarAsync(HttpClient cliente, int idConciliacion, int idPropuesta, int? idCuentaDestino = null) =>
-        cliente.PostAsJsonAsync($"{RutaPropuestas(idConciliacion)}/{idPropuesta}/aplicar", new SolicitudDeAplicacionDePropuesta(idCuentaDestino));
+    private static Task<HttpResponseMessage> PropAplicarAsync(
+        HttpClient cliente, int idConciliacion, int idPropuesta, int? idCuentaDestino = null, int? idCuentaOrigen = null) =>
+        cliente.PostAsJsonAsync($"{RutaPropuestas(idConciliacion)}/{idPropuesta}/aplicar", new SolicitudDeAplicacionDePropuesta(idCuentaDestino, idCuentaOrigen));
+
+    /// <summary>Le pone al medio con proveedor la cuenta de Mercado Pago del escenario: el único origen posible de un retiro.</summary>
+    private Task PropMedioConCuentaAsync(Escenario e) =>
+        EjecutarAsync("UPDATE medios_pago SET id_cuenta_tesoreria = $1 WHERE id_medio_pago = $2", e.Ctx.IdCuenta, e.IdMedio);
 
     private static Task<HttpResponseMessage> PropDescartarAsync(HttpClient cliente, int idConciliacion, int idPropuesta) =>
         cliente.PostAsync($"{RutaPropuestas(idConciliacion)}/{idPropuesta}/descartar", null);
@@ -169,6 +174,7 @@ public partial class MercadoPagoVentaTests
     public async Task CadaRetiroOPayoutProponeUnMovimientoYLaCancelacionNo()
     {
         var e = await PrepararAsync("mp-prop-retiros");
+        await PropMedioConCuentaAsync(e);
 
         var importada = await ConcSubirOkAsync(
             e.Ctx.Admin, e.Ctx.IdEmpresa,
@@ -311,22 +317,153 @@ public partial class MercadoPagoVentaTests
         Assert.All(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id), p => Assert.Equal("pendiente", p.Estado));
     }
 
-    // Clausula: un retiro de una empresa sin cuenta de origen (sin conexion con Mercado Pago) no se puede aplicar: 409, y se puede descartar.
+    // Clausula: sin una cuenta en los medios de Mercado Pago de la empresa un retiro no tiene origen fijo ni opciones: aplicar exige idCuentaOrigen
+    // (400 cuenta_origen_requerida), una cuenta que no es de esos medios se rechaza (400 cuenta_origen_invalida) y solo queda descartarlo.
     [Fact]
-    public async Task UnRetiroSinCuentaDeOrigenNoSeAplicaPeroSePuedeDescartar()
+    public async Task UnRetiroSinCuentaEnLosMediosDeMercadoPagoNoTieneOrigenYSoloSePuedeDescartar()
     {
         var e = await PrepararAsync("mp-prop-sin-origen");
         var idBanco = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Banco");
         var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9301", "WITHDRAWAL", "-10.00")));
         var retiro = Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
-        await EjecutarAsync(
-            "UPDATE propuestas_tesoreria_mercadopago SET id_cuenta_origen = NULL WHERE id_propuesta_tesoreria_mercadopago = $1", retiro.Id);
+        Assert.Null(retiro.IdCuentaOrigen);
+        Assert.Empty(retiro.OrigenesPosibles);
 
         await AssertCodigoAsync(
-            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idBanco), HttpStatusCode.Conflict, "propuesta_sin_cuenta_origen");
+            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idBanco), HttpStatusCode.BadRequest, "cuenta_origen_requerida");
+        await AssertCodigoAsync(
+            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idBanco, e.Ctx.IdCuenta), HttpStatusCode.BadRequest, "cuenta_origen_invalida");
 
         var descartada = await LeerAsync<PropuestaDeTesoreria>(await PropDescartarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id));
         Assert.Equal("descartada", descartada.Estado);
+    }
+
+    // Clausula (R2): el origen de un retiro es la cuenta de los medios de Mercado Pago, NO la de la conexion: con un solo medio con cuenta propia
+    // (distinta de la de la conexion) el origen fijo es esa cuenta y sale de ella lo retirado; elegir otra origen es 400 cuenta_origen_no_aplica.
+    [Fact]
+    public async Task ElOrigenDeUnRetiroEsLaCuentaDelMedioYNoLaDeLaConexionConMercadoPago()
+    {
+        var e = await PrepararAsync("mp-prop-origen-del-medio");
+        var idCuentaDelMedio = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Cuenta del medio");
+        var idBanco = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Banco");
+        await EjecutarAsync("UPDATE medios_pago SET id_cuenta_tesoreria = $1 WHERE id_medio_pago = $2", idCuentaDelMedio, e.IdMedio);
+        var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9311", "WITHDRAWAL", "-40.00")));
+        var retiro = Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
+
+        Assert.Equal(idCuentaDelMedio, retiro.IdCuentaOrigen);
+        Assert.NotEqual(e.Ctx.IdCuenta, retiro.IdCuentaOrigen);
+        Assert.Empty(retiro.OrigenesPosibles);
+        await AssertCodigoAsync(
+            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idBanco, idBanco), HttpStatusCode.BadRequest, "cuenta_origen_no_aplica");
+
+        await LeerAsync<PropuestaDeTesoreria>(await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idBanco));
+
+        Assert.Equal(-40m, await PropSaldoAsync(idCuentaDelMedio));
+        Assert.Equal(40m, await PropSaldoAsync(idBanco));
+        Assert.Equal(0L, await PropCantidadDeFilasAsync(e.Ctx.IdCuenta));
+    }
+
+    // Clausula (R2): con dos medios de Mercado Pago que acreditan en cuentas distintas no hay origen fijo: la propuesta ofrece las dos y aplicar exige
+    // elegir una; una cuenta que no es de esos medios (banco, otra empresa, inactiva, inexistente) es 400 cuenta_origen_invalida; igual al destino es
+    // 400 cuentas_iguales; la elegida queda escrita en la propuesta y es de donde sale el dinero. Una diferencia no admite idCuentaOrigen.
+    [Fact]
+    public async Task ConVariasCuentasDeMediosDeMercadoPagoElAdminEligeElOrigenYSoloEntreEsas()
+    {
+        var e = await PrepararAsync("mp-prop-origen-elegido");
+        var idCuentaB = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Cuenta del segundo medio");
+        var idMedioB = await CrearMedioConProveedorAsync(e.Ctx, "QR Mercado Pago B");
+        await EjecutarAsync("UPDATE medios_pago SET id_cuenta_tesoreria = $1 WHERE id_medio_pago = $2", idCuentaB, idMedioB);
+        var (_, datos) = await PropVentaAsync(e, e.Desde, porcentaje: 5m);
+        var idBanco = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Banco");
+        var idInactiva = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Inactiva", activo: false);
+        var (_, idCuentaAjena) = await _apoyo.CrearOtraEmpresaConCuentaAsync(e.Ctx, "Otra empresa del origen");
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFilaDelCobro(datos, "-6.50"), PropFila("9321", "WITHDRAWAL", "-30.00")));
+        var propuestas = await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id);
+        var retiro = propuestas.Single(p => p.Tipo == "retiro");
+        var diferencia = propuestas.Single(p => p.Tipo == "diferencia_comision");
+
+        Assert.Null(retiro.IdCuentaOrigen);
+        Assert.Equal(new[] { e.Ctx.IdCuenta, idCuentaB }, retiro.OrigenesPosibles.Select(c => c.Id));
+        Assert.Empty(diferencia.OrigenesPosibles);
+        await AssertCodigoAsync(
+            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idBanco), HttpStatusCode.BadRequest, "cuenta_origen_requerida");
+        foreach (var invalida in new[] { idBanco, idInactiva, idCuentaAjena, 987654 })
+        {
+            await AssertCodigoAsync(
+                await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, e.Ctx.IdCuenta, invalida), HttpStatusCode.BadRequest, "cuenta_origen_invalida");
+        }
+
+        await AssertCodigoAsync(
+            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idCuentaB, idCuentaB), HttpStatusCode.BadRequest, "cuentas_iguales");
+        await AssertCodigoAsync(
+            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, diferencia.Id, null, e.Ctx.IdCuenta), HttpStatusCode.BadRequest, "cuenta_origen_no_aplica");
+        Assert.Equal(0L, await PropCantidadDeFilasAsync(idCuentaB));
+        Assert.Equal(0L, await PropCantidadDeFilasAsync(idBanco));
+
+        var aplicada = await LeerAsync<PropuestaDeTesoreria>(
+            await PropAplicarAsync(e.Ctx.Admin, importada.Conciliacion.Id, retiro.Id, idBanco, idCuentaB));
+
+        Assert.Equal(idCuentaB, aplicada.IdCuentaOrigen);
+        Assert.Empty(aplicada.OrigenesPosibles);
+        Assert.Equal(-30m, await PropSaldoAsync(idCuentaB));
+        Assert.Equal(30m, await PropSaldoAsync(idBanco));
+        Assert.Equal(95m, await PropSaldoAsync(e.Ctx.IdCuenta));
+    }
+
+    // Clausula (R1): un retiro se propone UNA vez por empresa aunque dos reportes de rangos que se pisan lo traigan: el segundo reporte no vuelve a
+    // proponer el retiro que el primero ya propuso, ni cuando esta aplicado ni cuando esta descartado; el resumen de la importacion y la auditoria lo
+    // cuentan; aplicarlo una vez mueve el dinero una sola vez y una tercera importacion con la misma operacion tampoco genera otra.
+    [Fact]
+    public async Task UnRetiroQueAparecenEnDosReportesQueSePisanSeProponeYSeAplicaUnaSolaVez()
+    {
+        var e = await PrepararAsync("mp-prop-reportes-que-se-pisan");
+        await PropMedioConCuentaAsync(e);
+        var idBanco = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Banco");
+
+        var primera = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9801", "WITHDRAWAL", "-40.00"), PropFila("9802", "PAYOUT", "-25.00")));
+        Assert.Equal(0, primera.RetirosYaPropuestos);
+        var retiroUno = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id), p => p.SourceId == "9801");
+        await LeerAsync<PropuestaDeTesoreria>(await PropAplicarAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiroUno.Id, idBanco));
+        var retiroDos = Assert.Single(await PropListarAsync(e.Ctx.Admin, primera.Conciliacion.Id), p => p.SourceId == "9802");
+        await LeerAsync<PropuestaDeTesoreria>(await PropDescartarAsync(e.Ctx.Admin, primera.Conciliacion.Id, retiroDos.Id));
+
+        var segunda = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa,
+            Reporte(PropFila("9801", "WITHDRAWAL", "-40.00"), PropFila("9802", "PAYOUT", "-25.00"), PropFila("9803", "WITHDRAWAL", "-10.00")));
+
+        Assert.Equal(2, segunda.RetirosYaPropuestos);
+        var propuestasDeLaSegunda = await PropListarAsync(e.Ctx.Admin, segunda.Conciliacion.Id);
+        var nueva = Assert.Single(propuestasDeLaSegunda);
+        Assert.Equal("9803", nueva.SourceId);
+        var valor = (string)(await ConsultarAsync(
+            "SELECT valor_nuevo::text AS v FROM auditoria WHERE accion = 'conciliacion.importacion' AND id_entidad = $1", segunda.Conciliacion.Id)).Single()["v"]!;
+        Assert.Contains("\"retiros_ya_propuestos\": 2", valor);
+        Assert.Contains("\"propuestas_retiro\": 1", valor);
+
+        var tercera = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9801", "WITHDRAWAL", "-40.00"), PropFila("9804", "WITHDRAWAL", "-5.00")));
+        Assert.Equal(1, tercera.RetirosYaPropuestos);
+        Assert.Equal("9804", Assert.Single(await PropListarAsync(e.Ctx.Admin, tercera.Conciliacion.Id)).SourceId);
+
+        Assert.Equal(1L, (long)(await ConsultarAsync(
+            "SELECT count(*) AS n FROM propuestas_tesoreria_mercadopago WHERE id_empresa = $1 AND tipo = 'retiro' AND clave_origen = '9801'", e.Ctx.IdEmpresa)).Single()["n"]!);
+        Assert.Equal(40m, await PropSaldoAsync(idBanco));
+        Assert.Equal(-40m, await PropSaldoAsync(e.Ctx.IdCuenta));
+    }
+
+    // Clausula (R1): un SOURCE_ID repetido dentro del mismo archivo (otra fila, otro importe) tampoco se propone dos veces.
+    [Fact]
+    public async Task UnRetiroRepetidoEnElMismoArchivoSeProponeUnaSolaVez()
+    {
+        var e = await PrepararAsync("mp-prop-retiro-repetido");
+
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9811", "WITHDRAWAL", "-40.00"), PropFila("9811", "WITHDRAWAL", "-41.00")));
+
+        Assert.Equal(1, importada.RetirosYaPropuestos);
+        Assert.Equal(40m, Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Importe);
     }
 
     // Clausula: descartar no escribe nada en la tesoreria, queda auditado, es solo del Admin, y una propuesta descartada no se aplica ni se
@@ -406,6 +543,7 @@ public partial class MercadoPagoVentaTests
     public async Task AplicarEnUnPeriodoConciliadoDeTesoreriaEs409YNoEscribeNada()
     {
         var e = await PrepararAsync("mp-prop-periodo");
+        await PropMedioConCuentaAsync(e);
         var idBanco = await ApoyoDeMercadoPago.CrearCuentaAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, "Banco");
         var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9401", "WITHDRAWAL", "-10.00")));
         var retiro = Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
@@ -456,23 +594,66 @@ public partial class MercadoPagoVentaTests
         Assert.Equal("pendiente", Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id)).Estado);
     }
 
-    // Clausula: ux_propuestas_tesoreria_mercadopago_origen: la base rechaza dos propuestas del mismo tipo y origen en una conciliacion (23505),
-    // asi que recalcular nunca duplica. Solo la escribe la importacion, dentro de la transaccion que crea la conciliacion, por eso no hay
-    // traduccion a 409: ningun cliente la alcanza.
+    // Clausula: ux_propuestas_tesoreria_mercadopago_origen: la base rechaza dos diferencias de la misma cuenta en una conciliacion (23505), asi que
+    // recalcular nunca duplica. Solo la escribe la importacion, dentro de la transaccion que crea la conciliacion, por eso no hay traduccion a 409:
+    // ningun cliente la alcanza.
     [Fact]
-    public async Task LaBaseRechazaDosPropuestasDelMismoOrigenEnUnaConciliacion()
+    public async Task LaBaseRechazaDosDiferenciasDeLaMismaCuentaEnUnaConciliacion()
     {
         var e = await PrepararAsync("mp-prop-unico");
-        var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9601", "WITHDRAWAL", "-10.00")));
+        var (_, datos) = await PropVentaAsync(e, e.Desde, porcentaje: 5m);
+        var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFilaDelCobro(datos, "-6.50")));
         var existente = Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
-        var idFila = (int)(await ConsultarAsync(
-            "SELECT id_fila_conciliacion_mercadopago AS id FROM propuestas_tesoreria_mercadopago WHERE id_propuesta_tesoreria_mercadopago = $1", existente.Id)).Single()["id"]!;
 
-        var rechazo = await Assert.ThrowsAsync<PostgresException>(() => PropInsertarCrudaAsync(
-            e, importada.Conciliacion.Id, "retiro", "linea:2", 10m, idFila, e.Ctx.IdCuenta, "pendiente"));
+        var rechazo = await Assert.ThrowsAsync<PostgresException>(() => PropInsertarDiferenciaCrudaAsync(
+            e, importada.Conciliacion.Id, $"cuenta:{existente.IdCuentaOrigen}", e.Ctx.IdCuenta));
 
         Assert.Equal("23505", rechazo.SqlState);
         Assert.Equal("ux_propuestas_tesoreria_mercadopago_origen", rechazo.ConstraintName);
+    }
+
+    // Clausula (R1): ux_propuestas_tesoreria_mercadopago_retiro: la base rechaza un retiro con el mismo SOURCE_ID en otra conciliacion de la empresa
+    // (23505), aunque el generador ya lo salte: es el respaldo si dos importaciones de la misma empresa llegaran a correr a la vez.
+    [Fact]
+    public async Task LaBaseRechazaElMismoRetiroEnOtraConciliacionDeLaEmpresa()
+    {
+        var e = await PrepararAsync("mp-prop-unico-retiro");
+        await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9601", "WITHDRAWAL", "-10.00")));
+        var segunda = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFila("9602", "WITHDRAWAL", "-20.00")));
+        var propuestaDeLaSegunda = Assert.Single(await PropListarAsync(e.Ctx.Admin, segunda.Conciliacion.Id));
+        var idFila = (int)(await ConsultarAsync(
+            "SELECT id_fila_conciliacion_mercadopago AS id FROM propuestas_tesoreria_mercadopago WHERE id_propuesta_tesoreria_mercadopago = $1", propuestaDeLaSegunda.Id)).Single()["id"]!;
+
+        var rechazo = await Assert.ThrowsAsync<PostgresException>(() => PropInsertarCrudaAsync(
+            e, segunda.Conciliacion.Id, "retiro", "9601", 10m, idFila, e.Ctx.IdCuenta, "pendiente"));
+
+        Assert.Equal("23505", rechazo.SqlState);
+        Assert.Equal("ux_propuestas_tesoreria_mercadopago_retiro", rechazo.ConstraintName);
+    }
+
+    // Clausula (R4): solo cuentan los pagos de comprobantes emitidos, como el bruto del cierre: una venta anulada antes del cierre no entra a la
+    // diferencia (queda contada como cobro fuera del calculo) aunque su cobro se haya conciliado con la comision del reporte.
+    [Fact]
+    public async Task ElPagoDeUnaVentaAnuladaNoEntraALaDiferenciaDeComision()
+    {
+        var e = await PrepararAsync("mp-prop-venta-anulada");
+        var (_, datosVigente) = await PropVentaAsync(e, e.Desde, porcentaje: 5m, cerrar: false);
+        var (cobroAnulado, _) = await ConcVentaConMercadoPagoAsync(e, e.Desde + 1);
+        var datosAnulado = await ConcDatosDelCobroAsync(cobroAnulado.IdCobro);
+        await EjecutarAsync(
+            "UPDATE comprobantes_venta SET estado = 'anulado'::estado_comprobante WHERE id_comprobante_venta IN " +
+            "(SELECT id_comprobante_venta FROM cobros WHERE id_cobro_mercadopago = $1)", cobroAnulado.IdCobro);
+        await PropCerrarTurnoAsync(e);
+
+        var importada = await ConcSubirOkAsync(
+            e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(
+                FilaDelReporte("77001", datosVigente.Referencia, "SETTLEMENT", "100.00", "-6.50", null, FechaDelReporte),
+                FilaDelReporte("77002", datosAnulado.Referencia, "SETTLEMENT", "100.00", "-6.50", null, FechaDelReporte)));
+
+        var propuesta = Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
+        Assert.Equal(-1.50m, propuesta.Importe);
+        Assert.Equal(1, propuesta.Detalle!.CantidadDeCobros);
+        Assert.Equal(1, propuesta.Detalle.CobrosSinCierre);
     }
 
     // Clausula: los CHECK de la forma de la propuesta: un retiro con importe no positivo (23514), una aplicada sin fila del libro (23514) y una
@@ -487,19 +668,25 @@ public partial class MercadoPagoVentaTests
         var (_, idCuentaAjena) = await _apoyo.CrearOtraEmpresaConCuentaAsync(e.Ctx, "Otra empresa de la FK");
 
         var negativo = await Assert.ThrowsAsync<PostgresException>(() => PropInsertarCrudaAsync(
-            e, importada.Conciliacion.Id, "retiro", "linea:90", -10m, idFila, e.Ctx.IdCuenta, "pendiente"));
+            e, importada.Conciliacion.Id, "retiro", "90", -10m, idFila, e.Ctx.IdCuenta, "pendiente"));
         Assert.Equal("23514", negativo.SqlState);
         Assert.Equal("ck_propuestas_tesoreria_mercadopago_forma", negativo.ConstraintName);
 
         var aplicadaSinFila = await Assert.ThrowsAsync<PostgresException>(() => PropInsertarCrudaAsync(
-            e, importada.Conciliacion.Id, "retiro", "linea:91", 10m, idFila, e.Ctx.IdCuenta, "aplicada"));
+            e, importada.Conciliacion.Id, "retiro", "91", 10m, idFila, e.Ctx.IdCuenta, "aplicada"));
         Assert.Equal("23514", aplicadaSinFila.SqlState);
 
         var ajena = await Assert.ThrowsAsync<PostgresException>(() => PropInsertarCrudaAsync(
-            e, importada.Conciliacion.Id, "retiro", "linea:92", 10m, idFila, idCuentaAjena, "pendiente"));
+            e, importada.Conciliacion.Id, "retiro", "92", 10m, idFila, idCuentaAjena, "pendiente"));
         Assert.Equal("23503", ajena.SqlState);
         Assert.Equal("fk_propuestas_tesoreria_mercadopago_cuenta_origen", ajena.ConstraintName);
     }
+
+    private Task PropInsertarDiferenciaCrudaAsync(Escenario e, int idConciliacion, string clave, int idCuentaOrigen) =>
+        EjecutarAsync(
+            "INSERT INTO propuestas_tesoreria_mercadopago (id_tenant, id_empresa, id_conciliacion_mercadopago, tipo, clave_origen, importe, " +
+            "id_cuenta_origen, estado, detalle, created_at, updated_at) VALUES ($1, $2, $3, 'diferencia_comision', $4, 1, $5, 'pendiente', '{}'::jsonb, now(), now())",
+            e.Ctx.IdTenant, e.Ctx.IdEmpresa, idConciliacion, clave, idCuentaOrigen);
 
     private Task PropInsertarCrudaAsync(
         Escenario e, int idConciliacion, string tipo, string clave, decimal importe, int idFila, int idCuentaOrigen, string estado) =>

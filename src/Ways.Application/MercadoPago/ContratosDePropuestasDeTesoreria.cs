@@ -18,12 +18,17 @@ public sealed record DetalleDeDiferenciaDeComision(
     IReadOnlyList<LineaDeDiferenciaDeComision> Lineas,
     bool LineasTruncado);
 
+/// <summary>Una cuenta de tesorería a la que acredita un medio de pago con proveedor Mercado Pago: un origen posible de un retiro.</summary>
+public sealed record CuentaDeOrigenPosible(int Id, string Nombre);
+
 /// <summary>
 /// Una propuesta de la conciliación a la tesorería. <see cref="Importe"/> es, en una diferencia de comisión, el efecto con signo sobre la cuenta
 /// de origen (negativo si Mercado Pago cobró más de lo que el cierre descontó) y, en un retiro, el monto positivo que sale de ella.
-/// <see cref="IdCuentaOrigen"/> es nulo en un retiro de una empresa sin conexión con Mercado Pago (no se puede aplicar). El destino, el movimiento
-/// escrito y quién resolvió solo existen cuando ya se resolvió. <see cref="NumeroLinea"/>, <see cref="SourceId"/> y <see cref="FechaTransaccion"/>
-/// son de la fila del reporte de un retiro; <see cref="Detalle"/> es solo de una diferencia de comisión.
+/// <see cref="IdCuentaOrigen"/> es nulo en un retiro cuando la empresa no tiene exactamente una cuenta en sus medios de pago con proveedor Mercado
+/// Pago: mientras esté pendiente, <see cref="OrigenesPosibles"/> trae las cuentas entre las que el Admin elige al aplicar (vacía si no hay ninguna, y
+/// entonces solo se puede descartar); en cualquier otro caso viene vacía. El destino, el movimiento escrito y quién resolvió solo existen cuando ya
+/// se resolvió. <see cref="NumeroLinea"/>, <see cref="SourceId"/> y <see cref="FechaTransaccion"/> son de la fila del reporte de un retiro;
+/// <see cref="Detalle"/> es solo de una diferencia de comisión.
 /// </summary>
 public sealed record PropuestaDeTesoreria(
     int Id,
@@ -41,11 +46,14 @@ public sealed record PropuestaDeTesoreria(
     int? IdMovimientoCuenta,
     int? IdMovimientoCuentaDestino,
     DateTimeOffset? ResueltaEl,
-    string? ResueltaPor);
+    string? ResueltaPor,
+    IReadOnlyList<CuentaDeOrigenPosible> OrigenesPosibles);
 
 /// <summary>Aplica una propuesta. <see cref="IdCuentaDestino"/> es la cuenta bancaria activa de la misma empresa que recibe un retiro; es obligatoria
-/// en un retiro y se rechaza en una diferencia de comisión.</summary>
-public sealed record SolicitudDeAplicacionDePropuesta(int? IdCuentaDestino);
+/// en un retiro y se rechaza en una diferencia de comisión. <see cref="IdCuentaOrigen"/> solo se acepta en un retiro que no tiene origen fijo y entonces
+/// es obligatoria: una de las cuentas activas de la empresa que acreditan sus medios de pago con proveedor Mercado Pago; en cualquier otro caso se
+/// rechaza.</summary>
+public sealed record SolicitudDeAplicacionDePropuesta(int? IdCuentaDestino, int? IdCuentaOrigen = null);
 
 public static class CodigosDeErrorDePropuestaDeTesoreria
 {
@@ -63,7 +71,11 @@ public static class CodigosDeErrorDePropuestaDeTesoreria
 
     public const string CuentasIguales = "cuentas_iguales";
 
-    public const string SinCuentaOrigen = "propuesta_sin_cuenta_origen";
+    public const string CuentaOrigenRequerida = "cuenta_origen_requerida";
+
+    public const string CuentaOrigenNoAplica = "cuenta_origen_no_aplica";
+
+    public const string CuentaOrigenInvalida = "cuenta_origen_invalida";
 
     public const string CuentaOrigenNoDisponible = "cuenta_origen_no_disponible";
 }

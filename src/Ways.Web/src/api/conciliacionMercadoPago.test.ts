@@ -16,8 +16,10 @@ import {
   lineasDeConfirmacion,
   mensajeDeErrorDeConciliacion,
   motivoDeRangoInvalido,
+  pideElegirOrigen,
   rangoDeFilas,
   rangoUltimosDias,
+  seleccionVigente,
   sePuedeAplicar,
   resumenOrdenado,
   textoDeEfecto,
@@ -325,12 +327,14 @@ describe('propuestas de tesorería', () => {
     await clienteDeConciliacionMercadoPago.propuestas(3)
     await clienteDeConciliacionMercadoPago.aplicarPropuesta(3, 11, 71)
     await clienteDeConciliacionMercadoPago.aplicarPropuesta(3, 12, null)
+    await clienteDeConciliacionMercadoPago.aplicarPropuesta(3, 13, 71, 70)
     await clienteDeConciliacionMercadoPago.descartarPropuesta(3, 11)
 
     expect(apiGetMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas')
-    expect(apiPostMock).toHaveBeenNthCalledWith(1, '/mercadopago/conciliaciones/3/propuestas/11/aplicar', { idCuentaDestino: 71 })
-    expect(apiPostMock).toHaveBeenNthCalledWith(2, '/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: null })
-    expect(apiPostMock).toHaveBeenNthCalledWith(3, '/mercadopago/conciliaciones/3/propuestas/11/descartar', {})
+    expect(apiPostMock).toHaveBeenNthCalledWith(1, '/mercadopago/conciliaciones/3/propuestas/11/aplicar', { idCuentaDestino: 71, idCuentaOrigen: null })
+    expect(apiPostMock).toHaveBeenNthCalledWith(2, '/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: null, idCuentaOrigen: null })
+    expect(apiPostMock).toHaveBeenNthCalledWith(3, '/mercadopago/conciliaciones/3/propuestas/13/aplicar', { idCuentaDestino: 71, idCuentaOrigen: 70 })
+    expect(apiPostMock).toHaveBeenNthCalledWith(4, '/mercadopago/conciliaciones/3/propuestas/11/descartar', {})
   })
 
   it('el efecto distingue débito, crédito y retiro', () => {
@@ -344,12 +348,29 @@ describe('propuestas de tesorería', () => {
     )
   })
 
-  it('solo se aplica una pendiente y, siendo retiro, con cuenta de origen', () => {
-    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'diferencia_comision', idCuentaOrigen: 1 })).toBe(true)
-    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: 1 })).toBe(true)
-    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: null })).toBe(false)
-    expect(sePuedeAplicar({ estado: 'aplicada', tipo: 'diferencia_comision', idCuentaOrigen: 1 })).toBe(false)
-    expect(sePuedeAplicar({ estado: 'descartada', tipo: 'retiro', idCuentaOrigen: 1 })).toBe(false)
+  it('solo se aplica una pendiente y, siendo retiro, con cuenta de origen fija o entre las que elegir', () => {
+    const opciones = [{ id: 1, nombre: 'Mercado Pago' }]
+    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'diferencia_comision', idCuentaOrigen: 1, origenesPosibles: [] })).toBe(true)
+    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: 1, origenesPosibles: [] })).toBe(true)
+    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: null, origenesPosibles: [] })).toBe(false)
+    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: null, origenesPosibles: opciones })).toBe(true)
+    expect(sePuedeAplicar({ estado: 'aplicada', tipo: 'diferencia_comision', idCuentaOrigen: 1, origenesPosibles: [] })).toBe(false)
+    expect(sePuedeAplicar({ estado: 'descartada', tipo: 'retiro', idCuentaOrigen: 1, origenesPosibles: [] })).toBe(false)
+  })
+
+  it('el origen se pide solo en un retiro pendiente sin origen fijo', () => {
+    expect(pideElegirOrigen({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: null })).toBe(true)
+    expect(pideElegirOrigen({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: 1 })).toBe(false)
+    expect(pideElegirOrigen({ estado: 'pendiente', tipo: 'diferencia_comision', idCuentaOrigen: null })).toBe(false)
+    expect(pideElegirOrigen({ estado: 'aplicada', tipo: 'retiro', idCuentaOrigen: null })).toBe(false)
+  })
+
+  it('una selección solo vale mientras siga entre las opciones', () => {
+    const opciones = [{ id: 71 }, { id: 72 }]
+    expect(seleccionVigente(opciones, '71')).toBe('71')
+    expect(seleccionVigente(opciones, '99')).toBe('')
+    expect(seleccionVigente(opciones, '')).toBe('')
+    expect(seleccionVigente(opciones, undefined)).toBe('')
   })
 
   it('las cuentas de destino son las activas de la empresa, sin el origen, por nombre', () => {

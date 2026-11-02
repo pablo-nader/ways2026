@@ -35,7 +35,7 @@ const TITULO_DE_PESTANA: Record<Pestana, string> = {
 
 type Confirmacion = { idConciliacion: number; fila: FilaDeConciliacion; candidato: CandidatoDeConfirmacion }
 
-type Resolucion = { idConciliacion: number; propuesta: PropuestaDeTesoreria; accion: AccionDePropuesta; destino: DestinoElegido | null }
+type Resolucion = { idConciliacion: number; propuesta: PropuestaDeTesoreria; accion: AccionDePropuesta; destino: DestinoElegido | null; origen: DestinoElegido | null }
 
 type EmpresaElegible = { id: number; nombre: string }
 
@@ -202,10 +202,16 @@ export function ConciliacionMercadoPago() {
     }
   }
 
-  function pedirResolucion(idConciliacion: number, propuesta: PropuestaDeTesoreria, accion: AccionDePropuesta, destino: DestinoElegido | null) {
+  function pedirResolucion(
+    idConciliacion: number,
+    propuesta: PropuestaDeTesoreria,
+    accion: AccionDePropuesta,
+    destino: DestinoElegido | null,
+    origen: DestinoElegido | null,
+  ) {
     if (ocupadoRef.current || !esAdmin) return
     setErrorDeResolucion('')
-    setResolucion({ idConciliacion, propuesta, accion, destino })
+    setResolucion({ idConciliacion, propuesta, accion, destino, origen })
   }
 
   function cancelarResolucion() {
@@ -217,14 +223,14 @@ export function ConciliacionMercadoPago() {
   async function resolver() {
     if (ocupadoRef.current || resolucion === null || !esAdmin) return
 
-    const { idConciliacion, propuesta, accion, destino } = resolucion
+    const { idConciliacion, propuesta, accion, destino, origen } = resolucion
     ocupadoRef.current = true
     setResolviendo(true)
     setErrorDeResolucion('')
     try {
       try {
         if (accion === 'aplicar') {
-          await clienteDeConciliacionMercadoPago.aplicarPropuesta(idConciliacion, propuesta.id, destino?.id ?? null)
+          await clienteDeConciliacionMercadoPago.aplicarPropuesta(idConciliacion, propuesta.id, destino?.id ?? null, origen?.id ?? null)
         } else {
           await clienteDeConciliacionMercadoPago.descartarPropuesta(idConciliacion, propuesta.id)
         }
@@ -350,6 +356,7 @@ export function ConciliacionMercadoPago() {
           propuesta={resolucion.propuesta}
           accion={resolucion.accion}
           nombreDeDestino={resolucion.destino?.nombre ?? null}
+          nombreDeOrigen={resolucion.origen?.nombre ?? null}
           ocupado={resolviendo}
           error={errorDeResolucion}
           onConfirmar={() => void resolver()}

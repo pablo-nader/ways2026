@@ -12,6 +12,8 @@ type Props = {
   accion: AccionDePropuesta
   /** Nombre de la cuenta que recibe un retiro, elegido en la lista. */
   nombreDeDestino: string | null
+  /** Nombre de la cuenta de la que sale un retiro cuando el Admin la eligió; si el origen es fijo, viene en la propuesta. */
+  nombreDeOrigen: string | null
   /** La escritura está en vuelo: el diálogo entero queda inerte. */
   ocupado: boolean
   /** Rechazo de la resolución; el diálogo sigue abierto. */
@@ -21,10 +23,23 @@ type Props = {
 }
 
 /** Confirmación de aplicar o descartar una propuesta de tesorería: dice qué se va a escribir antes de hacerlo. */
-export function DialogoDeResolucionDePropuesta({ propuesta, accion, nombreDeDestino, ocupado, error, onConfirmar, onCancelar }: Props) {
+export function DialogoDeResolucionDePropuesta({
+  propuesta,
+  accion,
+  nombreDeDestino,
+  nombreDeOrigen,
+  ocupado,
+  error,
+  onConfirmar,
+  onCancelar,
+}: Props) {
   const idDescripcion = useId()
   const aplicar = accion === 'aplicar'
-  const efecto = textoDeEfecto({ ...propuesta, nombreCuentaDestino: nombreDeDestino })
+  const efecto = textoDeEfecto({
+    ...propuesta,
+    nombreCuentaOrigen: propuesta.nombreCuentaOrigen ?? nombreDeOrigen,
+    nombreCuentaDestino: nombreDeDestino,
+  })
 
   return (
     <Modal

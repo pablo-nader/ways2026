@@ -98,6 +98,46 @@ public class CalculadorDeDiferenciaDeComisionMercadoPagoTests
         Assert.Empty(resultado.PorCuenta);
     }
 
+    // El cierre redondea UNA vez por (turno, medio): tres pagos de 10,01 al 0,55 % suman 30,03 y su comisión es 0,17 (0,165165), no 3 × 0,06 = 0,18.
+    [Fact]
+    public void LaEstimadaSeRedondeaUnaVezPorGrupoComoElCierreYNoPagoPorPago()
+    {
+        var resultado = CalculadorDeDiferenciaDeComisionMercadoPago.Calcular(
+            [Pago(1, 10.01m, 0.17m), Pago(2, 10.01m, 0.17m), Pago(3, 10.01m, 0.17m)], Cierres(((1, 7), 3, 0.55m)));
+
+        Assert.Equal(0.17m, resultado.Lineas.Sum(l => l.ComisionEstimada));
+        Assert.Equal([0.06m, 0.06m, 0.05m], resultado.Lineas.OrderBy(l => l.IdCobroMercadoPago).Select(l => l.ComisionEstimada));
+        Assert.Equal(0.51m, resultado.Lineas.Sum(l => l.ComisionReal));
+        var cuenta = Assert.Single(resultado.PorCuenta);
+        Assert.Equal(-0.34m, cuenta.Importe);
+        Assert.Equal(0.17m, cuenta.ComisionEstimadaTotal);
+    }
+
+    // Asimétrico: 10,01 y 10,00 al 0,55 % suman 20,01 → 0,11 (0,110055), no 0,06 + 0,06 = 0,12; el centavo sobrante va al pago de mayor fracción.
+    [Fact]
+    public void LosCentavosSobrantesDelGrupoVanAlPagoDeMayorFraccion()
+    {
+        var resultado = CalculadorDeDiferenciaDeComisionMercadoPago.Calcular(
+            [Pago(2, 10.00m, 0.05m), Pago(1, 10.01m, 0.06m)], Cierres(((1, 7), 3, 0.55m)));
+
+        Assert.Equal(0.06m, resultado.Lineas.Single(l => l.IdCobroMercadoPago == 1).ComisionEstimada);
+        Assert.Equal(0.05m, resultado.Lineas.Single(l => l.IdCobroMercadoPago == 2).ComisionEstimada);
+        Assert.Equal(0.11m, resultado.Lineas.Sum(l => l.ComisionEstimada));
+        Assert.Empty(resultado.PorCuenta);
+    }
+
+    // Cada (turno, medio) redondea por su cuenta: dos turnos de la misma cuenta suman sus estimadas ya redondeadas.
+    [Fact]
+    public void LosGruposDeUnaMismaCuentaSumanSusEstimadasRedondeadasCadaUna()
+    {
+        var resultado = CalculadorDeDiferenciaDeComisionMercadoPago.Calcular(
+            [Pago(1, 10.01m, 0.06m, turno: 1), Pago(2, 10.01m, 0.06m, turno: 2)], Cierres(((1, 7), 3, 0.55m), ((2, 7), 3, 0.55m)));
+
+        var cuenta = Assert.Single(resultado.Lineas.GroupBy(l => l.IdCuentaTesoreria));
+        Assert.Equal(0.12m, cuenta.Sum(l => l.ComisionEstimada));
+        Assert.Empty(resultado.PorCuenta);
+    }
+
     [Fact]
     public void UnCierreSinPorcentajeEstimaCeroYLaComisionRealEntraEntera()
     {

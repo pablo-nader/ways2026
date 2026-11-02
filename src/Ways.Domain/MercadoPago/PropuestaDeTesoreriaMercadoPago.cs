@@ -28,9 +28,9 @@ public static class EstadosDePropuestaDeTesoreriaMercadoPago
 
 /// <summary>
 /// Un movimiento de tesorería que una conciliación propone y que nada escribe hasta que un Admin lo aplica (doc 10 §7). Se calcula al importar
-/// el reporte, en la misma transacción. <see cref="ClaveOrigen"/> identifica de dónde sale dentro de la conciliación
-/// (<c>cuenta:{id}</c> la diferencia de comisión de una cuenta, <c>linea:{n}</c> el retiro de una línea del archivo), y con el tipo es única por
-/// conciliación: volver a calcular no duplica.
+/// el reporte, en la misma transacción. <see cref="ClaveOrigen"/> identifica de dónde sale: <c>cuenta:{id}</c> la diferencia de comisión de una
+/// cuenta (única por conciliación) y el <c>SOURCE_ID</c> de Mercado Pago el retiro (único por empresa, así que dos reportes que se pisan no lo
+/// proponen dos veces).
 ///
 /// <see cref="Importe"/> es el efecto sobre la cuenta de origen: en una diferencia de comisión va con signo (negativo si Mercado Pago cobró
 /// más de lo que el cierre descontó); en un retiro es siempre el monto positivo que sale de la cuenta de origen.
@@ -54,8 +54,8 @@ public class PropuestaDeTesoreriaMercadoPago : EntidadTenant
     /// <summary>La fila del reporte de la que sale un retiro; nula en una diferencia de comisión.</summary>
     public int? IdFila { get; set; }
 
-    /// <summary>La cuenta que se ajusta (diferencia) o de la que sale el dinero (retiro). En un retiro es la cuenta de la conexión con Mercado Pago de la
-    /// empresa, y es nula si la empresa no tiene conexión: entonces no se puede aplicar.</summary>
+    /// <summary>La cuenta que se ajusta (diferencia) o de la que sale el dinero (retiro). En un retiro es la cuenta de los medios de pago con proveedor
+    /// Mercado Pago de la empresa cuando es una sola; nula si no hay o hay varias: entonces el Admin la elige al aplicar y queda escrita.</summary>
     public int? IdCuentaOrigen { get; set; }
 
     public int? IdCuentaDestino { get; set; }
@@ -78,5 +78,6 @@ public class PropuestaDeTesoreriaMercadoPago : EntidadTenant
 
     public static string ClaveDeCuenta(int idCuenta) => $"cuenta:{idCuenta}";
 
-    public static string ClaveDeLinea(int numeroLinea) => $"linea:{numeroLinea}";
+    /// <summary>La clave de un retiro es el id de la operación en Mercado Pago, sin prefijo: el índice parcial es por empresa.</summary>
+    public static string ClaveDeRetiro(string sourceId) => sourceId;
 }

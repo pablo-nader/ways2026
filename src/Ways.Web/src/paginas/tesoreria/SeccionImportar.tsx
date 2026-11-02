@@ -62,6 +62,8 @@ export function SeccionImportar({ archivo, subiendo, error, resultado, onElegir,
           </h6>
           <p className="small text-muted mb-2">
             {resultado.conciliacion.cantidadFilas} filas, {resultado.conciliacion.cantidadInvalidas} inválidas.
+            {resultado.retirosYaPropuestos > 0 &&
+              ` ${resultado.retirosYaPropuestos} retiro(s) ya estaban propuestos por un reporte anterior y no se volvieron a proponer.`}
           </p>
           <div className="table-responsive">
             <table className="table table-sm w-auto">

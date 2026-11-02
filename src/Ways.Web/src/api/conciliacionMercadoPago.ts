@@ -48,6 +48,8 @@ export type ConciliacionImportada = {
   conciliacion: ConciliacionListado
   invalidas: FilaInvalida[]
   invalidasTruncado: boolean
+  /** Retiros del reporte que ya tenían propuesta en otra conciliación de la empresa (o repetidos en el archivo) y no se volvieron a proponer. */
+  retirosYaPropuestos: number
 }
 
 export type CandidatoDeConfirmacion = {
@@ -150,10 +152,14 @@ export type DetalleDeDiferenciaDeComision = {
   lineasTruncado: boolean
 }
 
+/** Una cuenta a la que acredita un medio de pago de Mercado Pago de la empresa: un origen posible de un retiro. */
+export type CuentaDeOrigenPosible = { id: number; nombre: string }
+
 /**
  * Un movimiento de tesorería que la conciliación propone. `importe` es, en una diferencia de comisión, el efecto con signo sobre la
  * cuenta de origen (negativo si Mercado Pago cobró más de lo que el cierre descontó) y, en un retiro, el monto positivo que sale de ella.
- * `idCuentaOrigen` es nulo en un retiro de una empresa sin conexión con Mercado Pago: no se puede aplicar.
+ * `idCuentaOrigen` es nulo en un retiro cuando la empresa no tiene exactamente una cuenta en sus medios de Mercado Pago: mientras esté
+ * pendiente, `origenesPosibles` trae las cuentas entre las que el Admin elige al aplicar (vacía: solo se puede descartar); si no, viene vacía.
  */
 export type PropuestaDeTesoreria = {
   id: number
@@ -172,6 +178,7 @@ export type PropuestaDeTesoreria = {
   idMovimientoCuentaDestino: number | null
   resueltaEl: string | null
   resueltaPor: string | null
+  origenesPosibles: CuentaDeOrigenPosible[]
 }
 
 export type AccionDePropuesta = 'aplicar' | 'descartar'
@@ -205,8 +212,8 @@ export const clienteDeConciliacionMercadoPago = {
   confirmar: (idConciliacion: number, idFila: number, idCobro: number) =>
     api.post<void>(`${RUTA}/${idConciliacion}/filas/${idFila}/confirmar`, { idCobro }),
   propuestas: (idConciliacion: number) => api.get<PropuestaDeTesoreria[]>(`${RUTA}/${idConciliacion}/propuestas`),
-  aplicarPropuesta: (idConciliacion: number, idPropuesta: number, idCuentaDestino: number | null) =>
-    api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/aplicar`, { idCuentaDestino }),
+  aplicarPropuesta: (idConciliacion: number, idPropuesta: number, idCuentaDestino: number | null, idCuentaOrigen: number | null = null) =>
+    api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/aplicar`, { idCuentaDestino, idCuentaOrigen }),
   descartarPropuesta: (idConciliacion: number, idPropuesta: number) =>
     api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/descartar`, {}),
   cobrosSinVenta: (idEmpresa: number) => api.get<CobroSinVenta[]>(`/mercadopago/cobros-sin-venta${aQuery({ idEmpresa })}`),
@@ -373,8 +380,10 @@ const MENSAJE_POR_CODIGO: Record<string, string> = {
   cuenta_destino_no_aplica: 'Una diferencia de comisión no lleva cuenta de destino.',
   cuenta_destino_invalida: 'La cuenta de destino tiene que ser una cuenta activa de la misma empresa.',
   cuentas_iguales: 'La cuenta de destino es la misma de la que sale el retiro.',
-  propuesta_sin_cuenta_origen:
-    'La empresa no tiene una conexión con Mercado Pago: no hay cuenta de la que retirar. Descartá la propuesta.',
+  cuenta_origen_requerida: 'Elegí la cuenta de Mercado Pago de la que sale el retiro.',
+  cuenta_origen_no_aplica: 'Este movimiento ya tiene cuenta de origen: no se elige.',
+  cuenta_origen_invalida:
+    'La cuenta de origen tiene que ser una cuenta activa de la empresa a la que acreditan sus medios de pago de Mercado Pago.',
   cuenta_origen_no_disponible: 'La cuenta de Mercado Pago ya no está disponible.',
   periodo_conciliado: 'La fecha del movimiento cae en un período de tesorería ya conciliado: no se puede escribir.',
 }
@@ -497,9 +506,24 @@ export function textoDeEfecto(propuesta: Pick<PropuestaDeTesoreria, 'tipo' | 'im
     : `Acredita ${textoDeImporte(propuesta.importe)} en ${origen}`
 }
 
-/** Una propuesta se puede aplicar si está pendiente y, siendo un retiro, tiene cuenta de origen (la de la conexión con Mercado Pago). */
-export function sePuedeAplicar(propuesta: Pick<PropuestaDeTesoreria, 'estado' | 'tipo' | 'idCuentaOrigen'>): boolean {
-  return propuesta.estado === 'pendiente' && (propuesta.tipo !== 'retiro' || propuesta.idCuentaOrigen !== null)
+/** Una propuesta se puede aplicar si está pendiente y, siendo un retiro, tiene cuenta de origen fija o al menos una cuenta entre la que elegirla. */
+export function sePuedeAplicar(
+  propuesta: Pick<PropuestaDeTesoreria, 'estado' | 'tipo' | 'idCuentaOrigen' | 'origenesPosibles'>,
+): boolean {
+  return (
+    propuesta.estado === 'pendiente' &&
+    (propuesta.tipo !== 'retiro' || propuesta.idCuentaOrigen !== null || propuesta.origenesPosibles.length > 0)
+  )
+}
+
+/** Un retiro pendiente sin origen fijo exige que el Admin elija la cuenta de la que sale. */
+export function pideElegirOrigen(propuesta: Pick<PropuestaDeTesoreria, 'estado' | 'tipo' | 'idCuentaOrigen'>): boolean {
+  return propuesta.estado === 'pendiente' && propuesta.tipo === 'retiro' && propuesta.idCuentaOrigen === null
+}
+
+/** La selección de un `<select>` solo vale mientras siga entre las opciones: una cuenta que ya no se ofrece (baja, inactiva) se descarta. */
+export function seleccionVigente(opciones: readonly { id: number }[], seleccion: string | undefined): string {
+  return seleccion !== undefined && seleccion !== '' && opciones.some((o) => String(o.id) === seleccion) ? seleccion : ''
 }
 
 export type CuentaParaElegir = { id: number; idEmpresa: number; nombre: string; activo: boolean }
