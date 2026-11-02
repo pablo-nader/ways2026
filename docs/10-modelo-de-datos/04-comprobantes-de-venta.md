@@ -73,7 +73,7 @@ cobros (                              -- antes pagos_comprobante (E7-S1)
     referencia text NULL,                    -- cupón, nro de operación
     vuelto numeric(14,2) NOT NULL DEFAULT 0, -- solo medios que admiten vuelto
     id_cobro_mercadopago integer NULL,       -- el cobro aprobado de Mercado Pago que pagó este medio (§7); FK compuesta (id, id_tenant)
-    verificacion_mercadopago varchar(20) NULL -- qué respalda un pago de Mercado Pago: 'mercadopago' | 'sin_verificar' | 'verificado_manualmente'
+    verificacion_mercadopago varchar(30) NULL -- qué respalda un pago de Mercado Pago: 'mercadopago' | 'sin_verificar' | 'verificado_manualmente'
 );
 -- ck_cobros_verificacion_mercadopago: NULL o uno de los tres valores.
 -- ck_cobros_verificacion_mercadopago_cobro: (id_cobro_mercadopago IS NOT NULL) = (verificacion_mercadopago = 'mercadopago').

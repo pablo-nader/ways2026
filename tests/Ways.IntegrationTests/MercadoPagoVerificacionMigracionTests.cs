@@ -56,6 +56,13 @@ public class MercadoPagoVerificacionMigracionTests(WaysApiFixture fixture) : ICl
                 "('ck_cobros_verificacion_mercadopago', 'ck_cobros_verificacion_mercadopago_cobro')"));
         Assert.Equal(
             1L, await EscalarAsync<long>(owner, "SELECT count(*) FROM pg_indexes WHERE indexname = 'ix_cobros_sin_verificar'"));
+        // La columna tiene lugar para el valor más largo del catálogo, que guarda la conciliación (E6).
+        Assert.True(
+            await EscalarAsync<int>(
+                owner,
+                "SELECT character_maximum_length FROM information_schema.columns " +
+                "WHERE table_name = 'cobros' AND column_name = 'verificacion_mercadopago'")
+            >= "verificado_manualmente".Length);
     }
 
     [Fact]

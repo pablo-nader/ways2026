@@ -5969,8 +5969,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnName("updated_at");
 
                     b.Property<string>("VerificacionMercadoPago")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
                         .HasColumnName("verificacion_mercadopago");
 
                     b.Property<decimal>("Vuelto")

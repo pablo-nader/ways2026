@@ -23,8 +23,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             migrationBuilder.AddColumn<string>(
                 name: "verificacion_mercadopago",
                 table: "cobros",
-                type: "character varying(20)",
-                maxLength: 20,
+                type: "character varying(30)",
+                maxLength: 30,
                 nullable: true);
 
             migrationBuilder.CreateIndex(

@@ -57,7 +57,7 @@ public class CobroConfiguration : IEntityTypeConfiguration<Cobro>
             .IsRequired();
 
         builder.Property(p => p.IdCobroMercadoPago).HasColumnName("id_cobro_mercadopago");
-        builder.Property(p => p.VerificacionMercadoPago).HasColumnName("verificacion_mercadopago").HasMaxLength(20);
+        builder.Property(p => p.VerificacionMercadoPago).HasColumnName("verificacion_mercadopago").HasMaxLength(30);
 
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
