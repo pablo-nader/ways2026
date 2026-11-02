@@ -534,3 +534,18 @@ Confirmed by both judges; fixed on `pnader/mercadopago-e5` (no migration: `has-p
 - Mutation evidence (one per run, each killed): sale-exists lookup disabled (2 integration: poll and webhook); distinct ids collapsed to the first (1); lock order swapped back (explicit before the number's rows) (1).
 - Verification: `dotnet build Ways.slnx -c Release` 0 errors, `has-pending-model-changes` clean, Domain 2527, Application 1660, integration filter (`MercadoPagoVenta|MercadoPagoCobrosTests|MercadoPagoWebhook`) 217 green (11 m 59 s).
 - Known limit: a Fallido charge approved late now also writes the double-charge audit when a sale holds its number (it was already `sin_venta`).
+
+## Judgment-day E5 verdict
+
+- 2026-11-02: **ESCALATED** after two fix rounds (budget exhausted). Round 1 (both): the server ignored live/approved charges of
+  the same number on a manual approval, the pagos-sin-verificar list had no bounds; fixed in 6ac1b969 (auto-link of an approved
+  unlinked charge, audits, idsCobroEnConflicto, inclusive days, limit). Re-judgment (both): a pending conflicting charge approved
+  later stayed unlinked and unlisted; fixed in 21cfcd19 (approval checks whether a sale with that number exists → sin_venta).
+- Remaining, confirmed by both in the final re-judgment (judge B: CRITICAL, judge A: WARNING): that check matches a sale of ANY
+  tipo de comprobante with the same (punto de venta, número), but numbering is per (punto de venta, tipo) and the charge stores no
+  tipo. A legitimate charge for ticket N becomes `sin_venta` (with a false double-charge audit) whenever another tipo (e.g. a
+  credit note) already has number N at that PV; the real sale then cannot link it. Also confirmed (WARNING both): the check misses
+  a not-yet-committed plain sale (no Mercado Pago payment) for that number, since such sales take no charge-row lock.
+- Not opened as a PR. Owner decision needed. Options: (a) store the tipo de comprobante on the charge and match by it (schema change,
+  new slice); (b) narrow the check to sales of that number that carry a `sin_verificar` Mercado Pago payment (the actual double-pay
+  case, no schema change); (c) revert the round-2 check and leave late approvals to the E6 reconciliation.
