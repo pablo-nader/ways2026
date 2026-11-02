@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Ways.Api.Seguridad;
@@ -1091,7 +1092,9 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var segunda = await LeerAsync<ComprobanteEmitido>(await VenderAsync(e, solicitud), HttpStatusCode.Created);
         var otraReferencia = await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-2")));
-        var cobro = await CobroAprobadoAsync(e, e.Desde);
+        // Un cobro aprobado DESPUES de la venta manual quedaria sin_venta: se siembra aprobado en otro numero y se reasigna a este.
+        var cobro = await CobroAprobadoAsync(e, e.Desde + 5);
+        await EjecutarAsync("UPDATE cobros_mercadopago SET numero_preasignado = $1 WHERE id_cobro_mercadopago = $2", e.Desde, cobro.IdCobro);
         var conCobro = await VenderAsync(e, Venta(e, e.Desde, PagoMp(e, cobro.IdCobro)));
 
         Assert.Equal(primera.Id, segunda.Id);
@@ -1198,7 +1201,7 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
             Assert.Equal(PrecioDelArticulo, fila.Importe);
             Assert.Equal("OP-9", fila.Referencia);
             Assert.False(fila.Anulada);
-            Assert.Null(fila.IdCobroEnConflicto);
+            Assert.Empty(fila.IdsCobroEnConflicto ?? []);
             Assert.False(string.IsNullOrEmpty(fila.Empleado));
         }
 
@@ -1411,7 +1414,7 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(new[] { cobro.IdCobro }, aviso.GetProperty("ids_cobro_mercadopago").EnumerateArray().Select(i => i.GetInt32()));
         Assert.DoesNotContain("token", aviso.GetRawText(), StringComparison.OrdinalIgnoreCase);
         var fila = Assert.Single((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
-        Assert.Equal(cobro.IdCobro, fila.IdCobroEnConflicto);
+        Assert.Equal(new[] { cobro.IdCobro }, fila.IdsCobroEnConflicto);
 
         var reenvio = await LeerAsync<ComprobanteEmitido>(
             await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-1"))), HttpStatusCode.Created);
@@ -1432,7 +1435,163 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Empty(await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro"));
         var fila = Assert.Single((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
-        Assert.Null(fila.IdCobroEnConflicto);
+        Assert.Empty(fila.IdsCobroEnConflicto ?? []);
+    }
+
+    // Clausula (G2): el listado trae TODOS los cobros auditados como en conflicto, sin repetir y en orden ascendente.
+    [Fact]
+    public async Task ElListadoSenalaTodosLosCobrosEnConflictoEnOrdenAscendente()
+    {
+        var e = await PrepararAsync("mp-venta-manual-conflictos-varios");
+        var apartado = await InsertarCobroNoVivoAsync(e, e.Desde, 1);
+        await EjecutarAsync(
+            "UPDATE cobros_mercadopago SET estado = 'fallido', fecha_procesada_mercadopago = now() WHERE id_cobro_mercadopago = $1", apartado);
+        var pendiente = await CobroPendienteAsync(e, e.Desde);
+
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-2"))), HttpStatusCode.Created);
+
+        Assert.True(apartado < pendiente.IdCobro);
+        var fila = Assert.Single((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
+        Assert.Equal(emitido.Id, fila.IdComprobanteVenta);
+        Assert.Equal(new[] { apartado, pendiente.IdCobro }, fila.IdsCobroEnConflicto);
+    }
+
+    private async Task<string> OrdenDelCobroAsync(int idCobro) =>
+        (string)(await ConsultarAsync("SELECT id_orden_mercadopago FROM cobros_mercadopago WHERE id_cobro_mercadopago = $1", idCobro))
+            .Single()["id_orden_mercadopago"]!;
+
+    private async Task AssertCobroTardioSinVentaAsync(Escenario e, CobroDeMercadoPago cobro, ComprobanteEmitido venta)
+    {
+        var fila = (await ConsultarAsync(
+            "SELECT estado, fecha_apartado, id_pago_mercadopago, importe_pagado, id_comprobante_venta FROM cobros_mercadopago " +
+            "WHERE id_cobro_mercadopago = $1", cobro.IdCobro)).Single();
+        Assert.Equal("sin_venta", fila["estado"]);
+        Assert.NotNull(fila["fecha_apartado"]);
+        Assert.NotNull(fila["id_pago_mercadopago"]);
+        Assert.Equal(PrecioDelArticulo, fila["importe_pagado"]);
+        Assert.Null(fila["id_comprobante_venta"]);
+
+        var tardio = Assert.Single(
+            await AuditoriaDeLaVentaAsync(venta.Id, "venta.mercadopagodoblecobro"),
+            a => Payload(a).TryGetProperty("origen", out _));
+        Assert.Equal(new[] { cobro.IdCobro }, Payload(tardio).GetProperty("ids_cobro_mercadopago").EnumerateArray().Select(i => i.GetInt32()));
+
+        var listado = await LeerAsync<List<CobroSinVentaListado>>(
+            await e.Ctx.Admin.GetAsync($"/api/mercadopago/cobros-sin-venta?idEmpresa={e.Ctx.IdEmpresa}"));
+        Assert.Contains(listado, c => c.IdCobro == cobro.IdCobro);
+        var sinVerificar = Assert.Single((await ListarSinVerificarAsync(e.Ctx.Admin, e.Ctx.IdEmpresa)).Items);
+        Assert.Equal(new[] { cobro.IdCobro }, sinVerificar.IdsCobroEnConflicto);
+    }
+
+    // Clausula (G3): una venta con un cobro explicito y una aprobacion manual bloquea los explicitos y los del numero en UN solo orden
+    // ascendente. Con el cobro de menor id retenido por otra transaccion, la venta espera ahi SIN haber tomado antes el explicito (de
+    // mayor id): si lo hubiera tomado primero, dos ventas del mismo numero podrian esperarse en ciclo.
+    [Fact]
+    public async Task UnaVentaConCobroExplicitoYAprobacionManualBloqueaEnUnSoloOrdenAscendente()
+    {
+        var e = await PrepararAsync("mp-venta-manual-orden-de-locks");
+        var apartado = await InsertarCobroNoVivoAsync(e, e.Desde, 1);
+        var explicito = await CobroAprobadoAsync(e, e.Desde, importe: 50m);
+        Assert.True(apartado < explicito.IdCobro);
+
+        await using var retenedora = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var transaccionRetenedora = await retenedora.BeginTransactionAsync();
+        await using (var retiene = retenedora.CreateCommand())
+        {
+            retiene.Transaction = transaccionRetenedora;
+            retiene.CommandText = "SELECT 1 FROM cobros_mercadopago WHERE id_cobro_mercadopago = $1 FOR UPDATE";
+            retiene.Parameters.Add(new NpgsqlParameter { Value = apartado });
+            await retiene.ExecuteScalarAsync();
+        }
+
+        var venta = VenderAsync(e, Venta(e, e.Desde, PagoMp(e, explicito.IdCobro, importe: 50m), PagoManual(e, "OP-6", importe: 50m)));
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        Assert.False(venta.IsCompleted);
+
+        await using (var sonda = await fixture.AbrirConexionCrudaAsync("plataforma", null))
+        await using (var intento = sonda.CreateCommand())
+        {
+            intento.CommandText = "SELECT 1 FROM cobros_mercadopago WHERE id_cobro_mercadopago = $1 FOR UPDATE NOWAIT";
+            intento.Parameters.Add(new NpgsqlParameter { Value = explicito.IdCobro });
+            await using var transaccionSonda = await sonda.BeginTransactionAsync();
+            intento.Transaction = transaccionSonda;
+            await intento.ExecuteScalarAsync();
+            await transaccionSonda.RollbackAsync();
+        }
+
+        await transaccionRetenedora.RollbackAsync();
+        var emitido = await LeerAsync<ComprobanteEmitido>(await venta, HttpStatusCode.Created);
+        Assert.Equal(2, (await PagosDeLaVentaAsync(emitido.Id)).Count);
+        Assert.Equal(emitido.Id, await VentaLigadaAsync(explicito.IdCobro));
+    }
+
+    // Clausula (G1): un cobro pendiente cuando la aprobacion manual vendio su numero y que el sondeo aprueba DESPUES no queda aprobado
+    // sin venta para siempre: queda sin_venta (visible en la conciliacion y cerrado para el POS) y se audita el doble cobro con la venta.
+    [Fact]
+    public async Task UnCobroPendienteQueElSondeoApruebaDespuesDeUnaVentaManualConSuNumeroQuedaSinVentaYAuditado()
+    {
+        var e = await PrepararAsync("mp-venta-manual-cobro-tardio-sondeo");
+        var cobro = await CobroPendienteAsync(e, e.Desde);
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-3"))), HttpStatusCode.Created);
+
+        e.Ordenes.Estados[e.Ordenes.Estados.Single(kv => kv.Value == "created").Key] = "processed";
+        var visto = await LeerAsync<CobroDeMercadoPago>(await e.Cajero.GetAsync($"{Ruta}/{cobro.IdCobro}"));
+
+        Assert.Equal("sin_venta", visto.Estado);
+        await AssertCobroTardioSinVentaAsync(e, cobro, emitido);
+    }
+
+    // Clausula (G1): lo mismo cuando quien aprueba el cobro es el aviso firmado de Mercado Pago, que no tiene usuario autenticado.
+    [Fact]
+    public async Task UnCobroPendienteQueElAvisoApruebaDespuesDeUnaVentaManualConSuNumeroQuedaSinVentaYAuditado()
+    {
+        var e = await PrepararAsync("mp-venta-manual-cobro-tardio-aviso");
+        var cobro = await CobroPendienteAsync(e, e.Desde);
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-4"))), HttpStatusCode.Created);
+        var orden = await OrdenDelCobroAsync(cobro.IdCobro);
+        e.Ordenes.Estados[orden] = "processed";
+
+        const string secreto = "whsec-de-prueba-g1-que-no-es-real";
+        const string idDeSolicitud = "req-g1-0001";
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var manifiesto = $"id:{orden.ToLowerInvariant()};request-id:{idDeSolicitud};ts:{ts};";
+        var firma = Convert.ToHexString(
+            new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(secreto)).ComputeHash(Encoding.UTF8.GetBytes(manifiesto)))
+            .ToLowerInvariant();
+        var cliente = e.Ctx.Host.WithWebHostBuilder(b => b.ConfigureServices(s =>
+            s.Configure<OpcionesDeMercadoPago>(o => o.SecretoWebhook = secreto))).CreateClient();
+        using var aviso = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/integraciones/mercadopago/webhook?data.id={Uri.EscapeDataString(orden)}&type=order")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json")
+        };
+        aviso.Headers.Add("x-signature", $"ts={ts},v1={firma}");
+        aviso.Headers.Add("x-request-id", idDeSolicitud);
+
+        Assert.Equal(HttpStatusCode.OK, (await cliente.SendAsync(aviso)).StatusCode);
+
+        await AssertCobroTardioSinVentaAsync(e, cobro, emitido);
+    }
+
+    // Clausula (G1): una venta anulada no ocupa el numero: el cobro aprobado despues sigue aprobado y sin aviso.
+    [Fact]
+    public async Task UnCobroAprobadoDespuesDeUnaVentaAnuladaDelNumeroSigueAprobado()
+    {
+        var e = await PrepararAsync("mp-venta-manual-cobro-tardio-anulada");
+        var cobro = await CobroPendienteAsync(e, e.Desde);
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-5"))), HttpStatusCode.Created);
+        await EjecutarAsync("UPDATE comprobantes_venta SET estado = 'anulado'::estado_comprobante WHERE id_comprobante_venta = $1", emitido.Id);
+
+        e.Ordenes.Estados[e.Ordenes.Estados.Single(kv => kv.Value == "created").Key] = "processed";
+        var visto = await LeerAsync<CobroDeMercadoPago>(await e.Cajero.GetAsync($"{Ruta}/{cobro.IdCobro}"));
+
+        Assert.Equal("aprobado", visto.Estado);
+        Assert.DoesNotContain(
+            await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro"), a => Payload(a).TryGetProperty("origen", out _));
     }
 
     // Clausula: toda aprobacion manual deja un rastro con la venta, el punto de venta, el importe, la referencia y el dispositivo.

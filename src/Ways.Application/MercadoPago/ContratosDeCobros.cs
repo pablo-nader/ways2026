@@ -70,7 +70,7 @@ public sealed record PagoSinVerificarListado(
     int IdEmpleado,
     string? Empleado,
     bool Anulada,
-    int? IdCobroEnConflicto = null);
+    IReadOnlyList<int>? IdsCobroEnConflicto = null);
 
 /// <summary>La lista de pagos sin verificar de un rango: <see cref="Truncado"/> avisa que había más filas que el límite pedido (las más
 /// recientes vienen primero).</summary>

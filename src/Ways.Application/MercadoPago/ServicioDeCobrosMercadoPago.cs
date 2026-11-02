@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
 using Ways.Domain.Auditoria;
@@ -82,12 +83,19 @@ namespace Ways.Application.MercadoPago;
 /// pasa a <c>sin_venta</c>, que no es vivo (libera el número y el medio), no paga ninguna venta y queda listado para la conciliación
 /// (<see cref="ListarSinVentaAsync"/>).
 ///
+/// <b>Aprobado después de una venta con su número.</b> Si una orden <c>processed</c> aprueba un cobro cuyo número ya usó una venta no
+/// anulada (la aprobación manual de un pago sin verificar, de cualquier tipo de comprobante), el cobro no queda <c>aprobado</c> sin
+/// destino: pasa directo a <c>sin_venta</c> (con su pago y <c>fecha_apartado</c>) y se audita
+/// <see cref="AccionAuditada.VentaMercadoPagoDobleCobro"/> sobre esa venta. Antes de leer la venta toma la fila del cobro con
+/// <c>FOR UPDATE</c>: una venta que bloqueó el número la tiene hasta confirmar. Un aviso firmado no tiene usuario: la fila de auditoría
+/// se atribuye al empleado de la venta.
+///
 /// Los campos de la orden (<c>id</c>, <c>status</c>, <c>type_response.qr_data</c>, <c>transactions.payments[]</c>) están verificados
 /// contra la referencia de la API (2026-11-01) pero no se ejercitaron en vivo; los DTO ignoran lo que no usan.
 /// </summary>
 public class ServicioDeCobrosMercadoPago(
     IWaysDbContext db, IClienteApiMercadoPago api, IRelojDelSistema reloj, IContextoDeUsuario contexto,
-    ILogger<ServicioDeCobrosMercadoPago> log, ServicioDeParametros parametros)
+    ILogger<ServicioDeCobrosMercadoPago> log, ServicioDeParametros parametros, ServicioDeAuditoria auditoria)
 {
     /// <summary>Segunda clave del <c>pg_advisory_xact_lock(int, int)</c> por punto de venta; la primera es el id del punto de venta.</summary>
     public const int ClaveDeLockDeCobrosDelPuntoVenta = 0x4D504351;
@@ -349,7 +357,7 @@ public class ServicioDeCobrosMercadoPago(
         var ahora = reloj.Ahora;
         cobro.IdOrdenMercadoPago = id;
         cobro.ExpiraEn = ahora + Vigencia;
-        AplicarOrden(cobro, orden, ahora);
+        await AplicarOrdenAsync(cobro, orden, ahora, ct);
         if (cobro.Estado == EstadosDeCobroMercadoPago.Creando)
         {
             cobro.Estado = EstadosDeCobroMercadoPago.Pendiente;
@@ -555,16 +563,17 @@ public class ServicioDeCobrosMercadoPago(
                 .Select(f => new PagoSinVerificarListado(
                     f.Id, f.IdComprobanteVenta, NumeroDeComprobante.Formatear(f.IdPuntoVenta, f.Numero), f.IdPuntoVenta, f.Fecha,
                     f.IdMedioPago, f.Importe, f.Referencia, f.IdEmpleado, f.Empleado, f.Anulada,
-                    enConflicto.TryGetValue(f.IdComprobanteVenta, out var idCobro) ? idCobro : null))
+                    enConflicto.TryGetValue(f.IdComprobanteVenta, out var idsCobro) ? idsCobro : []))
                 .ToList(),
             truncado);
     }
 
-    /// <summary>El primer cobro (el de menor id) que la venta auditó como en conflicto con su aprobación manual
-    /// (<see cref="AccionAuditada.VentaMercadoPagoDobleCobro"/>), por venta; las ventas sin aviso no figuran.</summary>
-    private async Task<Dictionary<int, int>> CobrosEnConflictoDeLasVentasAsync(IReadOnlyList<int> idsDeVenta, CancellationToken ct)
+    /// <summary>Todos los cobros que la venta auditó como en conflicto (<see cref="AccionAuditada.VentaMercadoPagoDobleCobro"/>: los del
+    /// número al aprobar a mano y los aprobados después de la venta), sin repetir y en orden ascendente, por venta; las ventas sin aviso no figuran.</summary>
+    private async Task<Dictionary<int, IReadOnlyList<int>>> CobrosEnConflictoDeLasVentasAsync(IReadOnlyList<int> idsDeVenta, CancellationToken ct)
     {
-        var resultado = new Dictionary<int, int>();
+        var acumulado = new Dictionary<int, SortedSet<int>>();
+        var resultado = new Dictionary<int, IReadOnlyList<int>>();
         if (idsDeVenta.Count == 0)
         {
             return resultado;
@@ -585,11 +594,21 @@ public class ServicioDeCobrosMercadoPago(
                 continue;
             }
 
-            var menor = ids.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.Number).Select(i => i.GetInt32()).DefaultIfEmpty(0).Min();
-            if (menor > 0 && (!resultado.TryGetValue(aviso.IdEntidad, out var actual) || menor < actual))
+            foreach (var id in ids.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.Number).Select(i => i.GetInt32()).Where(i => i > 0))
             {
-                resultado[aviso.IdEntidad] = menor;
+                if (!acumulado.TryGetValue(aviso.IdEntidad, out var delaVenta))
+                {
+                    delaVenta = [];
+                    acumulado[aviso.IdEntidad] = delaVenta;
+                }
+
+                delaVenta.Add(id);
             }
+        }
+
+        foreach (var (idVenta, ids) in acumulado)
+        {
+            resultado[idVenta] = ids.ToList();
         }
 
         return resultado;
@@ -618,7 +637,7 @@ public class ServicioDeCobrosMercadoPago(
                 claveIdempotencia: $"ways-cobro-{cobro.Id}-cancelar", ct: ct);
 
             var ahora = reloj.Ahora;
-            AplicarOrden(cobro, cancelada, ahora);
+            await AplicarOrdenAsync(cobro, cancelada, ahora, ct);
             if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente && cancelada.Status != "processed")
             {
                 cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
@@ -762,7 +781,7 @@ public class ServicioDeCobrosMercadoPago(
             return;
         }
 
-        AplicarOrden(cobro, orden, ahora);
+        await AplicarOrdenAsync(cobro, orden, ahora, ct);
         cobro.FechaUltimaConsulta = ahora;
         cobro.UpdatedAt = ahora;
         await db.SaveChangesAsync(ct);
@@ -772,8 +791,56 @@ public class ServicioDeCobrosMercadoPago(
     /// Un estado de la orden que no cambia el estado del cobro (<c>created</c>, <c>at_terminal</c>, <c>action_required</c>…) lo deja como está (Point guarda dónde está la orden en <c>situacion_terminal</c>); <c>failed</c> solo cierra un cobro Point (<c>fallido</c>). <c>processed</c> solo
     /// aprueba si trae un pago con importe pagado e id válidos (la venta se apoya en ambos); si no, el cobro sigue como estaba y se avisa en el log.
     /// </summary>
-    private void AplicarOrden(CobroMercadoPago cobro, OrdenDeMercadoPago orden, DateTimeOffset ahora)
+    private async Task AplicarOrdenAsync(CobroMercadoPago cobro, OrdenDeMercadoPago orden, DateTimeOffset ahora, CancellationToken ct)
     {
+        VentaDelNumero? venta = null;
+        if (orden.Status == "processed" && cobro.IdComprobanteVenta is null)
+        {
+            venta = await LeerVentaDelNumeroBloqueandoAsync(cobro, ct);
+        }
+
+        if (!AplicarOrden(cobro, orden, ahora, venta is not null) || venta is not { } existente)
+        {
+            return;
+        }
+
+        auditoria.Registrar(
+            new RegistroDeAuditoria(
+                cobro.IdTenant, cobro.IdPuntoVenta, AccionAuditada.VentaMercadoPagoDobleCobro, existente.Id,
+                valorAnterior: null,
+                valorNuevo: new Dictionary<string, object?>
+                {
+                    ["numero_visible"] = NumeroDeComprobante.Formatear(cobro.IdPuntoVenta, cobro.NumeroPreasignado),
+                    ["ids_cobro_mercadopago"] = new List<int> { cobro.Id },
+                    ["id_dispositivo"] = contexto.IdDispositivo,
+                    ["origen"] = "cobro_aprobado_despues_de_la_venta"
+                }),
+            contexto.UsuarioId > 0 ? null : existente.IdEmpleado);
+    }
+
+    /// <summary>La venta vigente (no anulada, de cualquier tipo de comprobante) que ya usó el número del cobro, si hay. Antes toma la
+    /// fila del cobro con <c>FOR UPDATE</c>: la venta que bloqueó el número la tiene hasta confirmar, así que esta lectura ve su resultado.</summary>
+    private async Task<VentaDelNumero?> LeerVentaDelNumeroBloqueandoAsync(CobroMercadoPago cobro, CancellationToken ct)
+    {
+        await BloquearFilaAsync(cobro.Id, ct);
+
+        var numero = cobro.NumeroPreasignado;
+        var idPuntoVenta = cobro.IdPuntoVenta;
+        return await db.ComprobantesVenta
+            .AsNoTracking()
+            .SinEspejosFiscales()
+            .Where(c => c.IdPuntoVenta == idPuntoVenta && c.Numero == numero && c.Estado != EstadoComprobante.Anulado)
+            .Select(c => new VentaDelNumero(c.Id, c.IdEmpleado))
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private sealed record VentaDelNumero(int Id, int IdEmpleado);
+
+    /// <summary>Devuelve <c>true</c> si la orden aprobó el pago del cobro. Con <paramref name="ventaYaConElNumero"/> el cobro no se
+    /// aprueba: una venta (la aprobación manual de un pago sin verificar) ya usó su número, así que queda <c>sin_venta</c>.</summary>
+    private bool AplicarOrden(CobroMercadoPago cobro, OrdenDeMercadoPago orden, DateTimeOffset ahora, bool ventaYaConElNumero = false)
+    {
+        var aprobo = false;
         switch (orden.Status)
         {
             case "processed":
@@ -790,8 +857,9 @@ public class ServicioDeCobrosMercadoPago(
                     break;
                 }
 
-                // Un fallido ya liberó su número (otro cobro pudo tomarlo): el pago tardío no aprueba, queda a la vista de la conciliación.
-                if (cobro.Estado == EstadosDeCobroMercadoPago.Fallido)
+                // Un fallido ya liberó su número (otro cobro pudo tomarlo) y un número que una venta ya usó tampoco admite el cobro:
+                // el pago tardío no aprueba, queda a la vista de la conciliación.
+                if (cobro.Estado == EstadosDeCobroMercadoPago.Fallido || ventaYaConElNumero)
                 {
                     cobro.Estado = EstadosDeCobroMercadoPago.SinVenta;
                     cobro.FechaApartado = ahora;
@@ -805,6 +873,7 @@ public class ServicioDeCobrosMercadoPago(
                 cobro.IdPagoMercadoPago = idPago;
                 cobro.ReferenciaPagoMercadoPago = pago!.ReferenciaNumerica;
                 cobro.ImportePagado = pagado;
+                aprobo = true;
                 break;
             case "canceled":
                 cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
@@ -830,6 +899,8 @@ public class ServicioDeCobrosMercadoPago(
                 _ => null
             }
             : null;
+
+        return aprobo;
     }
 
     private static decimal? ImportePagadoValido(decimal? importe) =>

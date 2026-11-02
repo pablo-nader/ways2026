@@ -210,7 +210,7 @@ public static class MercadoPagoEndpoints
                 "antiguo; el cajero los dio por pagados y la conciliación los coteja. idEmpresa, desde y hasta son obligatorios; desde y " +
                 "hasta son días (yyyy-MM-dd) inclusivos en la zona horaria de la empresa, de hasta 366 días (400 si hasta < desde o el " +
                 "rango es mayor). limite (por defecto 200, máximo 500) acota las filas; truncado indica que había más. Cada fila trae " +
-                "idCobroEnConflicto cuando la venta chocó con otro cobro de Mercado Pago del mismo número. 404 si la empresa no existe en el tenant.");
+                "idsCobroEnConflicto (ascendente, vacío si no hubo) con todos los cobros de Mercado Pago del mismo número que chocaron con la venta. 404 si la empresa no existe en el tenant.");
 
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,

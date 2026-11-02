@@ -1536,28 +1536,31 @@ public class ServicioDeVentas(
             .Select(p => (p.IdCobroMercadoPago!.Value, p.IdMedioPago, p.Importe))
             .ToList();
 
-        var reservados = pedidos.Count == 0
-            ? new Dictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>()
-            : new Dictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>(
-                await EscriturasDeCobroMercadoPago.ReservarYValidarAsync(
-                    conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, pedidos, ct));
-
         var manuales = plan.Pagos
             .Select((p, indice) => (Pago: p, Indice: indice))
             .Where(x => x.Pago.AprobacionManualSinVerificar)
             .Select(x => new PagoManualPedido(x.Indice, x.Pago.IdMedioPago, x.Pago.Importe))
             .ToList();
 
+        // Una aprobación manual no mira el cobro que el dispositivo no conoce, pero el servidor sí: bajo el lock de los cobros del número,
+        // si el dinero ya entró por Mercado Pago la venta liga ese cobro en lugar de registrarlo dos veces, y cualquier otro cobro del
+        // número queda en conflicto para auditarlo. Los explícitos y los del número se bloquean juntos, en un solo orden ascendente.
+        IReadOnlyList<CobroDelNumero> delNumero = manuales.Count == 0
+            ? []
+            : await EscriturasDeCobroMercadoPago.LeerDelNumeroBloqueadoAsync(
+                conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, pedidos.Select(p => p.Item1).ToList(), ct);
+
+        var reservados = pedidos.Count == 0
+            ? new Dictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>()
+            : new Dictionary<int, EscriturasDeCobroMercadoPago.CobroReservado>(
+                await EscriturasDeCobroMercadoPago.ReservarYValidarAsync(
+                    conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, pedidos, ct));
+
         if (manuales.Count == 0)
         {
             return new CobrosDeLaVenta(plan, reservados, [], []);
         }
 
-        // Una aprobación manual no mira el cobro que el dispositivo no conoce, pero el servidor sí: bajo el lock de los cobros del número,
-        // si el dinero ya entró por Mercado Pago la venta liga ese cobro en lugar de registrarlo dos veces, y cualquier otro cobro del
-        // número queda en conflicto para auditarlo.
-        var delNumero = await EscriturasDeCobroMercadoPago.LeerDelNumeroBloqueadoAsync(
-            conexion, transaccion, plan.IdTenant, plan.IdPuntoVenta, numero, ct);
         var resolucion = ReglaDeCobroEnVenta.ResolverAprobacionManual(delNumero, manuales, reservados.Keys.ToList());
 
         var planResuelto = plan;

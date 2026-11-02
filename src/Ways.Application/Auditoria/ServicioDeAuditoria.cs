@@ -20,14 +20,15 @@ public sealed class ServicioDeAuditoria(IWaysDbContext db, IRelojDelSistema relo
     /// <summary>MUNDO EF — no hace I/O: encola la fila en el MISMO <c>SaveChangesAsync</c> del
     /// llamador, así que es atómica con él tenga o no una transacción explícita abierta. Devuelve
     /// la entidad solo para que un test pueda inspeccionarla; ningún call site de producción usa
-    /// el valor.</summary>
-    public Domain.Auditoria.Auditoria Registrar(RegistroDeAuditoria registro)
+    /// el valor. <paramref name="idActor"/> solo lo pasa un camino sin usuario autenticado (el aviso firmado de un proveedor de pagos),
+    /// que atribuye la fila a un usuario real del tenant; el resto toma el actor del contexto.</summary>
+    public Domain.Auditoria.Auditoria Registrar(RegistroDeAuditoria registro, int? idActor = null)
     {
         var entidad = new Domain.Auditoria.Auditoria
         {
             IdTenant = registro.IdTenant,
             IdPuntoVenta = registro.IdPuntoVenta,
-            IdActor = contexto.UsuarioId,
+            IdActor = idActor ?? contexto.UsuarioId,
             Accion = registro.Accion.Accion,
             Entidad = registro.Accion.Entidad,
             IdEntidad = registro.IdEntidad,
