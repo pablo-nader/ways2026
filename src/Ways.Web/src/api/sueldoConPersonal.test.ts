@@ -4,13 +4,14 @@ import {
   aSolicitudDePagoDePersonalDesdeAdministracion,
   aSolicitudDePagoDePersonalDesdeElPos,
   cambiosAlElegirCategoria,
+  conEmpleadoAsignado,
   elegiblesComoPersonal,
   esPagoAPersonal,
   MOTIVO_PAGO_A_PERSONAL_SIN_CONEXION,
   ofreceElegirPersonal,
   pagoAPersonalDisponible,
 } from './sueldoConPersonal'
-import type { PersonalListado } from './tipos'
+import type { PersonalListado, SolicitudDeEdicionDePagoConLineas } from './tipos'
 
 function formularioFixture(
   sobrescribir: Partial<FormularioDePagoDeAdministracion> = {},
@@ -159,5 +160,27 @@ describe('pagoAPersonalDisponible', () => {
 
   it('con conexión queda habilitado', () => {
     expect(pagoAPersonalDisponible({ enLinea: true }).habilitado).toBe(true)
+  })
+})
+
+describe('conEmpleadoAsignado', () => {
+  const edicion: SolicitudDeEdicionDePagoConLineas = {
+    categoria: 'Sueldos',
+    idProveedor: 4,
+    idArea: 2,
+    concepto: 'Sueldo suelto',
+    detalle: 'nota',
+    numeroFactura: null,
+    lineas: [{ idMedioPago: 1, importe: 500, referencia: null }],
+  }
+
+  it('con un empleado manda idPersonal, concepto vacío y sin proveedor, y conserva el resto', () => {
+    expect(conEmpleadoAsignado(edicion, 13)).toEqual({ ...edicion, concepto: '', idProveedor: null, idPersonal: 13 })
+  })
+
+  it('sin empleado devuelve la edición común, sin idPersonal', () => {
+    const resultado = conEmpleadoAsignado(edicion, '')
+    expect(resultado).toBe(edicion)
+    expect(resultado).not.toHaveProperty('idPersonal')
   })
 })
