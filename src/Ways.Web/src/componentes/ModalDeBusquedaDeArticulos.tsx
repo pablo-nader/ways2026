@@ -117,6 +117,22 @@ export function ModalDeBusquedaDeArticulos({
     }
   }
 
+  // Si la fuente cambia con el modal abierto (otro cliente, otra instantánea), lo que traía la anterior no aterriza y se repite la
+  // búsqueda vigente con la nueva.
+  const fuenteAnteriorRef = useRef(fuente)
+  const buscarRef = useRef<(t: string) => Promise<void>>(async () => {})
+  const terminoRef = useRef(termino)
+  useEffect(() => {
+    buscarRef.current = buscar
+    terminoRef.current = termino
+  })
+  useEffect(() => {
+    if (fuenteAnteriorRef.current === fuente) return
+    fuenteAnteriorRef.current = fuente
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    void buscarRef.current(terminoRef.current)
+  }, [fuente])
+
   async function buscar(terminoBuscado: string) {
     const propio = terminoBuscado.trim()
     if (propio.length < LARGO_MINIMO_DE_BUSQUEDA) {
@@ -169,7 +185,7 @@ export function ModalDeBusquedaDeArticulos({
   function cambiarTermino(valor: string) {
     setTermino(valor)
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    timeoutRef.current = setTimeout(() => void buscar(valor), DEMORA_DEBOUNCE_MS)
+    timeoutRef.current = setTimeout(() => void buscarRef.current(valor), DEMORA_DEBOUNCE_MS)
   }
 
   function buscarInmediato() {

@@ -24,7 +24,8 @@ Out of scope: backend changes, snapshot schema changes, POS release (a separate 
 
 ## Tasks
 
-- [x] T1 — Article search source (snapshot | API), modal and POS wiring, tests. Route: delegated (writer trigger: 2+ non-trivial files). Commit 3c1b060b.
+- [x] T1 — Article search source (snapshot | API), modal and POS wiring, tests. Route: delegated (writer trigger: 2+ non-trivial files). Commit 3c1b060b (PR #621, merged).
+- [x] T2 (commits cc878788 + 85b155e0) — Price preview follows the cart's gate per row: snapshot only when the client is admitted offline and the article has a price in the list; otherwise the row is priced via API (failure → no price). Search stays local. Route: delegated (writer trigger: 2+ non-trivial files). Branch `pnader/buscador-articulos-online-fallback`.
 
 ## Acceptance criteria
 
@@ -43,6 +44,9 @@ Out of scope: backend changes, snapshot schema changes, POS release (a separate 
 
 - T1 checks: tsc -b clean; lint clean on touched files; vitest full 10075/10076 (1 failure in untouched CompraEditor/GrillaDeItemsDeCompra area, passes alone); targeted 35/35.
 - judgment-day: APPROVED, no severe findings. Info: offer marks hidden when a snapshot exists (even online); preview prices from the snapshot even for a client the cart would price online (not admitted offline or list missing shows "—"); top-25 order uses localeCompare vs DB collation.
+
+- T2 checks: tsc -b and lint clean; vitest full 10201/10201 (before the debounce fix); targeted 44/44 after it; RED observed for the gate tests and for the debounce race test; mutations of the `clienteAdmitidoOffline` clause kill tests.
+- T2 judgment-day: APPROVED. Both judges reported the same WARNING (pending debounce timer fired the old `buscar` after a source change) → fixed in 85b155e0, scoped re-judgment clean. Info left: the memo depends on the `clienteSeleccionado` object, so a client refresh re-runs an open search; local rows wait for the API rows before showing; the clearTimeout in the source-change effect is not pinned by a test (only avoids a redundant search).
 
 ## Next step
 
