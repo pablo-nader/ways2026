@@ -266,6 +266,34 @@ public static class MercadoPagoEndpoints
             "existen, 400 conciliacion_pago_invalido, 409 conciliacion_fila_no_confirmable|conciliacion_fila_ya_confirmada|" +
             "conciliacion_pago_ya_verificado|conciliacion_pago_no_esta_sin_verificar.");
 
+        conciliaciones.MapGet("/{idConciliacion:int}/propuestas", (
+            ServicioDePropuestasDeTesoreriaMercadoPago servicio, int idConciliacion, CancellationToken ct) =>
+            servicio.ListarAsync(idConciliacion, ct))
+        .WithSummary(
+            "Supervisor y Admin: los movimientos de tesorería que la conciliación propone y que nada escribe hasta que un Admin los aplica: la diferencia " +
+            "de comisión por cuenta (comisión real del reporte menos la que el cierre de turno descontó; importe con signo, negativo si Mercado Pago cobró " +
+            "más) y un retiro por cada WITHDRAWAL o PAYOUT del reporte (importe positivo, sale de la cuenta de la conexión con Mercado Pago). Se calculan " +
+            "al importar el reporte. 404 si la conciliación no existe.");
+
+        conciliaciones.MapPost("/{idConciliacion:int}/propuestas/{idPropuesta:int}/aplicar", (
+            ServicioDePropuestasDeTesoreriaMercadoPago servicio, int idConciliacion, int idPropuesta,
+            SolicitudDeAplicacionDePropuesta? solicitud, CancellationToken ct) =>
+            servicio.AplicarAsync(idConciliacion, idPropuesta, solicitud, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Admin: aplica una propuesta de la conciliación en la tesorería. Una diferencia de comisión es un ajuste de la cuenta del medio; un retiro (cuerpo " +
+            "{idCuentaDestino}, una cuenta activa de la misma empresa) sale de la cuenta de Mercado Pago y entra a la elegida, en una sola transacción. Queda " +
+            "auditado. 404 si la conciliación o la propuesta no existen, 400 cuenta_destino_requerida|cuenta_destino_no_aplica|cuenta_destino_invalida|" +
+            "cuentas_iguales, 409 propuesta_ya_aplicada|propuesta_descartada|propuesta_sin_cuenta_origen|cuenta_origen_no_disponible|periodo_conciliado.");
+
+        conciliaciones.MapPost("/{idConciliacion:int}/propuestas/{idPropuesta:int}/descartar", (
+            ServicioDePropuestasDeTesoreriaMercadoPago servicio, int idConciliacion, int idPropuesta, CancellationToken ct) =>
+            servicio.DescartarAsync(idConciliacion, idPropuesta, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Admin: descarta una propuesta pendiente sin escribir nada en la tesorería; queda auditado. 404 si la conciliación o la propuesta no existen, " +
+            "409 propuesta_ya_aplicada|propuesta_ya_descartada.");
+
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,
             string? code,

@@ -12,9 +12,12 @@ import {
   textoDeResumen,
   type CandidatoDeConfirmacion,
   type ConciliacionListado,
+  type AccionDePropuesta,
   type FilaDeConciliacion,
+  type PropuestaDeTesoreria,
 } from '../../api/conciliacionMercadoPago'
 import { Cargando } from '../../componentes/Cargando'
+import { SeccionDePropuestas, type DestinoElegido } from './SeccionDePropuestas'
 import { TablaDeFilasDeConciliacion } from './TablaDeFilasDeConciliacion'
 import { useLectura } from './useLectura'
 
@@ -28,18 +31,28 @@ type Props = {
   puedeConfirmar: boolean
   bloqueado: boolean
   onConfirmar: (idConciliacion: number, fila: FilaDeConciliacion, candidato: CandidatoDeConfirmacion) => void
+  idEmpresa: number
+  /** Solo el Admin aplica o descarta las propuestas de tesorería. */
+  puedeResolver: boolean
+  onResolver: (idConciliacion: number, propuesta: PropuestaDeTesoreria, accion: AccionDePropuesta, destino: DestinoElegido | null) => void
 }
 
 const mensajeDeLectura = (e: unknown) => mensajeDeErrorDeConciliacion(e, 'lectura')
 
 function Detalle({
+  idEmpresa,
+  puedeResolver,
+  onResolver,
   idConciliacion,
   version,
   puedeConfirmar,
   bloqueado,
   onConfirmar,
   onVolver,
-}: Pick<Props, 'version' | 'puedeConfirmar' | 'bloqueado' | 'onConfirmar'> & { idConciliacion: number; onVolver: () => void }) {
+}: Pick<Props, 'version' | 'puedeConfirmar' | 'bloqueado' | 'onConfirmar' | 'idEmpresa' | 'puedeResolver' | 'onResolver'> & {
+  idConciliacion: number
+  onVolver: () => void
+}) {
   const [resultado, setResultado] = useState<string | null>(null)
   const [pagina, setPagina] = useState(1)
 
@@ -67,6 +80,15 @@ function Detalle({
           {detalle.conciliacion.nombreArchivo ?? 'Reporte'} · {textoDePeriodo(detalle.conciliacion.fechaDesde, detalle.conciliacion.fechaHasta)}
         </h6>
       )}
+
+      <SeccionDePropuestas
+        idConciliacion={idConciliacion}
+        idEmpresa={idEmpresa}
+        version={version}
+        puedeResolver={puedeResolver}
+        bloqueado={bloqueado}
+        onResolver={onResolver}
+      />
 
       <div className="row g-2 align-items-end mb-3">
         <div className="col-md-4">
@@ -154,6 +176,9 @@ export function SeccionConciliaciones({ conciliaciones, cargando, error, onReint
         puedeConfirmar={resto.puedeConfirmar}
         bloqueado={resto.bloqueado}
         onConfirmar={resto.onConfirmar}
+        idEmpresa={resto.idEmpresa}
+        puedeResolver={resto.puedeResolver}
+        onResolver={resto.onResolver}
         onVolver={() => setAbierta(null)}
       />
     )

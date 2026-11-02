@@ -122,6 +122,60 @@ export type PagosSinVerificar = { items: PagoSinVerificar[]; truncado: boolean }
 
 export type ConsultaDeFilas = { resultado: string | null; pagina: number; tamano: number }
 
+export type TipoDePropuesta = 'diferencia_comision' | 'retiro'
+
+export type EstadoDePropuesta = 'pendiente' | 'aplicada' | 'descartada'
+
+export type LineaDeDiferenciaDeComision = {
+  idCobroMercadoPago: number
+  idCobro: number
+  idTurnoCaja: number
+  idMedioPago: number
+  idCuentaTesoreria: number
+  importe: number
+  porcentajeEstimado: number
+  comisionEstimada: number
+  comisionReal: number
+  diferencia: number
+}
+
+/** Los dos conteos "sin" son de TODA la conciliación, no de la cuenta de la propuesta. */
+export type DetalleDeDiferenciaDeComision = {
+  cantidadDeCobros: number
+  comisionRealTotal: number
+  comisionEstimadaTotal: number
+  cobrosSinCierre: number
+  cobrosSinComisionReal: number
+  lineas: LineaDeDiferenciaDeComision[]
+  lineasTruncado: boolean
+}
+
+/**
+ * Un movimiento de tesorería que la conciliación propone. `importe` es, en una diferencia de comisión, el efecto con signo sobre la
+ * cuenta de origen (negativo si Mercado Pago cobró más de lo que el cierre descontó) y, en un retiro, el monto positivo que sale de ella.
+ * `idCuentaOrigen` es nulo en un retiro de una empresa sin conexión con Mercado Pago: no se puede aplicar.
+ */
+export type PropuestaDeTesoreria = {
+  id: number
+  tipo: TipoDePropuesta
+  estado: EstadoDePropuesta
+  importe: number
+  idCuentaOrigen: number | null
+  nombreCuentaOrigen: string | null
+  idCuentaDestino: number | null
+  nombreCuentaDestino: string | null
+  numeroLinea: number | null
+  sourceId: string | null
+  fechaTransaccion: string | null
+  detalle: DetalleDeDiferenciaDeComision | null
+  idMovimientoCuenta: number | null
+  idMovimientoCuentaDestino: number | null
+  resueltaEl: string | null
+  resueltaPor: string | null
+}
+
+export type AccionDePropuesta = 'aplicar' | 'descartar'
+
 export const ORIGEN_WEB = 'web'
 export const ENCABEZADO_DE_ORIGEN = 'X-Ways-Origen'
 export const TAMANO_MAXIMO_DE_ARCHIVO = 10 * 1024 * 1024
@@ -150,6 +204,11 @@ export const clienteDeConciliacionMercadoPago = {
     ),
   confirmar: (idConciliacion: number, idFila: number, idCobro: number) =>
     api.post<void>(`${RUTA}/${idConciliacion}/filas/${idFila}/confirmar`, { idCobro }),
+  propuestas: (idConciliacion: number) => api.get<PropuestaDeTesoreria[]>(`${RUTA}/${idConciliacion}/propuestas`),
+  aplicarPropuesta: (idConciliacion: number, idPropuesta: number, idCuentaDestino: number | null) =>
+    api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/aplicar`, { idCuentaDestino }),
+  descartarPropuesta: (idConciliacion: number, idPropuesta: number) =>
+    api.post<PropuestaDeTesoreria>(`${RUTA}/${idConciliacion}/propuestas/${idPropuesta}/descartar`, {}),
   cobrosSinVenta: (idEmpresa: number) => api.get<CobroSinVenta[]>(`/mercadopago/cobros-sin-venta${aQuery({ idEmpresa })}`),
   pagosSinVerificar: (idEmpresa: number, desde: string, hasta: string) =>
     api.get<PagosSinVerificar>(`/mercadopago/pagos-sin-verificar${aQuery({ idEmpresa, desde, hasta })}`),
@@ -289,7 +348,7 @@ export function importesDifieren(fila: Pick<FilaDeConciliacion, 'importe'>, cand
   return fila.importe !== null && Math.round(fila.importe * 100) !== Math.round(candidato.importe * 100)
 }
 
-export type ContextoDeError = 'lectura' | 'subida' | 'confirmacion'
+export type ContextoDeError = 'lectura' | 'subida' | 'confirmacion' | 'resolucion'
 
 const MENSAJE_POR_CODIGO: Record<string, string> = {
   solicitud_no_permitida: 'La subida del reporte solo se acepta desde la web de Ways. Recargá la página e intentá de nuevo desde ahí.',
@@ -307,12 +366,24 @@ const MENSAJE_POR_CODIGO: Record<string, string> = {
   conciliacion_pago_ya_verificado: 'Ese pago ya fue verificado.',
   venta_anulada: 'La venta de ese pago está anulada: no se puede confirmar contra ella.',
   importe_distinto: 'El importe del pago no coincide con el de la fila del reporte: no se puede confirmar.',
+  propuesta_ya_aplicada: 'La propuesta ya se aplicó.',
+  propuesta_descartada: 'La propuesta ya se descartó: no se puede aplicar.',
+  propuesta_ya_descartada: 'La propuesta ya se descartó.',
+  cuenta_destino_requerida: 'Elegí la cuenta que recibe el retiro.',
+  cuenta_destino_no_aplica: 'Una diferencia de comisión no lleva cuenta de destino.',
+  cuenta_destino_invalida: 'La cuenta de destino tiene que ser una cuenta activa de la misma empresa.',
+  cuentas_iguales: 'La cuenta de destino es la misma de la que sale el retiro.',
+  propuesta_sin_cuenta_origen:
+    'La empresa no tiene una conexión con Mercado Pago: no hay cuenta de la que retirar. Descartá la propuesta.',
+  cuenta_origen_no_disponible: 'La cuenta de Mercado Pago ya no está disponible.',
+  periodo_conciliado: 'La fecha del movimiento cae en un período de tesorería ya conciliado: no se puede escribir.',
 }
 
 const MENSAJE_GENERICO: Record<ContextoDeError, string> = {
   lectura: 'No se pudo cargar la información de la conciliación.',
   subida: 'No se pudo importar el archivo.',
   confirmacion: 'No se pudo confirmar la fila.',
+  resolucion: 'No se pudo resolver la propuesta.',
 }
 
 /**
@@ -327,6 +398,9 @@ export function mensajeDeErrorDeConciliacion(error: unknown, contexto: ContextoD
     if (contexto === 'confirmacion') {
       return 'No se pudo confirmar si la fila quedó confirmada. Recargá la pantalla y revisala antes de reintentar.'
     }
+    if (contexto === 'resolucion') {
+      return 'No se pudo confirmar si la propuesta quedó resuelta. Recargá la pantalla y revisala antes de reintentar.'
+    }
     return 'Sin conexión con el servidor. Revisá tu conexión y probá de nuevo.'
   }
   if (error instanceof ErrorApi) {
@@ -334,6 +408,7 @@ export function mensajeDeErrorDeConciliacion(error: unknown, contexto: ContextoD
     if (porCodigo) return porCodigo
     if (error.estado === 403) return 'No tenés permiso para esta operación.'
     if (error.estado === 404) {
+      if (contexto === 'resolucion') return 'La conciliación o la propuesta ya no existen. Recargá la pantalla.'
       return contexto === 'confirmacion'
         ? 'La conciliación, la fila o el pago ya no existen. Recargá la pantalla.'
         : 'No se encontró lo pedido. Recargá la pantalla.'
@@ -380,4 +455,70 @@ export function ultimaConciliacion(lista: readonly ConciliacionListado[]): Conci
 export function textoDeResumen(resumen: readonly ResumenDeResultado[]): string {
   const conFilas = resumenOrdenado(resumen).filter((r) => r.cantidad > 0)
   return conFilas.length === 0 ? '—' : conFilas.map((r) => `${etiquetaDeResultado(r.resultado)} ${r.cantidad}`).join(' · ')
+}
+
+const ETIQUETA_DE_TIPO_DE_PROPUESTA: Record<string, string> = {
+  diferencia_comision: 'Diferencia de comisión',
+  retiro: 'Retiro',
+}
+
+export function etiquetaDeTipoDePropuesta(tipo: string): string {
+  return ETIQUETA_DE_TIPO_DE_PROPUESTA[tipo] ?? tipo
+}
+
+const ETIQUETA_DE_ESTADO_DE_PROPUESTA: Record<string, string> = {
+  pendiente: 'Pendiente',
+  aplicada: 'Aplicada',
+  descartada: 'Descartada',
+}
+
+export function etiquetaDeEstadoDePropuesta(estado: string): string {
+  return ETIQUETA_DE_ESTADO_DE_PROPUESTA[estado] ?? estado
+}
+
+export function claseDeEstadoDePropuesta(estado: string): string {
+  if (estado === 'aplicada') return 'bg-success'
+  if (estado === 'descartada') return 'bg-secondary'
+  return 'bg-warning text-dark'
+}
+
+/**
+ * Qué hace la propuesta en la tesorería, en una frase. Una diferencia con importe negativo debita la cuenta (Mercado Pago cobró más de
+ * lo que el cierre descontó); positivo, la acredita. Un retiro sale de la cuenta de origen y entra a la que se elija.
+ */
+export function textoDeEfecto(propuesta: Pick<PropuestaDeTesoreria, 'tipo' | 'importe' | 'nombreCuentaOrigen' | 'nombreCuentaDestino'>): string {
+  const origen = propuesta.nombreCuentaOrigen ?? 'la cuenta de Mercado Pago'
+  if (propuesta.tipo === 'retiro') {
+    const destino = propuesta.nombreCuentaDestino ?? 'la cuenta que elijas'
+    return `Pasa ${textoDeImporte(propuesta.importe)} de ${origen} a ${destino}`
+  }
+  return propuesta.importe < 0
+    ? `Debita ${textoDeImporte(-propuesta.importe)} de ${origen}`
+    : `Acredita ${textoDeImporte(propuesta.importe)} en ${origen}`
+}
+
+/** Una propuesta se puede aplicar si está pendiente y, siendo un retiro, tiene cuenta de origen (la de la conexión con Mercado Pago). */
+export function sePuedeAplicar(propuesta: Pick<PropuestaDeTesoreria, 'estado' | 'tipo' | 'idCuentaOrigen'>): boolean {
+  return propuesta.estado === 'pendiente' && (propuesta.tipo !== 'retiro' || propuesta.idCuentaOrigen !== null)
+}
+
+export type CuentaParaElegir = { id: number; idEmpresa: number; nombre: string; activo: boolean }
+
+/** Las cuentas que puede recibir un retiro: activas, de la misma empresa y distintas de la de origen. */
+export function cuentasDeDestino<T extends CuentaParaElegir>(cuentas: readonly T[], idEmpresa: number, idCuentaOrigen: number | null): T[] {
+  return cuentas
+    .filter((c) => c.activo && c.idEmpresa === idEmpresa && c.id !== idCuentaOrigen)
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+}
+
+/** Lo que el cálculo dejó fuera de una diferencia de comisión, para avisarlo: cobros cuyo turno no acreditó el medio y cobros sin comisión real. */
+export function avisosDeDetalle(detalle: Pick<DetalleDeDiferenciaDeComision, 'cobrosSinCierre' | 'cobrosSinComisionReal'>): string[] {
+  const avisos: string[] = []
+  if (detalle.cobrosSinCierre > 0) {
+    avisos.push(`${detalle.cobrosSinCierre} cobro(s) de turnos que todavía no acreditaron el medio no entran al cálculo.`)
+  }
+  if (detalle.cobrosSinComisionReal > 0) {
+    avisos.push(`${detalle.cobrosSinComisionReal} cobro(s) vinieron sin comisión en el reporte y no entran al cálculo.`)
+  }
+  return avisos
 }

@@ -118,6 +118,14 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>verificado_manualmente</c>. <c>id_entidad</c> es la conciliación; lleva la fila, el pago, la venta y el importe.</summary>
     public static readonly AccionAuditada ConciliacionConfirmacion = new("conciliacion.confirmacion", "conciliacion_mercadopago");
 
+    /// <summary>E7: <c>MercadoPago/ServicioDePropuestasDeTesoreriaMercadoPago.cs</c> — el Admin aplicó una propuesta de la conciliación: escribió el ajuste de
+    /// la diferencia de comisión o el retiro (salida de la cuenta de Mercado Pago y entrada a la cuenta elegida). <c>id_entidad</c> es la propuesta; lleva
+    /// la conciliación, el tipo, el importe, las cuentas y las filas del libro escritas.</summary>
+    public static readonly AccionAuditada PropuestaDeTesoreriaAplicacion = new("conciliacion.propuestaaplicada", "propuesta_tesoreria_mercadopago");
+
+    /// <summary>E7: el Admin descartó una propuesta de la conciliación sin escribir nada en la tesorería. <c>id_entidad</c> es la propuesta.</summary>
+    public static readonly AccionAuditada PropuestaDeTesoreriaDescarte = new("conciliacion.propuestadescartada", "propuesta_tesoreria_mercadopago");
+
     /// <summary>Cierre de turno forzado por encima de la guarda de rendición de dispositivos —
     /// <c>Caja/ServicioDeTurnos.cs</c>, los DOS modos de cierre. Se escribe SIEMPRE que
     /// <c>ForzarSinRendicion</c> viene en true, incluso si la guarda no encontró nada pendiente: el
@@ -260,6 +268,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         VentaMercadoPagoDobleCobro,
         ConciliacionImportacion,
         ConciliacionConfirmacion,
+        PropuestaDeTesoreriaAplicacion,
+        PropuestaDeTesoreriaDescarte,
         CierreForzadoSinRendicion,
         VentaExcedioLimiteSinValidar,
         PagoEdicion,

@@ -3,9 +3,14 @@ import {
   ENCABEZADO_DE_ORIGEN,
   RESULTADOS_EN_ORDEN,
   TAMANO_MAXIMO_DE_ARCHIVO,
+  avisosDeDetalle,
+  claseDeEstadoDePropuesta,
   claseDeResultado,
   clienteDeConciliacionMercadoPago,
+  cuentasDeDestino,
   esFilaConfirmable,
+  etiquetaDeEstadoDePropuesta,
+  etiquetaDeTipoDePropuesta,
   etiquetaDeResultado,
   importesDifieren,
   lineasDeConfirmacion,
@@ -13,7 +18,9 @@ import {
   motivoDeRangoInvalido,
   rangoDeFilas,
   rangoUltimosDias,
+  sePuedeAplicar,
   resumenOrdenado,
+  textoDeEfecto,
   textoDeResumen,
   totalDePaginas,
   totalesDelResumen,
@@ -300,5 +307,83 @@ describe('mensajeDeErrorDeConciliacion', () => {
   it('un error que no es de la API cae al texto genérico del contexto', () => {
     expect(mensajeDeErrorDeConciliacion(new Error('x'), 'subida')).toBe('No se pudo importar el archivo.')
     expect(mensajeDeErrorDeConciliacion(null, 'confirmacion')).toBe('No se pudo confirmar la fila.')
+  })
+})
+
+describe('propuestas de tesorería', () => {
+  const api = (estado: number, codigo: string, mensaje = 'del servidor') => new ErrorApi(estado, codigo, mensaje)
+
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+  })
+
+  it('el cliente lee, aplica con el destino y descarta con cuerpo vacío', async () => {
+    apiGetMock.mockResolvedValue([])
+    apiPostMock.mockResolvedValue({})
+
+    await clienteDeConciliacionMercadoPago.propuestas(3)
+    await clienteDeConciliacionMercadoPago.aplicarPropuesta(3, 11, 71)
+    await clienteDeConciliacionMercadoPago.aplicarPropuesta(3, 12, null)
+    await clienteDeConciliacionMercadoPago.descartarPropuesta(3, 11)
+
+    expect(apiGetMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas')
+    expect(apiPostMock).toHaveBeenNthCalledWith(1, '/mercadopago/conciliaciones/3/propuestas/11/aplicar', { idCuentaDestino: 71 })
+    expect(apiPostMock).toHaveBeenNthCalledWith(2, '/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: null })
+    expect(apiPostMock).toHaveBeenNthCalledWith(3, '/mercadopago/conciliaciones/3/propuestas/11/descartar', {})
+  })
+
+  it('el efecto distingue débito, crédito y retiro', () => {
+    const base = { nombreCuentaOrigen: 'Mercado Pago', nombreCuentaDestino: null }
+    expect(textoDeEfecto({ ...base, tipo: 'diferencia_comision', importe: -1.5 })).toMatch(/^Debita .*1,50 de Mercado Pago$/)
+    expect(textoDeEfecto({ ...base, tipo: 'diferencia_comision', importe: 2 })).toMatch(/^Acredita .*2,00 en Mercado Pago$/)
+    expect(textoDeEfecto({ ...base, tipo: 'retiro', importe: 40 })).toMatch(/^Pasa .*40,00 de Mercado Pago a la cuenta que elijas$/)
+    expect(textoDeEfecto({ ...base, nombreCuentaDestino: 'Banco', tipo: 'retiro', importe: 40 })).toMatch(/a Banco$/)
+    expect(textoDeEfecto({ tipo: 'diferencia_comision', importe: -1, nombreCuentaOrigen: null, nombreCuentaDestino: null })).toContain(
+      'la cuenta de Mercado Pago',
+    )
+  })
+
+  it('solo se aplica una pendiente y, siendo retiro, con cuenta de origen', () => {
+    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'diferencia_comision', idCuentaOrigen: 1 })).toBe(true)
+    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: 1 })).toBe(true)
+    expect(sePuedeAplicar({ estado: 'pendiente', tipo: 'retiro', idCuentaOrigen: null })).toBe(false)
+    expect(sePuedeAplicar({ estado: 'aplicada', tipo: 'diferencia_comision', idCuentaOrigen: 1 })).toBe(false)
+    expect(sePuedeAplicar({ estado: 'descartada', tipo: 'retiro', idCuentaOrigen: 1 })).toBe(false)
+  })
+
+  it('las cuentas de destino son las activas de la empresa, sin el origen, por nombre', () => {
+    const cuentas = [
+      { id: 1, idEmpresa: 1, nombre: 'Zeta', activo: true },
+      { id: 2, idEmpresa: 1, nombre: 'Alfa', activo: true },
+      { id: 3, idEmpresa: 1, nombre: 'Baja', activo: false },
+      { id: 4, idEmpresa: 2, nombre: 'Ajena', activo: true },
+      { id: 5, idEmpresa: 1, nombre: 'Origen', activo: true },
+    ]
+    expect(cuentasDeDestino(cuentas, 1, 5).map((c) => c.id)).toEqual([2, 1])
+    expect(cuentasDeDestino(cuentas, 1, null).map((c) => c.id)).toEqual([2, 5, 1])
+  })
+
+  it('los avisos dicen solo lo que quedó fuera del cálculo', () => {
+    expect(avisosDeDetalle({ cobrosSinCierre: 0, cobrosSinComisionReal: 0 })).toEqual([])
+    expect(avisosDeDetalle({ cobrosSinCierre: 2, cobrosSinComisionReal: 0 })).toHaveLength(1)
+    expect(avisosDeDetalle({ cobrosSinCierre: 2, cobrosSinComisionReal: 1 })).toHaveLength(2)
+  })
+
+  it('las etiquetas y clases conocen los estados y el tipo, y caen al texto crudo', () => {
+    expect(etiquetaDeTipoDePropuesta('retiro')).toBe('Retiro')
+    expect(etiquetaDeTipoDePropuesta('raro')).toBe('raro')
+    expect(etiquetaDeEstadoDePropuesta('descartada')).toBe('Descartada')
+    expect(claseDeEstadoDePropuesta('aplicada')).toBe('bg-success')
+    expect(claseDeEstadoDePropuesta('descartada')).toBe('bg-secondary')
+    expect(claseDeEstadoDePropuesta('pendiente')).toContain('bg-warning')
+  })
+
+  it('los códigos de la resolución tienen su copia y la red caída es incierta', () => {
+    expect(mensajeDeErrorDeConciliacion(api(409, 'propuesta_ya_aplicada'), 'resolucion')).toBe('La propuesta ya se aplicó.')
+    expect(mensajeDeErrorDeConciliacion(api(409, 'periodo_conciliado'), 'resolucion')).toContain('ya conciliado')
+    expect(mensajeDeErrorDeConciliacion(api(404, 'no_encontrado'), 'resolucion')).toContain('ya no existen')
+    expect(mensajeDeErrorDeConciliacion(new ErrorDeRed('x'), 'resolucion')).toContain('No se pudo confirmar si la propuesta')
+    expect(mensajeDeErrorDeConciliacion(null, 'resolucion')).toBe('No se pudo resolver la propuesta.')
   })
 })

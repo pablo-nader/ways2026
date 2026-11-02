@@ -681,7 +681,7 @@ filas_conciliacion_mercadopago (   -- [operativa por empresa: id_tenant + id_emp
 > detalle muestra la comisión y el neto guardados para compararlos); los totales del resumen no cuentan esas dos clases de fila. Los cobros que nombran las filas se leen con
 > `FOR UPDATE` (ascendente por id) después del lock de la empresa; con otro importe → `importe_distinto`; cobro apartado, fallido, pendiente, aprobado sin venta, etc. → `sin_venta`; sin cobro →
 > `sin_cobro_en_ways`. `REFUND` → `devolucion`; `CHARGEBACK` y `DISPUTE` → `contracargo` (se ligan al cobro, que no se modifica); `WITHDRAWAL`, `WITHDRAWAL_CANCEL` y
-> `PAYOUT` → `retiro` (los toma la tesorería en E7). Una fila ilegible o de un `TRANSACTION_TYPE` desconocido no rechaza el archivo: queda `invalida` con línea y motivo
+> `PAYOUT` → `retiro` (la tesorería los propone en E7, ver `propuestas_tesoreria_mercadopago`). Una fila ilegible o de un `TRANSACTION_TYPE` desconocido no rechaza el archivo: queda `invalida` con línea y motivo
 > (más de 1000, o ninguna válida, sí lo rechazan). Todo en una transacción; auditoría `conciliacion.importacion`.
 >
 > **Confirmar.** `POST /api/mercadopago/conciliaciones/{id}/filas/{idFila}/confirmar` `{idCobro}` (Admin) une una fila `sin_cobro_en_ways` con un pago de venta
@@ -690,3 +690,39 @@ filas_conciliacion_mercadopago (   -- [operativa por empresa: id_tenant + id_emp
 > (el importe del pago tiene que ser el de la fila; la fecha y la caja las decide el Admin). La auditoría guarda el importe y la fecha de la fila, su `SOURCE_ID`, el importe del pago y la fecha de su venta.
 > El detalle (`GET …/{id}`) sugiere para cada fila sin cobro sin confirmar los pagos sin verificar de la empresa con el mismo importe, a no más de 24 horas de la venta y, si la fila trae
 > `EXTERNAL_POS_ID`, de la caja con ese `external_id`; las ventas anuladas no cuentan. La sugerencia nunca se aplica sola.
+
+```
+propuestas_tesoreria_mercadopago (   -- [operativa por empresa: id_tenant + id_empresa NOT NULL] E7: un movimiento de tesorería que una conciliación propone y un Admin aplica o descarta
+    id_propuesta_tesoreria_mercadopago PK,
+    id_empresa, id_conciliacion_mercadopago,  -- FK compuestas con id_tenant (RESTRICT)
+    tipo varchar(20),                        -- 'diferencia_comision' | 'retiro' (CHECK _tipo)
+    clave_origen varchar(30),                -- de dónde sale dentro de la conciliación: 'cuenta:{id}' (diferencia de una cuenta) o 'linea:{n}' (retiro de esa línea del archivo)
+    importe numeric(14,2),                   -- diferencia: efecto con signo sobre la cuenta de origen (negativo = Mercado Pago cobró más que el cierre); retiro: monto positivo que sale del origen (CHECK _importe <> 0, _forma)
+    id_fila_conciliacion_mercadopago NULL,   -- la fila del reporte de un retiro (FK compuesta); nula en una diferencia
+    id_cuenta_origen NULL, id_cuenta_destino NULL,  -- FK compuestas con la EMPRESA (ak_cuentas_tesoreria_id_..._id_empresa_id_tenant): la base rechaza una cuenta de otra empresa. Origen: la cuenta que se ajusta o de la que sale el retiro (la de la conexión con Mercado Pago; nula si la empresa no tiene conexión: no se puede aplicar). Destino: solo un retiro aplicado (CHECK _aplicada)
+    estado varchar(12),                      -- 'pendiente' | 'aplicada' | 'descartada' (CHECK _estado)
+    detalle jsonb NULL,                      -- solo la diferencia: totales, cobros que quedaron fuera y las 200 líneas que más pesan
+    id_movimiento_cuenta NULL,               -- la fila del libro de la cuenta de origen que escribió la aplicación (FK compuesta a movimientos_cuenta); la de destino en id_movimiento_cuenta_destino (retiro)
+    id_usuario_resolucion NULL, fecha_resolucion NULL,  -- quién y cuándo aplicó o descartó (CHECK _resolucion: pendiente = sin ninguno)
+    created_at, updated_at, deleted_at
+)
+```
+
+> Constraints: FK `fk_propuestas_tesoreria_mercadopago_tenant|_empresa|_conciliacion|_fila|_cuenta_origen|_cuenta_destino|_movimiento|_movimiento_destino|_usuario`; `movimientos_cuenta`
+> gana la clave alterna `ak_movimientos_cuenta_id_id_tenant` para la FK compuesta. RLS por tenant. Único `ux_propuestas_tesoreria_mercadopago_origen`
+> `(id_conciliacion_mercadopago, tipo, clave_origen)`: recalcular no duplica. Lo escribe solo la importación, dentro de la transacción que crea la conciliación, así que
+> ningún cliente lo alcanza y no tiene traducción a 409 (guardas-inmatables). Índices de soporte `ix_propuestas_tesoreria_mercadopago_*` de cada FK.
+>
+> **Cómo se calculan (E7).** Al importar, en la misma transacción. *Diferencia de comisión*: por cada cobro `conciliado` por ESTE archivo, comisión real (`comision_real`) menos la
+> estimada. La estimada es la que descontó el cierre del turno de la venta: el cierre no la guarda por pago, así que se rearma con el `porcentaje_aplicado` de la fila `comision`
+> de `movimientos_cuenta` de ese turno y medio (la cuenta sale de su fila `cobro`) aplicado al importe del pago, redondeado a centavos como el cierre (aproximación: el cierre redondea sobre
+> el bruto del turno y medio, esto lo hace pago por pago). Un cobro cuyo turno no acreditó el medio, o sin comisión real, no entra (se cuenta en el `detalle` y en la auditoría de la importación),
+> y un turno que se cierra después de importar no se suma. Una propuesta por cuenta con diferencia distinta de cero. *Retiro*: una por cada fila `WITHDRAWAL` o `PAYOUT` (importe en valor
+> absoluto; `WITHDRAWAL_CANCEL` no propone nada: se descarta a mano la del retiro cancelado). Nada se escribe en la tesorería hasta que el Admin aplica.
+>
+> **Endpoints.** `GET /api/mercadopago/conciliaciones/{id}/propuestas` (Supervisor y Admin); `POST …/propuestas/{idPropuesta}/aplicar` `{idCuentaDestino?}` y `POST …/descartar` (Admin).
+> Aplicar escribe con el escritor del ajuste manual (`EscriturasDeCuentaDeTesoreria.AgregarAjuste`): la diferencia es UN ajuste en la cuenta del medio; un retiro (tesorería no tiene transferencia
+> entre cuentas) es un ajuste de salida en la cuenta de Mercado Pago y uno de entrada en la cuenta elegida, en una sola transacción. Locks: guarda de conciliación de tesorería (compartida) → fila
+> de la propuesta (`FOR UPDATE`) → cuentas de la empresa (`FOR NO KEY UPDATE`, por id). 404 primero (conciliación, propuesta de esa conciliación); 400 `cuenta_destino_requerida|cuenta_destino_no_aplica|
+> cuenta_destino_invalida|cuentas_iguales`; 409 `propuesta_ya_aplicada|propuesta_descartada|propuesta_ya_descartada|propuesta_sin_cuenta_origen|cuenta_origen_no_disponible|periodo_conciliado`.
+> Auditoría `conciliacion.propuestaaplicada` y `conciliacion.propuestadescartada`.

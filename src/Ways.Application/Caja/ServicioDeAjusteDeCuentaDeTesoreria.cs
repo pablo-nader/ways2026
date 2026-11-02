@@ -59,21 +59,7 @@ public class ServicioDeAjusteDeCuentaDeTesoreria(IWaysDbContext db, IContextoDeU
             var fecha = EscriturasDeCuentaDeTesoreria.FechaMonotona(reloj.Ahora, cola.Fecha);
             await GuardaDeConciliacion.ExigirNoConciliadoAsync(db, idTenant, idEmpresa, fecha, ct);
 
-            var fila = new MovimientoCuenta
-            {
-                IdTenant = idTenant,
-                IdCuentaTesoreria = idCuenta,
-                Fecha = fecha,
-                Tipo = TipoMovimientoCuenta.Ajuste,
-                Concepto = concepto,
-                Inicio = ajuste.Inicio,
-                Ingreso = ajuste.Ingreso,
-                Egreso = ajuste.Egreso,
-                Final = ajuste.Final,
-                IdEmpleado = idEmpleado
-            };
-
-            db.MovimientosCuenta.Add(fila);
+            var fila = EscriturasDeCuentaDeTesoreria.AgregarAjuste(db, idTenant, idCuenta, ajuste, fecha, concepto, idEmpleado);
             await db.SaveChangesAsync(ct);
 
             // Todo lo que arma la respuesta se resuelve antes del commit: un fallo acá deshace el ajuste en vez de

@@ -6,6 +6,7 @@ import { ConciliacionMercadoPago } from './ConciliacionMercadoPago'
 import { Toaster } from '../toasts/Toaster'
 import { ROL } from '../api/tipos'
 import type { EmpresaListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type { CuentaTesoreriaListado } from '../api/cuentasTesoreria'
 import type {
   CandidatoDeConfirmacion,
   CobroSinVenta,
@@ -14,6 +15,7 @@ import type {
   DetalleDeConciliacion,
   FilaDeConciliacion,
   PagosSinVerificar,
+  PropuestaDeTesoreria,
 } from '../api/conciliacionMercadoPago'
 import { TAMANO_MAXIMO_DE_ARCHIVO } from '../api/conciliacionMercadoPago'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -168,11 +170,15 @@ let lista: ConciliacionListado[]
 let detalles: (ruta: string) => Promise<DetalleDeConciliacion>
 let cobrosSinVenta: CobroSinVenta[]
 let pagosSinVerificar: PagosSinVerificar
+let propuestas: PropuestaDeTesoreria[]
+let cuentas: CuentaTesoreriaListado[]
 
 function mockearRutas() {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
     if (ruta.startsWith('/mercadopago/conciliaciones?')) return Promise.resolve(lista)
+    if (ruta.endsWith('/propuestas')) return Promise.resolve(propuestas)
+    if (ruta === '/cuentas-tesoreria') return Promise.resolve(cuentas)
     if (ruta.startsWith('/mercadopago/conciliaciones/')) return detalles(ruta)
     if (ruta.startsWith('/mercadopago/cobros-sin-venta')) return Promise.resolve(cobrosSinVenta)
     if (ruta.startsWith('/mercadopago/pagos-sin-verificar')) return Promise.resolve(pagosSinVerificar)
@@ -199,6 +205,8 @@ beforeEach(() => {
   detalles = () => Promise.resolve(detalle([fila()]))
   cobrosSinVenta = []
   pagosSinVerificar = { items: [], truncado: false }
+  propuestas = []
+  cuentas = []
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   apiPostFormularioMock.mockReset()
@@ -570,6 +578,8 @@ describe('ConciliacionMercadoPago — cambio de empresa y de pestaña', () => {
       if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
       if (ruta === '/mercadopago/conciliaciones?idEmpresa=1') return Promise.resolve([conciliacion()])
       if (ruta === '/mercadopago/conciliaciones?idEmpresa=2') return Promise.resolve([conciliacion({ id: 4, idEmpresa: 2, nombreArchivo: 'de-otra-sa.csv' })])
+      if (ruta.endsWith('/propuestas')) return Promise.resolve([])
+      if (ruta === '/cuentas-tesoreria') return Promise.resolve([])
       if (ruta.startsWith('/mercadopago/conciliaciones/3')) return Promise.resolve(detalle([fila()]))
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
@@ -610,5 +620,234 @@ describe('ConciliacionMercadoPago — cambio de empresa y de pestaña', () => {
     await irAPestana('Para revisar')
 
     expect(await screen.findByText('Las fechas se interpretan en la zona horaria de la empresa.')).toBeInTheDocument()
+  })
+})
+
+function propuesta(sobrescribir: Partial<PropuestaDeTesoreria> = {}): PropuestaDeTesoreria {
+  return {
+    id: 11,
+    tipo: 'diferencia_comision',
+    estado: 'pendiente',
+    importe: -1.5,
+    idCuentaOrigen: 70,
+    nombreCuentaOrigen: 'Mercado Pago',
+    idCuentaDestino: null,
+    nombreCuentaDestino: null,
+    numeroLinea: null,
+    sourceId: null,
+    fechaTransaccion: null,
+    detalle: {
+      cantidadDeCobros: 4,
+      comisionRealTotal: 26,
+      comisionEstimadaTotal: 24.5,
+      cobrosSinCierre: 2,
+      cobrosSinComisionReal: 1,
+      lineas: [],
+      lineasTruncado: false,
+    },
+    idMovimientoCuenta: null,
+    idMovimientoCuentaDestino: null,
+    resueltaEl: null,
+    resueltaPor: null,
+    ...sobrescribir,
+  }
+}
+
+function retiro(sobrescribir: Partial<PropuestaDeTesoreria> = {}): PropuestaDeTesoreria {
+  return propuesta({
+    id: 12,
+    tipo: 'retiro',
+    importe: 500,
+    detalle: null,
+    numeroLinea: 9,
+    sourceId: 'WD-1',
+    fechaTransaccion: '2026-10-30T15:00:00Z',
+    ...sobrescribir,
+  })
+}
+
+function cuenta(sobrescribir: Partial<CuentaTesoreriaListado>): CuentaTesoreriaListado {
+  return {
+    id: 1,
+    idEmpresa: 1,
+    nombreEmpresa: 'Empresa Demo',
+    nombre: 'Cuenta',
+    saldoInicial: 0,
+    saldoActual: 0,
+    activo: true,
+    saldoInicialEditable: true,
+    ...sobrescribir,
+  }
+}
+
+async function abrirDetalle() {
+  const usuario = userEvent.setup()
+  await irAPestana('Conciliaciones')
+  await usuario.click(await screen.findByRole('button', { name: /Ver reporte-octubre/ }))
+  return { usuario, seccion: await screen.findByRole('region', { name: 'Movimientos a tesorería' }) }
+}
+
+describe('ConciliacionMercadoPago — movimientos a tesorería', () => {
+  beforeEach(() => {
+    cuentas = [
+      cuenta({ id: 70, nombre: 'Mercado Pago' }),
+      cuenta({ id: 71, nombre: 'Banco Nación' }),
+      cuenta({ id: 72, nombre: 'Banco inactivo', activo: false }),
+      cuenta({ id: 73, nombre: 'Banco de otra empresa', idEmpresa: 2 }),
+    ]
+  })
+
+  it('lista la diferencia de comisión y el retiro con su efecto, el cálculo y lo que quedó fuera', async () => {
+    propuestas = [propuesta(), retiro()]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Debita \$\s?1,50 de Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/4 cobro\(s\): comisión real/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/2 cobro\(s\) de turnos que todavía no acreditaron el medio/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/1 cobro\(s\) vinieron sin comisión en el reporte/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/Pasa \$\s?500,00 de Mercado Pago a la cuenta que elijas/)).toBeInTheDocument()
+    expect(within(seccion).getByText(/Línea 9 · WD-1/)).toBeInTheDocument()
+  })
+
+  it('aplica la diferencia tras confirmarla: manda destino nulo, avisa y vuelve a leer', async () => {
+    propuestas = [propuesta()]
+    apiPostMock.mockResolvedValue(propuesta({ estado: 'aplicada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Aplicar diferencia de comisión' }))
+    const dialogo = await screen.findByRole('alertdialog')
+    expect(apiPostMock).not.toHaveBeenCalled()
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/11/aplicar', { idCuentaDestino: null })
+    expect(await screen.findByText('Movimiento aplicado en la tesorería.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('un retiro no se aplica sin cuenta y ofrece solo cuentas activas de la empresa distintas del origen', async () => {
+    propuestas = [retiro()]
+    apiPostMock.mockResolvedValue(retiro({ estado: 'aplicada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    const selector = await within(seccion).findByLabelText('Cuenta de destino del retiro de la línea 9')
+    const boton = within(seccion).getByRole('button', { name: 'Aplicar retiro de la línea 9' })
+    expect(boton).toBeDisabled()
+    await within(selector).findByRole('option', { name: 'Banco Nación' })
+    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Elegir…', 'Banco Nación'])
+
+    await usuario.selectOptions(selector, '71')
+    expect(boton).toBeEnabled()
+    await usuario.click(boton)
+    const dialogo = await screen.findByRole('alertdialog')
+    expect(within(dialogo).getByText(/Pasa \$\s?500,00 de Mercado Pago a Banco Nación/)).toBeInTheDocument()
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/aplicar', { idCuentaDestino: 71 }))
+  })
+
+  it('un retiro sin cuenta de origen avisa y no se puede aplicar, pero sí descartar', async () => {
+    propuestas = [retiro({ idCuentaOrigen: null, nombreCuentaOrigen: null })]
+    apiPostMock.mockResolvedValue(retiro({ estado: 'descartada' }))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/no tiene conexión con Mercado Pago/)).toBeInTheDocument()
+    expect(within(seccion).getByRole('button', { name: 'Aplicar retiro de la línea 9' })).toBeDisabled()
+
+    await usuario.click(within(seccion).getByRole('button', { name: 'Descartar retiro de la línea 9' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Descartar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/mercadopago/conciliaciones/3/propuestas/12/descartar', {}))
+    expect(await screen.findByText('Propuesta descartada.')).toBeInTheDocument()
+  })
+
+  it('una propuesta ya resuelta no ofrece botones y dice cuándo y quién', async () => {
+    propuestas = [propuesta({ estado: 'aplicada', resueltaEl: '2026-11-01T12:00:00Z', resueltaPor: 'admin', idMovimientoCuenta: 5 })]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Aplicada el .* por admin/)).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Aplicar|Descartar/ })).toBeNull()
+  })
+
+  it.each([
+    ['propuesta_ya_aplicada', 'La propuesta ya se aplicó.'],
+    ['periodo_conciliado', 'período de tesorería ya conciliado'],
+    ['cuenta_destino_invalida', 'cuenta activa de la misma empresa'],
+  ])('un 409 %s deja el diálogo abierto con su copia y vuelve a leer', async (codigo, copia) => {
+    propuestas = [propuesta()]
+    apiPostMock.mockRejectedValue(new ErrorApi(409, codigo, 'x'))
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Aplicar diferencia de comisión' }))
+    const dialogo = await screen.findByRole('alertdialog')
+    const lecturasAntes = llamadasA('/mercadopago/conciliaciones/3/propuestas').length
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Aplicar' }))
+
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(copia)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasA('/mercadopago/conciliaciones/3/propuestas').length).toBeGreaterThan(lecturasAntes))
+  })
+
+  it('dos clics seguidos en Aplicar escriben una sola vez y toda la pantalla queda inerte mientras tanto', async () => {
+    propuestas = [propuesta()]
+    const escritura = diferido<PropuestaDeTesoreria>()
+    apiPostMock.mockReturnValue(escritura.promesa)
+    renderPagina()
+    const { usuario, seccion } = await abrirDetalle()
+    await usuario.click(await within(seccion).findByRole('button', { name: 'Aplicar diferencia de comisión' }))
+    const dialogo = await screen.findByRole('alertdialog')
+
+    const boton = within(dialogo).getByRole('button', { name: 'Aplicar' })
+    act(() => {
+      fireEvent.click(boton)
+      fireEvent.click(boton)
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(await within(dialogo).findByRole('button', { name: 'Aplicando…' })).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByLabelText('Empresa')).toBeDisabled()
+    expect(within(seccion).getByRole('button', { name: 'Descartar diferencia de comisión' })).toBeDisabled()
+
+    await act(async () => escritura.resolver(propuesta({ estado: 'aplicada' })))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+  })
+
+  it('el Supervisor ve las propuestas pero ni los botones ni las cuentas: no las pide', async () => {
+    usuarioActual = usuarioFixture(ROL.Supervisor)
+    propuestas = [propuesta(), retiro()]
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByText(/Debita/)).toBeInTheDocument()
+    expect(within(seccion).queryByRole('button', { name: /Aplicar|Descartar/ })).toBeNull()
+    expect(within(seccion).queryByLabelText(/Cuenta de destino/)).toBeNull()
+    expect(llamadasA('/cuentas-tesoreria')).toHaveLength(0)
+  })
+
+  it('una lectura que falla muestra el error con Reintentar', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.endsWith('/propuestas')) return Promise.reject(new ErrorApi(500, 'x', 'caído'))
+      if (ruta === '/cuentas-tesoreria') return Promise.resolve(cuentas)
+      if (ruta === '/puntos-venta') return Promise.resolve(puntosVentaDe(empresas))
+      if (ruta.startsWith('/mercadopago/conciliaciones?')) return Promise.resolve(lista)
+      return detalles(ruta)
+    })
+    renderPagina()
+
+    const { seccion } = await abrirDetalle()
+
+    expect(await within(seccion).findByRole('alert')).toBeInTheDocument()
+    expect(within(seccion).getByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
   })
 })

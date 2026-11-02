@@ -193,6 +193,9 @@ public interface IWaysDbContext
 
     DbSet<FilaConciliacionMercadoPago> FilasConciliacionMercadoPago { get; }
 
+    // Movimientos de tesorería que una conciliación propone (diferencia de comisión y retiros) y el Admin aplica o descarta (E7).
+    DbSet<PropuestaDeTesoreriaMercadoPago> PropuestasTesoreriaMercadoPago { get; }
+
     // Decisión de facturar una venta (facturación por medio de pago). El acumulado por medio y mes NO se
     // expone: su único escritor es un upsert crudo, como numeraciones_fiscales.
     DbSet<FacturacionDeVenta> FacturacionesDeVenta { get; }
