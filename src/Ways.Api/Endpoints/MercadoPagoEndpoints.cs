@@ -177,6 +177,23 @@ public static class MercadoPagoEndpoints
             "Dispositivo: cancela un cobro pendiente. Si Mercado Pago ya no puede cancelarlo (409) lee la orden y devuelve su estado real, " +
             "que puede ser aprobado. 404 si el cobro no existe o es de otro punto de venta, 409 cobro_mercadopago_ya_aprobado si ya estaba aprobado.");
 
+        cobros.MapPost("/{idCobro:int}/apartar", async (ServicioDeCobrosMercadoPago servicio, int idCobro, CancellationToken ct) =>
+            Results.Ok(await servicio.ApartarAsync(idCobro, ct)))
+        .WithSummary(
+            "Dispositivo: aparta un cobro cuya venta no se va a cerrar. Aprobado sin venta pasa a sin_venta y libera el número; pendiente " +
+            "se cancela en Mercado Pago (o termina sin_venta si ya se pagó); ya sin_venta es idempotente. 404 si el cobro no existe o es de " +
+            "otro punto de venta, 409 cobro_mercadopago_ya_usado si una venta ya lo usó, 409 cobro_mercadopago_pagado_sin_datos|" +
+            "cobro_mercadopago_en_curso si todavía no se puede resolver.");
+
+        app.MapGroup("/api/mercadopago/cobros-sin-venta")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.LecturaDeReportes)
+            .MapGet("/", (ServicioDeCobrosMercadoPago servicio, int idEmpresa, CancellationToken ct) =>
+                servicio.ListarSinVentaAsync(idEmpresa, ct))
+            .WithSummary(
+                "Supervisor y Admin: los cobros de Mercado Pago apartados (sin_venta) de una empresa, del más reciente al más antiguo; el " +
+                "dinero entró y ninguna venta lo usó. idEmpresa es obligatorio. 404 si la empresa no existe en el tenant.");
+
         app.MapGet(RutaDelCallback, (
             ServicioDeConexionMercadoPago servicio,
             string? code,

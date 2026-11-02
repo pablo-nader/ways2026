@@ -623,6 +623,40 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(0, await CantidadDeVentasAsync(e));
     }
 
+    // Clausula (estado): un cobro apartado (sin_venta) no paga ninguna venta: solo el aprobado la paga.
+    [Fact]
+    public async Task UnCobroApartadoSinVentaEs409NoAprobadoYNoLigaNada()
+    {
+        var e = await PrepararAsync("mp-venta-sin-venta");
+        var cobro = await CobroAprobadoAsync(e, e.Desde);
+        var apartado = await LeerAsync<CobroDeMercadoPago>(await e.Cajero.PostAsync($"{Ruta}/{cobro.IdCobro}/apartar", null));
+        Assert.Equal("sin_venta", apartado.Estado);
+
+        var respuesta = await VenderAsync(e, Venta(e, e.Desde, PagoMp(e, cobro.IdCobro)));
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, "cobro_mercadopago_no_aprobado");
+        Assert.Null(await VentaLigadaAsync(cobro.IdCobro));
+        Assert.Equal(0, await CantidadDeVentasAsync(e));
+    }
+
+    // Clausula (apartar): un cobro que una venta ya uso no se aparta (409 ya_usado) y queda ligado.
+    [Fact]
+    public async Task ApartarUnCobroQueUnaVentaYaUsoEs409YaUsado()
+    {
+        var e = await PrepararAsync("mp-venta-apartar-usado");
+        var cobro = await CobroAprobadoAsync(e, e.Desde);
+        var emitido = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoMp(e, cobro.IdCobro))), HttpStatusCode.Created);
+
+        var respuesta = await e.Cajero.PostAsync($"{Ruta}/{cobro.IdCobro}/apartar", null);
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, "cobro_mercadopago_ya_usado");
+        Assert.Equal(emitido.Id, await VentaLigadaAsync(cobro.IdCobro));
+        var fila = (await ConsultarAsync("SELECT estado, fecha_apartado FROM cobros_mercadopago WHERE id_cobro_mercadopago = $1", cobro.IdCobro)).Single();
+        Assert.Equal("aprobado", fila["estado"]);
+        Assert.Null(fila["fecha_apartado"]);
+    }
+
     // Clausula (importe): el pago por mas o por menos de lo que cobro Mercado Pago no sirve, aunque el total de la venta cierre con efectivo.
     [Theory]
     [InlineData(99.99)]

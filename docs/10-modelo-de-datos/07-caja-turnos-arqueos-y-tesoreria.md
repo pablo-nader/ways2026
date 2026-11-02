@@ -567,7 +567,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
     external_pos_id varchar(40),             -- external_id de la caja con el que se pidió la orden; un reintento reenvía la misma orden aunque la caja cambie
     clave_idempotencia varchar(64),          -- X-Idempotency-Key de POST /v1/orders: 'ways-cobro-' + huella SHA-256 del cuerpo completo de la orden
     id_orden_mercadopago varchar(64) NULL,   -- id de la orden (ORD…); nulo solo en 'creando' o 'expirado' sin orden (CHECK ck_cobros_mercadopago_orden)
-    estado varchar(20),                      -- 'creando' | 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto'
+    estado varchar(20),                      -- 'creando' | 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto' | 'sin_venta' (apartado, E3-T3b)
     id_pago_mercadopago varchar(64) NULL,    -- id del pago dentro de la orden; obligatorio si el cobro está aprobado (CHECK ck_cobros_mercadopago_aprobado_con_pago)
     referencia_pago_mercadopago bigint NULL, -- reference_id numérico del pago (para /v1/payments y los informes)
     importe_pagado numeric(18,2) NULL,       -- lo que Mercado Pago dice que se pagó; puede diferir de importe
@@ -575,6 +575,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
     expira_en,                               -- reserva de la fila + 10 minutos (expiration_time PT10M)
     fecha_ultima_consulta NULL,              -- última lectura de la orden; limita el refresco a una cada 2 segundos por cobro
     fecha_aprobacion NULL,
+    fecha_apartado NULL,                     -- cuándo el dispositivo apartó el cobro aprobado (estado sin_venta); nulo en cualquier otro estado
     fecha_procesada_mercadopago NULL,        -- la primera vez que Mercado Pago informó la orden processed sin un pago legible (importe o id); no se borra
     id_comprobante_venta NULL,               -- la venta que este cobro aprobado pagó (E3-T2); FK compuesta (id_comprobante_venta, id_tenant)
     created_at, updated_at, deleted_at
@@ -583,7 +584,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
 
 > Constraints: FK `fk_cobros_mercadopago_tenant` (simple), `_empresa` (`(id_empresa, id_tenant)`), `_punto_venta`, `_dispositivo` y `_medio_pago`
 > (todas compuestas con `id_tenant`, RESTRICT, sobre claves alternas existentes). CHECK de respaldo `ck_cobros_mercadopago_tipo`, `_estado`,
-> `_importe` (> 0), `_importe_pagado` (nulo o >= 0), `_intento` (>= 1), `_numero` (> 0), `_aprobacion` (un cobro aprobado tiene `fecha_aprobacion`), `_aprobado_con_pago` (un cobro aprobado tiene `id_pago_mercadopago`; 23514 -> 409 `cobro_mercadopago_sin_pago`) y `_orden` (solo un cobro `creando`, o `expirado` por abandono sin orden confirmada, puede no tener `id_orden_mercadopago`).
+> `_importe` (> 0), `_importe_pagado` (nulo o >= 0), `_intento` (>= 1), `_numero` (> 0), `_aprobacion` (un cobro aprobado tiene `fecha_aprobacion`), `_aprobado_con_pago` (un cobro aprobado tiene `id_pago_mercadopago`; 23514 -> 409 `cobro_mercadopago_sin_pago`), `_sin_venta` (un cobro `sin_venta` tiene `fecha_apartado` e `id_pago_mercadopago` y ninguna venta; 23514 -> 409 `cobro_mercadopago_ya_usado`) y `_orden` (solo un cobro `creando`, o `expirado` por abandono sin orden confirmada, puede no tener `id_orden_mercadopago`).
 > Único parcial `ux_cobros_mercadopago_vivo_numero` `(id_punto_venta, numero_preasignado) WHERE estado IN ('creando', 'pendiente', 'aprobado')`: a lo sumo
 > un cobro vivo por número de venta; y único `ux_cobros_mercadopago_intento` `(id_punto_venta, numero_preasignado, intento)`. Ambos 23505 se
 > traducen a 409 `cobro_mercadopago_en_curso` en `ManejadorDeErrores` (el servicio serializa las creaciones con un lock por punto de venta, así que
@@ -610,5 +611,7 @@ cobros_mercadopago (          -- [operativa por empresa: id_tenant + id_empresa 
 > 2 segundos, bajo un lock por cobro: `processed` → `aprobado` solo si trae un pago con importe pagado válido (`paid_amount` o `amount`, > 0 y hasta 2 decimales) e id no vacío de hasta 64 caracteres, recortado (se guarda el pago, el `reference_id` y el importe pagado, y si difiere de `importe`, `importeDistinto`); sin pago legible el cobro sigue `pendiente`, queda marcado con `fecha_procesada_mercadopago` y se avisa en el log. `canceled` → `cancelado`,
 > `expired` → `expirado`, `refunded` → `devuelto` (solo se observa mientras el cobro está pendiente; la devolución de un cobro ya aprobado es de la conciliación, E6); cualquier otro estado lo deja pendiente. Un 404 de la orden de un pendiente cuyo plazo pasó lo deja `expirado`; antes del plazo sigue siendo 502. Cancelar: un pendiente llama a `POST /v1/orders/{id}/cancel`; si Mercado Pago contesta
 > 409 se lee la orden y se devuelve su estado real (puede ser `aprobado`); un cobro aprobado es 409 `cobro_mercadopago_ya_aprobado`. Verificado contra la referencia (2026-11-01), no en vivo.
+>
+> **Apartar (E3-T3b).** `POST /api/pos/mercadopago/cobros/{id}/apartar` (dispositivo, mismo alcance y locks que cancelar, más `FOR UPDATE` de la fila antes de leerla): un cobro `aprobado` sin venta pasa a `sin_venta` con `fecha_apartado`; `sin_venta` no es vivo (sale del único parcial `ux_cobros_mercadopago_vivo_numero`, así que el número admite otro cobro y el medio deja de estar guardado), no paga ninguna venta (solo `aprobado` la paga) y es final. Un `creando` o `pendiente` se resuelve antes (reenvío o refresco): si todavía se puede pagar se cancela en Mercado Pago y termina `cancelado`; si ya se pagó termina `sin_venta`. Una venta que ya lo usó es 409 `cobro_mercadopago_ya_usado`; un `sin_venta` (o cancelado, vencido, devuelto) se devuelve tal cual. `GET /api/mercadopago/cobros-sin-venta?idEmpresa=` (Supervisor y Admin) los lista para la conciliación (E6).
 >
 > **Guarda del medio.** Cambiar el `proveedor` de un medio (a nulo o a otro), sacarlo de `Electronico` o desactivarlo es 409 `medio_con_cobros_mercadopago_vivos` mientras tenga cobros `creando` o `pendiente` (los aprobados quedan como historia). La edición toma `FOR UPDATE` del medio y la reserva de un cobro `FOR KEY SHARE`, así que no se cruzan.

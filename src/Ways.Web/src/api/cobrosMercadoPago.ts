@@ -5,7 +5,7 @@
  */
 import { api, ErrorApi, ErrorDeRed } from './cliente'
 
-export type EstadoDeCobroMercadoPago = 'creando' | 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto'
+export type EstadoDeCobroMercadoPago = 'creando' | 'pendiente' | 'aprobado' | 'cancelado' | 'expirado' | 'devuelto' | 'sin_venta'
 
 /** Espejo de `CobroDeMercadoPago`. `qrData` solo viaja mientras el cobro está pendiente y hay un QR para mostrar. */
 export type CobroMercadoPago = {
@@ -30,6 +30,8 @@ export const clienteDeCobrosMercadoPago = {
   crear: (solicitud: SolicitudDeCobroMercadoPago) => api.post<CobroMercadoPago>(`${RUTA}/`, solicitud),
   consultar: (idCobro: number) => api.get<CobroMercadoPago>(`${RUTA}/${idCobro}`),
   cancelar: (idCobro: number) => api.post<CobroMercadoPago>(`${RUTA}/${idCobro}/cancelar`),
+  /** Aparta un cobro aprobado sin venta: el servidor lo pasa a `sin_venta`, libera el número y lo deja para la conciliación. Idempotente. */
+  apartar: (idCobro: number) => api.post<CobroMercadoPago>(`${RUTA}/${idCobro}/apartar`),
 }
 
 const MENSAJE_POR_CODIGO: Record<string, string> = {
@@ -38,6 +40,7 @@ const MENSAJE_POR_CODIGO: Record<string, string> = {
   mercadopago_requiere_reconexion: 'La conexión con Mercado Pago venció. Pedile a un administrador que la vuelva a conectar.',
   cobro_mercadopago_en_curso: 'Ya hay un cobro de Mercado Pago en curso para esta venta. Esperá a que se resuelva o cobrá con otro medio.',
   cobro_mercadopago_ya_aprobado: 'Mercado Pago ya aprobó un cobro para esta venta.',
+  cobro_mercadopago_ya_usado: 'Una venta ya usó este cobro de Mercado Pago.',
   cobro_mercadopago_pagado_sin_datos:
     'Mercado Pago informa el pago, falta confirmarlo. No se puede cancelar: esperá la confirmación.',
   cobro_mercadopago_medio_invalido: 'Este medio de pago no está habilitado para cobrar con QR de Mercado Pago.',

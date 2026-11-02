@@ -63,6 +63,10 @@ namespace Ways.Application.MercadoPago;
 /// <c>cobro_mercadopago_pagado_sin_datos</c> sin llamar a Mercado Pago. Consultar sigue refrescando (con el límite de siempre) y un
 /// pago legible posterior lo aprueba.
 ///
+/// <b>Apartar.</b> El dispositivo aparta un cobro cuya venta no se va a cerrar (<see cref="ApartarAsync"/>): un cobro aprobado sin venta
+/// pasa a <c>sin_venta</c>, que no es vivo (libera el número y el medio), no paga ninguna venta y queda listado para la conciliación
+/// (<see cref="ListarSinVentaAsync"/>).
+///
 /// Los campos de la orden (<c>id</c>, <c>status</c>, <c>type_response.qr_data</c>, <c>transactions.payments[]</c>) están verificados
 /// contra la referencia de la API (2026-11-01) pero no se ejercitaron en vivo; los DTO ignoran lo que no usan.
 /// </summary>
@@ -321,38 +325,111 @@ public class ServicioDeCobrosMercadoPago(
                 return Mapear(cobro);
             }
 
-            if (cobro.FechaProcesadaMercadoPago is not null)
-            {
-                throw ErrorDominio.Conflicto(
-                    CodigosDeErrorDeCobrosMercadoPago.PagadoSinDatos,
-                    "Mercado Pago informa que el cliente ya pagó este cobro, pero todavía falta confirmar el pago: no se puede cancelar. " +
-                    "Esperá la confirmación o usá la aprobación manual.");
-            }
-
-            try
-            {
-                var cancelada = await api.EnviarAsync<OrdenDeMercadoPago>(
-                    cobro.IdEmpresa, HttpMethod.Post, $"/v1/orders/{Uri.EscapeDataString(cobro.IdOrdenMercadoPago!)}/cancel",
-                    claveIdempotencia: $"ways-cobro-{cobro.Id}-cancelar", ct: ct);
-
-                var ahora = reloj.Ahora;
-                AplicarOrden(cobro, cancelada, ahora);
-                if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente && cancelada.Status != "processed")
-                {
-                    cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
-                }
-
-                cobro.UpdatedAt = ahora;
-                await db.SaveChangesAsync(ct);
-            }
-            catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 409)
-            {
-                // Mercado Pago solo cancela una orden en estado created: si contesta 409 pudo pagarse (o vencer) mientras tanto.
-                await RefrescarAsync(cobro, respetarIntervalo: false, ct);
-            }
+            await CancelarPendienteAsync(cobro, ct);
 
             return Mapear(cobro);
         }, ct);
+    }
+
+    /// <summary>
+    /// El dispositivo aparta un cobro que su venta no va a usar. Un cobro <c>aprobado</c> sin venta pasa a <c>sin_venta</c> (con
+    /// <c>fecha_apartado</c>): el dinero entró, el número y el medio quedan libres y la conciliación lo resuelve. Un cobro
+    /// <c>creando</c> o <c>pendiente</c> se resuelve primero (se reenvía o se refresca): si todavía se puede pagar se cancela en
+    /// Mercado Pago y termina <c>cancelado</c>, y si ya se pagó termina <c>sin_venta</c>. Un cobro que una venta ya usó es 409
+    /// <c>cobro_mercadopago_ya_usado</c>; uno ya <c>sin_venta</c>, cancelado, vencido o devuelto se devuelve tal cual (idempotente).
+    /// Si Mercado Pago informa el pago sin datos legibles es 409 <c>cobro_mercadopago_pagado_sin_datos</c> (como al cancelar). La fila
+    /// se toma con <c>FOR UPDATE</c> antes de leerla, el mismo lock con que la venta liga el cobro: o la venta confirma antes y se ve
+    /// acá, o el apartado confirma antes y la venta ya no encuentra el cobro aprobado.
+    /// </summary>
+    public async Task<CobroDeMercadoPago> ApartarAsync(int idCobro, CancellationToken ct = default)
+    {
+        var (_, idPuntoVenta, _) = await ResolverDispositivoAsync(ct);
+
+        return await SobreCobroAsync(idCobro, idPuntoVenta, async cobro =>
+        {
+            if (cobro.IdComprobanteVenta is not null)
+            {
+                throw ErrorDominio.Conflicto(
+                    CodigosDePagoConMercadoPago.YaUsado, "El cobro de Mercado Pago ya pagó una venta: no se puede apartar.");
+            }
+
+            if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente)
+            {
+                await RefrescarAsync(cobro, respetarIntervalo: false, ct);
+            }
+
+            if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente)
+            {
+                await CancelarPendienteAsync(cobro, ct);
+            }
+
+            if (cobro.Estado == EstadosDeCobroMercadoPago.Aprobado)
+            {
+                var ahora = reloj.Ahora;
+                cobro.Estado = EstadosDeCobroMercadoPago.SinVenta;
+                cobro.FechaApartado = ahora;
+                cobro.UpdatedAt = ahora;
+                await db.SaveChangesAsync(ct);
+            }
+
+            return Mapear(cobro);
+        }, ct, bloquearFila: true);
+    }
+
+    /// <summary>Los cobros apartados (<c>sin_venta</c>) de una empresa, del más reciente al más antiguo, para que la conciliación los resuelva.</summary>
+    public async Task<IReadOnlyList<CobroSinVentaListado>> ListarSinVentaAsync(int idEmpresa, CancellationToken ct = default)
+    {
+        if (!await db.Empresas.AnyAsync(e => e.Id == idEmpresa, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la empresa {idEmpresa}.");
+        }
+
+        return await db.CobrosMercadoPago
+            .AsNoTracking()
+            .Where(c => c.IdEmpresa == idEmpresa && c.Estado == EstadosDeCobroMercadoPago.SinVenta)
+            .OrderByDescending(c => c.FechaApartado)
+            .ThenByDescending(c => c.Id)
+            .Select(c => new CobroSinVentaListado(
+                c.Id, c.IdPuntoVenta, c.IdMedioPago, c.NumeroPreasignado, c.Importe, c.ImportePagado, c.IdPagoMercadoPago,
+                c.IdOrdenMercadoPago, c.FechaAprobacion, c.FechaApartado))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Cancela en Mercado Pago un cobro pendiente y aplica la respuesta; un 409 lee la orden, que pudo pagarse. Un pago ya informado
+    /// sin datos legibles no se cancela (409). Quien la llama tiene el lock del cobro.
+    /// </summary>
+    private async Task CancelarPendienteAsync(CobroMercadoPago cobro, CancellationToken ct)
+    {
+        if (cobro.FechaProcesadaMercadoPago is not null)
+        {
+            throw ErrorDominio.Conflicto(
+                CodigosDeErrorDeCobrosMercadoPago.PagadoSinDatos,
+                "Mercado Pago informa que el cliente ya pagó este cobro, pero todavía falta confirmar el pago: no se puede cancelar. " +
+                "Esperá la confirmación o usá la aprobación manual.");
+        }
+
+        try
+        {
+            var cancelada = await api.EnviarAsync<OrdenDeMercadoPago>(
+                cobro.IdEmpresa, HttpMethod.Post, $"/v1/orders/{Uri.EscapeDataString(cobro.IdOrdenMercadoPago!)}/cancel",
+                claveIdempotencia: $"ways-cobro-{cobro.Id}-cancelar", ct: ct);
+
+            var ahora = reloj.Ahora;
+            AplicarOrden(cobro, cancelada, ahora);
+            if (cobro.Estado == EstadosDeCobroMercadoPago.Pendiente && cancelada.Status != "processed")
+            {
+                cobro.Estado = EstadosDeCobroMercadoPago.Cancelado;
+            }
+
+            cobro.UpdatedAt = ahora;
+            await db.SaveChangesAsync(ct);
+        }
+        catch (ErrorDeApiMercadoPago error) when (error.EstadoMercadoPago == 409)
+        {
+            // Mercado Pago solo cancela una orden en estado created: si contesta 409 pudo pagarse (o vencer) mientras tanto.
+            await RefrescarAsync(cobro, respetarIntervalo: false, ct);
+        }
     }
 
     /// <summary>
@@ -361,7 +438,8 @@ public class ServicioDeCobrosMercadoPago(
     /// (el mismo orden que crear).
     /// </summary>
     private async Task<CobroDeMercadoPago> SobreCobroAsync(
-        int idCobro, int idPuntoVenta, Func<CobroMercadoPago, Task<CobroDeMercadoPago>> operacion, CancellationToken ct)
+        int idCobro, int idPuntoVenta, Func<CobroMercadoPago, Task<CobroDeMercadoPago>> operacion, CancellationToken ct,
+        bool bloquearFila = false)
     {
         var previo = await db.CobrosMercadoPago
             .AsNoTracking()
@@ -379,6 +457,11 @@ public class ServicioDeCobrosMercadoPago(
             {
                 await ServicioDeCajasMercadoPago.TomarLockAsync(db, idCobro, ClaveDeLockDeCobro, ct);
                 db.ChangeTracker.Clear();
+                if (bloquearFila)
+                {
+                    await BloquearFilaAsync(idCobro, ct);
+                }
+
                 var cobro = await LeerCobroAsync(idCobro, idPuntoVenta, ct);
                 if (cobro.Estado == EstadosDeCobroMercadoPago.Creando)
                 {
@@ -392,9 +475,19 @@ public class ServicioDeCobrosMercadoPago(
         return await EnLockAsync(idCobro, ClaveDeLockDeCobro, async () =>
         {
             db.ChangeTracker.Clear();
+            if (bloquearFila)
+            {
+                await BloquearFilaAsync(idCobro, ct);
+            }
+
             return await operacion(await LeerCobroAsync(idCobro, idPuntoVenta, ct));
         }, ct);
     }
+
+    /// <summary><c>FOR UPDATE</c> de la fila del cobro, antes de leerla: es el lock con que la venta liga el cobro aprobado.</summary>
+    private async Task BloquearFilaAsync(int idCobro, CancellationToken ct) =>
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM cobros_mercadopago WHERE id_cobro_mercadopago = {idCobro} FOR UPDATE", ct);
 
     /// <summary>Lee la orden de Mercado Pago y aplica su estado al cobro pendiente. Con <paramref name="respetarIntervalo"/> no hace
     /// nada si la última consulta es de hace menos de <see cref="IntervaloMinimoDeConsulta"/>. Quien la llama tiene el lock del cobro.
@@ -560,7 +653,10 @@ public class ServicioDeCobrosMercadoPago(
         await db.CobrosMercadoPago.FirstOrDefaultAsync(c => c.Id == idCobro && c.IdPuntoVenta == idPuntoVenta, ct)
         ?? throw CobroInexistente(idCobro);
 
-    private static ErrorDominio CobroInexistente(int idCobro) => ErrorDominio.NoEncontrado($"No existe el cobro {idCobro}.");
+    /// <summary>404 con código propio: el POS lo distingue de un 404 de ruteo (un servidor sin el endpoint, un proxy) antes de dar
+    /// por resuelto un cobro apartado.</summary>
+    private static ErrorDominio CobroInexistente(int idCobro) =>
+        new("cobro_mercadopago_inexistente", $"No existe el cobro {idCobro}.", 404);
 
     private async Task<T> EnLockAsync<T>(int primeraClave, int segundaClave, Func<Task<T>> operacion, CancellationToken ct)
     {

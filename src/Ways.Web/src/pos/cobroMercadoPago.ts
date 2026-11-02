@@ -46,7 +46,7 @@ export type VistaDelCobro =
   | { tipo: 'informado_sin_datos' }
   | { tipo: 'aprobado' }
   | { tipo: 'importe_distinto'; importe: number; importePagado: number }
-  | { tipo: 'sin_aprobar'; estado: Extract<EstadoDeCobroMercadoPago, 'cancelado' | 'expirado' | 'devuelto'> }
+  | { tipo: 'sin_aprobar'; estado: Extract<EstadoDeCobroMercadoPago, 'cancelado' | 'expirado' | 'devuelto' | 'sin_venta'> }
   | { tipo: 'esperando' }
 
 /**
@@ -63,6 +63,7 @@ export function vistaDelCobro(cobro: CobroMercadoPago): VistaDelCobro {
     case 'cancelado':
     case 'expirado':
     case 'devuelto':
+    case 'sin_venta':
       return { tipo: 'sin_aprobar', estado: cobro.estado }
     case 'pendiente':
       if (cobro.pagoInformadoSinDatos) return { tipo: 'informado_sin_datos' }
@@ -86,10 +87,11 @@ export function formatearCuentaRegresiva(segundos: number): string {
   return `${String(minutos).padStart(2, '0')}:${String(resto).padStart(2, '0')}`
 }
 
-export const TEXTO_POR_CIERRE_SIN_APROBAR: Record<'cancelado' | 'expirado' | 'devuelto', string> = {
+export const TEXTO_POR_CIERRE_SIN_APROBAR: Record<'cancelado' | 'expirado' | 'devuelto' | 'sin_venta', string> = {
   cancelado: 'El cobro con Mercado Pago se canceló. Podés intentarlo de nuevo o cobrar con otro medio.',
   expirado: 'El cobro con Mercado Pago venció sin pagarse. Podés intentarlo de nuevo o cobrar con otro medio.',
   devuelto: 'Mercado Pago devolvió el cobro. Podés intentarlo de nuevo o cobrar con otro medio.',
+  sin_venta: 'El cobro se apartó sin venta y un supervisor lo resuelve desde la conciliación. Podés intentarlo de nuevo o cobrar con otro medio.',
 }
 
 /** Qué hacer con un cobro aprobado por un importe distinto del pedido: nunca se cierra solo, pero tampoco queda sin salida. */

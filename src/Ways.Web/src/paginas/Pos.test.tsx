@@ -11544,12 +11544,14 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
     crear: vi.fn<(cuerpo: unknown) => Promise<CobroMercadoPago>>(),
     leer: vi.fn<() => Promise<CobroMercadoPago>>(),
     cancelar: vi.fn<() => Promise<CobroMercadoPago>>(),
+    apartar: vi.fn<() => Promise<CobroMercadoPago>>(),
   }
 
   beforeEach(() => {
     servidor.crear.mockReset().mockResolvedValue(cobroDeServidor())
     servidor.leer.mockReset().mockResolvedValue(cobroDeServidor())
     servidor.cancelar.mockReset().mockResolvedValue(cobroDeServidor({ estado: 'cancelado', qrData: null }))
+    servidor.apartar.mockReset().mockResolvedValue(cobroDeServidor({ estado: 'sin_venta', qrData: null, importePagado: 100 }))
     mockearApiGet((ruta) => {
       if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioMercadoPago])
       if (ruta.startsWith(RUTA_COBROS)) return servidor.leer()
@@ -11558,6 +11560,7 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
     apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
       if (ruta === RUTA_COBROS) return servidor.crear(cuerpo)
       if (ruta.startsWith(RUTA_COBROS) && ruta.endsWith('/cancelar')) return servidor.cancelar()
+      if (ruta.startsWith(RUTA_COBROS) && ruta.endsWith('/apartar')) return servidor.apartar()
       if (ruta === '/ventas') return new Promise(() => {})
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
@@ -12044,6 +12047,51 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
       expect(await screen.findByText(/El cobro sigue pendiente: retomalo o cancelalo/)).toBeInTheDocument()
       expect(await leerReservaDeCobro(crearAlmacenIndexedDb())).toMatchObject({ numero: 500, idCobro: 31 })
       expect(await leerCobrosSinVenta(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    // E3-T3b: el apartado avisa primero al servidor y, si no puede, queda pendiente de sincronizar y bloquea el cierre y los cobros con Mercado Pago.
+    it('apartar avisa al servidor y la entrada queda sincronizada (sin marca de pendiente)', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      await recargarConCobroVivo()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Apartar cobro' }))
+
+      expect(await screen.findByText(/quedó apartado y la caja puede vender\. Un supervisor lo resuelve/)).toBeInTheDocument()
+      expect(apiPostMock.mock.calls.filter(([ruta]) => ruta === `${RUTA_COBROS}31/apartar`)).toHaveLength(1)
+      const [entrada] = await leerCobrosSinVenta(crearAlmacenIndexedDb())
+      expect(entrada.sincronizadoEn).toEqual(expect.any(String))
+      expect(screen.queryByText(/pendiente de sincronizar/)).not.toBeInTheDocument()
+    })
+
+    it('sin poder avisar al servidor el apartado queda pendiente: la caja vende, pero no cierra el turno ni cobra con Mercado Pago hasta sincronizar', async () => {
+      servidor.leer.mockResolvedValue(cobroAprobado())
+      servidor.apartar.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+      await recargarConCobroVivo()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Apartar cobro y liberar la caja' }))
+      await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Apartar el cobro y liberar la caja' })).getByRole('button', { name: 'Apartar cobro' }))
+
+      expect(await screen.findByText(/Mercado Pago todavía no lo registró como sin venta/)).toBeInTheDocument()
+      expect(await screen.findByText(/pendiente de sincronizar/)).toBeInTheDocument()
+      const almacen = crearAlmacenIndexedDb()
+      expect(await leerReservaDeCobro(almacen)).toBeNull()
+      expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toBeUndefined()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 cobro de Mercado Pago apartado sin sincronizar/)).toBeInTheDocument()
+      expect(screen.queryByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).not.toBeInTheDocument()
+
+      await cargarLineaYMedio()
+      await userEvent.click(botonCobrar())
+      expect(await screen.findByText(/Hay cobros de Mercado Pago apartados que todavía no se avisaron al servidor/, { selector: '.alert' })).toBeInTheDocument()
+      expect(crearCobroLlamadas()).toHaveLength(0)
+
+      servidor.apartar.mockResolvedValue(cobroDeServidor({ estado: 'sin_venta', qrData: null, importePagado: 100 }))
+      await userEvent.click(botonCobrar())
+      expect(await screen.findByRole('img', { name: 'Código QR de Mercado Pago' })).toBeInTheDocument()
+      expect(crearCobroLlamadas()).toHaveLength(1)
+      expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toEqual(expect.any(String))
     })
 
     it('un importe distinto detiene la venta con la salida "Apartar cobro y liberar la caja"', async () => {

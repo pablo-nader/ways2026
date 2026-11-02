@@ -1061,8 +1061,8 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         foreach (var cliente in new[] { cajeroDos, ajeno.Cajero })
         {
-            await AssertCodigoAsync(await ConsultarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "no_encontrado");
-            await AssertCodigoAsync(await CancelarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "no_encontrado");
+            await AssertCodigoAsync(await ConsultarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "cobro_mercadopago_inexistente");
+            await AssertCodigoAsync(await CancelarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "cobro_mercadopago_inexistente");
         }
 
         Assert.Empty(Lecturas(e));
@@ -1566,6 +1566,267 @@ public class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var conexion = Assert.Single(await _apoyo.FilasAsync(e.Ctx.IdEmpresa), f => f.Estado != "desconectada");
         Assert.Equal("requiere_reconexion", conexion.Estado);
         Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // ---- Apartar (E3-T3b) ------------------------------------------------------------------------------------------------
+
+    private static Task<HttpResponseMessage> ApartarAsync(Escenario e, int idCobro, HttpClient? cliente = null) =>
+        (cliente ?? e.Cajero).PostAsync($"{Ruta}/{idCobro}/apartar", null);
+
+    private static async Task<CobroDeMercadoPago> CobroAprobadoAsync(Escenario e, long numero, decimal importe)
+    {
+        var cobro = await CrearOkAsync(e, numero, importe);
+        e.Ordenes.Estados[e.Ordenes.Estados.Single(kv => kv.Value == "created").Key] = "processed";
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        var aprobado = await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro));
+        Assert.Equal("aprobado", aprobado.Estado);
+        return aprobado;
+    }
+
+    // Clausula: aprobado sin venta -> sin_venta con fecha_apartado, y repetir es idempotente.
+    [Fact]
+    public async Task ApartarUnCobroAprobadoLoDejaSinVentaConSuFechaYRepetirEsIdempotente()
+    {
+        var e = await PrepararAsync("mp-apartar-aprobado");
+        var cobro = await CobroAprobadoAsync(e, 5101, 100m);
+
+        var apartado = await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("sin_venta", apartado.Estado);
+        Assert.Null(apartado.QrData);
+        Assert.Equal(100m, apartado.ImportePagado);
+        Assert.False(apartado.UsadoEnVenta);
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("sin_venta", fila["estado"]);
+        Assert.NotNull(fila["fecha_apartado"]);
+        Assert.Null(fila["id_comprobante_venta"]);
+        var fecha = fila["fecha_apartado"];
+
+        var otraVez = await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+        Assert.Equal("sin_venta", otraVez.Estado);
+        Assert.Equal(fecha, Assert.Single(await FilasAsync(e.IdPuntoVenta))["fecha_apartado"]);
+        Assert.Empty(Cancelaciones(e));
+        Assert.Equal("sin_venta", (await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro))).Estado);
+        Assert.Equal("sin_venta", (await LeerAsync<CobroDeMercadoPago>(await CancelarAsync(e, cobro.IdCobro))).Estado);
+    }
+
+    // Clausula: un sin_venta no es vivo (sale del unico parcial): el mismo numero admite otro cobro, con el intento siguiente.
+    [Fact]
+    public async Task UnCobroApartadoNoOcupaElNumeroYElMismoNumeroAbreOtroIntento()
+    {
+        var e = await PrepararAsync("mp-apartar-libera-numero");
+        var cobro = await CobroAprobadoAsync(e, 5102, 100m);
+        await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+
+        var nuevo = await CrearOkAsync(e, 5102, 100m);
+
+        Assert.NotEqual(cobro.IdCobro, nuevo.IdCobro);
+        Assert.Equal("pendiente", nuevo.Estado);
+        var filas = await FilasAsync(e.IdPuntoVenta);
+        Assert.Equal(["sin_venta", "pendiente"], filas.Select(f => (string)f["estado"]!).ToArray());
+        Assert.Equal(2, filas[1]["intento"]);
+    }
+
+    // Clausula: sin_venta no cuenta para la guarda del medio (solo creando y pendiente).
+    [Fact]
+    public async Task UnCobroApartadoNoBloqueaElCambioDelMedio()
+    {
+        var e = await PrepararAsync("mp-apartar-guarda-medio");
+        var cobro = await CobroAprobadoAsync(e, 5103, 100m);
+        await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+
+        Assert.Equal(HttpStatusCode.OK, (await EditarMedioAsync(e, "Electronico", null)).StatusCode);
+    }
+
+    // Clausula: un cobro pendiente que todavia se puede pagar se cancela en Mercado Pago y termina cancelado, no sin_venta.
+    [Fact]
+    public async Task ApartarUnCobroPendienteQueSigueCobrableLoCancelaEnMercadoPago()
+    {
+        var e = await PrepararAsync("mp-apartar-pendiente");
+        var cobro = await CrearOkAsync(e, 5104, 100m);
+
+        var resultado = await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("cancelado", resultado.Estado);
+        Assert.Single(Cancelaciones(e));
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("cancelado", fila["estado"]);
+        Assert.Null(fila["fecha_apartado"]);
+    }
+
+    // Clausula: un pendiente que se pago mientras tanto (el refresco previo lo ve processed) termina sin_venta y no se cancela.
+    [Fact]
+    public async Task ApartarUnCobroPendienteQueYaSePagoLoDejaSinVentaSinCancelarlo()
+    {
+        var e = await PrepararAsync("mp-apartar-pagado-en-el-medio");
+        var cobro = await CrearOkAsync(e, 5105, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+
+        var resultado = await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("sin_venta", resultado.Estado);
+        Assert.Empty(Cancelaciones(e));
+        Assert.Equal("sin_venta", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: si Mercado Pago contesta 409 al cancelar porque se pago justo, el cobro termina sin_venta.
+    [Fact]
+    public async Task ApartarUnCobroCuyaCancelacionRevelaQueSePagoLoDejaSinVenta()
+    {
+        var e = await PrepararAsync("mp-apartar-cancel-409");
+        var cobro = await CrearOkAsync(e, 5106, 100m);
+        e.Ordenes.Cancelar = id =>
+        {
+            e.Ordenes.Estados[id] = "processed";
+            return Json(HttpStatusCode.Conflict, """{"error": "cannot_cancel_order"}""");
+        };
+
+        var resultado = await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("sin_venta", resultado.Estado);
+        Assert.Equal("sin_venta", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: un pago informado sin datos legibles no se aparta (el cliente ya pago; todavia no hay con que conciliarlo).
+    [Fact]
+    public async Task ApartarUnCobroPagadoSinDatosEsUn409SinCancelar()
+    {
+        var e = await PrepararAsync("mp-apartar-sin-datos");
+        var cobro = await CrearOkAsync(e, 5107, 100m);
+        e.Ordenes.Estados[e.Ordenes.OrdenPorClave.Values.Single()] = "processed";
+        e.Ordenes.SinPagos = true;
+
+        await AssertCodigoAsync(await ApartarAsync(e, cobro.IdCobro), HttpStatusCode.Conflict, "cobro_mercadopago_pagado_sin_datos");
+
+        Assert.Empty(Cancelaciones(e));
+        Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: cancelado, vencido y devuelto se devuelven tal cual.
+    [Fact]
+    public async Task ApartarUnCobroCanceladoLoDevuelveTalCual()
+    {
+        var e = await PrepararAsync("mp-apartar-cancelado");
+        var cobro = await CrearOkAsync(e, 5108, 100m);
+        await CancelarAsync(e, cobro.IdCobro);
+
+        var resultado = await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, cobro.IdCobro));
+
+        Assert.Equal("cancelado", resultado.Estado);
+        Assert.Single(Cancelaciones(e));
+    }
+
+    // Clausula: alcance por punto de venta y tenant (404) y sesion web sin dispositivo (403).
+    [Fact]
+    public async Task ApartarUnCobroAjenoEs404YUnaSesionWebEs403()
+    {
+        var e = await PrepararAsync("mp-apartar-alcance");
+        var cobro = await CobroAprobadoAsync(e, 5109, 100m);
+        var otroPv = await e.Ctx.Admin.PostAsJsonAsync(
+            "/api/puntos-venta", new PuntoVentaAlta(e.Ctx.IdEmpresa, "Caja Dos", ModoPuntoVenta.Escritorio, IdSucursal: e.IdSucursal));
+        var (cajeroDos, _) = await VincularCajeroAsync(e.Ctx, (await LeerAsync<PuntoVentaListado>(otroPv, HttpStatusCode.Created)).Id, "dos");
+        var ajeno = await PrepararAsync("mp-apartar-alcance-ajeno");
+
+        foreach (var cliente in new[] { cajeroDos, ajeno.Cajero })
+        {
+            await AssertCodigoAsync(await ApartarAsync(e, cobro.IdCobro, cliente), HttpStatusCode.NotFound, "cobro_mercadopago_inexistente");
+        }
+
+        foreach (var web in new[] { e.Ctx.Admin, e.Ctx.Supervisor, e.Ctx.Vendedor })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await ApartarAsync(e, cobro.IdCobro, web)).StatusCode);
+        }
+
+        Assert.Equal("aprobado", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: el apartado toma la fila con FOR UPDATE ANTES de leerla (el lock con que la venta liga el cobro): mientras otra transaccion la
+    // tiene tomada espera, y cuando confirma lee lo que dejo en vez de pisarlo con una lectura vieja.
+    [Fact]
+    public async Task ApartarEsperaElLockDeLaFilaYLuegoLeeLoQueLaOtraTransaccionDejo()
+    {
+        var e = await PrepararAsync("mp-apartar-lock-fila");
+        var cobro = await CobroAprobadoAsync(e, 5115, 100m);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var transaccion = await conexion.BeginTransactionAsync();
+        await using (var tomar = new NpgsqlCommand(
+            $"UPDATE cobros_mercadopago SET estado = 'devuelto' WHERE id_cobro_mercadopago = {cobro.IdCobro}", conexion, transaccion))
+        {
+            await tomar.ExecuteNonQueryAsync();
+        }
+
+        var apartado = ApartarAsync(e, cobro.IdCobro);
+        await Task.Delay(1500);
+        Assert.False(apartado.IsCompleted, "El apartado tendria que esperar el lock de la fila.");
+
+        await transaccion.CommitAsync();
+        var resultado = await LeerAsync<CobroDeMercadoPago>(await apartado);
+        Assert.Equal("devuelto", resultado.Estado);
+        Assert.Equal("devuelto", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+    }
+
+    // Clausula: ck_cobros_mercadopago_sin_venta: un sin_venta sin fecha de apartado lo rechaza la base (23514).
+    [Fact]
+    public async Task LaBaseRechazaUnCobroSinVentaSinFechaDeApartado()
+    {
+        var e = await PrepararAsync("mp-apartar-check");
+        var cobro = await CobroAprobadoAsync(e, 5110, 100m);
+
+        var rechazo = await Assert.ThrowsAsync<PostgresException>(() =>
+            EjecutarAsync($"UPDATE cobros_mercadopago SET estado = 'sin_venta' WHERE id_cobro_mercadopago = {cobro.IdCobro}"));
+
+        Assert.Equal("23514", rechazo.SqlState);
+        Assert.Equal("ck_cobros_mercadopago_sin_venta", rechazo.ConstraintName);
+    }
+
+    // ---- Listado de cobros sin venta (back office) -----------------------------------------------------------------------
+
+    private const string RutaSinVenta = "/api/mercadopago/cobros-sin-venta";
+
+    // Clausula: el listado es de Supervisor y Admin (el Vendedor y el dispositivo reciben 403), por empresa del tenant, solo sin_venta.
+    [Fact]
+    public async Task ElListadoDeCobrosSinVentaEsDeSupervisorYAdminPorEmpresaYSoloListaLosApartados()
+    {
+        var e = await PrepararAsync("mp-sin-venta-listado");
+        var apartado = await CobroAprobadoAsync(e, 5111, 100m);
+        await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, apartado.IdCobro));
+        await CobroAprobadoAsync(e, 5112, 50m);
+        var deLaOtraEmpresa = await CobroAprobadoAsync(e, 5113, 70m);
+        await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(e, deLaOtraEmpresa.IdCobro));
+        var (idOtraEmpresa, _) = await _apoyo.CrearOtraEmpresaConCuentaAsync(e.Ctx, "Otra empresa del tenant");
+        await EjecutarAsync($"UPDATE cobros_mercadopago SET id_empresa = {idOtraEmpresa} WHERE id_cobro_mercadopago = {deLaOtraEmpresa.IdCobro}");
+
+        foreach (var cliente in new[] { e.Ctx.Admin, e.Ctx.Supervisor })
+        {
+            var lista = await LeerAsync<List<CobroSinVentaListado>>(await cliente.GetAsync($"{RutaSinVenta}?idEmpresa={e.Ctx.IdEmpresa}"));
+            var fila = Assert.Single(lista);
+            Assert.Equal(apartado.IdCobro, fila.IdCobro);
+            Assert.Equal(5111L, fila.NumeroPreasignado);
+            Assert.Equal(100m, fila.ImportePagado);
+            Assert.Equal(e.IdPuntoVenta, fila.IdPuntoVenta);
+            Assert.NotNull(fila.FechaApartado);
+        }
+
+        var deLaOtra = await LeerAsync<List<CobroSinVentaListado>>(await e.Ctx.Admin.GetAsync($"{RutaSinVenta}?idEmpresa={idOtraEmpresa}"));
+        Assert.Equal(deLaOtraEmpresa.IdCobro, Assert.Single(deLaOtra).IdCobro);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await e.Ctx.Vendedor.GetAsync($"{RutaSinVenta}?idEmpresa={e.Ctx.IdEmpresa}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await e.Cajero.GetAsync($"{RutaSinVenta}?idEmpresa={e.Ctx.IdEmpresa}")).StatusCode);
+    }
+
+    // Clausula: una empresa de otro tenant es 404 y los cobros de otro tenant no aparecen por RLS.
+    [Fact]
+    public async Task ElListadoDeUnaEmpresaDeOtroTenantEs404()
+    {
+        var a = await PrepararAsync("mp-sin-venta-tenant-a");
+        var b = await PrepararAsync("mp-sin-venta-tenant-b");
+        var cobro = await CobroAprobadoAsync(b, 5114, 100m);
+        await LeerAsync<CobroDeMercadoPago>(await ApartarAsync(b, cobro.IdCobro));
+
+        await AssertCodigoAsync(
+            await a.Ctx.Admin.GetAsync($"{RutaSinVenta}?idEmpresa={b.Ctx.IdEmpresa}"), HttpStatusCode.NotFound, "no_encontrado");
+        Assert.Empty(await LeerAsync<List<CobroSinVentaListado>>(await a.Ctx.Admin.GetAsync($"{RutaSinVenta}?idEmpresa={a.Ctx.IdEmpresa}")));
     }
 
     // ---- Guarda del medio ------------------------------------------------------------------------------------------------

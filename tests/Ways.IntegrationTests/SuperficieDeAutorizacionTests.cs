@@ -79,6 +79,7 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // MercadoPagoCobrosTests (un cajero de dispositivo crea y cancela; una sesión web recibe 403).
         ("POST", "/api/pos/mercadopago/cobros/"),
         ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/cancelar"),
+        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/apartar"),
         // Alta rápida de cliente desde el POS: mismo grupo /api/clientes (OperacionDePos), sin
         // GestionDeCatalogo apilado porque la hace el Vendedor. El positivo por rol real es
         // ClientesEndpointsTests.UnVendedorCreaUnClienteRapidoConLosDefaultsForzados.
@@ -384,7 +385,8 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("POST", "/api/ventas/reservas-numeracion", Politicas.RequiereDispositivo),
         ("POST", "/api/pos/rendicion-de-cola", Politicas.RequiereDispositivo),
         ("POST", "/api/pos/mercadopago/cobros/", Politicas.RequiereDispositivo),
-        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/cancelar", Politicas.RequiereDispositivo)
+        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/cancelar", Politicas.RequiereDispositivo),
+        ("POST", "/api/pos/mercadopago/cobros/{idCobro:int}/apartar", Politicas.RequiereDispositivo)
     ];
 
     [Fact]

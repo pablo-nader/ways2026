@@ -1787,21 +1787,24 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // judgment-day ronda 1 (CRITICAL): el bloqueo cubre TAMBIÉN `ventasConError` — una venta que
     // el servidor rechazó de forma permanente sigue siendo una venta real con ticket entregado,
     // nunca algo que un cierre pueda ignorar solo porque ya salió del outbox.
-    function bloquearPorColaLocal(cantidadPendiente: number, cantidadConError: number): boolean {
-      if (cantidadPendiente === 0 && cantidadConError === 0) return false
+    function bloquearPorColaLocal(cantidadPendiente: number, cantidadConError: number, apartadosSinSincronizar: number): boolean {
+      if (cantidadPendiente === 0 && cantidadConError === 0 && apartadosSinSincronizar === 0) return false
       const partes: string[] = []
       if (cantidadPendiente > 0) partes.push(`hay ${pluralizar(cantidadPendiente, 'venta')} sin sincronizar`)
       if (cantidadConError > 0) partes.push(fraseVentasNecesitanAtencion(cantidadConError))
+      if (apartadosSinSincronizar > 0) partes.push(`hay ${pluralizar(apartadosSinSincronizar, 'cobro')} de Mercado Pago apartado${apartadosSinSincronizar === 1 ? '' : 's'} sin sincronizar`)
       setAvisoCerrarCaja(`No se puede cerrar la caja: ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
       return true
     }
 
+    // Un cobro de Mercado Pago apartado sin sincronizar se trata como una venta por drenar: `drenarAhora` reintenta avisarle al servidor y
+    // el cierre se bloquea después si sigue pendiente.
     // Antes de consultar el turno se drena y se rinde la cola: con la venta local casi siempre hay
     // alguna venta recién cobrada esperando su envío, y la guarda de cierre del servidor exige un
     // reporte de rendición de menos de 5 minutos (`ReglaDeRendicionDeCola.VentanaDeFrescura`),
     // que con un intervalo de sincronización largo podría estar vencido. Una venta que necesita
     // atención no se resuelve drenando, así que sola bloquea de inmediato, sin tocar la red.
-    if (sincronizacionOffline.outboxCount === 0 && bloquearPorColaLocal(0, sincronizacionOffline.ventasConError.length)) return
+    if (sincronizacionOffline.outboxCount === 0 && bloquearPorColaLocal(0, sincronizacionOffline.ventasConError.length, 0)) return
 
     verificandoCierreRef.current = true
     setVerificandoCierre(true)
@@ -1814,7 +1817,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     try {
       const cola = await sincronizacionOffline.drenarAhora()
       if (!montadoRef.current) return
-      if (bloquearPorColaLocal(cola.pendientes, cola.conError)) return
+      if (bloquearPorColaLocal(cola.pendientes, cola.conError, cola.apartadosSinSincronizar)) return
 
       const turnoReal = await clienteDeCaja.obtenerAbierto(puntoVentaSeleccionada.id)
       // Re-judgment (WARNING, juez A): si la pantalla ya se desmontó mientras el `await` estaba en
@@ -3873,9 +3876,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     setCobroAApartarAhora(null)
     setCobroDeRecarga(null)
-    setCobrosSinVenta(await sincronizacionOffline.leerCobrosSinVenta().catch(() => []))
+    const lista = await sincronizacionOffline.leerCobrosSinVenta().catch(() => [])
+    setCobrosSinVenta(lista)
+    const importeApartado = formatearMoneda(aparta.cobro.importePagado ?? aparta.cobro.importe)
+    const sincronizado = lista.some((c) => c.idCobro === aparta.cobro.idCobro && c.sincronizadoEn !== undefined)
     setErrorCobro(
-      `El cobro ${aparta.cobro.idCobro} por ${formatearMoneda(aparta.cobro.importePagado ?? aparta.cobro.importe)} quedó apartado y la caja puede vender. Un supervisor lo resuelve desde la conciliación de Mercado Pago.`,
+      sincronizado
+        ? `El cobro ${aparta.cobro.idCobro} por ${importeApartado} quedó apartado y la caja puede vender. Un supervisor lo resuelve desde la conciliación de Mercado Pago.`
+        : `El cobro ${aparta.cobro.idCobro} por ${importeApartado} quedó apartado en este dispositivo y la caja puede vender, pero Mercado Pago todavía no lo registró como sin venta: se reintenta solo cuando hay conexión. Hasta entonces no se pueden iniciar cobros con Mercado Pago ni cerrar la caja.`,
     )
     return true
   }
@@ -4704,6 +4712,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   {cobrosSinVenta.map((c) => (
                     <li key={c.idCobro}>
                       {formatearMoneda(c.importePagado ?? c.importe)} — cobro {c.idCobro} — {new Date(c.apartadoEn).toLocaleString('es-AR')}
+                      {c.sincronizadoEn === undefined && ' — pendiente de sincronizar'}
                     </li>
                   ))}
                 </ul>

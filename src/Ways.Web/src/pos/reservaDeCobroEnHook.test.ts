@@ -1,5 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ErrorApi, ErrorDeRed } from '../api/cliente'
+import { clienteDeCobrosMercadoPago, type CobroMercadoPago } from '../api/cobrosMercadoPago'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
 import { useSincronizacionOffline } from './useSincronizacionOffline'
@@ -19,6 +21,7 @@ vi.mock('../api/ventas', async (importarOriginal) => ({
     reservarNumeracion: vi.fn().mockRejectedValue(new Error('sin red')),
   },
 }))
+vi.mock('../api/cobrosMercadoPago', () => ({ clienteDeCobrosMercadoPago: { apartar: vi.fn() } }))
 vi.mock('../api/pos', () => ({
   clienteDePos: {
     obtenerInstantanea: vi.fn().mockRejectedValue(new Error('sin red')),
@@ -111,6 +114,7 @@ async function preparar(opciones: { bloque?: Partial<BloqueDeNumeracionLocal>; f
 
 beforeEach(() => {
   reiniciarLotesDeFacturacionParaTests()
+  vi.mocked(clienteDeCobrosMercadoPago.apartar).mockReset().mockRejectedValue(new ErrorDeRed(new Error('sin red')))
 })
 
 const reservaEnCurso = { idPuntoVenta: 7, numero: 500, estado: 'en_curso' as const, idCobro: 31, idMedioPago: 4, importe: 100, creadoEn: 'x' }
@@ -785,5 +789,273 @@ describe('R3: Web Locks serializa las operaciones de la reserva entre pestañas'
     })
 
     expect(reserva).toMatchObject({ ok: true, numero: 500 })
+  })
+})
+
+const cobroDelServidor = (estado: CobroMercadoPago['estado']): CobroMercadoPago => ({
+  idCobro: 31,
+  estado,
+  qrData: null,
+  expiraEn: '2026-11-01T12:00:00.000Z',
+  importe: 100,
+  importePagado: 100,
+  importeDistinto: false,
+  verificandoPago: false,
+  pagoInformadoSinDatos: false,
+  usadoEnVenta: false,
+})
+
+async function conCobroEnCurso() {
+  const almacen = await preparar()
+  const vista = await montar(almacen)
+  await act(async () => {
+    await vista.result.current.reservarNumeroParaCobro(7)
+    await vista.result.current.anotarCobroEnCurso({ numero: 500, idCobro: 31, idMedioPago: 4, importe: 100 })
+  })
+  return { almacen, ...vista }
+}
+
+describe('apartarCobroSinVenta avisa primero al servidor (E3-T3b)', () => {
+  it('con el servidor de acuerdo (sin_venta) la entrada queda sincronizada, la reserva suelta y no hay nada pendiente', async () => {
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockResolvedValue(cobroDelServidor('sin_venta'))
+    const { almacen, result } = await conCobroEnCurso()
+
+    let apartado
+    await act(async () => {
+      apartado = await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect(apartado).toBe(true)
+    expect(clienteDeCobrosMercadoPago.apartar).toHaveBeenCalledExactlyOnceWith(31)
+    const [entrada] = await leerCobrosSinVenta(almacen)
+    expect(entrada.sincronizadoEn).toEqual(expect.any(String))
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    expect((await leerBloque(almacen))?.proximo).toBe(500)
+    expect(result.current.apartadosSinSincronizar).toBe(0)
+  })
+
+  it('sin red guarda la entrada como pendiente de sincronizar, suelta la reserva y cuenta un apartado sin sincronizar', async () => {
+    const { almacen, result } = await conCobroEnCurso()
+
+    let apartado
+    await act(async () => {
+      apartado = await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect(apartado).toBe(true)
+    const [entrada] = await leerCobrosSinVenta(almacen)
+    expect(entrada.sincronizadoEn).toBeUndefined()
+    expect(await leerReservaDeCobro(almacen)).toBeNull()
+    expect(result.current.apartadosSinSincronizar).toBe(1)
+  })
+
+  it('sin conexión ni siquiera llama al servidor: la entrada queda pendiente de sincronizar', async () => {
+    const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      const { almacen, result } = await conCobroEnCurso()
+
+      await act(async () => {
+        await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+      })
+
+      expect(clienteDeCobrosMercadoPago.apartar).not.toHaveBeenCalled()
+      expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toBeUndefined()
+      expect(await leerReservaDeCobro(almacen)).toBeNull()
+    } finally {
+      sinRed.mockRestore()
+    }
+  })
+
+  it.each([
+    ['un 503', new ErrorApi(503, 'mercadopago_no_disponible', 'no disponible')],
+    ['un 409 que todavía no se puede resolver', new ErrorApi(409, 'cobro_mercadopago_pagado_sin_datos', 'falta confirmar')],
+  ])('%s deja la entrada pendiente de sincronizar', async (_nombre, error) => {
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockRejectedValue(error)
+    const { almacen, result } = await conCobroEnCurso()
+
+    await act(async () => {
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toBeUndefined()
+  })
+
+  it.each([
+    ['un 404 del cobro (es de otro punto de venta)', new ErrorApi(404, 'cobro_mercadopago_inexistente', 'no existe')],
+    ['una venta que ya lo usó', new ErrorApi(409, 'cobro_mercadopago_ya_usado', 'ya usado')],
+  ])('%s es una respuesta definitiva: la entrada queda sincronizada', async (_nombre, error) => {
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockRejectedValue(error)
+    const { almacen, result } = await conCobroEnCurso()
+
+    await act(async () => {
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toEqual(expect.any(String))
+  })
+
+  it.each([
+    ['un 404 de ruteo sin código (servidor sin el endpoint)', new ErrorApi(404, '', 'Not Found')],
+    ['un 404 de otro recurso', new ErrorApi(404, 'no_encontrado', 'no existe')],
+  ])('%s no es definitivo: la entrada queda pendiente de sincronizar', async (_nombre, error) => {
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockRejectedValue(error)
+    const { almacen, result } = await conCobroEnCurso()
+
+    await act(async () => {
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toBeUndefined()
+  })
+
+  it('un servidor que sigue diciendo aprobado no cuenta como sincronizado', async () => {
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockResolvedValue(cobroDelServidor('aprobado'))
+    const { almacen, result } = await conCobroEnCurso()
+
+    await act(async () => {
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toBeUndefined()
+  })
+})
+
+describe('sincronizarApartados (E3-T3b: reintento al volver la conexión y en cada ciclo)', () => {
+  async function conUnApartadoPendiente() {
+    const vista = await conCobroEnCurso()
+    await act(async () => {
+      await vista.result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+    expect(vista.result.current.apartadosSinSincronizar).toBe(1)
+    return vista
+  }
+
+  it('reintenta el apartado: si el servidor ya responde sin_venta la entrada queda sincronizada y devuelve 0', async () => {
+    const { almacen, result } = await conUnApartadoPendiente()
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockResolvedValue(cobroDelServidor('sin_venta'))
+
+    let pendientes
+    await act(async () => {
+      pendientes = await result.current.sincronizarApartados()
+    })
+
+    expect(pendientes).toBe(0)
+    expect(clienteDeCobrosMercadoPago.apartar).toHaveBeenLastCalledWith(31)
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toEqual(expect.any(String))
+    expect(result.current.apartadosSinSincronizar).toBe(0)
+  })
+
+  it('si el servidor sigue sin responder lo deja pendiente y devuelve 1', async () => {
+    const { almacen, result } = await conUnApartadoPendiente()
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockClear()
+
+    let pendientes
+    await act(async () => {
+      pendientes = await result.current.sincronizarApartados()
+    })
+
+    expect(pendientes).toBe(1)
+    expect(clienteDeCobrosMercadoPago.apartar).toHaveBeenCalledTimes(1)
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toBeUndefined()
+  })
+
+  it('una entrada ya sincronizada no vuelve a llamar al servidor', async () => {
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockResolvedValue(cobroDelServidor('sin_venta'))
+    const { result } = await conCobroEnCurso()
+    await act(async () => {
+      await result.current.apartarCobroSinVenta({ numero: 500, cobro: cobroAprobadoSinVenta() })
+    })
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockClear()
+
+    await act(async () => {
+      await result.current.sincronizarApartados()
+    })
+
+    expect(clienteDeCobrosMercadoPago.apartar).not.toHaveBeenCalled()
+  })
+
+  it('dos pedidos a la vez comparten una sola corrida', async () => {
+    const { result } = await conUnApartadoPendiente()
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockClear()
+
+    await act(async () => {
+      await Promise.all([result.current.sincronizarApartados(), result.current.sincronizarApartados()])
+    })
+
+    expect(clienteDeCobrosMercadoPago.apartar).toHaveBeenCalledTimes(1)
+  })
+
+  it('cada ciclo de sincronización con señal reintenta los apartados pendientes', async () => {
+    const { almacen, result } = await conUnApartadoPendiente()
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockResolvedValue(cobroDelServidor('sin_venta'))
+    vi.mocked(clienteDePos.obtenerInstantanea).mockResolvedValue({ modificada: false } as never)
+
+    await act(async () => {
+      await result.current.sincronizarAhora()
+    })
+
+    expect(clienteDeCobrosMercadoPago.apartar).toHaveBeenCalledWith(31)
+    expect((await leerCobrosSinVenta(almacen))[0].sincronizadoEn).toEqual(expect.any(String))
+    vi.mocked(clienteDePos.obtenerInstantanea).mockRejectedValue(new Error('sin red'))
+  })
+
+  it('drenarAhora informa cuántos apartados siguen sin sincronizar (el cierre de turno se bloquea con eso)', async () => {
+    const { result } = await conUnApartadoPendiente()
+
+    let estado
+    await act(async () => {
+      estado = await result.current.drenarAhora()
+    })
+    expect(estado).toMatchObject({ pendientes: 0, conError: 0, apartadosSinSincronizar: 1 })
+
+    vi.mocked(clienteDeCobrosMercadoPago.apartar).mockResolvedValue(cobroDelServidor('sin_venta'))
+    await act(async () => {
+      estado = await result.current.drenarAhora()
+    })
+    expect(estado).toMatchObject({ apartadosSinSincronizar: 0 })
+  })
+
+  it('una entrada guardada antes de este campo (sin sincronizadoEn) cuenta como pendiente al montar', async () => {
+    const almacen = await preparar()
+    await almacen.escribir('cobrosMercadoPagoSinVenta', [{ ...cobroAprobadoSinVenta(), apartadoEn: '2026-11-01T10:00:00.000Z' }])
+
+    const { result } = await montar(almacen)
+
+    await waitFor(() => expect(result.current.apartadosSinSincronizar).toBe(1))
+  })
+})
+
+describe('reponerBloque decide bajo el candado de la reserva (E3-T3b)', () => {
+  it('una reserva que aparece durante las llamadas de red impide reemplazar el bloque', async () => {
+    const almacen = await preparar({ bloque: { proximo: 595 } })
+    vi.mocked(clienteDePos.obtenerInstantanea).mockResolvedValue({ modificada: false } as never)
+    vi.mocked(clienteDeVentas.reservarNumeracion).mockReset().mockImplementation(async () => {
+      await guardarReservaDeCobro(almacen, { ...reservaEnCurso, numero: 595 })
+      return { desde: 900, hasta: 999, idPuntoVenta: 7, codigoTipoComprobante: 'TX' } as never
+    })
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(clienteDeVentas.reservarNumeracion).toHaveBeenCalled())
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(await leerBloque(almacen)).toMatchObject({ desde: 500, hasta: 599, proximo: 595 })
+    expect(await leerReservaDeCobro(almacen)).toMatchObject({ numero: 595 })
+    vi.mocked(clienteDePos.obtenerInstantanea).mockRejectedValue(new Error('sin red'))
+    vi.mocked(clienteDeVentas.reservarNumeracion).mockReset().mockRejectedValue(new Error('sin red'))
+  })
+
+  it('sin reserva el bloque nuevo sí reemplaza al que quedaba corto', async () => {
+    const almacen = await preparar({ bloque: { proximo: 595 } })
+    vi.mocked(clienteDePos.obtenerInstantanea).mockResolvedValue({ modificada: false } as never)
+    vi.mocked(clienteDeVentas.reservarNumeracion)
+      .mockReset()
+      .mockResolvedValue({ desde: 900, hasta: 999, idPuntoVenta: 7, codigoTipoComprobante: 'TX' } as never)
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(async () => expect(await leerBloque(almacen)).toMatchObject({ desde: 900, hasta: 999, proximo: 900 }))
+    vi.mocked(clienteDePos.obtenerInstantanea).mockRejectedValue(new Error('sin red'))
+    vi.mocked(clienteDeVentas.reservarNumeracion).mockReset().mockRejectedValue(new Error('sin red'))
   })
 })

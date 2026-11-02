@@ -6,7 +6,7 @@
  * se encola con ese número (`encolarVentaOffline`) o se emite online con él (`consumirReservaDeCobro`). Así un cobro cancelado o
  * vencido no deja un hueco que bloquee el cierre del turno (`entregadoHasta` = `proximo - 1`).
  *
- * Mientras la reserva existe ninguna otra venta del dispositivo corre: ninguna puede tomar ese número ni dejarlo atrás.
+ * Mientras la reserva existe ninguna venta local del dispositivo corre: ninguna puede tomar ese número ni dejarlo atrás.
  */
 import type { AlmacenClaveValor } from './almacenPos'
 import type { BloqueDeNumeracionLocal, VentaEnCola, VentaRechazada } from './outboxOffline'
@@ -62,7 +62,12 @@ export function reservaEsElProximoDelBloque(reserva: ReservaDeCobro, bloque: Blo
 
 const CLAVE_SIN_VENTA = 'cobrosMercadoPagoSinVenta'
 
-/** Un cobro aprobado cuya venta no se pudo cerrar y que el cajero apartó para liberar la caja: solo lo resuelve un supervisor. */
+/**
+ * Un cobro aprobado cuya venta no se pudo cerrar y que el cajero apartó para liberar la caja: solo lo resuelve un supervisor.
+ * `sincronizadoEn` ausente significa que el servidor todavía no lo marcó `sin_venta` (se apartó sin conexión, o la llamada falló):
+ * mientras haya uno así no se inician cobros con Mercado Pago ni se cierra el turno, y se reintenta solo. Una entrada guardada antes
+ * de que existiera este campo tampoco lo trae, y como el servidor nunca la apartó, también está pendiente.
+ */
 export type CobroSinVenta = {
   idCobro: number
   numero: number
@@ -71,7 +76,12 @@ export type CobroSinVenta = {
   importe: number
   importePagado: number | null
   apartadoEn: string
+  sincronizadoEn?: string
 }
+
+export const apartadoPendienteDeSincronizar = (cobro: CobroSinVenta): boolean => cobro.sincronizadoEn === undefined
+
+export const contarApartadosPendientes = (lista: readonly CobroSinVenta[]): number => lista.filter(apartadoPendienteDeSincronizar).length
 
 /** Lista durable, solo de altas: nada la borra sola. */
 export async function leerCobrosSinVenta(almacen: AlmacenClaveValor): Promise<CobroSinVenta[]> {
@@ -86,6 +96,18 @@ export async function agregarCobroSinVenta(almacen: AlmacenClaveValor, cobro: Co
     if (!(await almacen.escribir(CLAVE_SIN_VENTA, [...actuales, cobro]))) return false
   }
   return (await leerCobrosSinVenta(almacen)).some((c) => c.idCobro === cobro.idCobro)
+}
+
+/** `true` si el cobro quedó marcado como sincronizado y releído (idempotente); `true` también si ya no está en la lista. */
+export async function marcarCobroSinVentaSincronizado(almacen: AlmacenClaveValor, idCobro: number, sincronizadoEn: string): Promise<boolean> {
+  const actuales = await leerCobrosSinVenta(almacen)
+  const actual = actuales.find((c) => c.idCobro === idCobro)
+  if (actual === undefined) return true
+  if (actual.sincronizadoEn === undefined) {
+    const nueva = actuales.map((c) => (c.idCobro === idCobro ? { ...c, sincronizadoEn } : c))
+    if (!(await almacen.escribir(CLAVE_SIN_VENTA, nueva))) return false
+  }
+  return (await leerCobrosSinVenta(almacen)).find((c) => c.idCobro === idCobro)?.sincronizadoEn !== undefined
 }
 
 const NOMBRE_DEL_CANDADO = 'ways-pos-reserva-cobro'

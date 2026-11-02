@@ -29,6 +29,22 @@ public sealed record CobroDeMercadoPago(
     bool PagoInformadoSinDatos,
     bool UsadoEnVenta);
 
+/// <summary>
+/// Un cobro apartado (<c>sin_venta</c>) tal como lo lista el back office para la conciliación: el dinero entró en Mercado Pago pero
+/// ninguna venta lo usó.
+/// </summary>
+public sealed record CobroSinVentaListado(
+    int IdCobro,
+    int IdPuntoVenta,
+    int IdMedioPago,
+    long NumeroPreasignado,
+    decimal Importe,
+    decimal? ImportePagado,
+    string? IdPagoMercadoPago,
+    string? IdOrdenMercadoPago,
+    DateTimeOffset? FechaAprobacion,
+    DateTimeOffset? FechaApartado);
+
 public static class CodigosDeErrorDeCobrosMercadoPago
 {
     public const string EnCurso = "cobro_mercadopago_en_curso";

@@ -1,7 +1,13 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { clienteDeCobrosMercadoPago, CobroMercadoPago } from '../api/cobrosMercadoPago'
-import { cobrarConMercadoPago, resolverResultadoDelCobro, sanarReservaYaVendida, type ReservaDeCobroEnPos } from './cobrarConMercadoPago'
+import {
+  cobrarConMercadoPago,
+  MENSAJE_CON_APARTADOS_SIN_SINCRONIZAR,
+  resolverResultadoDelCobro,
+  sanarReservaYaVendida,
+  type ReservaDeCobroEnPos,
+} from './cobrarConMercadoPago'
 import type { ResultadoDelCobro } from './ModalDeCobroMercadoPago'
 import type { ReservaLeida } from './reservaDeCobro'
 
@@ -28,7 +34,7 @@ type Consultar = Mock<typeof clienteDeCobrosMercadoPago.consultar>
 type Cancelar = Mock<typeof clienteDeCobrosMercadoPago.cancelar>
 
 function armar(
-  opciones: { previa?: ReservaLeida | null; resultado?: ResultadoDelCobro; consultar?: Consultar; crear?: Crear; cancelar?: Cancelar; confirmar?: boolean } = {},
+  opciones: { previa?: ReservaLeida | null; resultado?: ResultadoDelCobro; consultar?: Consultar; crear?: Crear; cancelar?: Cancelar; confirmar?: boolean; apartadosPendientes?: number } = {},
 ) {
   const reserva = {
     reservarNumeroParaCobro: vi.fn().mockResolvedValue({ ok: true, numero: 500 }),
@@ -36,6 +42,7 @@ function armar(
     soltarReservaDeCobro: vi.fn().mockResolvedValue(true),
     consumirReservaDeCobro: vi.fn().mockResolvedValue(true),
     leerReservaDeCobro: vi.fn().mockResolvedValue(opciones.previa ?? null),
+    sincronizarApartados: vi.fn().mockResolvedValue(opciones.apartadosPendientes ?? 0),
   } satisfies ReservaDeCobroEnPos
   const clienteDeCobros = {
     crear: opciones.crear ?? vi.fn<typeof clienteDeCobrosMercadoPago.crear>().mockResolvedValue(cobro()),
@@ -63,6 +70,26 @@ const enCurso = (sobrescribir: Partial<ReservaLeida> = {}): ReservaLeida => ({
 })
 
 describe('cobrarConMercadoPago', () => {
+  it('con un cobro apartado sin sincronizar no reserva ni crea nada y explica por qué', async () => {
+    const { deps, reserva, clienteDeCobros } = armar({ apartadosPendientes: 1 })
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(resultado).toEqual({ tipo: 'detenido', mensaje: MENSAJE_CON_APARTADOS_SIN_SINCRONIZAR })
+    expect(reserva.sincronizarApartados).toHaveBeenCalledTimes(1)
+    expect(reserva.reservarNumeroParaCobro).not.toHaveBeenCalled()
+    expect(clienteDeCobros.crear).not.toHaveBeenCalled()
+  })
+
+  it('sin apartados pendientes cobra como siempre', async () => {
+    const { deps, clienteDeCobros } = armar({ apartadosPendientes: 0 })
+
+    const resultado = await cobrarConMercadoPago(deps, PAGO)
+
+    expect(resultado.tipo).toBe('aprobado')
+    expect(clienteDeCobros.crear).toHaveBeenCalledTimes(1)
+  })
+
   it('sin conexión se detiene con el aviso y no reserva ni crea nada', async () => {
     const { deps, reserva, clienteDeCobros } = armar()
 

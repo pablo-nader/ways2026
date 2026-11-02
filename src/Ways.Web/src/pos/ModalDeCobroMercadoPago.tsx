@@ -15,7 +15,7 @@ import {
 /** Cómo terminó el cobro: el modal se resuelve una sola vez y lo desmonta el llamador. */
 export type ResultadoDelCobro =
   | { tipo: 'aprobado'; cobro: CobroMercadoPago }
-  | { tipo: 'sin_aprobar'; estado: 'cancelado' | 'expirado' | 'devuelto'; cobro: CobroMercadoPago }
+  | { tipo: 'sin_aprobar'; estado: 'cancelado' | 'expirado' | 'devuelto' | 'sin_venta'; cobro: CobroMercadoPago }
   | { tipo: 'importe_distinto'; cobro: CobroMercadoPago }
 
 type PropsModalDeCobroMercadoPago = {

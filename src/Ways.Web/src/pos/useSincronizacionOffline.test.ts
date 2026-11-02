@@ -1672,7 +1672,7 @@ describe('useSincronizacionOffline — drenarAhora', () => {
       estado = await result.current.drenarAhora()
     })
 
-    expect(estado).toEqual({ pendientes: 0, conError: 1 })
+    expect(estado).toEqual({ pendientes: 0, conError: 1, apartadosSinSincronizar: 0 })
     expect(result.current.outboxCount).toBe(0)
     expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 100, pendientes: 1 }, expect.any(AbortSignal))
   })
@@ -1687,7 +1687,7 @@ describe('useSincronizacionOffline — drenarAhora', () => {
     await act(async () => {
       estado = await result.current.drenarAhora()
     })
-    expect(estado).toEqual({ pendientes: 1, conError: 0 })
+    expect(estado).toEqual({ pendientes: 1, conError: 0, apartadosSinSincronizar: 0 })
   })
 })
 
