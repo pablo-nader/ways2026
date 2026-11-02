@@ -40,6 +40,7 @@ import { Presupuestos } from './paginas/Presupuestos'
 import { CargaSemanalDeHoras } from './paginas/CargaSemanalDeHoras'
 import { CuentaDePersonal } from './paginas/CuentaDePersonal'
 import { Personal } from './paginas/Personal'
+import { ConciliacionMercadoPago } from './paginas/ConciliacionMercadoPago'
 import { CuentasTesoreria } from './paginas/CuentasTesoreria'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
@@ -192,6 +193,15 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <CuentasTesoreria />
+                </RutaProtegida>
+              }
+            />
+            {/* Conciliación de Mercado Pago: lectura de Supervisor y Admin (Politicas.LecturaDeReportes); subir y confirmar, solo Admin. */}
+            <Route
+              path="/caja/conciliacion-mercadopago"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <ConciliacionMercadoPago />
                 </RutaProtegida>
               }
             />

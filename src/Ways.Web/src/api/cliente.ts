@@ -187,7 +187,8 @@ async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
     credentials: credencialesDeLaSolicitud(),
     headers: {
       Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      // Un FormData lleva su propio tipo con el límite (boundary): fijarlo acá lo rompería.
+      ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...headerBearerSiCorresponde(),
       ...init?.headers,
     },
@@ -285,6 +286,9 @@ export const api = {
       ...(headers ? { headers } : {}),
       ...(senal ? { signal: senal } : {}),
     }),
+  /** `POST` multipart: el navegador arma el `Content-Type` con su límite. */
+  postFormulario: <T>(ruta: string, formulario: FormData, headers?: Record<string, string>) =>
+    pedir<T>(ruta, { method: 'POST', body: formulario, ...(headers ? { headers } : {}) }),
   put: <T>(ruta: string, cuerpo: unknown) =>
     pedir<T>(ruta, { method: 'PUT', body: JSON.stringify(cuerpo) }),
   /** `PUT` con el archivo crudo como cuerpo. `pedir` pone `application/json` a todo cuerpo y los
