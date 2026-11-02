@@ -30,6 +30,7 @@ import type {
 import { puedeVerComisiones, puedeVerRentabilidad } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
@@ -559,7 +560,6 @@ type PropsPanelDeRentabilidad = { idEmpresa: number; desde: string; hasta: strin
  */
 function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanelDeRentabilidad) {
   const [incluirEstimados, setIncluirEstimados] = useState(false)
-  const [errorDescarga, setErrorDescarga] = useState('')
   const cargarDatos = useCallback(
     () => clienteDeReportes.rentabilidad({ idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados }),
     [idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados],
@@ -576,7 +576,7 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
         <BotonDeDescarga
           ruta={rutasDeExportacion.rentabilidad({ idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados })}
           etiqueta="Descargar"
-          onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
+          onError={toast.error}
         />
       </div>
       <div className="form-check form-switch mb-2">
@@ -592,7 +592,6 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
           Incluir costos estimados
         </label>
       </div>
-      {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
       {error && <PanelDeError error={error} onReintentar={reintentar} />}
       {cargando && !datos && <Cargando />}
       {datos && (
@@ -732,9 +731,6 @@ export function Tablero() {
   const [pagos, setPagos] = useState<ResumenDePagos | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  /** Error de descarga (stage-11 slice 4) — separado de `error` (carga de ventas/pagos) para no
-   * ofrecer un botón "Reintentar" que en realidad reintenta la carga, no la descarga. */
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   useEffect(() => {
@@ -902,17 +898,16 @@ export function Tablero() {
 
             {ventas && pagos && idEmpresa !== null && (
               <>
-                {errorDescarga && <div className="alert alert-danger py-1 px-2 small">{errorDescarga}</div>}
                 <div className="d-flex gap-2 mb-2">
                   <BotonDeDescarga
                     ruta={rutasDeExportacion.ventasResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
                     etiqueta="Descargar ventas"
-                    onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
+                    onError={toast.error}
                   />
                   <BotonDeDescarga
                     ruta={rutasDeExportacion.pagosResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
                     etiqueta="Descargar pagos"
-                    onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
+                    onError={toast.error}
                   />
                 </div>
                 <div className="row g-3 mb-4">

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
+import { Toaster } from '../toasts/Toaster'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Existencias } from './Existencias'
 import { RutaProtegida } from '../auth/RutaProtegida'
@@ -153,7 +154,12 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
 }
 
 function renderExistencias() {
-  return render(<Existencias />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+  return render(<Existencias />, { wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ) })
 }
 
 /** Monta detrás del mismo gate de rol que `App.tsx` usa para `/reportes/existencias`
@@ -186,6 +192,14 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/reportes/stock/rotacion?')) return Promise.resolve(rotacionFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
+}
+
+/** Una descarga fallida se avisa con un toast de error, nunca con un banner. */
+async function toastDeErrorDeDescarga(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.ws-toaster [role="alert"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
 }
 
 beforeEach(() => {
@@ -262,7 +276,7 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
     await screen.findByText('Yerba mate 1kg')
     await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
 
-    expect(await screen.findByText('No se pudo descargar el archivo.')).toBeInTheDocument()
+    await toastDeErrorDeDescarga('No se pudo descargar el archivo.')
     expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/existencias\/export\?idSucursal=20/)
   })
 
