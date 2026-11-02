@@ -843,6 +843,13 @@ in place (Designer and snapshot too; `has-pending-model-changes` clean).
   backfill `SET LOCAL` removed fails the `ways_app` test (the StartsWith guard).
 - Deviation: `src/Ways.Web/src/paginas/ConciliacionMercadoPago.test.tsx` was also edited (fixture needs the new field; reopen tests updated), outside the listed surface but required by the verification command.
 
+## Veredicto judgment-day E7b (2026-11-02)
+
+- Ronda 1: jueces A y B confirmaron F1 (índices sin nombre colapsados), F2 (backfill sin filas WITHDRAWAL_CANCEL) y F3 (falta índice de búsqueda de cancelaciones); todos WARNING.
+- Corrección e86ddc91; re-juicio acotado de A y B: F1, F2 y F3 resueltos, sin hallazgos nuevos.
+- **JUDGMENT: APPROVED ✅**
+- Límites conocidos: el backfill no audita los descartes; la reversión se prueba con la conexión dueña; toma la fila de cancelación de menor id.
+
 ## Judgment-day E7b round 1 fixes (2026-11-02)
 
 - F1 (index identity collapse): both partial unique indexes on `{IdTenant, IdEmpresa, ClaveOrigen}` are declared with the named `HasIndex(..., name)` overload; the E7b Designer and the
