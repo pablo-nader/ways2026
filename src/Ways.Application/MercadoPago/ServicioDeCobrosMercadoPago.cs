@@ -84,8 +84,8 @@ namespace Ways.Application.MercadoPago;
 /// (<see cref="ListarSinVentaAsync"/>).
 ///
 /// <b>Aprobado después de una venta con su número.</b> Si una orden <c>processed</c> aprueba un cobro cuyo número ya usó una venta no
-/// anulada (la aprobación manual de un pago sin verificar, de cualquier tipo de comprobante), el cobro no queda <c>aprobado</c> sin
-/// destino: pasa directo a <c>sin_venta</c> (con su pago y <c>fecha_apartado</c>) y se audita
+/// anulada con un pago de Mercado Pago <c>sin_verificar</c> (la aprobación manual del cajero, que cobró dos veces), el cobro no queda
+/// <c>aprobado</c> sin destino: pasa directo a <c>sin_venta</c> (con su pago y <c>fecha_apartado</c>) y se audita
 /// <see cref="AccionAuditada.VentaMercadoPagoDobleCobro"/> sobre esa venta. Antes de leer la venta toma la fila del cobro con
 /// <c>FOR UPDATE</c>: una venta que bloqueó el número la tiene hasta confirmar. Un aviso firmado no tiene usuario: la fila de auditoría
 /// se atribuye al empleado de la venta.
@@ -818,8 +818,10 @@ public class ServicioDeCobrosMercadoPago(
             contexto.UsuarioId > 0 ? null : existente.IdEmpleado);
     }
 
-    /// <summary>La venta vigente (no anulada, de cualquier tipo de comprobante) que ya usó el número del cobro, si hay. Antes toma la
-    /// fila del cobro con <c>FOR UPDATE</c>: la venta que bloqueó el número la tiene hasta confirmar, así que esta lectura ve su resultado.</summary>
+    /// <summary>La venta vigente (no anulada) que ya usó el número del cobro y tiene al menos un pago <c>sin_verificar</c> (la aprobación
+    /// manual del cajero en un medio con proveedor de Mercado Pago, que la regla de venta exige: el doble cobro real), si hay. Otra venta con
+    /// el mismo número no cuenta. Antes toma la fila del cobro con <c>FOR UPDATE</c>: la venta con ese pago tomó el bloqueo del número y lo
+    /// tiene hasta confirmar, así que esta lectura ve su resultado.</summary>
     private async Task<VentaDelNumero?> LeerVentaDelNumeroBloqueandoAsync(CobroMercadoPago cobro, CancellationToken ct)
     {
         await BloquearFilaAsync(cobro.Id, ct);
@@ -829,7 +831,10 @@ public class ServicioDeCobrosMercadoPago(
         return await db.ComprobantesVenta
             .AsNoTracking()
             .SinEspejosFiscales()
-            .Where(c => c.IdPuntoVenta == idPuntoVenta && c.Numero == numero && c.Estado != EstadoComprobante.Anulado)
+            .Where(c => c.IdPuntoVenta == idPuntoVenta && c.Numero == numero && c.Estado != EstadoComprobante.Anulado
+                && db.Cobros.Any(p =>
+                    p.IdComprobanteVenta == c.Id && p.DeletedAt == null
+                    && p.VerificacionMercadoPago == VerificacionDePagoMercadoPago.SinVerificar))
             .Select(c => new VentaDelNumero(c.Id, c.IdEmpleado))
             .FirstOrDefaultAsync(ct);
     }
@@ -837,7 +842,7 @@ public class ServicioDeCobrosMercadoPago(
     private sealed record VentaDelNumero(int Id, int IdEmpleado);
 
     /// <summary>Devuelve <c>true</c> si la orden aprobó el pago del cobro. Con <paramref name="ventaYaConElNumero"/> el cobro no se
-    /// aprueba: una venta (la aprobación manual de un pago sin verificar) ya usó su número, así que queda <c>sin_venta</c>.</summary>
+    /// aprueba: una venta con un pago de Mercado Pago sin verificar (la aprobación manual) ya usó su número, así que queda <c>sin_venta</c>.</summary>
     private bool AplicarOrden(CobroMercadoPago cobro, OrdenDeMercadoPago orden, DateTimeOffset ahora, bool ventaYaConElNumero = false)
     {
         var aprobo = false;

@@ -1594,6 +1594,78 @@ public class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
             await AuditoriaDeLaVentaAsync(emitido.Id, "venta.mercadopagodoblecobro"), a => Payload(a).TryGetProperty("origen", out _));
     }
 
+    private static string TipoDeOtraSerie => "NCX";
+
+    private async Task AssertCobroTardioSigueAprobadoSinAvisoAsync(CobroDeMercadoPago cobro, params int[] ventas)
+    {
+        var fila = (await ConsultarAsync(
+            "SELECT estado, id_comprobante_venta FROM cobros_mercadopago WHERE id_cobro_mercadopago = $1", cobro.IdCobro)).Single();
+        Assert.Equal("aprobado", fila["estado"]);
+        Assert.Null(fila["id_comprobante_venta"]);
+        foreach (var venta in ventas)
+        {
+            Assert.DoesNotContain(
+                await AuditoriaDeLaVentaAsync(venta, "venta.mercadopagodoblecobro"), x => Payload(x).TryGetProperty("origen", out _));
+        }
+    }
+
+    // Clausula (G1, decision del dueno): una venta de OTRO tipo de comprobante con el mismo numero y sin pago sin verificar no es doble
+    // cobro: el cobro aprobado despues sigue aprobado, sin aviso, y la venta real lo liga.
+    [Fact]
+    public async Task UnCobroAprobadoDespuesDeUnaVentaDeOtroTipoConSuNumeroSigueAprobadoYLaVentaRealLoLiga()
+    {
+        var e = await PrepararAsync("mp-venta-cobro-tardio-otro-tipo");
+        var cobro = await CobroPendienteAsync(e, e.Desde);
+        var otra = await LeerAsync<ComprobanteEmitido>(await VenderAsync(e, Venta(e, e.Desde, PagoEfectivo(e))), HttpStatusCode.Created);
+        await EjecutarAsync(
+            "UPDATE comprobantes_venta SET id_tipo_comprobante = (SELECT id_tipo_comprobante FROM tipos_comprobante WHERE codigo = $1) " +
+            "WHERE id_comprobante_venta = $2", TipoDeOtraSerie, otra.Id);
+
+        e.Ordenes.Estados[e.Ordenes.Estados.Single(kv => kv.Value == "created").Key] = "processed";
+        var visto = await LeerAsync<CobroDeMercadoPago>(await e.Cajero.GetAsync($"{Ruta}/{cobro.IdCobro}"));
+
+        Assert.Equal("aprobado", visto.Estado);
+        await AssertCobroTardioSigueAprobadoSinAvisoAsync(cobro, otra.Id);
+        var real = await LeerAsync<ComprobanteEmitido>(
+            await VenderAsync(e, Venta(e, e.Desde, PagoMp(e, cobro.IdCobro))), HttpStatusCode.Created);
+        Assert.Equal(real.Id, await VentaLigadaAsync(cobro.IdCobro));
+        Assert.DoesNotContain(
+            await AuditoriaDeLaVentaAsync(real.Id, "venta.mercadopagodoblecobro"), x => Payload(x).TryGetProperty("origen", out _));
+    }
+
+    // Clausula (G1, decision del dueno): una venta con el mismo numero solo en efectivo no es doble cobro.
+    [Fact]
+    public async Task UnCobroAprobadoDespuesDeUnaVentaSoloEnEfectivoConSuNumeroSigueAprobado()
+    {
+        var e = await PrepararAsync("mp-venta-cobro-tardio-efectivo");
+        var cobro = await CobroPendienteAsync(e, e.Desde);
+        var venta = await LeerAsync<ComprobanteEmitido>(await VenderAsync(e, Venta(e, e.Desde, PagoEfectivo(e))), HttpStatusCode.Created);
+
+        e.Ordenes.Estados[e.Ordenes.Estados.Single(kv => kv.Value == "created").Key] = "processed";
+        var visto = await LeerAsync<CobroDeMercadoPago>(await e.Cajero.GetAsync($"{Ruta}/{cobro.IdCobro}"));
+
+        Assert.Equal("aprobado", visto.Estado);
+        await AssertCobroTardioSigueAprobadoSinAvisoAsync(cobro, venta.Id);
+    }
+
+    // Clausula (G1, decision del dueno): una venta con el mismo numero cuyo unico pago de Mercado Pago es uno ligado (`mercadopago`),
+    // no sin verificar, tampoco cuenta.
+    [Fact]
+    public async Task UnCobroAprobadoDespuesDeUnaVentaConPagoMercadoPagoSinMarcaDeSuNumeroSigueAprobado()
+    {
+        var e = await PrepararAsync("mp-venta-cobro-tardio-sin-marca");
+        var cobro = await CobroPendienteAsync(e, e.Desde);
+        var venta = await LeerAsync<ComprobanteEmitido>(await VenderAsync(e, Venta(e, e.Desde, PagoManual(e, "OP-9"))), HttpStatusCode.Created);
+        await EjecutarAsync(
+            "UPDATE cobros SET verificacion_mercadopago = NULL WHERE id_comprobante_venta = $1", venta.Id);
+
+        e.Ordenes.Estados[e.Ordenes.Estados.Single(kv => kv.Value == "created").Key] = "processed";
+        var visto = await LeerAsync<CobroDeMercadoPago>(await e.Cajero.GetAsync($"{Ruta}/{cobro.IdCobro}"));
+
+        Assert.Equal("aprobado", visto.Estado);
+        await AssertCobroTardioSigueAprobadoSinAvisoAsync(cobro, venta.Id);
+    }
+
     // Clausula: toda aprobacion manual deja un rastro con la venta, el punto de venta, el importe, la referencia y el dispositivo.
     [Fact]
     public async Task TodaAprobacionManualDejaSuRastroDeAuditoria()
