@@ -19,6 +19,9 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
+import { ModalDeCambioDeMedios } from '../componentes/ModalDeCambioDeMedios'
+import { motivoDeNoCambiarMedios } from '../api/cambioDeMedios'
+import { useEnLinea } from '../pos/useEnLinea'
 import { EstadoDeVentaEnFila, ModalDetalleDeVenta } from '../componentes/DetalleDeVenta'
 import {
   FILTROS_VACIOS,
@@ -30,6 +33,7 @@ import {
   hayFiltrosActivos,
   mediosDisponibles,
   puedeAnular,
+  puedeCambiarMedios,
   puedeReimprimir,
   puedeReimprimirFactura,
   puedeReimprimirNotaDeCredito,
@@ -68,6 +72,7 @@ function mensajeDeErrorReimprimir(e: unknown): string {
   return e instanceof ErrorApi ? e.message : 'No se pudo obtener el comprobante para reimprimir.'
 }
 
+const MENSAJE_CAMBIO_DE_MEDIOS_SIN_CONEXION = 'Sin conexión: el medio de pago de una venta se cambia solo con el servidor, no se puede hacer en modo offline.'
 const MENSAJE_VENTA_ANULADA_NO_REIMPRIME = 'La venta fue anulada, no se puede reimprimir.'
 const MENSAJE_FACTURA_NO_DISPONIBLE = 'La factura de esta venta no está disponible para reimprimir.'
 const MENSAJE_NC_NO_DISPONIBLE = 'La nota de crédito de esta venta no está disponible para reimprimir.'
@@ -144,6 +149,10 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
   const [errorAnular, setErrorAnular] = useState('')
 
   const [filtros, setFiltros] = useState<FiltrosDeVentasDelTurno>(FILTROS_VACIOS)
+
+  /** Venta cuyo medio de pago se está corrigiendo: el modal es dueño de su lectura y de su escritura. */
+  const [filaACambiarMedios, setFilaACambiarMedios] = useState<VentaDeTurnoListado | null>(null)
+  const enLinea = useEnLinea()
 
   // Catálogo de medios de pago — cargado una sola vez al montar (no depende de `puntoVenta`, el
   // catálogo de medios es del tenant): hace falta para nombrar cada pago del detalle y para
@@ -237,7 +246,24 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
   }, [])
 
   const ocupado = buscandoTurno || cargandoVentas || anulando
-  const bloqueado = ocupado || filaAAnular !== null || idDetalle !== null
+  const bloqueado = ocupado || filaAAnular !== null || idDetalle !== null || filaACambiarMedios !== null
+
+  function pedirCambiarMedios(fila: VentaDeTurnoListado, disparador: HTMLElement) {
+    disparadorRef.current = disparador
+    setFilaACambiarMedios(fila)
+  }
+
+  function cerrarCambioDeMedios() {
+    focoPendienteRef.current = true
+    setFilaACambiarMedios(null)
+  }
+
+  /** El servidor ya corrigió la venta: se avisa y se vuelve a pedir el listado (un fallo de ese refresco tiene su propio aviso). */
+  function alGuardarCambioDeMedios(corregida: ComprobanteEmitido) {
+    toast.exito(`Se cambió el medio de pago de la venta ${corregida.numeroVisible}.`)
+    cerrarCambioDeMedios()
+    if (turno) void cargarVentas(turno.id, (generacionRef.current += 1))
+  }
 
   function pedirAnular(fila: VentaDeTurnoListado, disparador: HTMLElement) {
     if (bloqueado) return
@@ -490,6 +516,11 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
           <>
             {errorVentas && <div className="alert alert-danger">{errorVentas}</div>}
             {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
+            {!enLinea && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {MENSAJE_CAMBIO_DE_MEDIOS_SIN_CONEXION}
+              </div>
+            )}
 
             {cargandoVentas && ventas.length === 0 && <Cargando />}
 
@@ -631,6 +662,19 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
                           {puedeAnular(v, rolId) && (
                             <BotonIcono icono="anular" disabled={bloqueado} onClick={(e) => pedirAnular(v, e.currentTarget)} />
                           )}
+                          {puedeCambiarMedios(v, rolId) && (
+                            <BotonIcono
+                              icono="editar"
+                              etiqueta="Cambiar medio de pago"
+                              title={
+                                !enLinea
+                                  ? MENSAJE_CAMBIO_DE_MEDIOS_SIN_CONEXION
+                                  : (motivoDeNoCambiarMedios(v, medios) ?? 'Cambiar medio de pago')
+                              }
+                              disabled={bloqueado || !enLinea || motivoDeNoCambiarMedios(v, medios) !== null}
+                              onClick={(e) => pedirCambiarMedios(v, e.currentTarget)}
+                            />
+                          )}
                           {alReimprimir && puedeReimprimir(v) && (
                             <BotonIcono
                               icono="imprimir"
@@ -723,6 +767,16 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
                   </div>
                 )}
               </Modal>
+            )}
+
+            {filaACambiarMedios && (
+              <ModalDeCambioDeMedios
+                key={filaACambiarMedios.id}
+                venta={filaACambiarMedios}
+                medios={medios}
+                onGuardado={alGuardarCambioDeMedios}
+                onCerrar={cerrarCambioDeMedios}
+              />
             )}
 
             {idDetalle !== null && (

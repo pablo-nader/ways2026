@@ -12,6 +12,7 @@ import {
 } from '../api/reportes'
 import type { PaginaDeHistoricoDeCajas, PuntoVentaListado } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
+import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { EncabezadoOrdenable } from '../componentes/grilla'
@@ -52,7 +53,6 @@ export function HistoricoDeCajas() {
   const [pagina, setPagina] = useState<PaginaDeHistoricoDeCajas | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   useEffect(() => {
@@ -185,13 +185,10 @@ export function HistoricoDeCajas() {
             <BotonDeDescarga
               ruta={rutasDeExportacion.historicoDeCajas(filtros)}
               etiqueta="Descargar"
-              onError={setErrorDescarga}
-              onInicio={() => setErrorDescarga('')}
+              onError={toast.error}
             />
           </div>
         </div>
-
-        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
         {cargando && !pagina && <Cargando />}
 
