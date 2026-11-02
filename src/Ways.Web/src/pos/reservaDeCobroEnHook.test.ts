@@ -803,6 +803,10 @@ const cobroDelServidor = (estado: CobroMercadoPago['estado']): CobroMercadoPago 
   verificandoPago: false,
   pagoInformadoSinDatos: false,
   usadoEnVenta: false,
+  tipo: 'qr',
+  idTerminal: null,
+  enTerminal: false,
+  revisarTerminal: false,
 })
 
 async function conCobroEnCurso() {

@@ -3703,6 +3703,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
 
+                    b.Property<string>("IdTerminalPoint")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("id_terminal_point");
+
                     b.Property<decimal>("Importe")
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("importe");
@@ -3726,6 +3731,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<long?>("ReferenciaPagoMercadoPago")
                         .HasColumnType("bigint")
                         .HasColumnName("referencia_pago_mercadopago");
+
+                    b.Property<string>("SituacionTerminal")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("situacion_terminal");
 
                     b.Property<string>("Tipo")
                         .IsRequired()
@@ -3781,7 +3791,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_aprobado_con_pago", "estado <> 'aprobado' OR id_pago_mercadopago IS NOT NULL");
 
-                            t.HasCheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto', 'sin_venta')");
+                            t.HasCheckConstraint("ck_cobros_mercadopago_estado", "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto', 'sin_venta', 'fallido')");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_importe", "importe > 0");
 
@@ -3791,9 +3801,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
 
-                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL");
+                            t.HasCheckConstraint("ck_cobros_mercadopago_orden", "estado IN ('creando', 'expirado') OR id_orden_mercadopago IS NOT NULL OR (estado = 'cancelado' AND tipo = 'point')");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_sin_venta", "estado <> 'sin_venta' OR (fecha_apartado IS NOT NULL AND id_comprobante_venta IS NULL AND id_pago_mercadopago IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_situacion_terminal", "situacion_terminal IS NULL OR (tipo = 'point' AND estado = 'pendiente' AND situacion_terminal IN ('en_terminal', 'revisar_terminal'))");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_terminal", "(tipo = 'point') = (id_terminal_point IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_tipo", "tipo IN ('qr', 'point')");
                         });

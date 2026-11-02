@@ -14,6 +14,10 @@ const cobro: CobroMercadoPago = {
   verificandoPago: false,
   pagoInformadoSinDatos: false,
   usadoEnVenta: false,
+  tipo: 'qr',
+  idTerminal: null,
+  enTerminal: false,
+  revisarTerminal: false,
 }
 
 afterEach(cleanup)

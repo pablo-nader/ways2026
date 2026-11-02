@@ -157,8 +157,11 @@ public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixt
                 var id = ordenes.OrdenPorClave.GetOrAdd(clave, _ => $"ORD{Interlocked.Increment(ref _siguienteOrden):D6}");
                 ordenes.Estados.TryAdd(id, "created");
                 using var cuerpo = JsonDocument.Parse(pedido.Cuerpo);
-                ordenes.Totales[id] = decimal.Parse(
-                    cuerpo.RootElement.GetProperty("total_amount").GetString()!, CultureInfo.InvariantCulture);
+                // El QR lleva total_amount; la orden Point no (solo transactions.payments[{amount}]).
+                var textoDelTotal = cuerpo.RootElement.TryGetProperty("total_amount", out var total)
+                    ? total.GetString()!
+                    : cuerpo.RootElement.GetProperty("transactions").GetProperty("payments")[0].GetProperty("amount").GetString()!;
+                ordenes.Totales[id] = decimal.Parse(textoDelTotal, CultureInfo.InvariantCulture);
                 return Json(HttpStatusCode.Created, JsonDeOrden(ordenes, id));
             }
 
@@ -958,16 +961,15 @@ public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixt
     // ---- Crear: validaciones y precondiciones ----------------------------------------------------------------------------
 
     [Fact]
-    public async Task ElMedioTieneQueExistirEstarActivoSerDeLaEmpresaYCobrarConQr()
+    public async Task ElMedioTieneQueExistirEstarActivoSerDeLaEmpresaYCobrarConMercadoPago()
     {
         var e = await PrepararAsync("mp-cobro-medio");
         var sinProveedor = await CrearMedioAsync(e.Ctx, "Transferencia", "Electronico", null);
-        var point = await CrearMedioAsync(e.Ctx, "Point", "Electronico", "mercadopago_point");
         var efectivo = await CrearMedioAsync(e.Ctx, "Efectivo", "Efectivo", null);
         var inactivo = await CrearMedioAsync(e.Ctx, "QR viejo", "Electronico", "mercadopago_qr", activo: false);
         var otro = await PrepararAsync("mp-cobro-medio-ajeno");
 
-        foreach (var idMedio in new[] { sinProveedor, point, efectivo, inactivo, otro.IdMedio, 987_654 })
+        foreach (var idMedio in new[] { sinProveedor, efectivo, inactivo, otro.IdMedio, 987_654 })
         {
             await AssertCodigoAsync(
                 await CrearAsync(e, 5012, 100m, idMedio), HttpStatusCode.BadRequest, "cobro_mercadopago_medio_invalido");
@@ -1526,17 +1528,16 @@ public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixt
     }
 
     [Fact]
-    public async Task UnCancelarQueContesta409SobreUnaOrdenQueSigueCreadaDejaElCobroPendiente()
+    public async Task UnCancelarQueContesta409SobreUnaOrdenQueSigueCreadaEsUn409CancelacionNoAplicadaYElCobroSigueVivo()
     {
         var e = await PrepararAsync("mp-cobro-cancelar-409-sigue");
         var cobro = await CrearOkAsync(e, 5031, 100m);
         e.Ordenes.Cancelar = _ => Json(HttpStatusCode.Conflict, """{"error": "cannot_cancel_order"}""");
 
-        var resultado = await LeerAsync<CobroDeMercadoPago>(await CancelarAsync(e, cobro.IdCobro));
+        await AssertCodigoAsync(await CancelarAsync(e, cobro.IdCobro), HttpStatusCode.Conflict, "mercadopago_cancelacion_no_aplicada");
 
-        Assert.Equal("pendiente", resultado.Estado);
-        Assert.NotNull(resultado.QrData);
         Assert.Equal("pendiente", Assert.Single(await FilasAsync(e.IdPuntoVenta))["estado"]);
+        Assert.NotNull((await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro))).QrData);
     }
 
     [Fact]

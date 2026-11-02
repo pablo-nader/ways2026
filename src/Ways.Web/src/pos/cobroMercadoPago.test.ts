@@ -9,6 +9,7 @@ import {
   medioConCobroIntegrado,
   planDeCobroMercadoPago,
   segundosParaExpirar,
+  TEXTO_POR_CIERRE_SIN_APROBAR,
   vistaDelCobro,
 } from './cobroMercadoPago'
 
@@ -24,6 +25,10 @@ function cobro(sobrescribir: Partial<CobroMercadoPago> = {}): CobroMercadoPago {
     verificandoPago: false,
     pagoInformadoSinDatos: false,
     usadoEnVenta: false,
+    tipo: 'qr',
+    idTerminal: null,
+    enTerminal: false,
+    revisarTerminal: false,
     ...sobrescribir,
   }
 }
@@ -77,7 +82,36 @@ describe('vistaDelCobro', () => {
     expect(vistaDelCobro(cobro({ estado: 'aprobado', importePagado: 1500, importeDistinto: true })).tipo).toBe('importe_distinto')
   })
 
-  it.each(['cancelado', 'expirado', 'devuelto', 'sin_venta'] as const)('un cobro %s vuelve al pago', (estado) => {
+  it('un cobro Point pendiente espera en la terminal (nunca "verificando" por no tener QR) y nombra la terminal', () => {
+    const point = { tipo: 'point', idTerminal: 'PAX_A910__SMARTPOS1', qrData: null } as const
+    expect(vistaDelCobro(cobro(point))).toEqual({ tipo: 'cobrando_en_terminal', idTerminal: 'PAX_A910__SMARTPOS1', enTerminal: false })
+    expect(vistaDelCobro(cobro({ ...point, enTerminal: true }))).toEqual({
+      tipo: 'cobrando_en_terminal',
+      idTerminal: 'PAX_A910__SMARTPOS1',
+      enTerminal: true,
+    })
+  })
+
+  it('un cobro Point que pide mirar la terminal muestra "revisar la terminal"', () => {
+    expect(vistaDelCobro(cobro({ tipo: 'point', idTerminal: 'T', qrData: null, revisarTerminal: true }))).toEqual({ tipo: 'revisar_terminal' })
+  })
+
+  it('un cobro Point con el pago informado sin datos o verificando no muestra la terminal', () => {
+    const point = { tipo: 'point', idTerminal: 'T', qrData: null } as const
+    expect(vistaDelCobro(cobro({ ...point, pagoInformadoSinDatos: true, verificandoPago: true })).tipo).toBe('informado_sin_datos')
+    expect(vistaDelCobro(cobro({ ...point, verificandoPago: true })).tipo).toBe('verificando')
+  })
+
+  it('un cobro Point aprobado con el importe pedido cierra la venta', () => {
+    expect(vistaDelCobro(cobro({ tipo: 'point', idTerminal: 'T', estado: 'aprobado', importePagado: 1500, qrData: null }))).toEqual({ tipo: 'aprobado' })
+  })
+
+  it('un cobro Point fallido vuelve al pago con el texto del rechazo en la terminal', () => {
+    expect(vistaDelCobro(cobro({ tipo: 'point', idTerminal: 'T', estado: 'fallido', qrData: null }))).toEqual({ tipo: 'sin_aprobar', estado: 'fallido' })
+    expect(TEXTO_POR_CIERRE_SIN_APROBAR.fallido).toBe('El pago fue rechazado en la terminal: probá de nuevo u otro medio.')
+  })
+
+  it.each(['cancelado', 'expirado', 'devuelto', 'sin_venta', 'fallido'] as const)('un cobro %s vuelve al pago', (estado) => {
     expect(vistaDelCobro(cobro({ estado, qrData: null }))).toEqual({ tipo: 'sin_aprobar', estado })
   })
 
@@ -110,6 +144,15 @@ describe('planDeCobroMercadoPago', () => {
   it('dos filas con proveedor (aunque sean el mismo medio) se rechazan', () => {
     expect(planDeCobroMercadoPago([{ idMedioPago: 2 }, { idMedioPago: 2 }], medios)).toEqual({ tipo: 'varios' })
     expect(planDeCobroMercadoPago([{ idMedioPago: 2 }, { idMedioPago: 3 }], medios)).toEqual({ tipo: 'varios' })
+  })
+
+  it('un medio Point también cobra con Mercado Pago, y un Point más un QR son dos cobros', () => {
+    const conPoint = { ...medios, 4: medio(4, 'mercadopago_point') }
+    const pago = { idMedioPago: 4, importe: 10 }
+    expect(planDeCobroMercadoPago([{ idMedioPago: 1 }, pago], conPoint)).toEqual({ tipo: 'uno', pago })
+    expect(planDeCobroMercadoPago([{ idMedioPago: 2 }, pago], conPoint)).toEqual({ tipo: 'varios' })
+    expect(medioConCobroIntegrado(medio(4, 'mercadopago_point'))).toBe(true)
+    expect(medioConCobroIntegrado(medio(5, 'otro'))).toBe(false)
   })
 
   it('un medio que no está en la lista no cuenta', () => {

@@ -251,11 +251,14 @@ describe('descriptorMediosPago — integración de cobro (proveedor)', () => {
     ...sobrescribir,
   })
 
-  it('el campo solo se ve con Electronico y ofrece Mercado Pago QR sin Point', () => {
+  it('el campo solo se ve con Electronico y ofrece Mercado Pago QR y Mercado Pago Point', () => {
     const campo = descriptorMediosPago.campos.find((c) => c.clave === 'proveedor')
 
     expect(campo).toMatchObject({ tipo: 'select', opcionVacia: 'Sin integración' })
-    expect(campo?.opciones).toEqual([{ valor: 'mercadopago_qr', etiqueta: 'Mercado Pago QR' }])
+    expect(campo?.opciones).toEqual([
+      { valor: 'mercadopago_qr', etiqueta: 'Mercado Pago QR' },
+      { valor: 'mercadopago_point', etiqueta: 'Mercado Pago Point' },
+    ])
     expect(campo?.visibleSi?.(valoresElectronicos())).toBe(true)
     expect(campo?.visibleSi?.(valoresElectronicos({ comportamiento: 'Efectivo' }))).toBe(false)
   })
@@ -270,6 +273,14 @@ describe('descriptorMediosPago — integración de cobro (proveedor)', () => {
 
     expect(valores.proveedor).toBe('mercadopago_qr')
     expect(descriptorMediosPago.aAlta('QR', true, valores, null).proveedor).toBe('mercadopago_qr')
+  })
+
+  it('un medio Point hace la ida y vuelta del formulario y se manda limpio si deja de ser electrónico', () => {
+    const valores = descriptorMediosPago.aValores(medioFixture({ comportamiento: 'Electronico', proveedor: 'mercadopago_point' }))
+
+    expect(valores.proveedor).toBe('mercadopago_point')
+    expect(descriptorMediosPago.aAlta('Point', true, valores, null).proveedor).toBe('mercadopago_point')
+    expect(descriptorMediosPago.aAlta('Point', true, { ...valores, comportamiento: 'Efectivo' }, null).proveedor).toBeNull()
   })
 
   it('un medio sin proveedor (o de una copia vieja sin el campo) se edita como vacío', () => {
