@@ -342,8 +342,8 @@ export type RechazoDePagoACuenta = { codigo: string; mensaje: string }
  * Espejo pixel-a-pixel del orden de `ValidadorDePagoACuenta.Validar` (Ways.Domain.CuentaCorriente)
  * — corta en el primer rechazo, nunca acumula errores, mismos códigos de dominio. Nunca
  * autoritativo: solo guía al cajero antes de intentar el pago real. La regla 5 (vuelto justificado por
- * billetes) se eliminó por decisión del dueño, 2026-11-02; el vuelto solo queda acotado por el
- * importe aplicado positivo.
+ * billetes) se eliminó por decisión del dueño, 2026-11-02; el vuelto de cada fila queda acotado por su
+ * importe y el total por el importe aplicado positivo.
  */
 export function validarPagoACuentaLocal(params: {
   pagos: PagoACuentaParaCalculo[]
@@ -374,6 +374,12 @@ export function validarPagoACuentaLocal(params: {
   for (const pago of pagos) {
     if (pago.vuelto > 0 && !pago.admiteVuelto) {
       return { codigo: 'medio_no_admite_vuelto', mensaje: 'El medio de pago elegido no admite vuelto.' }
+    }
+  }
+
+  for (const pago of pagos) {
+    if (pago.vuelto > pago.importe) {
+      return { codigo: 'vuelto_supera_el_pago', mensaje: 'El vuelto no puede superar el importe del pago que lo da.' }
     }
   }
 

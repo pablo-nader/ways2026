@@ -25,10 +25,10 @@ public readonly record struct PagoAValidar(
 /// nuevas del proyecto (referencia obligatoria, vuelto máximo coherente con lo efectivamente
 /// pagado).
 ///
-/// La regla 3 (el vuelto justificado por billetes) se eliminó por decisión del dueño,
-/// 2026-11-02: el cliente puede entregar de más para recibir un vuelto redondo, y el vuelto
-/// solo queda acotado por la regla 8. Se conserva la numeración para no alterar el orden de
-/// las demás reglas. <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
+/// La regla 3 ya no exige que el vuelto se justifique con billetes (decisión del dueño,
+/// 2026-11-02): el cliente puede entregar de más para recibir un vuelto redondo. Ahora acota
+/// el vuelto de cada fila a su propio importe; el vuelto total sigue acotado por la regla 8.
+/// <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
 ///
 /// El orden es OBSERVABLE (spec: "a payload violating rules 2 and 6 reports 2") — cada regla
 /// corta la validación en el primer rechazo, nunca acumula errores.
@@ -115,6 +115,16 @@ public static class ValidadorDePagos
         {
             throw new ErrorDominio(
                 "tolerancia_de_pago_superada", "El pago ingresado no cubre el total, ni siquiera con la tolerancia.", 400);
+        }
+
+        // 3: el vuelto de una fila no puede superar el importe de esa misma fila.
+        foreach (var pago in pagos)
+        {
+            if (pago.Vuelto > pago.Importe)
+            {
+                throw new ErrorDominio(
+                    "vuelto_supera_el_pago", "El vuelto no puede superar el importe del pago que lo da.", 400);
+            }
         }
 
         // 4: vuelto sobre un medio con AdmiteVuelto = false (generaliza "tarjetas" y "cuenta

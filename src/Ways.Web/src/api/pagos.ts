@@ -250,6 +250,12 @@ export function validarPagosLocal(params: {
   }
 
   for (const pago of pagos) {
+    if (pago.vuelto > pago.importe) {
+      return { codigo: 'vuelto_supera_el_pago', mensaje: 'El vuelto no puede superar el importe del pago que lo da.' }
+    }
+  }
+
+  for (const pago of pagos) {
     if (pago.vuelto > 0 && !pago.admiteVuelto) {
       return { codigo: 'medio_no_admite_vuelto', mensaje: 'El medio de pago elegido no admite vuelto.' }
     }

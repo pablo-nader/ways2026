@@ -79,7 +79,22 @@ public class ValidadorDePagoACuentaTests
         Assert.True(excepcion is null || ((ErrorDominio)excepcion).Codigo != "medio_no_admite_vuelto");
     }
 
-    // ---- 5: eliminada (decisión del dueño, 2026-11-02) --------------------------------------
+    // ---- 5: vuelto_supera_el_pago (sin regla de billetes, decisión del dueño 2026-11-02) ----
+
+    [Fact]
+    public void UnVueltoMayorAlImporteDeSuFilaSeRechazaAunqueOtraFilaLoCubra()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            ValidadorDePagoACuenta.Validar([Efectivo(0m, vuelto: 50m), Tarjeta(100m)]));
+        Assert.Equal("vuelto_supera_el_pago", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnVueltoIgualAlImporteDeSuFilaNoSeRechazaPorLaRegla5()
+    {
+        var importeAplicado = ValidadorDePagoACuenta.Validar([Efectivo(50m, vuelto: 50m), Tarjeta(100m)]);
+        Assert.Equal(100m, importeAplicado);
+    }
 
     [Fact]
     public void UnVueltoDe3000SobreUnEfectivoDe10500EsAceptado()

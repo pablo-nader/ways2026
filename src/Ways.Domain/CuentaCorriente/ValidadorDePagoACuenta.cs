@@ -15,10 +15,10 @@ namespace Ways.Domain.CuentaCorriente;
 /// es vacía acá porque no hay <c>total</c> independiente — <c>importeAplicado</c> se DERIVA de
 /// <c>Σ importe − Σ vuelto</c>, así que esa desigualdad se cumple siempre por construcción.
 ///
-/// La regla 5 (el vuelto justificado por billetes) se eliminó por decisión del dueño,
-/// 2026-11-02, igual que la regla 3 de <see cref="ValidadorDePagos"/>: el vuelto solo queda
-/// acotado por la regla 7 (<c>importeAplicado</c> positivo). Se conserva la numeración de las
-/// demás reglas. <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
+/// La regla 5 ya no exige que el vuelto se justifique con billetes (decisión del dueño,
+/// 2026-11-02), igual que la regla 3 de <see cref="ValidadorDePagos"/>: acota el vuelto de cada
+/// fila a su propio importe, y la regla 7 (<c>importeAplicado</c> positivo) acota el total.
+/// <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
 ///
 /// El orden es OBSERVABLE, mismo contrato que <see cref="ValidadorDePagos"/>: cada regla corta la
 /// validación en el primer rechazo, nunca acumula errores.
@@ -77,6 +77,16 @@ public static class ValidadorDePagoACuenta
             {
                 throw new ErrorDominio(
                     "medio_no_admite_vuelto", "El medio de pago elegido no admite vuelto.", 400);
+            }
+        }
+
+        // 5: el vuelto de una fila no puede superar el importe de esa misma fila.
+        foreach (var pago in pagos)
+        {
+            if (pago.Vuelto > pago.Importe)
+            {
+                throw new ErrorDominio(
+                    "vuelto_supera_el_pago", "El vuelto no puede superar el importe del pago que lo da.", 400);
             }
         }
 

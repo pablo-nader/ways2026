@@ -351,6 +351,22 @@ describe('validarPagoACuentaLocal — orden observable, espejo de ValidadorDePag
     expect(validarPagoACuentaLocal({ pagos: [pagoFixture({ importe: 10500, vuelto: 3000 })] })).toBeNull()
   })
 
+  it('regla 5: un vuelto mayor al importe de su fila se rechaza aunque otra fila lo cubra', () => {
+    expect(
+      validarPagoACuentaLocal({
+        pagos: [pagoFixture({ idFila: 1, importe: 0, vuelto: 50 }), pagoFixture({ idFila: 2, importe: 100 })],
+      }),
+    ).toEqual({ codigo: 'vuelto_supera_el_pago', mensaje: 'El vuelto no puede superar el importe del pago que lo da.' })
+  })
+
+  it('regla 5: un vuelto igual al importe de su fila no se rechaza por esta regla', () => {
+    expect(
+      validarPagoACuentaLocal({
+        pagos: [pagoFixture({ idFila: 1, importe: 50, vuelto: 50 }), pagoFixture({ idFila: 2, importe: 100 })],
+      }),
+    ).toBeNull()
+  })
+
   it('regla 6: referencia requerida y ausente', () => {
     expect(
       validarPagoACuentaLocal({

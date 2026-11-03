@@ -188,7 +188,21 @@ public class ValidadorDePagosTests
         Validar(100m, [Efectivo(90m)], tolerancia: 10m);
     }
 
-    // ---- 3: eliminada (decisión del dueño, 2026-11-02) -------------------------------------
+    // ---- 3: vuelto_supera_el_pago (sin regla de billetes, decisión del dueño 2026-11-02) ----
+
+    [Fact]
+    public void UnVueltoMayorAlImporteDeSuFilaSeRechazaAunqueOtraFilaCubraElExcedente()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(100m, [Efectivo(10m, vuelto: 40m), Tarjeta(130m)]));
+        Assert.Equal("vuelto_supera_el_pago", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnVueltoIgualAlImporteDeSuFilaNoSeRechazaPorEstaRegla()
+    {
+        Validar(100m, [Efectivo(50m, vuelto: 50m), Tarjeta(100m)]);
+    }
 
     [Fact]
     public void UnTicketDe7500PagadoCon10500EnEfectivoAceptaUnVueltoDe3000()

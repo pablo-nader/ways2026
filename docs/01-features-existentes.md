@@ -135,7 +135,7 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 > positivo se rechaza con 400 `pago_en_comprobante_negativo` (`ValidadorDePagos`, regla 0c, después de los importes negativos y
 > antes de la fila 1). Las filas en cero no se rechazan; sin pagos se acepta.
 >
-> **Desviación deliberada (decisión del dueño, 2026-09-16):** la fila 3 de arriba (`vuelto
+> **Desviación deliberada (decisión del dueño, 2026-09-16; histórica, reemplazada el 2026-11-02):** la fila 3 de arriba (`vuelto
 > máximo`, $20 en el legacy, `vuelto_maximo` parametrizado en la app nueva hasta esta fecha)
 > impedía ventas legítimas — p. ej. un ticket de $5.500 pagado con un billete de $10.000 requiere
 > $4.500 de vuelto, muy por encima de cualquier techo fijo razonable. En la app nueva, para
@@ -153,10 +153,12 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 > billetes formables (`vuelto_no_justificado`, `BilletesArgentinos`) se eliminó por completo,
 > en ventas en efectivo y en el pago a cuenta corriente: rechazaba, por ejemplo, un ticket de
 > $7.500 pagado con $10.500 para recibir $3.000 de vuelto. Desde esa fecha el vuelto solo queda
-> acotado por la regla 8 (`vuelto_invalido`: Σ vuelto <= max(0, Σ importe − total)); el resto de
-> las reglas no cambia. Las notas siguientes describen el estado histórico.
+> acotado por la regla 8 (`vuelto_invalido`: Σ vuelto <= max(0, Σ importe − total)) y, fila por
+> fila, por su propio importe (`vuelto_supera_el_pago`, en la posición de la regla 3 de ventas y
+> de la 5 del pago a cuenta; vuelto == importe es válido); el resto de las reglas no cambia. Las
+> notas siguientes describen el estado histórico.
 >
-> **Actualización (decisión del dueño, 2026-09-16):** el mismo reclamo aplicaba al pago a
+> **Actualización (decisión del dueño, 2026-09-16; histórica):** el mismo reclamo aplicaba al pago a
 > **cuenta corriente** (`ValidadorDePagoACuenta`) — se extendió la misma regla de billetes ahí
 > también (mismo criterio, mismo código `vuelto_no_justificado`). El parámetro `vuelto_maximo`
 > ya no lo consume ningún validador del proyecto.

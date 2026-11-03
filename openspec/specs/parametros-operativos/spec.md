@@ -42,9 +42,8 @@ MUST represent a punto_venta-specific override.
 hardcoded anywhere in the payment-validation path, and a client-supplied
 tolerancia value MUST NOT override the resolved one. Vuelto is NOT governed
 by a parameter: both venta checkout (`ValidadorDePagos`) and pago a cuenta
-corriente (`ValidadorDePagoACuenta`) apply the banknote rule
-`BilletesArgentinos.EsVueltoJustificado` (owner decision, 2026-09-16,
-docs/01 §B6). The former `vuelto_maximo` key was removed from
+corriente (`ValidadorDePagoACuenta`) bound each pago's vuelto by its own
+importe (`vuelto_supera_el_pago`, owner decision, 2026-11-02, docs/01 §B6). The former `vuelto_maximo` key was removed from
 `ParametroConocido` and from `parametros` (`QuitarVueltoMaximo` migration).
 
 #### Scenario: No hardcoded tolerancia value exists
@@ -57,7 +56,7 @@ docs/01 §B6). The former `vuelto_maximo` key was removed from
 - GIVEN a checkout that pays `10000.00` in efectivo against a `5500.00`
   total (vuelto `4500.00`)
 - WHEN checkout validates payment
-- THEN it is accepted by the banknote rule, with no parametro resolved for
+- THEN it is accepted, with no parametro resolved for
   the vuelto
 
 #### Scenario: The removed vuelto_maximo key behaves as unknown

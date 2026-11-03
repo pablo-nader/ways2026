@@ -251,19 +251,16 @@ itemless RC path.)
 Checkout payment validation MUST apply the legacy B6 rejection order, reading
 `tolerancia_pago` through `ServicioDeParametros` (punto de venta > empresa >
 default) — never hardcoded. Rule 3 is a deliberate deviation from legacy B6
-(owner decision, 2026-09-16, docs/01 §B6): the fixed vuelto ceiling is
-replaced by the banknote rule `BilletesArgentinos.EsVueltoJustificado` (the
-pago a cuenta corriente flow applies the same rule). No parametro caps the
-vuelto; the former `vuelto_maximo` key was removed entirely
-(`QuitarVueltoMaximo` migration):
+(owner decision, 2026-11-02, docs/01 §B6): the fixed vuelto ceiling and the
+later banknote rule are replaced by a per-row bound (the pago a cuenta
+corriente flow applies the same rule). No parametro caps the vuelto; the
+former `vuelto_maximo` key was removed entirely (`QuitarVueltoMaximo`
+migration):
 
 1. All medios sum to 0 and total > 0 → rejected.
 2. `sum(pagos) + tolerancia_pago < total` → rejected.
-3. `vuelto > 0` and the efectivo entregado — Σ `importe` of the pagos whose
-   medio `Comportamiento = Efectivo` (never selected by `AdmiteVuelto`) — is
-   NOT representable with valid Argentine banknotes
-   (10/20/50/100/200/500/1000/2000/10000/20000) all strictly greater than the
-   vuelto → rejected (`vuelto_no_justificado`).
+3. A pago whose `vuelto` is greater than its own `importe` → rejected
+   (`vuelto_supera_el_pago`); `vuelto == importe` is allowed.
 4. `vuelto > 0` on a pago whose medio has `AdmiteVuelto = false` → rejected.
 5. Cuenta corriente payment beyond `LimiteCredito` (unless `CreditoIlimitado`)
    → rejected.

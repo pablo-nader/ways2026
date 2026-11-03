@@ -284,6 +284,25 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
     expect(validarPagosLocal({ ...base, total: 7500, pagos })).toBeNull()
   })
 
+  it('regla 3: un vuelto mayor al importe de su fila se rechaza aunque otra fila cubra el excedente', () => {
+    const pagos = [
+      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 10, admiteVuelto: true }), vuelto: 40 },
+      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', importe: 130, admiteVuelto: false }), vuelto: 0 },
+    ]
+    expect(validarPagosLocal({ ...base, total: 100, pagos })).toEqual({
+      codigo: 'vuelto_supera_el_pago',
+      mensaje: 'El vuelto no puede superar el importe del pago que lo da.',
+    })
+  })
+
+  it('regla 3: un vuelto igual al importe de su fila no se rechaza por esta regla', () => {
+    const pagos = [
+      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 50, admiteVuelto: true }), vuelto: 50 },
+      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', importe: 100, admiteVuelto: false }), vuelto: 0 },
+    ]
+    expect(validarPagosLocal({ ...base, total: 100, pagos })).toBeNull()
+  })
+
   it('regla 4: vuelto sobre un medio que no admite vuelto', () => {
     // Efectivo entrega 200 sin vuelto propio; Tarjeta declara un vuelto de 20 a mano.
     const pagos = [
