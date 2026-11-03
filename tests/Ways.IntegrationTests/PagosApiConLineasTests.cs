@@ -424,7 +424,7 @@ public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<Ways
     private static async Task<decimal> SaldoDelProveedorAsync(Contexto ctx) =>
         (await ctx.Admin.GetFromJsonAsync<SaldoDeProveedor>($"/api/proveedores/{ctx.IdProveedor}/saldo", OpcionesJson))!.Saldo;
 
-    private static DateOnly Ayer() => DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+    private static DateOnly Ayer() => FechaDelNegocio.Hoy().AddDays(-1);
 
     private static async Task<PagoConLineas> CrearPagoDeProveedorAsync(Contexto ctx, decimal importe) =>
         await LeerAsync<PagoConLineas>(
