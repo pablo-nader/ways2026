@@ -41,7 +41,7 @@ parametros (                  -- [operativa a nivel sucursal o punto de venta, c
 ```
 
 > **`vuelto_maximo` eliminado (decisión del dueño, 2026-09-16):** dejó de ser consumido por
-> cualquier validador (reemplazado por la regla de billetes formables, PRs #205/#211) y se
+> cualquier validador (reemplazado por la regla de billetes formables, PRs #205/#211, eliminada a su vez el 2026-11-02 por decisión del dueño) y se
 > eliminó del registro `ParametroConocido` y de cualquier fila remanente en `parametros`
 > (migración de datos `QuitarVueltoMaximo`, sin cambio de esquema).
 

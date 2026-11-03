@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   aPagosDeVenta,
-  BILLETES_ARGENTINOS,
   calcularExcedente,
   calcularFaltante,
   calcularPagosConVuelto,
   consumoCuentaCorriente,
-  efectivoEntregado,
-  esVueltoJustificado,
   filaPagoInicial,
   filaPagoVacia,
   filasAPagosConVuelto,
@@ -93,73 +90,6 @@ describe('pagos — consumoCuentaCorriente', () => {
 
   it('da 0 cuando no hay ningún pago por cuenta corriente', () => {
     expect(consumoCuentaCorriente([pagoFixture({ comportamiento: 'Efectivo' })])).toBe(0)
-  })
-})
-
-describe('pagos — efectivoEntregado', () => {
-  it('suma solo los pagos cuyo comportamiento es Efectivo', () => {
-    const pagos = [
-      pagoFixture({ comportamiento: 'Efectivo', importe: 100 }),
-      pagoFixture({ comportamiento: 'Electronico', importe: 50 }),
-    ]
-    expect(efectivoEntregado(pagos)).toBe(100)
-  })
-
-  it('da 0 cuando ningún pago es Efectivo', () => {
-    expect(efectivoEntregado([pagoFixture({ comportamiento: 'CuentaCorriente' })])).toBe(0)
-  })
-
-  it('ignora un medio no-Efectivo aunque admita vuelto por configuración de catálogo', () => {
-    // admiteVuelto es un flag por medio (ABM), no está atado a comportamiento — una Transferencia
-    // podría tenerlo prendido, pero nunca es "billetes físicos".
-    const pagos = [pagoFixture({ comportamiento: 'Electronico', admiteVuelto: true, importe: 9900 })]
-    expect(efectivoEntregado(pagos)).toBe(0)
-  })
-})
-
-// Tabla compartida con BilletesArgentinosTests (Ways.Domain.Tests): mismas entradas, mismo
-// criterio en ambas implementaciones (decisión del dueño, 2026-09-16).
-describe('pagos — esVueltoJustificado (espejo de BilletesArgentinos.EsVueltoJustificado)', () => {
-  it('expone las diez denominaciones vigentes', () => {
-    expect(BILLETES_ARGENTINOS).toEqual([10, 20, 50, 100, 200, 500, 1000, 2000, 10000, 20000])
-  })
-
-  it.each([
-    [10000, 4500, 'ticket 5500, un billete de 10000'],
-    [6000, 500, 'ticket 5500, tres billetes de 2000'],
-    [10000, 2000, 'vuelto igual a una denominación, un solo billete alcanza'],
-    [10000, 4500.5, 'total con centavos, efectivo múltiplo de 10'],
-    [10, 0, 'vuelto cero siempre justificado'],
-  ])('%d entregado con vuelto %d es justificado (%s)', (entregado, vuelto) => {
-    expect(esVueltoJustificado(entregado, vuelto)).toBe(true)
-  })
-
-  it.each([
-    [5520, 20, 'todo billete > 20 es múltiplo de 50; 5520 no lo es'],
-    [30000, 24500, 'ningún billete supera 24500'],
-    [11000, 2000, '11000 con billetes > 2000 no arma exacto'],
-    [4000, 2000, 'vuelto igual a un billete pero no alcanza para justificar 4000'],
-    [5500.5, 500.5, 'efectivo con centavos nunca es formable'],
-    [5505, 500, 'efectivo no múltiplo de 10'],
-    [0, 500, 'sin efectivo entregado no hay nada que formar'],
-  ])('%d entregado con vuelto %d NO es justificado (%s)', (entregado, vuelto) => {
-    expect(esVueltoJustificado(entregado, vuelto)).toBe(false)
-  })
-
-  it('rechaza de plano un efectivo por encima del techo acotado', () => {
-    expect(esVueltoJustificado(10_000_010, 10_000_009)).toBe(false)
-  })
-
-  it('vuelto igual al valor de un billete no alcanza para justificar un efectivo que lo necesitaría', () => {
-    // Mutation-proof-tests: la ÚNICA forma de completar 4000 en billetes reales usa como mínimo
-    // un billete <= 2000 (dos de 2000, u otras combinaciones más chicas) — ningún billete
-    // estrictamente MAYOR a 2000 arma 4000 solo (10000/20000 se pasan).
-    //
-    // Evidencia de mutación (mutation-proof-tests regla 2): cambiar el filtro de
-    // `esVueltoJustificado` de `billete > vuelto` a `billete >= vuelto` admite el billete de
-    // 2000 (justo el vuelto) y esta prueba pasaría a fallar (4000 = 2×2000 se aceptaría).
-    // Mutado y revertido — ver reporte de la tarea.
-    expect(esVueltoJustificado(4000, 2000)).toBe(false)
   })
 })
 
@@ -349,59 +279,32 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
     expect(validarPagosLocal({ ...base, pagos })).toBeNull()
   })
 
-  // ---- regla 3: vuelto_no_justificado (decisión del dueño, 2026-09-16 — reemplaza el
-  // vuelto_maximo fijo/parametrizado: el vuelto es válido si el efectivo entregado es formable
-  // con billetes argentinos válidos, todos estrictamente mayores al vuelto) ------------------
-
-  it('regla 3: ejemplo del dueño — ticket 5500, entrega 10000, vuelto 4500, un billete de 10000 alcanza', () => {
-    const pagos = [{ ...pagoFixture({ importe: 10000, admiteVuelto: true }), vuelto: 4500 }]
-    expect(validarPagosLocal({ ...base, total: 5500, pagos })).toBeNull()
+  it('regla 3 eliminada: un ticket de 7500 pagado con 10500 y vuelto 3000 se acepta', () => {
+    const pagos = [{ ...pagoFixture({ importe: 10500, admiteVuelto: true }), vuelto: 3000 }]
+    expect(validarPagosLocal({ ...base, total: 7500, pagos })).toBeNull()
   })
 
-  it('regla 3: ejemplo del dueño — ticket 5500, entrega 6000, vuelto 500, tres billetes de 2000', () => {
-    const pagos = [{ ...pagoFixture({ importe: 6000, admiteVuelto: true }), vuelto: 500 }]
-    expect(validarPagosLocal({ ...base, total: 5500, pagos })).toBeNull()
-  })
-
-  it('regla 3: ejemplo del dueño — ticket 5500, entrega 5520, vuelto 20 no formable, se rechaza', () => {
-    const pagos = [{ ...pagoFixture({ importe: 5520, admiteVuelto: true }), vuelto: 20 }]
-    expect(validarPagosLocal({ ...base, total: 5500, pagos })?.codigo).toBe('vuelto_no_justificado')
-  })
-
-  it('regla 3: ejemplo del dueño — ticket 5500, entrega 30000, vuelto 24500 sin billete suficiente', () => {
-    const pagos = [{ ...pagoFixture({ importe: 30000, admiteVuelto: true }), vuelto: 24500 }]
-    expect(validarPagosLocal({ ...base, total: 5500, pagos })?.codigo).toBe('vuelto_no_justificado')
-  })
-
-  it('regla 3: sin ningún pago que admita vuelto, un vuelto > 0 nunca es justificado', () => {
+  it('regla 3: un vuelto mayor al importe de su fila se rechaza aunque otra fila cubra el excedente', () => {
     const pagos = [
-      { ...pagoFixture({ comportamiento: 'Electronico', importe: 100, admiteVuelto: false }), vuelto: 30 },
+      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 10, admiteVuelto: true }), vuelto: 40 },
+      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', importe: 130, admiteVuelto: false }), vuelto: 0 },
     ]
-    expect(validarPagosLocal({ ...base, total: 70, pagos })?.codigo).toBe('vuelto_no_justificado')
+    expect(validarPagosLocal({ ...base, total: 100, pagos })).toEqual({
+      codigo: 'vuelto_supera_el_pago',
+      mensaje: 'El vuelto no puede superar el importe del pago que lo da.',
+    })
   })
 
-  it('regla 3: solo el efectivo cuenta como billetes, aunque una Transferencia admita vuelto por configuración', () => {
-    // Efectivo entregado REAL: solo 100 (comportamiento Efectivo). La Transferencia aporta 9900
-    // y carga el vuelto de 4500 a mano — su medio tiene admiteVuelto=true (config de catálogo
-    // atípica: ese flag es por medio, no está atado a comportamiento), pero una transferencia no
-    // es un billete físico. Σ importe total (100+9900=10000) SÍ sería formable contra un vuelto
-    // de 4500 (un billete de 10000) si se contara por error el importe de la Transferencia como
-    // "billetes" — la regla 3 tiene que rechazar igual, porque el efectivo real (100) no alcanza.
-    //
-    // Mutation-proof-tests: si `efectivoEntregado` volviera a filtrar por `admiteVuelto` en vez
-    // de `comportamiento === 'Efectivo'`, este test pasaría a aceptar la venta (falso negativo).
-    // Evidencia de mutación: ver reporte de la tarea (mutado y revertido en pagos.ts).
+  it('regla 3: un vuelto igual al importe de su fila no se rechaza por esta regla', () => {
     const pagos = [
-      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', admiteVuelto: true, importe: 100 }), vuelto: 0 },
-      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', admiteVuelto: true, importe: 9900 }), vuelto: 4500 },
+      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 50, admiteVuelto: true }), vuelto: 50 },
+      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', importe: 100, admiteVuelto: false }), vuelto: 0 },
     ]
-    expect(validarPagosLocal({ ...base, total: 5500, pagos })?.codigo).toBe('vuelto_no_justificado')
+    expect(validarPagosLocal({ ...base, total: 100, pagos })).toBeNull()
   })
 
   it('regla 4: vuelto sobre un medio que no admite vuelto', () => {
-    // Efectivo entrega 200 sin vuelto propio (justificaría hasta 20 de sobra); Tarjeta declara
-    // un vuelto de 20 a mano -> la regla 3 no corta (200 es formable contra un vuelto de 20), la
-    // que corta es la 4.
+    // Efectivo entrega 200 sin vuelto propio; Tarjeta declara un vuelto de 20 a mano.
     const pagos = [
       { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 200, admiteVuelto: true }), vuelto: 0 },
       { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', importe: 120, admiteVuelto: false }), vuelto: 20 },
@@ -451,17 +354,20 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
   })
 
   it('regla 8: el vuelto no coincide con lo que sobra del pago', () => {
-    // 100 pagados sobre 100 de total ⇒ nada sobra, pero se declara un vuelto de 5 a mano (100 sí
-    // sería formable contra un vuelto de 5 — la regla 3 no corta, aísla la regla 8).
+    // 100 pagados sobre 100 de total ⇒ nada sobra, pero se declara un vuelto de 5 a mano.
     const pagos = [{ ...pagoFixture({ importe: 100, admiteVuelto: true }), vuelto: 5 }]
     expect(validarPagosLocal({ ...base, pagos })?.codigo).toBe('vuelto_invalido')
   })
 
   it('regla 8: el vuelto que sí coincide con lo que sobra del pago se acepta', () => {
-    // Un solo billete de 1000 sobre un total de 100 ⇒ excedente 900 == vuelto declarado 900, y
-    // 1000 es formable con ese único billete (> 900).
+    // 1000 pagados sobre un total de 100 ⇒ excedente 900 == vuelto declarado 900.
     const pagos = [{ ...pagoFixture({ importe: 1000, admiteVuelto: true }), vuelto: 900 }]
     expect(validarPagosLocal({ ...base, pagos })).toBeNull()
+  })
+
+  it('regla 8: un vuelto mayor al excedente se rechaza aunque el efectivo entregado lo cubra', () => {
+    const pagos = [{ ...pagoFixture({ importe: 10500, admiteVuelto: true }), vuelto: 3500 }]
+    expect(validarPagosLocal({ ...base, total: 7500, pagos })?.codigo).toBe('vuelto_invalido')
   })
 
   it('un payload que viola las reglas 2 y 6 a la vez reporta la 2 (la que corta primero)', () => {

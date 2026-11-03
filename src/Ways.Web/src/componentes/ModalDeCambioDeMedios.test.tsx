@@ -356,13 +356,13 @@ describe('ModalDeCambioDeMedios — guardado', () => {
   })
 
   it('el rechazo de una regla de pago conserva el texto del servidor', async () => {
-    apiPutMock.mockRejectedValue(new ErrorApi(400, 'vuelto_no_justificado', 'El vuelto de $100 no se justifica con los billetes entregados.'))
+    apiPutMock.mockRejectedValue(new ErrorApi(400, 'vuelto_invalido', 'El vuelto de $100 supera el excedente del pago.'))
     montar()
     await cambiarATransferencia()
 
     await userEvent.click(guardar())
 
-    expect(await screen.findByText('El vuelto de $100 no se justifica con los billetes entregados.')).toBeInTheDocument()
+    expect(await screen.findByText('El vuelto de $100 supera el excedente del pago.')).toBeInTheDocument()
   })
 
   it('editar después de un rechazo borra el mensaje anterior', async () => {

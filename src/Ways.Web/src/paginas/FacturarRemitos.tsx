@@ -147,7 +147,7 @@ export function FacturarRemitos() {
 
   // ---- parámetros de pago (tolerancia), por punto de venta — mismo criterio que Pos.tsx.
   // `vuelto_maximo` ya no se resuelve acá: dejó de gobernar el vuelto de ventas en efectivo
-  // (decisión del dueño 2026-09-16, ver Ways.Domain.Ventas.BilletesArgentinos) y mantener su
+  // (decisión del dueño 2026-09-16, regla de billetes eliminada el 2026-11-02) y mantener su
   // fetch solo exponía la facturación a bloquearse si ese endpoint fallaba, sin usar el valor. ----
   const [parametros, setParametros] = useState<{ toleranciaPago: number } | null>(null)
   const [errorParametros, setErrorParametros] = useState('')

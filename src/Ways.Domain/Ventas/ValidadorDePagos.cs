@@ -25,12 +25,9 @@ public readonly record struct PagoAValidar(
 /// nuevas del proyecto (referencia obligatoria, vuelto máximo coherente con lo efectivamente
 /// pagado).
 ///
-/// La regla 3 (decisión del dueño, 2026-09-16 — reemplaza el <c>vuelto_maximo</c> fijo del
-/// legacy/parametrizado: ver docs/01 §B6 nota de paridad) ya NO compara el vuelto contra un
-/// techo configurado — <see cref="BilletesArgentinos.EsVueltoJustificado"/> valida en cambio que
-/// el efectivo entregado sea representable con billetes argentinos válidos, todos estrictamente
-/// mayores al vuelto. <see cref="CuentaCorriente.ValidadorDePagoACuenta"/> (pago a cuenta
-/// corriente) aplica la misma regla de billetes (decisión del dueño, 2026-09-16) —
+/// La regla 3 ya no exige que el vuelto se justifique con billetes (decisión del dueño,
+/// 2026-11-02): el cliente puede entregar de más para recibir un vuelto redondo. Ahora acota
+/// el vuelto de cada fila a su propio importe; el vuelto total sigue acotado por la regla 8.
 /// <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
 ///
 /// El orden es OBSERVABLE (spec: "a payload violating rules 2 and 6 reports 2") — cada regla
@@ -120,24 +117,14 @@ public static class ValidadorDePagos
                 "tolerancia_de_pago_superada", "El pago ingresado no cubre el total, ni siquiera con la tolerancia.", 400);
         }
 
-        // 3 (reescrita, decisión del dueño 2026-09-16): el vuelto ya no se compara contra un
-        // techo fijo — se valida que el efectivo entregado sea formable con billetes válidos,
-        // todos estrictamente mayores al vuelto declarado. "Efectivo entregado" es Σ importe de
-        // los pagos cuyo Comportamiento es Efectivo (billetes físicos reales) — a propósito NO
-        // "cuyo AdmiteVuelto es true": AdmiteVuelto es un flag configurable por medio (catálogo,
-        // ABM), no está atado a Comportamiento, y en teoría podría estar prendido en un medio
-        // NO efectivo (p. ej. una Transferencia mal configurada). Un pago así puede seguir
-        // teniendo vuelto habilitado por la regla 4 de abajo (semántica legacy intacta, sin
-        // cambios), pero su importe nunca cuenta como "billetes" acá — nadie entregó billetes
-        // físicos por una transferencia.
-        var efectivoEntregado = pagos
-            .Where(p => p.Comportamiento == ComportamientoMedioPago.Efectivo)
-            .Sum(p => p.Importe);
-        if (!BilletesArgentinos.EsVueltoJustificado(efectivoEntregado, sumaVueltos))
+        // 3: el vuelto de una fila no puede superar el importe de esa misma fila.
+        foreach (var pago in pagos)
         {
-            throw new ErrorDominio(
-                "vuelto_no_justificado",
-                $"El vuelto de ${sumaVueltos} no se justifica con los billetes entregados.", 400);
+            if (pago.Vuelto > pago.Importe)
+            {
+                throw new ErrorDominio(
+                    "vuelto_supera_el_pago", "El vuelto no puede superar el importe del pago que lo da.", 400);
+            }
         }
 
         // 4: vuelto sobre un medio con AdmiteVuelto = false (generaliza "tarjetas" y "cuenta

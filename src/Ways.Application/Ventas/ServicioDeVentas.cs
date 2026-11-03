@@ -310,7 +310,7 @@ public class ServicioDeVentas(
         // idEmpresa ya es de confianza). `lotesHabilitado` alimenta el plan FEFO de slice 7,
         // inmediatamente abajo; `importeEnvio` solo importa con ConEnvio, pero va en la misma consulta
         // para que una venta sin envío no pague nada extra. `vuelto_maximo` YA NO se resuelve acá (decisión del dueño
-        // 2026-09-16, ver BilletesArgentinos): dejó de ser consumido por ValidadorDePagos para
+        // 2026-09-16): dejó de ser consumido por ValidadorDePagos para
         // ventas en efectivo, y no tiene sentido seguir pagando la fila extra sin usarla — sigue
         // siendo autoritativo para ValidadorDePagoACuenta (pago a cuenta corriente), resuelto ahí
         // por separado (ServicioDeCuentaCorriente).
@@ -2214,7 +2214,7 @@ public class ServicioDeVentas(
 
     /// <summary>Las claves que el checkout necesita, en UNA sola query <c>WHERE clave IN (...)</c>
     /// (stage-12, design decisión 2). Antes resolvía también <c>vuelto_maximo</c> acá — dejó de
-    /// hacerlo (decisión del dueño 2026-09-16, ver BilletesArgentinos): ese parámetro ya no lo
+    /// hacerlo (decisión del dueño 2026-09-16): ese parámetro ya no lo
     /// consume <see cref="ValidadorDePagos"/> para ventas en efectivo, y sigue siendo autoritativo
     /// solo para <see cref="CuentaCorriente.ValidadorDePagoACuenta"/> (resuelto aparte por
     /// <c>ServicioDeCuentaCorriente</c>). Resuelve además <c>importe_envio</c> en la misma consulta: una venta sin envío no

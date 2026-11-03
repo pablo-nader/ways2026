@@ -95,7 +95,7 @@ public class RedondeoDePagosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private static async Task<string> CodigoAsync(HttpResponseMessage respuesta) =>
         JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync()).RootElement.GetProperty("codigo").GetString()!;
 
-    private static DateOnly Ayer() => DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+    private static DateOnly Ayer() => FechaDelNegocio.Hoy().AddDays(-1);
 
     private async Task<(int IdCompra, decimal Total)> CrearYConfirmarCompraAsync(Contexto ctx)
     {

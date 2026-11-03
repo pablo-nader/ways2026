@@ -14,7 +14,7 @@ namespace Ways.Domain.Catalogos;
 ///
 /// <c>vuelto_maximo</c> se eliminó del registro (decisión del dueño, 2026-09-16): dejó de ser
 /// consumido por cualquier validador desde las PR #205/#211 (reemplazado por la regla de
-/// billetes formables, <see cref="Ways.Domain.Ventas.BilletesArgentinos"/>), y la migración
+/// billetes formables, eliminada luego el 2026-11-02), y la migración
 /// <c>QuitarVueltoMaximo</c> borró cualquier fila remanente en <c>parametros</c>.
 /// </summary>
 public sealed record ParametroConocido(

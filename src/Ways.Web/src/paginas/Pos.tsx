@@ -1624,8 +1624,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // react-async-state regla 2: cada cambio de punto de venta dispara la resolución de
   // tolerancia_pago (ADR-13: punto de venta > empresa > default) — una respuesta desactualizada
   // nunca puede pisar la más reciente. `vuelto_maximo` ya no se resuelve acá: dejó de gobernar
-  // el vuelto de ventas en efectivo (decisión del dueño 2026-09-16, ver
-  // Ways.Domain.Ventas.BilletesArgentinos) y mantener su fetch solo exponía el cobro a bloquearse
+  // el vuelto de ventas en efectivo (decisión del dueño 2026-09-16) y mantener su fetch solo exponía el cobro a bloquearse
   // si ese endpoint fallaba, sin que el valor se usara para nada.
   useEffect(() => {
     if (!puntoVentaSeleccionada) {
@@ -4307,7 +4306,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       }
 
       // Cubre el total pero `puedeCobrar` sigue en `false` por otra razón local (ej. falta la
-      // referencia de un medio que la requiere, el vuelto no se justifica con billetes): tampoco
+      // referencia de un medio que la requiere): tampoco
       // abre el diálogo — el propio botón "Cobrar" seguiría deshabilitado.
       if (!m.puedeCobrar) return
 
