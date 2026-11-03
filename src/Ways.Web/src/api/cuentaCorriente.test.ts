@@ -347,34 +347,8 @@ describe('validarPagoACuentaLocal — orden observable, espejo de ValidadorDePag
     ).toEqual({ codigo: 'medio_no_admite_vuelto', mensaje: 'El medio de pago elegido no admite vuelto.' })
   })
 
-  // ---- regla 5: vuelto_no_justificado (decisión del dueño, 2026-09-16 — reemplaza el
-  // vuelto_maximo fijo/parametrizado: mismo criterio que la regla 3 de validarPagosLocal) -----
-
-  it('regla 5: ejemplo del dueño — entrega 10000, vuelto 4500, un billete de 10000 alcanza', () => {
-    expect(validarPagoACuentaLocal({ pagos: [pagoFixture({ importe: 10000, vuelto: 4500 })] })).toBeNull()
-  })
-
-  it('regla 5: ejemplo del dueño — entrega 5520, vuelto 20 no formable, se rechaza', () => {
-    expect(validarPagoACuentaLocal({ pagos: [pagoFixture({ importe: 5520, vuelto: 20 })] })).toEqual({
-      codigo: 'vuelto_no_justificado',
-      mensaje: 'El vuelto de $20 no se justifica con los billetes entregados.',
-    })
-  })
-
-  it('regla 5: ejemplo del dueño — entrega 30000, vuelto 24500 sin billete suficiente, se rechaza', () => {
-    expect(validarPagoACuentaLocal({ pagos: [pagoFixture({ importe: 30000, vuelto: 24500 })] })?.codigo).toBe(
-      'vuelto_no_justificado',
-    )
-  })
-
-  it('regla 5: solo el efectivo cuenta como billetes, aunque un medio Electronico admita vuelto por configuración', () => {
-    // Mismo criterio que pagos.ts: admiteVuelto es un flag de catálogo (ABM), no atado a
-    // comportamiento. El importe de un medio Electronico nunca cuenta como "billetes" acá.
-    expect(
-      validarPagoACuentaLocal({
-        pagos: [pagoFixture({ comportamiento: 'Electronico', admiteVuelto: true, importe: 10000, vuelto: 4500 })],
-      })?.codigo,
-    ).toBe('vuelto_no_justificado')
+  it('un vuelto de 3000 sobre 10500 entregados en efectivo no se rechaza (sin regla de billetes)', () => {
+    expect(validarPagoACuentaLocal({ pagos: [pagoFixture({ importe: 10500, vuelto: 3000 })] })).toBeNull()
   })
 
   it('regla 6: referencia requerida y ausente', () => {
@@ -385,7 +359,7 @@ describe('validarPagoACuentaLocal — orden observable, espejo de ValidadorDePag
     ).toEqual({ codigo: 'referencia_de_pago_requerida', mensaje: 'Este medio de pago requiere una referencia.' })
   })
 
-  it('regla 7: importeAplicado <= 0, aislado de la regla 5 (vuelto = 0 siempre justificado)', () => {
+  it('regla 7: importeAplicado <= 0 con importe y vuelto en cero', () => {
     expect(
       validarPagoACuentaLocal({
         pagos: [pagoFixture({ importe: 0, vuelto: 0 })],
@@ -393,12 +367,9 @@ describe('validarPagoACuentaLocal — orden observable, espejo de ValidadorDePag
     ).toEqual({ codigo: 'pago_a_cuenta_sin_importe', mensaje: 'Tenés que ingresar al menos un pago a cuenta.' })
   })
 
-  it('un vuelto igual al importe entregado se rechaza por la regla 5 antes de llegar a la regla 7', () => {
-    // Antes (vuelto_maximo): vuelto == importe pasaba la regla 5 y llegaba a la regla 7
-    // (importeAplicado == 0) como pago_a_cuenta_sin_importe. Con la regla de billetes, ningún
-    // billete estrictamente mayor a 100 arma exactamente 100 -> se rechaza antes.
+  it('un vuelto igual al importe entregado deja importeAplicado en 0 y se rechaza por la regla 7', () => {
     expect(validarPagoACuentaLocal({ pagos: [pagoFixture({ importe: 100, vuelto: 100 })] })?.codigo).toBe(
-      'vuelto_no_justificado',
+      'pago_a_cuenta_sin_importe',
     )
   })
 

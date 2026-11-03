@@ -15,12 +15,10 @@ namespace Ways.Domain.CuentaCorriente;
 /// es vacía acá porque no hay <c>total</c> independiente — <c>importeAplicado</c> se DERIVA de
 /// <c>Σ importe − Σ vuelto</c>, así que esa desigualdad se cumple siempre por construcción.
 ///
-/// La regla 5 (decisión del dueño, 2026-09-16 — mismo reemplazo que la regla 3 de
-/// <see cref="ValidadorDePagos"/>, ver docs/01 §B6 nota de paridad) ya NO compara el vuelto
-/// contra un <c>vuelto_maximo</c> parametrizado: <see cref="BilletesArgentinos.EsVueltoJustificado"/>
-/// valida en cambio que el efectivo entregado (Σ importe de los pagos cuyo Comportamiento es
-/// Efectivo) sea formable con billetes argentinos válidos, todos estrictamente mayores al
-/// vuelto. <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
+/// La regla 5 (el vuelto justificado por billetes) se eliminó por decisión del dueño,
+/// 2026-11-02, igual que la regla 3 de <see cref="ValidadorDePagos"/>: el vuelto solo queda
+/// acotado por la regla 7 (<c>importeAplicado</c> positivo). Se conserva la numeración de las
+/// demás reglas. <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
 ///
 /// El orden es OBSERVABLE, mismo contrato que <see cref="ValidadorDePagos"/>: cada regla corta la
 /// validación en el primer rechazo, nunca acumula errores.
@@ -82,23 +80,6 @@ public static class ValidadorDePagoACuenta
             }
         }
 
-        // 5 (decisión del dueño, 2026-09-16): el vuelto ya no se compara contra un techo
-        // parametrizado — se valida que el efectivo entregado sea formable con billetes
-        // válidos, todos estrictamente mayores al vuelto declarado. Mismo criterio que la
-        // regla 3 de ValidadorDePagos: "efectivo entregado" es Σ importe de los pagos cuyo
-        // Comportamiento es Efectivo (billetes físicos reales) — a propósito NO "cuyo
-        // AdmiteVuelto es true", que es un flag de catálogo (ABM) no atado a Comportamiento.
-        var sumaVueltos = pagos.Sum(p => p.Vuelto);
-        var efectivoEntregado = pagos
-            .Where(p => p.Comportamiento == ComportamientoMedioPago.Efectivo)
-            .Sum(p => p.Importe);
-        if (!BilletesArgentinos.EsVueltoJustificado(efectivoEntregado, sumaVueltos))
-        {
-            throw new ErrorDominio(
-                "vuelto_no_justificado",
-                $"El vuelto de ${sumaVueltos} no se justifica con los billetes entregados.", 400);
-        }
-
         // 6: RequiereReferencia sin referencia — mismo criterio que la regla 7 de ValidadorDePagos.
         foreach (var pago in pagos)
         {
@@ -115,6 +96,7 @@ public static class ValidadorDePagoACuenta
         // valor derivado, después de que las reglas 1/2 ya garantizaron que ninguno de los dos
         // sumandos es negativo.
         var sumaImportes = pagos.Sum(p => p.Importe);
+        var sumaVueltos = pagos.Sum(p => p.Vuelto);
         var importeAplicado = sumaImportes - sumaVueltos;
         if (importeAplicado <= 0m)
         {

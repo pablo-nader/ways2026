@@ -332,8 +332,7 @@ public class ServicioDeFacturacionDeRemitos(
             ?? throw new InvalidOperationException("El tenant actual no tiene el tipo de comprobante TXR sembrado.");
 
     /// <summary>Antes resolvía <c>tolerancia_pago</c> + <c>vuelto_maximo</c> — <c>vuelto_maximo</c>
-    /// ya no lo consume <see cref="ValidadorDePagos"/> (decisión del dueño 2026-09-16, ver
-    /// <see cref="BilletesArgentinos"/>), así que esta facturación deja de resolverlo (sin
+    /// ya no lo consume <see cref="ValidadorDePagos"/> (decisión del dueño 2026-09-16), así que esta facturación deja de resolverlo (sin
     /// mutation-proof-test propio que dependiera de la mezcla de dos claves, a diferencia de
     /// <c>ServicioDeVentas.ResolverParametrosDeVentaAsync</c>).</summary>
     private async Task<decimal> ResolverToleranciaDeFacturacionAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)

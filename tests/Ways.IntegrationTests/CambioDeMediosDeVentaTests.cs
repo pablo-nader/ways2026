@@ -477,7 +477,7 @@ public class CambioDeMediosDeVentaTests(WaysApiFixture fixture) : IClassFixture<
             HttpStatusCode.BadRequest, "referencia_invalida");
         await AfirmarErrorAsync(
             await CambiarEnLaCajaAsync(ctx.Cajero, venta, new PagoDeVenta(ctx.IdTransferencia, 110m, "OP-1", 10m)),
-            HttpStatusCode.BadRequest, "vuelto_no_justificado");
+            HttpStatusCode.BadRequest, "medio_no_admite_vuelto");
         await AfirmarErrorAsync(
             await CambiarEnLaCajaAsync(ctx.Cajero, venta, new PagoDeVenta(ctx.IdEfectivo, 100m, " REF-0 ", 0m)),
             HttpStatusCode.Conflict, "cambio_de_medios_sin_diferencia");

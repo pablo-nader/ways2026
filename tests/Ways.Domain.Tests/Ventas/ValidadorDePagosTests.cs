@@ -21,14 +21,6 @@ public class ValidadorDePagosTests
     private static PagoAValidar CuentaCorriente(decimal importe) =>
         new(3, ComportamientoMedioPago.CuentaCorriente, AdmiteVuelto: false, RequiereReferencia: false, importe, 0m, null);
 
-    /// <summary>Simula una configuración de catálogo atípica pero posible: `AdmiteVuelto` es un
-    /// flag por medio (ABM), no atado a `Comportamiento` — un Admin podría prender `AdmiteVuelto`
-    /// en un medio Electronico (p. ej. "Transferencia"). La regla 3 tiene que seguir ignorando su
-    /// importe como "billetes" aunque este flag esté prendido (solo billetes físicos reales
-    /// cuentan); la regla 4 sí lo trata como cualquier medio con `AdmiteVuelto = true`.</summary>
-    private static PagoAValidar TransferenciaQueAdmiteVuelto(decimal importe, decimal vuelto = 0m) =>
-        new(5, ComportamientoMedioPago.Electronico, AdmiteVuelto: true, RequiereReferencia: false, importe, vuelto, null);
-
     private static void Validar(
         decimal total,
         IReadOnlyList<PagoAValidar> pagos,
@@ -196,145 +188,24 @@ public class ValidadorDePagosTests
         Validar(100m, [Efectivo(90m)], tolerancia: 10m);
     }
 
-    // ---- 3: vuelto_no_justificado (decisión del dueño, 2026-09-16 — reemplaza el
-    // vuelto_maximo fijo/parametrizado del legacy: el vuelto es válido si el efectivo entregado
-    // es formable con billetes argentinos válidos, todos estrictamente mayores al vuelto) -------
+    // ---- 3: eliminada (decisión del dueño, 2026-11-02) -------------------------------------
 
     [Fact]
-    public void ElEjemploDelDuenioTicket5500ConUnBilleteDe10000EsAceptado()
+    public void UnTicketDe7500PagadoCon10500EnEfectivoAceptaUnVueltoDe3000()
     {
-        // Total 5500, entrega 10000 -> vuelto 4500. Un solo billete de 10000 (> 4500) alcanza.
-        // El legacy rechazaba esto porque 4500 > 20 (el vuelto_maximo fijo) — el motivo original
-        // del reclamo del dueño.
-        Validar(5500m, [Efectivo(10000m, vuelto: 4500m)]);
+        Validar(7500m, [Efectivo(10500m, vuelto: 3000m)]);
     }
 
     [Fact]
-    public void ElEjemploDelDuenioTicket5500ConTresBilletesDe2000EsAceptado()
+    public void UnVueltoQueNingunBilleteJustificariaEsAceptadoSiCoincideConElExcedente()
     {
-        // Total 5500, entrega 6000 -> vuelto 500. 6000 = 3 billetes de 2000 (> 500 cada uno).
-        Validar(5500m, [Efectivo(6000m, vuelto: 500m)]);
+        Validar(5500m, [Efectivo(30000m, vuelto: 24500m)]);
     }
 
     [Fact]
-    public void ElEjemploDelDuenioTicket5500ConVueltoDe20NoFormableSeRechaza()
+    public void UnEfectivoConCentavosAceptaUnVueltoQueCoincideConElExcedente()
     {
-        // Total 5500, entrega 5520 -> vuelto 20. Todo billete estrictamente mayor a 20 es
-        // múltiplo de 50 (50, 100, 200, ...) -> solo arman múltiplos de 50; 5520 no lo es.
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(5500m, [Efectivo(5520m, vuelto: 20m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
-    }
-
-    [Fact]
-    public void ElEjemploDelDuenioTicket5500ConVueltoDe24500SinBilleteSuficienteSeRechaza()
-    {
-        // Total 5500, entrega 30000 -> vuelto 24500. Ningún billete (máximo 20000) es > 24500.
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(5500m, [Efectivo(30000m, vuelto: 24500m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
-    }
-
-    [Fact]
-    public void VueltoCeroSiempreEsJustificadoSinImportarElEfectivo()
-    {
-        // Pago exacto, nada que justificar.
-        Validar(100m, [Efectivo(100m, vuelto: 0m)]);
-    }
-
-    [Fact]
-    public void VueltoIgualAlValorDeUnBilleteEsAceptadoConEseUnicoBillete()
-    {
-        // Boundary: total 8000, entrega 10000 -> vuelto 2000 (coincide con una denominación
-        // real). Un solo billete de 10000 (> 2000) alcanza.
-        Validar(8000m, [Efectivo(10000m, vuelto: 2000m)]);
-    }
-
-    [Fact]
-    public void VueltoQueSoloEsFormableConUnBilleteNoPermitidoSeRechaza()
-    {
-        // Boundary: total 9000, entrega 11000 -> vuelto 2000. 11000 con billetes > 2000 (10000,
-        // 20000) no arma exacto (10000 + 1000 usa un billete de 1000, no permitido).
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(9000m, [Efectivo(11000m, vuelto: 2000m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
-    }
-
-    [Fact]
-    public void VueltoIgualAUnBilleteNoAlcanzaParaJustificarUnEfectivoQueLoNecesitaria()
-    {
-        // Mutation-proof-tests: total 2000, entrega 4000 -> vuelto 2000. La ÚNICA forma de
-        // completar 4000 en billetes reales usa como mínimo un billete <= 2000 (dos de 2000, o
-        // combinaciones más chicas) — ningún billete estrictamente MAYOR a 2000 arma 4000 solo
-        // (10000/20000 se pasan). Se rechaza.
-        //
-        // Evidencia de mutación (mutation-proof-tests regla 2): cambiar el filtro de
-        // BilletesArgentinos.EsVueltoJustificado de "billete > vuelto" a "billete >= vuelto"
-        // admite el billete de 2000 (justo el vuelto) y 4000 = 2×2000 pasaría a aceptarse
-        // (rojo evitado). Mutado y revertido — ver reporte de la tarea.
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(2000m, [Efectivo(4000m, vuelto: 2000m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
-    }
-
-    [Fact]
-    public void EfectivoConCentavosNuncaEsFormableConBilletes()
-    {
-        // El efectivo entregado tiene que ser un múltiplo entero de $10 (el billete más chico);
-        // con centavos, ningún billete real puede componerlo.
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(5000m, [Efectivo(5500.50m, vuelto: 500.50m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
-    }
-
-    [Fact]
-    public void ElTotalPuedeTenerCentavosMientrasElEfectivoSeaMultiploDeDiez()
-    {
-        // Total con centavos (5499.50), entrega 10000 (múltiplo de 10) -> vuelto 4500.50. Un
-        // billete de 10000 (> 4500.50) alcanza igual.
-        Validar(5499.50m, [Efectivo(10000m, vuelto: 4500.50m)]);
-    }
-
-    [Fact]
-    public void EfectivoPorEncimaDelTechoAcotadoSeRechazaDePlano()
-    {
-        // La DP está acotada (BilletesArgentinos.EfectivoMaximo) — por encima de ese techo se
-        // rechaza sin evaluar formabilidad, para no correr una DP sin límite.
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(1m, [Efectivo(BilletesArgentinos.EfectivoMaximo + 10m, vuelto: BilletesArgentinos.EfectivoMaximo + 9m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
-    }
-
-    [Fact]
-    public void SinNingunPagoQueAdmitaVueltoElVueltoNuncaEsJustificado()
-    {
-        // Nadie entregó efectivo (AdmiteVuelto = false en el único pago) pero se declara un
-        // vuelto > 0 -> no hay nada de donde "formarlo".
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(70m, [Tarjeta(100m, vuelto: 30m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
-    }
-
-    [Fact]
-    public void SoloElEfectivoCuentaComoBilletesAunqueUnaTransferenciaAdmitaVueltoPorConfiguracion()
-    {
-        // Efectivo entregado REAL: solo 100 (Comportamiento = Efectivo). La Transferencia aporta
-        // 9900 y carga el vuelto de 4500 a mano — su medio tiene AdmiteVuelto = true (config de
-        // catálogo atípica), pero una transferencia no es un billete físico. Σ importe total
-        // (100 + 9900 = 10000) SÍ sería formable contra un vuelto de 4500 (un billete de 10000)
-        // si se contara por error el importe de la Transferencia como "billetes" — la regla 3
-        // tiene que rechazar igual, porque el efectivo real (100) nunca alcanza.
-        //
-        // Mutation-proof-tests: si la regla 3 volviera a filtrar por `AdmiteVuelto` en vez de
-        // `Comportamiento == Efectivo`, este test pasaría a aceptar la venta (falso negativo).
-        // Evidencia de mutación: revertido el filtro a `p.AdmiteVuelto` en
-        // ValidadorDePagos.Validar, este test corrió y dio verde INCORRECTO (no tiró excepción) —
-        // confirmando que sin el filtro por Comportamiento la venta se aceptaba mal. Revertido a
-        // `Comportamiento == Efectivo`, vuelve a tirar `vuelto_no_justificado` (rojo esperado acá,
-        // que es el comportamiento correcto). Ver reporte de la tarea.
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(5500m, [Efectivo(100m), TransferenciaQueAdmiteVuelto(9900m, vuelto: 4500m)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
+        Validar(5000m, [Efectivo(5500.50m, vuelto: 500.50m)]);
     }
 
     // ---- 4: medio_no_admite_vuelto ---------------------------------------------------------
@@ -343,9 +214,7 @@ public class ValidadorDePagosTests
     public void VueltoRechazadoSobreUnMedioSinAdmiteVuelto()
     {
         // Efectivo (AdmiteVuelto = true) entrega 200 sin vuelto propio; Tarjeta (AdmiteVuelto =
-        // false) declara un vuelto de 20 -> el efectivo entregado (200) SÍ justificaría un
-        // vuelto de 20 (bills > 20 arman 200 de sobra), así que la regla 3 no corta acá — la que
-        // corta es la 4, porque el vuelto está sobre un medio que no lo admite.
+        // false) declara un vuelto de 20 sobre un medio que no lo admite.
         var excepcion = Assert.Throws<ErrorDominio>(() =>
             Validar(300m, [Efectivo(200m), Tarjeta(120m, vuelto: 20m)]));
         Assert.Equal("medio_no_admite_vuelto", excepcion.Codigo);
@@ -467,9 +336,7 @@ public class ValidadorDePagosTests
     [Fact]
     public void VueltoQueNoCoincideConLoQueSobraDelPagoSeRechaza()
     {
-        // Importe 100 contra total 100 (nada sobra), vuelto declarado 5 -> invalido. El efectivo
-        // (100) sí sería formable contra un vuelto de 5 (regla 3 no corta), así que esta prueba
-        // aísla la regla 8.
+        // Importe 100 contra total 100 (nada sobra), vuelto declarado 5 -> invalido.
         var excepcion = Assert.Throws<ErrorDominio>(() =>
             Validar(100m, [Efectivo(100m, vuelto: 5m)]));
         Assert.Equal("vuelto_invalido", excepcion.Codigo);
@@ -478,9 +345,16 @@ public class ValidadorDePagosTests
     [Fact]
     public void VueltoQueCoincideConLoQueSobraEsAceptado()
     {
-        // Total 100, entrega 1000 (un solo billete) -> excedente 900 == vuelto declarado 900,
-        // y 1000 es formable con ese único billete (> 900).
+        // Total 100, entrega 1000 -> excedente 900 == vuelto declarado 900.
         Validar(100m, [Efectivo(1000m, vuelto: 900m)]);
+    }
+
+    [Fact]
+    public void UnVueltoMayorAlExcedenteSeRechazaAunqueElEfectivoEntregadoLoCubra()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(7500m, [Efectivo(10500m, vuelto: 3500m)]));
+        Assert.Equal("vuelto_invalido", excepcion.Codigo);
     }
 
     // ---- Orden de rechazo observable --------------------------------------------------------
@@ -499,15 +373,13 @@ public class ValidadorDePagosTests
     }
 
     [Fact]
-    public void UnPagoQueViolaLasReglas3Y7ReportaLaRegla3()
+    public void UnPagoQueViolaLasReglas4Y7ReportaLaRegla4()
     {
-        // Regla 3 (vuelto no justificado): el vuelto (30) está sobre una Tarjeta, que no admite
-        // vuelto -> el efectivo entregado (Σ importe de pagos con AdmiteVuelto) es 0, así que
-        // nunca hay de dónde "formarlo".
+        // Regla 4: el vuelto (30) está sobre una Tarjeta, que no admite vuelto.
         // Regla 7 (referencia): además falta la referencia de un medio que la requiere.
         var excepcion = Assert.Throws<ErrorDominio>(() =>
             Validar(70m, [Tarjeta(100m, vuelto: 30m, requiereReferencia: true, referencia: null)]));
-        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
+        Assert.Equal("medio_no_admite_vuelto", excepcion.Codigo);
     }
 
     [Fact]

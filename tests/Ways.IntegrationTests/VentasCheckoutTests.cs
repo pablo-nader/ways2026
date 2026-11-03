@@ -762,9 +762,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         // total = 100; tolerancia default = 10 ⇒ 100 - 10 = 90 es el piso aceptado sin vuelto.
         // Con importe = 50 se viola la regla 2 (tolerancia) de entrada — un vuelto de 60 sobre un
-        // efectivo entregado de apenas 50 también violaría la regla 3 (vuelto_no_justificado: 50
-        // ni siquiera alcanza para cubrir un vuelto de 60) si se llegara a evaluar, pero la
-        // regla 2 corta antes.
+        // efectivo entregado de apenas 50 también violaría la regla 8 (vuelto_invalido) si se
+        // llegara a evaluar, pero la regla 2 corta antes.
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,
             [new LineaDeVenta(idArticulo, 1m, null)],
@@ -836,12 +835,11 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     [Fact]
     public async Task ElVueltoDeUnaVentaEnEfectivoNoTieneTechoParametrizadoYaQueVueltoMaximoSeElimino()
     {
-        // Decisión del dueño, 2026-09-16 (ver docs/01 §B6 nota de paridad y BilletesArgentinos):
+        // Decisión del dueño, 2026-09-16 (ver docs/01 §B6 nota de paridad):
         // vuelto_maximo dejó de ser consumido por ValidadorDePagos para ventas en efectivo, y la
         // migración QuitarVueltoMaximo lo sacó del todo de ParametroConocido — ya no existe
         // ninguna clave que un PUT pueda usar para intentar poner un techo al vuelto. Este es el
-        // ejemplo de ticket del dueño: total 5500, entrega 10000 -> vuelto 4500 (un solo billete
-        // de 10000 alcanza), y tiene que pasar sin ninguna configuración de por medio.
+        // ejemplo de ticket del dueño: total 5500, entrega 10000 -> vuelto 4500, y tiene que pasar sin ninguna configuración de por medio.
         var ctx = await PrepararAsync(nameof(ElVueltoDeUnaVentaEnEfectivoNoTieneTechoParametrizadoYaQueVueltoMaximoSeElimino));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-parametro-pv", 5500m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente parametro PV");
@@ -1272,7 +1270,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         // tolerancia_pago y lotes_habilitado en una sola query `WHERE clave IN (...)`, nunca dos
         // round trips separados. (vuelto_maximo se resolvía acá también hasta la decisión del
-        // dueño 2026-09-16 — ver BilletesArgentinos — que lo sacó de este camino.)
+        // dueño 2026-09-16 — que lo sacó de este camino.)
         Assert.Equal(1, consultasDeParametros);
     }
 
@@ -1285,8 +1283,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// ÚNICA con <c>id_punto_venta</c> coincidente en todo el candidate set, así que "gana" la
     /// resolución de <c>lotes_habilitado</c> también (aunque <c>lotes_habilitado</c> no tenga
     /// ninguna fila propia acá — <c>ResolverParametrosDeVentaAsync</c> ahora solo resuelve estas
-    /// dos claves: <c>vuelto_maximo</c> se sacó de acá, decisión del dueño 2026-09-16, ver
-    /// BilletesArgentinos — ya no lo consume <see cref="Ways.Domain.Ventas.ValidadorDePagos"/>
+    /// dos claves: <c>vuelto_maximo</c> se sacó de acá, decisión del dueño 2026-09-16 — ya no lo consume <see cref="Ways.Domain.Ventas.ValidadorDePagos"/>
     /// para ventas en efectivo, y sigue siendo autoritativo solo para
     /// <see cref="Ways.Domain.CuentaCorriente.ValidadorDePagoACuenta"/>, resuelto aparte).
     ///
@@ -1298,7 +1295,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// <c>JsonException</c> antes de llegar a <c>ValidadorDePagos</c>. Revertido el borrado,
     /// vuelve a <c>201 Created</c> (verde). No se debilitó ninguna otra capa para lograrlo — la
     /// prueba llama al endpoint real de punta a punta. El pago (5500/10000/4500, el ejemplo del
-    /// dueño) es formable con billetes, así que la venta se acepta sin depender de esta mezcla de
+    /// dueño) se acepta, así que la venta no depende de esta mezcla de
     /// parámetros — lo único que este test verifica es que la mezcla NO corrompe el checkout.
     /// </summary>
     [Fact]
