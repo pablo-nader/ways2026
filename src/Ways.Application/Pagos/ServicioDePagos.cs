@@ -474,6 +474,12 @@ public partial class ServicioDePagos(
         var momento = reloj.Ahora;
 
         var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        if (solicitud.OrigenFondos is not null)
+        {
+            throw new ErrorDominio(
+                "origen_solo_administracion", "El origen de los fondos de un pago solo lo cambia la administración.", 400);
+        }
+
         await ExigirPersonalDeLaConversionAsync(solicitud.IdPersonal, ct);
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirDatosDeLaEdicion(solicitud);
@@ -545,12 +551,12 @@ public partial class ServicioDePagos(
     /// <c>id_movimiento_personal</c> sí lo está solo como lectura rápida: la conversión de un pago de sueldos común en pago de
     /// personal lo cambia, así que cada escritura lo vuelve a decidir sobre el pago leído bajo su lock.</summary>
     private sealed record DatosInmutablesDePago(
-        int? IdTurnoCaja, int IdEmpresa, OrigenFondosPago OrigenFondos, int? IdMovimientoPersonal);
+        int? IdTurnoCaja, int IdEmpresa, int? IdMovimientoPersonal);
 
     private async Task<DatosInmutablesDePago> LeerDatosInmutablesAsync(int idPago, CancellationToken ct) =>
         await db.Pagos
             .Where(g => g.Id == idPago)
-            .Select(g => new DatosInmutablesDePago(g.IdTurnoCaja, g.IdEmpresa, g.OrigenFondos, g.IdMovimientoPersonal))
+            .Select(g => new DatosInmutablesDePago(g.IdTurnoCaja, g.IdEmpresa, g.IdMovimientoPersonal))
             .FirstOrDefaultAsync(ct)
         // ADR-8: mismo 404 para "no existe", "es de otro tenant" y "está dado de baja".
         ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idPago}.");
@@ -756,11 +762,23 @@ public partial class ServicioDePagos(
 
         int? idMovimientoDeLaConversion = null;
         var anterior = await EstadoContableAsync(pago, ct);
+        var origenAnterior = pago.OrigenFondos;
         var medioAnterior = itemsVivos.FirstOrDefault()?.IdMedioPago;
         var valorAnterior = PayloadDeEdicion(pago, medioAnterior, anterior.ImportePorMedio);
 
         if (solicitud is not null && plan is not null)
         {
+            if (solicitud.OrigenFondos is { } origenPedido)
+            {
+                if (origenPedido == OrigenFondosPago.CajaTurno && pago.IdTurnoCaja is null)
+                {
+                    throw new ErrorDominio(
+                        "pago_sin_turno", "Un pago sin turno no puede pasar a caja: no hay cajón del que descontarlo.", 409);
+                }
+
+                pago.OrigenFondos = origenPedido;
+            }
+
             await ExigirReferenciasNuevasDeLaEdicionAsync(pago, solicitud, plan, itemsVivos, ct);
             ExigirEdicionCoherenteConLaCompra(pago, solicitud, tieneAplicaciones: aplicaciones.Count > 0);
 
@@ -819,13 +837,13 @@ public partial class ServicioDePagos(
             cambiaLaCuenta: anterior.IdProveedor != pago.IdProveedor || anterior.Categoria != pago.Categoria,
             detalle, idEmpleado, momento, ct);
 
-        if (turnoCerrado is not null && CalculadorDeAjustesDePago.AfectaElArqueo(pago.OrigenFondos, anterior, nuevo))
+        if (turnoCerrado is not null && CalculadorDeAjustesDePago.AfectaElArqueo(origenAnterior, pago.OrigenFondos, anterior, nuevo))
         {
             await RecalculoDeArqueoDeTurnoCerrado.RecalcularAsync(
                 db, lectorDeMovimientos, idTenant, turnoCerrado.Id, turnoCerrado.IdMedioPagoEfectivo, idEmpleado, momento, ct);
         }
 
-        if (CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(pago.OrigenFondos, anterior.Importe, nuevo?.Importe)
+        if (CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(origenAnterior, pago.OrigenFondos, anterior.Importe, nuevo?.Importe)
             is { } ajusteDeTesoreria)
         {
             var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -1084,7 +1102,8 @@ public partial class ServicioDePagos(
             .Select(par => new Dictionary<string, object?> { ["id_medio_pago"] = par.Key, ["importe"] = par.Value })
             .ToList(),
         ["numero_factura"] = pago.NumeroFactura,
-        ["importe"] = pago.Importe
+        ["importe"] = pago.Importe,
+        ["origen_fondos"] = pago.OrigenFondos
     };
 
     /// <summary>Historial paginado (design: API Surface, <c>GET /api/pagos</c>) — mismo criterio
