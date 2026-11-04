@@ -7,16 +7,17 @@ import { CajaZ } from './CajaZ'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { cierreDeTurno } from '../impresion/plantillas'
 import { ROL } from '../api/tipos'
-import type { ComprobanteEmitido, DetalleDeTurno, ResumenDeCierrePorRetiro, ResumenDeTurno, TurnoResumen, UsuarioAutenticado } from '../api/tipos'
+import type { ComprobanteEmitido, DetalleDeTurno, FilaDeRetiro, MedioPagoListado, PagoDeAdministracionListado, PaginaDeRetiros, ResumenDeCierrePorRetiro, ResumenDeTurno, TurnoResumen, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiDescargarMock = vi.fn()
+const apiPutMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: vi.fn(),
-    put: vi.fn(),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: vi.fn(),
     descargar: (...args: unknown[]) => apiDescargarMock(...(args as [string])),
   },
@@ -139,6 +140,7 @@ beforeEach(() => {
   apiGetMock.mockReset()
   apiDescargarMock.mockReset()
   apiDescargarMock.mockResolvedValue(undefined)
+  apiPutMock.mockReset()
   usuarioActual = usuarioFixture()
   imprimirMock.mockReset()
   imprimirMock.mockResolvedValue({ ok: true })
@@ -937,5 +939,399 @@ describe('CajaZ — tickets del turno', () => {
 
     await waitFor(() => expect(alReimprimirVenta).toHaveBeenCalledTimes(1))
     expect(apiGetMock.mock.calls.filter((c) => c[0] === '/ventas/1')).toHaveLength(1)
+  })
+})
+
+describe('CajaZ — corrección de la administración', () => {
+  const NUMERO_DEL_TICKET = '0003-00000001'
+
+  function medio(id: number, nombre: string, sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
+    return {
+      id,
+      nombre,
+      activo: true,
+      idEmpresa: null,
+      orden: id,
+      comportamiento: 'Electronico',
+      admiteVuelto: false,
+      requiereReferencia: false,
+      recargoPorcentaje: null,
+      porcentajeFacturacion: 0,
+      ...sobrescribir,
+    }
+  }
+
+  const MEDIOS = [medio(1, 'Efectivo', { comportamiento: 'Efectivo', admiteVuelto: true }), medio(2, 'Tarjeta')]
+
+  function retiroFixture(sobrescribir: Partial<FilaDeRetiro> = {}): FilaDeRetiro {
+    return {
+      id: 9,
+      fecha: '2026-08-05T15:00:00Z',
+      idTurnoCaja: 412,
+      idPuntoVenta: 10,
+      puntoVenta: 'Local Centro',
+      idEmpleado: 4,
+      empleado: 'cajera1',
+      importe: 100,
+      motivo: 'Pago a proveedor',
+      turnoCerrado: true,
+      conciliado: false,
+      esRetiroDeCierre: false,
+      ...sobrescribir,
+    }
+  }
+
+  function paginaDeRetiros(items: FilaDeRetiro[], total = items.length): PaginaDeRetiros {
+    return { items, total, pagina: 1, tamanio: 200 }
+  }
+
+  function pagoDeAdministracion(sobrescribir: Partial<PagoDeAdministracionListado> = {}): PagoDeAdministracionListado {
+    return {
+      id: 2,
+      fecha: '2026-08-05T10:00:00Z',
+      idEmpresa: 1,
+      idPuntoVenta: 10,
+      idTurnoCaja: 412,
+      categoria: 'Viaticos',
+      idProveedor: null,
+      nombreProveedor: null,
+      idArea: null,
+      nombreArea: null,
+      concepto: 'Nafta del reparto',
+      detalle: null,
+      idMedioPago: 1,
+      nombreMedioPago: 'Efectivo',
+      numeroFactura: null,
+      importe: 120,
+      origenFondos: 'CajaTurno',
+      idComprobanteCompra: null,
+      turnoAbierto: false,
+      idMovimientoPersonal: null,
+      lineas: [{ idItem: 1, idMedioPago: 1, nombreMedioPago: 'Efectivo', importe: 120, referencia: null }],
+      ...sobrescribir,
+    }
+  }
+
+  function comprobanteDelTicket(): ComprobanteEmitido {
+    return {
+      id: 1,
+      numero: 1,
+      numeroVisible: NUMERO_DEL_TICKET,
+      estado: 'Emitido',
+      fecha: '2026-08-05T08:30:00Z',
+      idPuntoVenta: 10,
+      idCliente: 1,
+      idComprobanteAsociado: null,
+      subtotal: 750,
+      descuentoTotal: 0,
+      descuentoManualTotal: 0,
+      recargoManualTotal: 0,
+      total: 750,
+      direccionEntrega: null,
+      observaciones: null,
+      items: [],
+      pagos: [{ idMedioPago: 1, importe: 750, referencia: null, vuelto: 0 }],
+      idPresupuestoOrigen: null,
+    } as ComprobanteEmitido
+  }
+
+  const RECALCULADO = { fechaRecalculo: '2026-08-06T10:00:00Z', idEmpleadoRecalculo: 9 }
+
+  type Escenario = {
+    /** Respuestas sucesivas de `GET .../detalle`; la última se repite. Un `Error` rechaza esa llamada. */
+    detalles?: Array<DetalleDeTurno | Error>
+    retiros?: PaginaDeRetiros
+    pago?: () => Promise<PagoDeAdministracionListado>
+  }
+
+  function mockearAdministracion({ detalles = [detalleFixture()], retiros = paginaDeRetiros([retiroFixture()]), pago }: Escenario = {}) {
+    let llamadasAlDetalle = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/412/detalle') {
+        const respuesta = detalles[Math.min(llamadasAlDetalle, detalles.length - 1)]
+        llamadasAlDetalle += 1
+        return respuesta instanceof Error ? Promise.reject(respuesta) : Promise.resolve(respuesta)
+      }
+      if (ruta === '/caja/turnos/412') return Promise.resolve(turnoFixture())
+      if (ruta.startsWith('/caja/retiros?')) return Promise.resolve(retiros)
+      if (ruta.startsWith('/catalogos/medios-pago')) return Promise.resolve(MEDIOS)
+      if (ruta === '/ventas/1') return Promise.resolve(comprobanteDelTicket())
+      if (ruta === '/pagos/administracion/2') return pago ? pago() : Promise.resolve(pagoDeAdministracion())
+      if (ruta === '/catalogos/areas') return Promise.resolve([])
+      if (ruta === '/proveedores/opciones') return Promise.resolve([])
+      if (ruta.startsWith('/personal')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 200 })
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    return { llamadasAlDetalle: () => llamadasAlDetalle }
+  }
+
+  function comoAdmin() {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+  }
+
+  function rutasPedidas(prefijo: string): string[] {
+    return apiGetMock.mock.calls.map((c) => c[0] as string).filter((r) => r.startsWith(prefijo))
+  }
+
+  /** Espera al dato (la fila del ticket, el catálogo de medios y la de los retiros), no solo a que exista el botón. */
+  async function esperarListadosDelAdmin() {
+    const filaDelTicket = await screen.findByRole('row', { name: new RegExp(NUMERO_DEL_TICKET) })
+    const botonDelTicket = within(filaDelTicket).getByRole('button', { name: /Cambiar medio de pago/ })
+    await waitFor(() => expect(botonDelTicket).toBeEnabled())
+    await screen.findByRole('button', { name: /Editar el retiro/ })
+  }
+
+  describe('quién ve las acciones', () => {
+    it('el Admin ve cambiar medio en el ticket emitido, editar en los pagos y editar en los retiros', async () => {
+      comoAdmin()
+      mockearAdministracion()
+      renderCajaZ()
+
+      await esperarListadosDelAdmin()
+
+      expect(screen.getAllByRole('button', { name: /Cambiar medio de pago/ })).toHaveLength(1)
+      expect(screen.getByRole('button', { name: /Editar el pago de Sueldos/ })).toBeEnabled()
+      expect(screen.getByRole('button', { name: /Editar el pago de Viaticos/ })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Editar el retiro de Pago a proveedor' })).toBeEnabled()
+      const pedidas = rutasPedidas('/caja/retiros?')
+      expect(pedidas).toHaveLength(1)
+      expect(pedidas[0]).toContain('idTurnoCaja=412')
+      expect(pedidas[0]).toContain('tamanio=200')
+    })
+
+    it.each([
+      ['Supervisor', ROL.Supervisor],
+      ['Vendedor', ROL.Vendedor],
+    ])('el %s no ve acciones de corrección ni pide los retiros ni los medios', async (rol, rolId) => {
+      usuarioActual = usuarioFixture({ rolId, rol })
+      mockearAdministracion()
+      renderCajaZ()
+
+      await screen.findByRole('row', { name: new RegExp(NUMERO_DEL_TICKET) })
+
+      expect(screen.queryByRole('button', { name: /Cambiar medio de pago/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Editar el pago/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Retiros' })).not.toBeInTheDocument()
+      expect(rutasPedidas('/caja/retiros?')).toEqual([])
+      expect(rutasPedidas('/catalogos/medios-pago')).toEqual([])
+    })
+
+    it('dentro del POS de escritorio (con contextoDeImpresion) ni el Admin edita', async () => {
+      comoAdmin()
+      mockearAdministracion()
+      renderCajaZConContexto(CONTEXTO_DE_IMPRESION)
+
+      await screen.findByRole('row', { name: new RegExp(NUMERO_DEL_TICKET) })
+
+      expect(screen.queryByRole('button', { name: /Cambiar medio de pago/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Editar el pago/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Retiros' })).not.toBeInTheDocument()
+      expect(rutasPedidas('/caja/retiros?')).toEqual([])
+      expect(rutasPedidas('/catalogos/medios-pago')).toEqual([])
+    })
+
+    it('un pago nacido de personal no ofrece editar', async () => {
+      comoAdmin()
+      const base = detalleFixture()
+      const nacidoDePersonal = { ...base.gastos[0], id: 3, categoria: 'Impuestos' as const, idMovimientoPersonal: 7 }
+      mockearAdministracion({ detalles: [{ ...base, gastos: [...base.gastos, nacidoDePersonal] }] })
+      renderCajaZ()
+
+      await esperarListadosDelAdmin()
+
+      expect(screen.getByRole('row', { name: /Impuestos/ })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Editar el pago de Impuestos/ })).not.toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: /Editar el pago/ })).toHaveLength(2)
+    })
+
+    it('un retiro de cierre no se edita, con el motivo en el título', async () => {
+      comoAdmin()
+      mockearAdministracion({ retiros: paginaDeRetiros([retiroFixture({ esRetiroDeCierre: true })]) })
+      renderCajaZ()
+
+      const boton = await screen.findByRole('button', { name: 'Editar el retiro de Pago a proveedor' })
+
+      expect(boton).toBeDisabled()
+      expect(boton).toHaveAttribute('title', expect.stringContaining('retiro de cierre de turno'))
+    })
+
+    it('si hay más retiros que los que entran lo dice y manda a la grilla completa', async () => {
+      comoAdmin()
+      mockearAdministracion({ retiros: paginaDeRetiros([retiroFixture()], 250) })
+      renderCajaZ()
+
+      expect(await screen.findByText(/Se muestran 1 de 250 retiros del turno/)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Retiros' })).toHaveAttribute('href', '/caja/retiros')
+    })
+  })
+
+  describe('cambiar el medio de un ticket', () => {
+    it('abre el diálogo de la administración del ticket elegido, guarda y recarga el detalle con la marca de recálculo', async () => {
+      comoAdmin()
+      const escenario = mockearAdministracion({ detalles: [detalleFixture(), detalleFixture(RECALCULADO)] })
+      apiPutMock.mockResolvedValueOnce(comprobanteDelTicket())
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+      expect(screen.queryByText('Recalculado')).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: `Cambiar medio de pago de la venta ${NUMERO_DEL_TICKET}` }))
+      const dialogo = within(await screen.findByRole('dialog', { name: `Cambiar medio de pago — ${NUMERO_DEL_TICKET}` }))
+      const selector = await dialogo.findByLabelText('Medio de la línea 1')
+      await waitFor(() => expect(selector).toHaveValue('1'))
+      await userEvent.selectOptions(selector, '2')
+      await userEvent.click(dialogo.getByRole('button', { name: 'Guardar cambio' }))
+
+      await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/ventas/administracion/1/medios', expect.anything()))
+      expect(await screen.findByText('Recalculado')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(escenario.llamadasAlDetalle()).toBe(2)
+      expect(screen.getByText(`Se cambió el medio de pago de la venta ${NUMERO_DEL_TICKET}.`)).toBeInTheDocument()
+    })
+
+    it('un ticket anulado no ofrece cambiar el medio', async () => {
+      comoAdmin()
+      mockearAdministracion()
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+
+      const fila = screen.getByRole('row', { name: /0003-00000002/ })
+
+      expect(within(fila).queryByRole('button', { name: /Cambiar medio de pago/ })).not.toBeInTheDocument()
+    })
+
+    it('mientras el diálogo está abierto el resto de las acciones queda inerte', async () => {
+      comoAdmin()
+      mockearAdministracion()
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+
+      await userEvent.click(screen.getByRole('button', { name: /Cambiar medio de pago/ }))
+      await screen.findByRole('dialog', { name: /Cambiar medio de pago/ })
+
+      for (const nombre of [/Editar el pago/, /Editar el retiro/]) {
+        for (const boton of screen.getAllByRole('button', { name: nombre, hidden: true })) expect(boton).toBeDisabled()
+      }
+    })
+  })
+
+  describe('editar un pago', () => {
+    it('pide el pago por id, abre la edición con el origen de los fondos, guarda y recarga el detalle', async () => {
+      comoAdmin()
+      const escenario = mockearAdministracion({ detalles: [detalleFixture(), detalleFixture(RECALCULADO)] })
+      apiPutMock.mockResolvedValueOnce({ id: 2 })
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+
+      await userEvent.click(screen.getByRole('button', { name: /Editar el pago de Viaticos/ }))
+      const dialogo = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+
+      await dialogo.findByRole('option', { name: 'Efectivo' })
+      expect(apiGetMock).toHaveBeenCalledWith('/pagos/administracion/2')
+      expect(dialogo.getByLabelText('Concepto')).toHaveValue('Nafta del reparto')
+      expect(dialogo.getByLabelText('Origen de los fondos')).toHaveValue('CajaTurno')
+      await userEvent.clear(dialogo.getByLabelText('Importe de la línea 1'))
+      await userEvent.type(dialogo.getByLabelText('Importe de la línea 1'), '150')
+      await userEvent.click(dialogo.getByRole('button', { name: 'Guardar cambios' }))
+
+      await waitFor(() =>
+        expect(apiPutMock).toHaveBeenCalledWith(
+          '/pagos/administracion/2',
+          expect.objectContaining({ lineas: [{ idMedioPago: 1, importe: 150, referencia: null }] }),
+        ),
+      )
+      expect(await screen.findByText('Recalculado')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
+      expect(escenario.llamadasAlDetalle()).toBe(2)
+      expect(screen.getByText('Pago actualizado.')).toBeInTheDocument()
+    })
+
+    it('una respuesta que llega después de cerrar no abre el diálogo', async () => {
+      comoAdmin()
+      let resolver!: (pago: PagoDeAdministracionListado) => void
+      mockearAdministracion({ pago: () => new Promise((resolve) => (resolver = resolve)) })
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+
+      await userEvent.click(screen.getByRole('button', { name: /Editar el pago de Viaticos/ }))
+      const cargandoElPago = await screen.findByRole('dialog', { name: 'Editar pago' })
+      await userEvent.click(within(cargandoElPago).getByRole('button', { name: 'Cerrar' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+      await act(async () => {
+        resolver(pagoDeAdministracion())
+      })
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Editar el pago de Viaticos/ })).toBeEnabled()
+    })
+
+    it('si no se puede leer el pago lo dice y deja cerrar', async () => {
+      comoAdmin()
+      mockearAdministracion({ pago: () => Promise.reject(new Error('sin red')) })
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+
+      await userEvent.click(screen.getByRole('button', { name: /Editar el pago de Viaticos/ }))
+
+      const dialogo = await screen.findByRole('dialog', { name: 'Editar pago' })
+      expect(await within(dialogo).findByText('No se pudo cargar el pago.')).toBeInTheDocument()
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cerrar' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('un pago que resultó nacido de personal no abre la edición', async () => {
+      comoAdmin()
+      mockearAdministracion({ pago: () => Promise.resolve(pagoDeAdministracion({ idMovimientoPersonal: 7 })) })
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+
+      await userEvent.click(screen.getByRole('button', { name: /Editar el pago de Viaticos/ }))
+
+      expect(await screen.findByText('Nació de un movimiento de personal y no se modifica por separado.')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Concepto')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('editar un retiro', () => {
+    it('abre la edición del retiro de la fila, guarda y vuelve a pedir el detalle y los retiros', async () => {
+      comoAdmin()
+      const escenario = mockearAdministracion({ detalles: [detalleFixture(), detalleFixture(RECALCULADO)] })
+      apiPutMock.mockResolvedValueOnce(retiroFixture({ importe: 80 }))
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+      expect(rutasPedidas('/caja/retiros?')).toHaveLength(1)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Editar el retiro de Pago a proveedor' }))
+      const dialogo = within(await screen.findByRole('dialog', { name: 'Editar retiro' }))
+      expect(dialogo.getByLabelText('Importe')).toHaveValue('100,00')
+      await userEvent.clear(dialogo.getByLabelText('Importe'))
+      await userEvent.type(dialogo.getByLabelText('Importe'), '80')
+      await userEvent.click(dialogo.getByRole('button', { name: 'Guardar cambio' }))
+
+      await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/caja/retiros/9', { importe: 80, motivo: 'Pago a proveedor' }))
+      expect(await screen.findByText('Recalculado')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(escenario.llamadasAlDetalle()).toBe(2)
+      await waitFor(() => expect(rutasPedidas('/caja/retiros?')).toHaveLength(2))
+      expect(screen.getByText('Retiro actualizado.')).toBeInTheDocument()
+    })
+
+    it('si la recarga del detalle falla, el guardado sigue informado y el detalle anterior no desaparece', async () => {
+      comoAdmin()
+      mockearAdministracion({ detalles: [detalleFixture(), new Error('sin red')] })
+      apiPutMock.mockResolvedValueOnce(retiroFixture({ importe: 80 }))
+      renderCajaZ()
+      await esperarListadosDelAdmin()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Editar el retiro de Pago a proveedor' }))
+      const dialogo = within(await screen.findByRole('dialog', { name: 'Editar retiro' }))
+      await userEvent.clear(dialogo.getByLabelText('Importe'))
+      await userEvent.type(dialogo.getByLabelText('Importe'), '80')
+      await userEvent.click(dialogo.getByRole('button', { name: 'Guardar cambio' }))
+
+      expect(await screen.findByText(/El cambio se guardó, pero no se pudo actualizar el detalle del turno/)).toBeInTheDocument()
+      expect(screen.getByText('Retiro actualizado.')).toBeInTheDocument()
+      expect(screen.getByRole('row', { name: new RegExp(NUMERO_DEL_TICKET) })).toBeInTheDocument()
+    })
   })
 })

@@ -13,6 +13,7 @@ import {
   haySalidaDeEfectivoDeCaja,
   importeEnEfectivoDeCaja,
   mediosValidosParaPago,
+  origenEditableDelPago,
   salidaDeEfectivoDeCaja,
   textoDeMedioDelPagoDeTurno,
   totalDePagos,
@@ -362,5 +363,22 @@ describe('textoDeMedioDelPagoDeTurno', () => {
   it('con un medio fuera del catálogo cae a su número', () => {
     expect(textoDeMedioDelPagoDeTurno(pagoFixture({ idMedioPago: 9 }), medios)).toBe('Medio #9')
     expect(textoDeMedioDelPagoDeTurno(pagoFixture({ idMedioPago: 9 }), null)).toBe('Medio #9')
+  })
+})
+
+describe('origenEditableDelPago', () => {
+  it('un pago sin turno no ofrece cambiar el origen', () => {
+    expect(origenEditableDelPago({ idTurnoCaja: null, origenFondos: 'Tesoreria', turnoAbierto: false })).toBeUndefined()
+  })
+
+  it('un pago con turno lo ofrece con su origen actual y si el turno está cerrado', () => {
+    expect(origenEditableDelPago({ idTurnoCaja: 7, origenFondos: 'CajaTurno', turnoAbierto: true })).toEqual({
+      actual: 'CajaTurno',
+      turnoCerrado: false,
+    })
+    expect(origenEditableDelPago({ idTurnoCaja: 7, origenFondos: 'Tesoreria', turnoAbierto: false })).toEqual({
+      actual: 'Tesoreria',
+      turnoCerrado: true,
+    })
   })
 })

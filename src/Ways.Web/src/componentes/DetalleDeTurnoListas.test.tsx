@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
-import { DetalleDeTurnoListas } from './DetalleDeTurnoListas'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DetalleDeTurnoListas, type EdicionDeTurno } from './DetalleDeTurnoListas'
 import type { PagoDeTurno, TicketDeTurno } from '../api/tipos'
 
 afterEach(cleanup)
@@ -143,5 +143,58 @@ describe('DetalleDeTurnoListas — acciones de los tickets', () => {
     render(<DetalleDeTurnoListas tickets={[ticket(1), ticket(2, { estado: 'Anulado' })]} pagos={[]} alReimprimir={() => {}} />)
 
     expect(screen.getAllByRole('button', { name: 'Reimprimir' })).toHaveLength(1)
+  })
+})
+
+describe('DetalleDeTurnoListas — corrección de la administración', () => {
+  function edicionFixture(sobrescribir: Partial<EdicionDeTurno> = {}): EdicionDeTurno {
+    return { alCambiarMedio: vi.fn(), alEditarPago: vi.fn(), inerte: false, puedeCambiarMedio: true, ...sobrescribir }
+  }
+
+  const tickets = [ticket(1), ticket(2, { estado: 'Anulado' })]
+  const pagos = [pago(10, { categoria: 'Servicios' }), pago(11, { categoria: 'Sueldos', idMovimientoPersonal: 5 })]
+
+  it('sin edicion no ofrece ninguna acción de corrección ni la columna de acciones de los pagos', () => {
+    render(<DetalleDeTurnoListas tickets={tickets} pagos={pagos} />)
+
+    expect(screen.queryByRole('button', { name: /Cambiar medio/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Editar el pago/ })).not.toBeInTheDocument()
+    const [, tablaDePagos] = screen.getAllByRole('table')
+    expect(within(tablaDePagos).queryByRole('columnheader', { name: 'Acciones' })).not.toBeInTheDocument()
+  })
+
+  it('con edicion solo el ticket emitido ofrece cambiar el medio, y el pago nacido de personal no se edita', () => {
+    render(<DetalleDeTurnoListas tickets={tickets} pagos={pagos} edicion={edicionFixture()} />)
+
+    expect(screen.getAllByRole('button', { name: /Cambiar medio de pago/ })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Cambiar medio de pago de la venta T-1' })).toBeEnabled()
+    const editables = screen.getAllByRole('button', { name: /Editar el pago/ })
+    expect(editables).toHaveLength(1)
+    expect(editables[0].getAttribute('aria-label')).toContain('Servicios')
+  })
+
+  it('cada acción entrega al dueño el ticket o el pago de su fila', () => {
+    const edicion = edicionFixture()
+    render(<DetalleDeTurnoListas tickets={tickets} pagos={pagos} edicion={edicion} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar medio de pago de la venta T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: /Editar el pago de Servicios/ }))
+
+    expect(edicion.alCambiarMedio).toHaveBeenCalledWith(tickets[0], expect.any(HTMLElement))
+    expect(edicion.alEditarPago).toHaveBeenCalledWith(pagos[0], expect.any(HTMLElement))
+  })
+
+  it('inerte deja todas las acciones deshabilitadas', () => {
+    render(<DetalleDeTurnoListas tickets={tickets} pagos={pagos} edicion={edicionFixture({ inerte: true })} />)
+
+    expect(screen.getByRole('button', { name: /Cambiar medio de pago/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Editar el pago/ })).toBeDisabled()
+  })
+
+  it('sin catálogo de medios solo se deshabilita el cambio de medio', () => {
+    render(<DetalleDeTurnoListas tickets={tickets} pagos={pagos} edicion={edicionFixture({ puedeCambiarMedio: false })} />)
+
+    expect(screen.getByRole('button', { name: /Cambiar medio de pago/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Editar el pago/ })).toBeEnabled()
   })
 })
