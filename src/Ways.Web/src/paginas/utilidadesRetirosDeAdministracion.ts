@@ -5,7 +5,7 @@ import type { FilaDeRetiro } from '../api/tipos'
 export type AccionSobreRetiro = 'editar' | 'eliminar'
 
 const MENSAJES_DE_RETIRO: Readonly<Record<string, string>> = {
-  retiro_de_cierre_no_editable: 'El retiro de cierre de turno lo genera el sistema al cerrar: no se puede modificar ni eliminar.',
+  motivo_de_cierre_no_editable: 'El motivo del retiro de cierre de turno no se puede cambiar: solo se corrige su importe.',
   movimiento_de_caja_importe_invalido: 'El importe tiene que ser mayor a 0.',
   movimiento_de_caja_sin_motivo: 'El motivo tiene que tener al menos 5 caracteres.',
   periodo_conciliado: 'La fecha de este retiro ya está conciliada en tesorería: no se puede modificar ni eliminar.',
@@ -24,9 +24,8 @@ export function filaQuedoObsoleta(e: unknown): boolean {
   return e instanceof ErrorApi && (e.estado === 404 || e.estado === 409)
 }
 
-/** Por qué el retiro no admite editar ni eliminar, o `null` si los admite. El retiro de cierre gana sobre la conciliación. */
-export function motivoDeNoModificarRetiro(fila: Pick<FilaDeRetiro, 'esRetiroDeCierre' | 'conciliado'>): string | null {
-  if (fila.esRetiroDeCierre) return MENSAJES_DE_RETIRO.retiro_de_cierre_no_editable
+/** Por qué el retiro no admite editar ni eliminar, o `null` si los admite. El retiro de cierre se corrige como cualquier otro. */
+export function motivoDeNoModificarRetiro(fila: Pick<FilaDeRetiro, 'conciliado'>): string | null {
   if (fila.conciliado) return MENSAJES_DE_RETIRO.periodo_conciliado
 
   return null

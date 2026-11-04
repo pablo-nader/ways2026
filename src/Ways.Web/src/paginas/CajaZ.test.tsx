@@ -1144,15 +1144,25 @@ describe('CajaZ — corrección de la administración', () => {
       expect(screen.getAllByRole('button', { name: /Editar el pago/ })).toHaveLength(2)
     })
 
-    it('un retiro de cierre no se edita, con el motivo en el título', async () => {
+    it('un retiro de cierre se edita como cualquier otro', async () => {
       comoAdmin()
       mockearAdministracion({ retiros: paginaDeRetiros([retiroFixture({ esRetiroDeCierre: true })]) })
       renderCajaZ()
 
       const boton = await screen.findByRole('button', { name: 'Editar el retiro de Pago a proveedor' })
 
+      expect(boton).toBeEnabled()
+    })
+
+    it('un retiro de cierre conciliado no se edita y lo explica', async () => {
+      comoAdmin()
+      mockearAdministracion({ retiros: paginaDeRetiros([retiroFixture({ esRetiroDeCierre: true, conciliado: true })]) })
+      renderCajaZ()
+
+      const boton = await screen.findByRole('button', { name: 'Editar el retiro de Pago a proveedor' })
+
       expect(boton).toBeDisabled()
-      expect(boton).toHaveAttribute('title', expect.stringContaining('retiro de cierre de turno'))
+      expect(boton).toHaveAttribute('title', expect.stringContaining('conciliada'))
     })
 
     it('si hay más retiros que los que entran lo dice y manda a la grilla completa', async () => {

@@ -9,13 +9,14 @@ namespace Ways.Domain.Caja;
 /// </summary>
 public static class ReglaDeEdicionDeRetiros
 {
-    /// <summary>El retiro que escribe el cierre por retiro es parte del cierre: corregirlo es corregir el cierre.</summary>
-    public static void ExigirEditable(bool esRetiroDeCierre)
+    /// <summary>El motivo del retiro que escribe el cierre lo identifica en las impresiones ("Cierre"): se corrige su importe, no su
+    /// motivo. <paramref name="motivoNuevo"/> ya viene recortado.</summary>
+    public static void ExigirMotivoDeCierreIntacto(bool esRetiroDeCierre, string motivoActual, string motivoNuevo)
     {
-        if (esRetiroDeCierre)
+        if (esRetiroDeCierre && !string.Equals(motivoActual, motivoNuevo, StringComparison.Ordinal))
         {
             throw new ErrorDominio(
-                "retiro_de_cierre_no_editable", "El retiro del cierre de turno no se puede editar ni eliminar.", 409);
+                "motivo_de_cierre_no_editable", "El motivo del retiro de cierre de turno no se puede cambiar.", 400);
         }
     }
 

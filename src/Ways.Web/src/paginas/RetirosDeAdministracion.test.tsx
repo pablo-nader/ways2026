@@ -450,16 +450,12 @@ describe('RetirosDeAdministracion — permisos y estado de las acciones', () => 
     expect(screen.getByRole('button', { name: /^Eliminar/ })).toBeEnabled()
   })
 
-  it('el retiro de cierre no se edita ni se elimina y lo explica', async () => {
+  it('el retiro de cierre se edita y se elimina como cualquier otro', async () => {
     mockearGrilla(paginaFixture([retiroFixture({ esRetiroDeCierre: true })]))
     await renderizar()
 
-    for (const nombre of [/^Editar/, /^Eliminar/]) {
-      const boton = screen.getByRole('button', { name: nombre })
-      expect(boton).toBeDisabled()
-      expect(boton).toHaveAttribute('title', expect.stringContaining('retiro de cierre de turno'))
-      expect(boton.parentElement).toHaveAttribute('title', expect.stringContaining('retiro de cierre de turno'))
-    }
+    expect(screen.getByRole('button', { name: /^Editar/ })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^Eliminar/ })).toBeEnabled()
   })
 
   it('un retiro de una fecha conciliada no se edita ni se elimina y lo explica', async () => {
@@ -473,11 +469,15 @@ describe('RetirosDeAdministracion — permisos y estado de las acciones', () => 
     }
   })
 
-  it('el motivo del retiro de cierre gana sobre el de la conciliación', async () => {
+  it('el retiro de cierre de una fecha conciliada tampoco se modifica y lo explica', async () => {
     mockearGrilla(paginaFixture([retiroFixture({ esRetiroDeCierre: true, conciliado: true })]))
     await renderizar()
 
-    expect(screen.getByRole('button', { name: /^Editar/ })).toHaveAttribute('title', expect.stringContaining('retiro de cierre de turno'))
+    for (const nombre of [/^Editar/, /^Eliminar/]) {
+      const boton = screen.getByRole('button', { name: nombre })
+      expect(boton).toBeDisabled()
+      expect(boton).toHaveAttribute('title', expect.stringContaining('conciliada'))
+    }
   })
 })
 
@@ -487,6 +487,28 @@ describe('RetirosDeAdministracion — editar', () => {
 
     return within(await screen.findByRole('dialog', { name: 'Editar retiro' }))
   }
+
+  it('en el retiro de cierre el motivo es de solo lectura y se envía el guardado', async () => {
+    mockearGrilla(paginaFixture([retiroFixture({ esRetiroDeCierre: true })]))
+    apiPutMock.mockResolvedValue(retiroFixture({ importe: 250, esRetiroDeCierre: true }))
+    await renderizar()
+    const dialogo = await abrirEdicion()
+
+    expect(dialogo.getByLabelText('Motivo')).toHaveAttribute('readonly')
+    fireEvent.change(dialogo.getByLabelText('Importe'), { target: { value: '250' } })
+    await userEvent.click(dialogo.getByRole('button', { name: 'Guardar cambio' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock).toHaveBeenCalledWith('/caja/retiros/9', { importe: 250, motivo: 'Pago a proveedor' })
+  })
+
+  it('en un retiro común el motivo se puede editar', async () => {
+    mockearGrilla(paginaFixture([retiroFixture()]))
+    await renderizar()
+    const dialogo = await abrirEdicion()
+
+    expect(dialogo.getByLabelText('Motivo')).not.toHaveAttribute('readonly')
+  })
 
   it('abre con el importe y el motivo actuales, y avisa del recálculo solo si el turno está cerrado', async () => {
     mockearGrilla(paginaFixture([retiroFixture({ turnoCerrado: true })]))
@@ -591,7 +613,7 @@ describe('RetirosDeAdministracion — editar', () => {
   })
 
   const rechazos: [string, number, string][] = [
-    ['retiro_de_cierre_no_editable', 409, 'El retiro de cierre de turno lo genera el sistema al cerrar: no se puede modificar ni eliminar.'],
+    ['motivo_de_cierre_no_editable', 400, 'El motivo del retiro de cierre de turno no se puede cambiar: solo se corrige su importe.'],
     ['movimiento_de_caja_importe_invalido', 400, 'El importe tiene que ser mayor a 0.'],
     ['movimiento_de_caja_sin_motivo', 400, 'El motivo tiene que tener al menos 5 caracteres.'],
     ['periodo_conciliado', 409, 'La fecha de este retiro ya está conciliada en tesorería: no se puede modificar ni eliminar.'],
@@ -856,7 +878,6 @@ describe('RetirosDeAdministracion — eliminar', () => {
 
 function rechazosDeBaja(): [string, number, string][] {
   return [
-    ['retiro_de_cierre_no_editable', 409, 'El retiro de cierre de turno lo genera el sistema al cerrar'],
     ['periodo_conciliado', 409, 'La fecha de este retiro ya está conciliada en tesorería'],
     ['no_encontrado', 404, 'El retiro ya no existe'],
   ]
