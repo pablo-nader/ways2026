@@ -1011,6 +1011,9 @@ export function Pagos() {
           personal={personal ?? []}
           errorDePersonal={errorDePersonal}
           advertencias={advertenciasDePagoDeAdministracion(edicion)}
+          origenEditable={
+            edicion.idTurnoCaja !== null ? { actual: edicion.origenFondos, turnoCerrado: !edicion.turnoAbierto } : undefined
+          }
           guardando={guardandoEdicion}
           error={errorEdicion}
           onGuardarConLineas={(solicitud) => void guardarEdicion(solicitud)}

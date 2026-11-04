@@ -2029,6 +2029,9 @@ export type SolicitudDeEdicionDePagoConLineas = {
   numeroFactura: string | null
   lineas: LineaDePagoSolicitud[]
   idPersonal?: number
+  /** Solo administración y solo para un pago con turno; ausente = se conserva el origen actual (el POS responde 400
+   * `origen_solo_administracion` si lo recibe). */
+  origenFondos?: OrigenFondosPago
 }
 
 /** Página de resultados de `GET /api/pagos/administracion` — espejo de

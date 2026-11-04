@@ -269,6 +269,7 @@ export function lineasIniciales(pago: Pick<PagoEditable, 'idMedioPago' | 'import
 export function aSolicitudDeEdicionConLineas(
   f: FormularioDeEdicionDePago,
   lineas: readonly LineaDePagoEditable[],
+  origen?: { actual: OrigenFondosPago; elegido: OrigenFondosPago },
 ): SolicitudDeEdicionDePagoConLineas {
   return {
     categoria: f.categoria,
@@ -278,6 +279,7 @@ export function aSolicitudDeEdicionConLineas(
     detalle: f.detalle.trim() === '' ? null : f.detalle.trim(),
     numeroFactura: f.numeroFactura.trim() === '' ? null : f.numeroFactura.trim(),
     lineas: aLineasDeSolicitud(lineas),
+    ...(origen !== undefined && origen.elegido !== origen.actual ? { origenFondos: origen.elegido } : {}),
   }
 }
 
@@ -288,11 +290,15 @@ export function formularioDeEdicionConLineasCompleto(f: FormularioDeEdicionDePag
 export const COPIA_PAGO_TURNO_CERRADO =
   'El turno de este pago ya está cerrado: no se puede editar desde la caja. Pedile a un administrador que lo corrija.'
 
+export const COPIA_PAGO_SIN_TURNO =
+  'Este pago no pertenece a ningún turno: su origen de fondos es la caja general y no se puede cambiar a la caja del turno.'
+
 /** Copia del fallo de un `PUT`/`DELETE` de pago: el `409 gasto_turno_cerrado` tiene texto propio
  * (es una precondición vigente, no un error genérico); el resto muestra el mensaje del servidor. */
 export function copiaDeFalloDeEdicion(error: unknown, accion = 'guardar'): string {
   if (error instanceof ErrorApi) {
     if (error.estado === 409 && error.codigo === 'gasto_turno_cerrado') return COPIA_PAGO_TURNO_CERRADO
+    if (error.estado === 409 && error.codigo === 'pago_sin_turno') return COPIA_PAGO_SIN_TURNO
     return error.message.trim() || `No se pudo ${accion} el pago.`
   }
   return `No se pudo ${accion} el pago.`

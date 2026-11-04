@@ -8,12 +8,13 @@ import {
 } from '../api/registroDePagos'
 import type { FormularioDeEdicionDePago, PagoEditable } from '../api/registroDePagos'
 import { conEmpleadoAsignado, ofreceElegirPersonal } from '../api/sueldoConPersonal'
-import { CATEGORIAS_PAGO } from '../api/tipos'
+import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
   AreaListado,
   LineaDePagoListada,
   MedioPagoListado,
   OpcionDeProveedor,
+  OrigenFondosPago,
   SolicitudDeEdicionDePagoConLineas,
 } from '../api/tipos'
 import { EditorDeLineasDePago } from '../componentes/EditorDeLineasDePago'
@@ -36,6 +37,11 @@ type Props = {
   personalDisponible?: { habilitado: boolean; motivo: string }
   /** Motivo por el que no se pudo leer el personal; el pago sigue editable sin empleado. */
   errorDePersonal?: string
+  /**
+   * Solo la administración, y solo para un pago con turno: habilita elegir el origen de los fondos. Sin esta prop
+   * (POS, pago sin turno) el selector no se muestra y la solicitud nunca lleva `origenFondos`.
+   */
+  origenEditable?: { actual: OrigenFondosPago; turnoCerrado: boolean }
   /** Recibe la solicitud con el reparto por medio ya armada y validada de forma local. */
   onGuardarConLineas: (solicitud: SolicitudDeEdicionDePagoConLineas) => void
   /** Avisos de efectos (arqueo recalculado, ajuste compensatorio) mostrados sobre el formulario. */
@@ -63,6 +69,7 @@ export function ModalDeEdicionDePago({
   personalDisponible = { habilitado: true, motivo: '' },
   errorDePersonal = '',
   advertencias = [],
+  origenEditable,
   guardando,
   error,
   onGuardarConLineas,
@@ -71,6 +78,7 @@ export function ModalDeEdicionDePago({
   const [formulario, setFormulario] = useState<FormularioDeEdicionDePago>(() => aFormularioDeEdicion(pago))
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => lineasIniciales(pago))
   const [idPersonal, setIdPersonal] = useState<number | ''>('')
+  const [origenElegido, setOrigenElegido] = useState<OrigenFondosPago | null>(origenEditable?.actual ?? null)
   const [errorLocal, setErrorLocal] = useState('')
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
@@ -116,7 +124,11 @@ export function ModalDeEdicionDePago({
       return
     }
     setErrorLocal('')
-    const solicitud = aSolicitudDeEdicionConLineas(formulario, lineas)
+    const solicitud = aSolicitudDeEdicionConLineas(
+      formulario,
+      lineas,
+      origenEditable !== undefined && origenElegido !== null ? { actual: origenEditable.actual, elegido: origenElegido } : undefined,
+    )
     onGuardarConLineas(conEmpleado ? conEmpleadoAsignado(solicitud, idPersonal) : solicitud)
   }
 
@@ -267,6 +279,29 @@ export function ModalDeEdicionDePago({
             onChange={(e) => setFormulario((prev) => ({ ...prev, numeroFactura: e.target.value }))}
           />
         </div>
+
+        {origenEditable !== undefined && origenElegido !== null && (
+          <div className="col-md-6">
+            <label className="form-label" htmlFor="pago-edicion-origen">
+              Origen de los fondos
+            </label>
+            <select
+              id="pago-edicion-origen"
+              className="form-select"
+              value={origenElegido}
+              onChange={(e) => setOrigenElegido(e.target.value as OrigenFondosPago)}
+            >
+              {ORIGENES_DE_FONDOS_PAGO.map((o) => (
+                <option key={o.valor} value={o.valor}>
+                  {o.etiqueta}
+                </option>
+              ))}
+            </select>
+            {origenElegido !== origenEditable.actual && origenEditable.turnoCerrado && (
+              <div className="form-text">El turno está cerrado: al guardar se recalculará su arqueo.</div>
+            )}
+          </div>
+        )}
 
         <div className="col-12">
           <label className="form-label" htmlFor="pago-edicion-detalle">

@@ -1288,6 +1288,69 @@ describe('Pagos (administración) — edición y baja', () => {
     expect(d.getByLabelText('Concepto')).toBeEnabled()
   })
 
+  it('el selector de origen aparece en un pago con turno, precargado con su origen actual', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.getByLabelText('Origen de los fondos')).toHaveValue('CajaTurno')
+  })
+
+  it('un pago sin turno no ofrece el selector de origen', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler', idTurnoCaja: null })]) })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Alquiler' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await d.findByLabelText('Concepto')
+    expect(d.queryByLabelText('Origen de los fondos')).not.toBeInTheDocument()
+  })
+
+  it('cambiar el origen manda origenFondos en el PUT y avisa del recálculo del arqueo de un turno cerrado', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+    apiPutMock.mockResolvedValueOnce({ id: 31 })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.queryByText('El turno está cerrado: al guardar se recalculará su arqueo.')).not.toBeInTheDocument()
+    await userEvent.selectOptions(d.getByLabelText('Origen de los fondos'), 'Tesoreria')
+    expect(d.getByText('El turno está cerrado: al guardar se recalculará su arqueo.')).toBeInTheDocument()
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith('/pagos/administracion/31', expect.objectContaining({ origenFondos: 'Tesoreria' })),
+    )
+  })
+
+  it('sin tocar el origen el PUT no lleva origenFondos', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+    apiPutMock.mockResolvedValueOnce({ id: 31 })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalled())
+    expect(apiPutMock.mock.calls[0][1]).not.toHaveProperty('origenFondos')
+  })
+
+  it('un 409 pago_sin_turno muestra su mensaje legible en el modal', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+    const { ErrorApi } = await import('../api/cliente')
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'pago_sin_turno', 'sin turno'))
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await userEvent.selectOptions(d.getByLabelText('Origen de los fondos'), 'Tesoreria')
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await d.findByText(/no pertenece a ningún turno/)).toBeInTheDocument()
+  })
+
   it('un error del servidor al editar se muestra en el modal y no lo cierra', async () => {
     mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
     const { ErrorApi } = await import('../api/cliente')
