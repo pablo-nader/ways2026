@@ -8,16 +8,22 @@ public class ReglaDeEdicionDeRetirosTests
     private static readonly DateTimeOffset Ahora = new(2026, 11, 1, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public void ElRetiroDeCierreSeRechazaCon409()
+    public void CambiarElMotivoDelRetiroDeCierreSeRechazaCon400()
     {
-        var error = Assert.Throws<ErrorDominio>(() => ReglaDeEdicionDeRetiros.ExigirEditable(esRetiroDeCierre: true));
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeEdicionDeRetiros.ExigirMotivoDeCierreIntacto(true, "Retiro de cierre de turno", "Otro motivo"));
 
-        Assert.Equal("retiro_de_cierre_no_editable", error.Codigo);
-        Assert.Equal(409, error.EstadoHttp);
+        Assert.Equal("motivo_de_cierre_no_editable", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
     }
 
     [Fact]
-    public void UnRetiroManualEsEditable() => ReglaDeEdicionDeRetiros.ExigirEditable(esRetiroDeCierre: false);
+    public void ElRetiroDeCierreConservaSuMotivo() =>
+        ReglaDeEdicionDeRetiros.ExigirMotivoDeCierreIntacto(true, "Retiro de cierre de turno", "Retiro de cierre de turno");
+
+    [Fact]
+    public void UnRetiroManualCambiaDeMotivoLibremente() =>
+        ReglaDeEdicionDeRetiros.ExigirMotivoDeCierreIntacto(false, "Retiro para el banco", "Otro motivo");
 
     [Fact]
     public void SubirElImporteAcreditaLaDiferenciaALaTesoreria() =>

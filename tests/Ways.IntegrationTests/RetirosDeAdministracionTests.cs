@@ -19,7 +19,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// Corrección administrativa de retiros: <c>PUT</c> y <c>DELETE /api/caja/retiros/{id}</c> (Admin). Cubre la edición y la baja con
 /// el turno abierto (el resumen parcial la refleja) y cerrado (recálculo del arqueo con su marca, ajuste en la cadena de
-/// tesorería, libro), el retiro del cierre rechazado, la conciliación, los 404 antes que el cuerpo, la validación del alta, los
+/// tesorería, libro), el retiro del cierre corregido con su motivo fijo, la conciliación, los 404 antes que el cuerpo, la validación del alta, los
 /// roles y la auditoría.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -195,27 +195,136 @@ public class RetirosDeAdministracionTests(WaysApiFixture fixture) : IClassFixtur
 
     // ---- guardas ------------------------------------------------------------------------------------------------------------
 
+    private const string MotivoDelCierre = "Retiro de cierre de turno";
+
+    private static async Task<int> IdDelRetiroDeCierreAsync(WaysDbContext db, int turno) =>
+        await db.MovimientosCaja.Where(m => m.IdTurnoCaja == turno && m.EsRetiroDeCierre).Select(m => m.Id).SingleAsync();
+
+    /// <summary>Fondo 1000, el cierre retira 300 y deja 700 en el cajón (el declarado). Corregir el retiro a 250 sube el esperado a
+    /// 750 sin tocar el declarado; la tesorería recibe un ajuste de egreso de 50 (el cierre había acreditado el retiro de 300) y el turno queda marcado.</summary>
     [Fact]
-    public async Task ElRetiroDelCierreNoSeEditaNiSeElimina()
+    public async Task EditarElImporteDelRetiroDeCierreRecalculaElEsperadoSinTocarElDeclaradoYAjustaLaTesoreria()
     {
-        var ctx = await PrepararAsync(fixture, "retiro-de-cierre");
+        var ctx = await PrepararAsync(fixture, "retiro-cierre-edita");
         var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta, 1000m);
         await CerrarPorRetiroAsync(ctx.Admin, turno, 300m);
 
         int idDelCierre;
-        await using (var db = Db(ctx.IdTenant))
+        decimal declaradoAntes;
+        await using (var antes = Db(ctx.IdTenant))
         {
-            idDelCierre = await db.MovimientosCaja.Where(m => m.IdTurnoCaja == turno && m.EsRetiroDeCierre).Select(m => m.Id).SingleAsync();
+            idDelCierre = await IdDelRetiroDeCierreAsync(antes, turno);
+            declaradoAntes = await antes.ArqueosTurno.Where(a => a.IdTurnoCaja == turno && a.IdMedioPago == ctx.IdEfectivo)
+                .Select(a => a.ImporteDeclarado).SingleAsync();
+            Assert.Equal(700m, await EsperadoDelEfectivoAsync(antes, turno, ctx.IdEfectivo));
+        }
+
+        var respuesta = await ctx.Admin.PutAsJsonAsync(
+            $"/api/caja/retiros/{idDelCierre}", new SolicitudDeEdicionDeRetiro(250m, $"  {MotivoDelCierre}  "));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var fila = JsonSerializer.Deserialize<FilaDeRetiro>(cuerpo, OpcionesJson)!;
+        Assert.Equal((250m, MotivoDelCierre, true), (fila.Importe, fila.Motivo, fila.EsRetiroDeCierre));
+
+        await using var db = Db(ctx.IdTenant);
+        var arqueo = await db.ArqueosTurno.SingleAsync(a => a.IdTurnoCaja == turno && a.IdMedioPago == ctx.IdEfectivo);
+        Assert.Equal((750m, 700m, declaradoAntes), (arqueo.ImporteEsperado, arqueo.ImporteEsperadoOriginal, arqueo.ImporteDeclarado));
+        var marca = await db.TurnosCaja.Where(t => t.Id == turno).Select(t => new { t.FechaRecalculo, t.IdEmpleadoRecalculo }).FirstAsync();
+        Assert.NotNull(marca.FechaRecalculo);
+        Assert.Equal(ctx.IdAdmin, marca.IdEmpleadoRecalculo);
+
+        var ajuste = await db.MovimientosTesoreria
+            .Where(m => m.IdEmpresa == ctx.IdEmpresa).OrderByDescending(m => m.Id).FirstAsync();
+        Assert.Equal(
+            (TipoMovimientoTesoreria.Ajuste, turno, 0m, 50m, $"Edición del retiro #{idDelCierre}"),
+            (ajuste.Tipo, ajuste.IdTurnoCaja, ajuste.Ingreso, ajuste.Egreso, ajuste.Concepto));
+        Assert.Equal(1, await db.Auditoria.CountAsync(a => a.Accion == "retiro.edicion" && a.IdEntidad == idDelCierre));
+    }
+
+    [Fact]
+    public async Task EliminarElRetiroDeCierreRecalculaElEsperadoSinTocarElDeclaradoYDebitaElImporteEntero()
+    {
+        var ctx = await PrepararAsync(fixture, "retiro-cierre-baja");
+        var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta, 1000m);
+        await CerrarPorRetiroAsync(ctx.Admin, turno, 300m);
+
+        int idDelCierre;
+        decimal declaradoAntes;
+        await using (var antes = Db(ctx.IdTenant))
+        {
+            idDelCierre = await IdDelRetiroDeCierreAsync(antes, turno);
+            declaradoAntes = await antes.ArqueosTurno.Where(a => a.IdTurnoCaja == turno && a.IdMedioPago == ctx.IdEfectivo)
+                .Select(a => a.ImporteDeclarado).SingleAsync();
+        }
+
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/caja/retiros/{idDelCierre}")).StatusCode);
+
+        await using var db = Db(ctx.IdTenant);
+        var arqueo = await db.ArqueosTurno.SingleAsync(a => a.IdTurnoCaja == turno && a.IdMedioPago == ctx.IdEfectivo);
+        Assert.Equal((1000m, declaradoAntes), (arqueo.ImporteEsperado, arqueo.ImporteDeclarado));
+        Assert.NotNull(await db.TurnosCaja.Where(t => t.Id == turno).Select(t => t.FechaRecalculo).FirstAsync());
+        Assert.False(await db.MovimientosCaja.AnyAsync(m => m.Id == idDelCierre));
+
+        var ajuste = await db.MovimientosTesoreria
+            .Where(m => m.IdEmpresa == ctx.IdEmpresa).OrderByDescending(m => m.Id).FirstAsync();
+        Assert.Equal(
+            (TipoMovimientoTesoreria.Ajuste, 0m, 300m, $"Baja del retiro #{idDelCierre}"),
+            (ajuste.Tipo, ajuste.Ingreso, ajuste.Egreso, ajuste.Concepto));
+        Assert.Equal(1, await db.Auditoria.CountAsync(a => a.Accion == "retiro.baja" && a.IdEntidad == idDelCierre));
+    }
+
+    /// <summary>LA CLÁUSULA: el motivo del retiro de cierre no cambia (las impresiones lo reconocen por el literal). El 400 sale
+    /// bajo el lock, antes de escribir: ni el importe, ni el arqueo, ni la tesorería, ni la auditoría se mueven.</summary>
+    [Fact]
+    public async Task CambiarElMotivoDelRetiroDeCierreRespondeBadRequestYNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(fixture, "retiro-cierre-motivo");
+        var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta, 1000m);
+        await CerrarPorRetiroAsync(ctx.Admin, turno, 300m);
+
+        int idDelCierre;
+        int ajustesAntes;
+        await using (var antes = Db(ctx.IdTenant))
+        {
+            idDelCierre = await IdDelRetiroDeCierreAsync(antes, turno);
+            ajustesAntes = await antes.MovimientosTesoreria.CountAsync(m => m.IdEmpresa == ctx.IdEmpresa);
         }
 
         await AsertarErrorAsync(
-            await ctx.Admin.PutAsJsonAsync($"/api/caja/retiros/{idDelCierre}", new SolicitudDeEdicionDeRetiro(100m, "Corrijo el cierre")),
-            HttpStatusCode.Conflict, "retiro_de_cierre_no_editable");
-        await AsertarErrorAsync(
-            await ctx.Admin.DeleteAsync($"/api/caja/retiros/{idDelCierre}"), HttpStatusCode.Conflict, "retiro_de_cierre_no_editable");
+            await ctx.Admin.PutAsJsonAsync($"/api/caja/retiros/{idDelCierre}", new SolicitudDeEdicionDeRetiro(250m, "Corrijo el cierre")),
+            HttpStatusCode.BadRequest, "motivo_de_cierre_no_editable");
 
-        await using var despues = Db(ctx.IdTenant);
-        Assert.Equal(300m, (await despues.MovimientosCaja.SingleAsync(m => m.Id == idDelCierre)).Importe);
+        await using var db = Db(ctx.IdTenant);
+        var fila = await db.MovimientosCaja.SingleAsync(m => m.Id == idDelCierre);
+        Assert.Equal((300m, MotivoDelCierre), (fila.Importe, fila.Motivo));
+        Assert.Equal(700m, await EsperadoDelEfectivoAsync(db, turno, ctx.IdEfectivo));
+        Assert.Null(await db.TurnosCaja.Where(t => t.Id == turno).Select(t => t.FechaRecalculo).FirstAsync());
+        Assert.Equal(ajustesAntes, await db.MovimientosTesoreria.CountAsync(m => m.IdEmpresa == ctx.IdEmpresa));
+        Assert.Equal(0, await db.Auditoria.CountAsync(a => a.IdEntidad == idDelCierre && a.Accion.StartsWith("retiro.")));
+    }
+
+    [Fact]
+    public async Task ElRetiroDeCierreDeUnTurnoConciliadoNoSeEditaNiSeElimina()
+    {
+        var ctx = await PrepararAsync(fixture, "retiro-cierre-conciliado");
+        var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta, 1000m);
+        var cierre = await CerrarPorRetiroAsync(ctx.Admin, turno, 300m);
+        await ConciliarAsync(ctx, cierre);
+
+        int idDelCierre;
+        await using (var antes = Db(ctx.IdTenant))
+        {
+            idDelCierre = await IdDelRetiroDeCierreAsync(antes, turno);
+        }
+
+        await AsertarErrorAsync(
+            await ctx.Admin.PutAsJsonAsync($"/api/caja/retiros/{idDelCierre}", new SolicitudDeEdicionDeRetiro(250m, MotivoDelCierre)),
+            HttpStatusCode.Conflict, "periodo_conciliado");
+        await AsertarErrorAsync(
+            await ctx.Admin.DeleteAsync($"/api/caja/retiros/{idDelCierre}"), HttpStatusCode.Conflict, "periodo_conciliado");
+
+        await using var db = Db(ctx.IdTenant);
+        Assert.Equal(300m, (await db.MovimientosCaja.SingleAsync(m => m.Id == idDelCierre)).Importe);
     }
 
     [Fact]

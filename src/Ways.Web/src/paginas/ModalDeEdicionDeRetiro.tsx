@@ -19,7 +19,7 @@ type Props = {
 /**
  * Corrección del importe y del motivo de un retiro (`PUT /api/caja/retiros/{id}`, solo Admin). Las validaciones locales son las del
  * alta del retiro; el servidor vuelve a validar todo. La escritura es de este modal: queda inerte mientras está en vuelo y una
- * guarda de ref evita el doble envío en el mismo tick.
+ * guarda de ref evita el doble envío en el mismo tick. El motivo del retiro de cierre de turno no se edita: el servidor lo exige igual.
  */
 export function ModalDeEdicionDeRetiro({ retiro, onGuardado, onObsoleto, onCerrar }: Props) {
   const [importe, setImporte] = useState<number | null>(retiro.importe)
@@ -89,6 +89,7 @@ export function ModalDeEdicionDeRetiro({ retiro, onGuardado, onObsoleto, onCerra
             type="text"
             className="form-control"
             value={motivo}
+            readOnly={retiro.esRetiroDeCierre}
             onChange={(e) => {
               setErrorDelServidor('')
               setMotivo(e.target.value)

@@ -13,10 +13,10 @@ using static Ways.Application.Busqueda.BusquedaSinAcentos;
 namespace Ways.Application.Caja;
 
 /// <summary>
-/// Retiros de caja en el back office: el listado de todos los turnos y la corrección administrativa de un retiro manual (editar
+/// Retiros de caja en el back office: el listado de todos los turnos y la corrección administrativa de un retiro (editar
 /// importe y motivo, o darlo de baja lógica), con el turno abierto o cerrado. Solo los retiros: los refuerzos y las aperturas de
-/// cajón siguen siendo append-only. El retiro que escribe el cierre por retiro no se corrige
-/// (<see cref="ReglaDeEdicionDeRetiros.ExigirEditable"/>).
+/// cajón siguen siendo append-only. El retiro que escribe el cierre por retiro también se
+/// corrige, pero conserva su motivo (<see cref="ReglaDeEdicionDeRetiros.ExigirMotivoDeCierreIntacto"/>).
 ///
 /// Con el turno cerrado, la corrección recalcula el arqueo (<see cref="RecalculoDeArqueoDeTurnoCerrado"/>, con la marca del
 /// recálculo) y agrega a la cadena de tesorería un <see cref="TipoMovimientoTesoreria.Ajuste"/> por la diferencia: el cierre había
@@ -203,14 +203,12 @@ public class ServicioDeRetiros(
     // ---- corrección -----------------------------------------------------------------------------------------------------
 
     /// <summary>Cambia el importe y el motivo de un retiro. Orden de respuestas: 404 (no existe, es de otro tenant, está dado de
-    /// baja o no es un retiro), 409 si es el retiro del cierre, 400 si el cuerpo no cumple las reglas del alta; después, bajo los
-    /// locks, 409 <c>periodo_conciliado</c>.</summary>
+    /// baja o no es un retiro), 400 si el cuerpo no cumple las reglas del alta; después, bajo los
+    /// locks, 400 si cambia el motivo del retiro del cierre y 409 <c>periodo_conciliado</c>.</summary>
     public async Task<FilaDeRetiro> EditarAsync(int idMovimiento, SolicitudDeEdicionDeRetiro solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var inmutables = await LeerDatosInmutablesAsync(idMovimiento, ct);
-        ReglaDeEdicionDeRetiros.ExigirEditable(inmutables.EsRetiroDeCierre);
-
         ReglaDeMovimientosDeCaja.ExigirImporteValido(TipoMovimientoCaja.Retiro, solicitud.Importe);
         ReglaDeMovimientosDeCaja.ExigirMotivoValido(TipoMovimientoCaja.Retiro, solicitud.Motivo);
         var nuevo = new Correccion(solicitud.Importe, solicitud.Motivo!.Trim());
@@ -232,8 +230,6 @@ public class ServicioDeRetiros(
     {
         var idTenant = ExigirTenantDeLaSesion();
         var inmutables = await LeerDatosInmutablesAsync(idMovimiento, ct);
-        ReglaDeEdicionDeRetiros.ExigirEditable(inmutables.EsRetiroDeCierre);
-
         await EjecutarAsync(idTenant, idMovimiento, inmutables, nuevo: null, ct);
     }
 
@@ -243,7 +239,7 @@ public class ServicioDeRetiros(
     /// clave del primer lock y el turno la del segundo. Es también la verificación de existencia que responde 404 antes de mirar el
     /// cuerpo. El punto de venta puede estar dado de baja (su empresa no cambia); el filtro de baja lógica se apaga para toda la
     /// consulta, así que la del retiro se excluye a mano.</summary>
-    private sealed record DatosInmutables(int IdTurnoCaja, int IdPuntoVenta, int IdEmpresa, bool EsRetiroDeCierre);
+    private sealed record DatosInmutables(int IdTurnoCaja, int IdPuntoVenta, int IdEmpresa);
 
     private async Task<DatosInmutables> LeerDatosInmutablesAsync(int idMovimiento, CancellationToken ct) =>
         await (
@@ -251,7 +247,7 @@ public class ServicioDeRetiros(
             where m.Id == idMovimiento && m.Tipo == TipoMovimientoCaja.Retiro && m.DeletedAt == null
             join t in db.TurnosCaja on m.IdTurnoCaja equals t.Id
             join pv in db.PuntosVenta on t.IdPuntoVenta equals pv.Id
-            select new DatosInmutables(m.IdTurnoCaja, t.IdPuntoVenta, pv.IdEmpresa, m.EsRetiroDeCierre))
+            select new DatosInmutables(m.IdTurnoCaja, t.IdPuntoVenta, pv.IdEmpresa))
             .FirstOrDefaultAsync(ct)
         ?? throw NoExiste(idMovimiento);
 
@@ -310,6 +306,7 @@ public class ServicioDeRetiros(
         }
         else
         {
+            ReglaDeEdicionDeRetiros.ExigirMotivoDeCierreIntacto(retiro.EsRetiroDeCierre, motivoAnterior, nuevo.Motivo);
             retiro.Importe = nuevo.Importe;
             retiro.Motivo = nuevo.Motivo;
         }

@@ -19,7 +19,7 @@ const { filaQuedoObsoleta, mensajeDeErrorDeRetiro, motivoDeNoModificarRetiro, va
 
 describe('mensajeDeErrorDeRetiro', () => {
   it.each([
-    ['retiro_de_cierre_no_editable', 'retiro de cierre'],
+    ['motivo_de_cierre_no_editable', 'solo se corrige su importe'],
     ['movimiento_de_caja_importe_invalido', 'mayor a 0'],
     ['movimiento_de_caja_sin_motivo', 'al menos 5'],
     ['periodo_conciliado', 'conciliada'],
@@ -56,13 +56,11 @@ describe('filaQuedoObsoleta', () => {
 
 describe('motivoDeNoModificarRetiro', () => {
   it('un retiro común se puede modificar', () => {
-    expect(motivoDeNoModificarRetiro({ esRetiroDeCierre: false, conciliado: false })).toBeNull()
+    expect(motivoDeNoModificarRetiro({ conciliado: false })).toBeNull()
   })
 
-  it('el retiro de cierre y el conciliado dicen cada uno su motivo, con prioridad del cierre', () => {
-    expect(motivoDeNoModificarRetiro({ esRetiroDeCierre: true, conciliado: false })).toContain('retiro de cierre')
-    expect(motivoDeNoModificarRetiro({ esRetiroDeCierre: false, conciliado: true })).toContain('conciliada')
-    expect(motivoDeNoModificarRetiro({ esRetiroDeCierre: true, conciliado: true })).toContain('retiro de cierre')
+  it('el retiro conciliado dice por qué no se modifica', () => {
+    expect(motivoDeNoModificarRetiro({ conciliado: true })).toContain('conciliada')
   })
 })
 
