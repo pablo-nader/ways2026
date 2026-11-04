@@ -44,7 +44,7 @@ No new tables or columns. `pagos.origen_fondos` becomes editable for rows with `
   1660 passed (structural guards); integration `Pagos*` + `SuperficieDeAutorizacion` 315 passed; filtered PagosEdicion/
   PagosOrigenFondos/PagosDeAdministracion 58 passed. Mutations killed: domain origen anterior (2 fail), tesorería origen
   anterior (2 fail), guarda `pago_sin_turno` (1 fail), rechazo POS (1 fail), origen anterior capturado tarde (2 fail).
-  Codes: `origen_solo_administracion` (400, POS), `pago_sin_turno` (409, admin).
+  Codes: `origen_solo_administracion` (400, POS), `pago_sin_turno` (409, admin). Commit a36d1caa. judgment-day: APPROVED round 1 (0 critical; suggestions: baja test name tightened, OpenAPI summaries and Ajuste detail text left as info).
 - [ ] T2 — Web: origin selector in `ModalDeEdicionDePago` only for admin and payments with a shift; request builder;
   Vitest tests. Route: delegated.
 - [ ] T3 — judgment-day, PR(s) stacked-to-main, auto-merge + Auto-fix.

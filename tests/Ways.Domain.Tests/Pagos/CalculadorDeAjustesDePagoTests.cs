@@ -192,12 +192,16 @@ public class CalculadorDeAjustesDePagoTests
     }
 
     [Fact]
-    public void UnaBajaDeUnPagoQueCambiaDeOrigenSoloReingresaLoQueEgresaba()
+    public void UnaBajaSoloReingresaLoQueEgresabaSinImportarElOrigenNuevo()
     {
         Assert.Equal(
             new AjusteDeTesoreria(100m, 0m),
             CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Tesoreria, Tesoreria, 100m, null));
+        Assert.Equal(
+            new AjusteDeTesoreria(100m, 0m),
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Tesoreria, Caja, 100m, null));
         Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Caja, Caja, 100m, null));
+        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Caja, Tesoreria, 100m, null));
     }
 
     [Fact]
