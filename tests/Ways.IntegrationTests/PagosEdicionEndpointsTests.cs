@@ -1043,6 +1043,181 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(0, await db.Auditoria.CountAsync(a => a.Accion == "pago.edicion"));
     }
 
+    // ---- cambio de origen de los fondos -----------------------------------------------------------
+
+    private static SolicitudDeEdicionDePagoConLineas ConOrigen(
+        SolicitudDeEdicionDePagoConLineas edicion, OrigenFondosPago? origen) => edicion with { OrigenFondos = origen };
+
+    /// <summary>LA CLÁUSULA del cambio de origen: de caja a tesorería sobre un turno cerrado, el arqueo deja de descontar el
+    /// pago (el esperado sube lo que aportaban sus líneas) y deja la marca de recálculo, la cadena de tesorería egresa el
+    /// importe con un ajuste y la auditoría registra los dos orígenes.</summary>
+    [Fact]
+    public async Task PasarUnPagoDeCajaATesoreriaEnUnTurnoCerradoRecalculaElArqueoYEgresaDeLaTesoreria()
+    {
+        var ctx = await PrepararAsync(nameof(PasarUnPagoDeCajaATesoreriaEnUnTurnoCerradoRecalculaElArqueoYEgresaDeLaTesoreria));
+        var idTurno = await AbrirTurnoAsync(ctx, 1000m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo);
+        await RegistrarPagoPosAsync(ctx.Admin, ctx, 40m, ctx.IdMedioEfectivo);
+        await CerrarTurnoAsync(ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 860m));
+
+        var respuesta = await EditarAdminAsync(
+            ctx.Admin, pago.Id, ConOrigen(Edicion(100m, ctx.IdMedioEfectivo), OrigenFondosPago.Tesoreria));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        Assert.Equal(OrigenFondosPago.Tesoreria, JsonSerializer.Deserialize<PagoDeAdministracionListado>(cuerpo, OpcionesJson)!.OrigenFondos);
+
+        await using var db = Db(ctx);
+        var arqueo = await db.ArqueosTurno.SingleAsync(a => a.IdTurnoCaja == idTurno);
+        Assert.Equal(960m, arqueo.ImporteEsperado);
+        Assert.Equal(860m, arqueo.ImporteEsperadoOriginal);
+        Assert.Equal(100m, arqueo.Diferencia);
+        var turno = await db.TurnosCaja.SingleAsync(t => t.Id == idTurno);
+        Assert.NotNull(turno.FechaRecalculo);
+        Assert.Equal(ctx.IdAdmin, turno.IdEmpleadoRecalculo);
+
+        var ajuste = await db.MovimientosTesoreria.SingleAsync(m => m.IdEmpresa == ctx.IdEmpresa && m.Tipo == TipoMovimientoTesoreria.Ajuste);
+        Assert.Equal((0m, 100m), (ajuste.Ingreso, ajuste.Egreso));
+        Assert.Equal(idTurno, ajuste.IdTurnoCaja);
+        Assert.Null(ajuste.IdPago);
+
+        var auditoria = await db.Auditoria.SingleAsync(a => a.Accion == "pago.edicion" && a.IdEntidad == pago.Id);
+        Assert.Equal("caja_turno", JsonDocument.Parse(auditoria.ValorAnterior!).RootElement.GetProperty("origen_fondos").GetString());
+        Assert.Equal("tesoreria", JsonDocument.Parse(auditoria.ValorNuevo).RootElement.GetProperty("origen_fondos").GetString());
+    }
+
+    /// <summary>Simétrico: de tesorería a caja el arqueo vuelve a descontar el pago (con el importe nuevo, porque el cambio
+    /// se combina con otra edición) y la tesorería reingresa lo que el pago había egresado.</summary>
+    [Fact]
+    public async Task PasarUnPagoDeTesoreriaACajaEnUnTurnoCerradoRecalculaElArqueoYReingresaALaTesoreria()
+    {
+        var ctx = await PrepararAsync(nameof(PasarUnPagoDeTesoreriaACajaEnUnTurnoCerradoRecalculaElArqueoYReingresaALaTesoreria));
+        var idTurno = await AbrirTurnoAsync(ctx, 1000m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo, origen: OrigenFondosPago.Tesoreria);
+        await RegistrarPagoPosAsync(ctx.Admin, ctx, 40m, ctx.IdMedioEfectivo);
+        await CerrarTurnoAsync(ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 960m));
+
+        var respuesta = await EditarAdminAsync(
+            ctx.Admin, pago.Id, ConOrigen(Edicion(130m, ctx.IdMedioEfectivo), OrigenFondosPago.CajaTurno));
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        await using var db = Db(ctx);
+        var arqueo = await db.ArqueosTurno.SingleAsync(a => a.IdTurnoCaja == idTurno);
+        Assert.Equal(830m, arqueo.ImporteEsperado);
+        Assert.Equal(960m, arqueo.ImporteEsperadoOriginal);
+        Assert.NotNull(await db.TurnosCaja.Where(t => t.Id == idTurno).Select(t => t.FechaRecalculo).SingleAsync());
+
+        var ajuste = await db.MovimientosTesoreria.SingleAsync(m => m.IdEmpresa == ctx.IdEmpresa && m.Tipo == TipoMovimientoTesoreria.Ajuste);
+        Assert.Equal((100m, 0m), (ajuste.Ingreso, ajuste.Egreso));
+
+        var auditoria = await db.Auditoria.SingleAsync(a => a.Accion == "pago.edicion" && a.IdEntidad == pago.Id);
+        Assert.Equal("tesoreria", JsonDocument.Parse(auditoria.ValorAnterior!).RootElement.GetProperty("origen_fondos").GetString());
+        Assert.Equal("caja_turno", JsonDocument.Parse(auditoria.ValorNuevo).RootElement.GetProperty("origen_fondos").GetString());
+    }
+
+    /// <summary>Con el turno abierto no hay arqueo persistido que recalcular: el cambio de origen no deja marca y el cierre
+    /// posterior deriva el esperado con el origen nuevo.</summary>
+    [Fact]
+    public async Task PasarUnPagoDeCajaATesoreriaConElTurnoAbiertoNoDejaMarcaYElCierreLoDerivaConElOrigenNuevo()
+    {
+        var ctx = await PrepararAsync(nameof(PasarUnPagoDeCajaATesoreriaConElTurnoAbiertoNoDejaMarcaYElCierreLoDerivaConElOrigenNuevo));
+        var idTurno = await AbrirTurnoAsync(ctx, 500m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 80m, ctx.IdMedioEfectivo);
+
+        var respuesta = await EditarAdminAsync(
+            ctx.Admin, pago.Id, ConOrigen(Edicion(80m, ctx.IdMedioEfectivo), OrigenFondosPago.Tesoreria));
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        await CerrarTurnoAsync(ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 500m));
+
+        await using var db = Db(ctx);
+        var arqueo = await db.ArqueosTurno.SingleAsync(a => a.IdTurnoCaja == idTurno);
+        Assert.Equal(500m, arqueo.ImporteEsperado);
+        Assert.Null(arqueo.ImporteEsperadoOriginal);
+        Assert.Null(await db.TurnosCaja.Where(t => t.Id == idTurno).Select(t => t.FechaRecalculo).SingleAsync());
+        Assert.Equal(OrigenFondosPago.Tesoreria, await db.Pagos.Where(g => g.Id == pago.Id).Select(g => g.OrigenFondos).SingleAsync());
+    }
+
+    /// <summary>Mandar el origen que el pago ya tiene (o no mandarlo) se comporta como siempre: ni recálculo ni ajuste.</summary>
+    [Fact]
+    public async Task ElMismoOrigenOSinOrigenNoRecalculaNiAjustaLaTesoreria()
+    {
+        var ctx = await PrepararAsync(nameof(ElMismoOrigenOSinOrigenNoRecalculaNiAjustaLaTesoreria));
+        var idTurno = await AbrirTurnoAsync(ctx, 300m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 50m, ctx.IdMedioEfectivo);
+        await CerrarTurnoAsync(ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 250m));
+
+        Assert.Equal(HttpStatusCode.OK, (await EditarAdminAsync(
+            ctx.Admin, pago.Id, ConOrigen(Edicion(50m, ctx.IdMedioEfectivo, concepto: "Mismo"), OrigenFondosPago.CajaTurno))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await EditarAdminAsync(
+            ctx.Admin, pago.Id, Edicion(50m, ctx.IdMedioEfectivo, concepto: "Sin origen"))).StatusCode);
+
+        await using var db = Db(ctx);
+        Assert.Null(await db.TurnosCaja.Where(t => t.Id == idTurno).Select(t => t.FechaRecalculo).SingleAsync());
+        Assert.Null(await db.ArqueosTurno.Where(a => a.IdTurnoCaja == idTurno).Select(a => a.ImporteEsperadoOriginal).SingleAsync());
+        Assert.Equal(0, await db.MovimientosTesoreria.CountAsync(m => m.IdEmpresa == ctx.IdEmpresa && m.Tipo == TipoMovimientoTesoreria.Ajuste));
+        Assert.Equal(OrigenFondosPago.CajaTurno, await db.Pagos.Where(g => g.Id == pago.Id).Select(g => g.OrigenFondos).SingleAsync());
+    }
+
+    /// <summary>Un pago sin turno no tiene cajón del que descontarse: pedirle caja es <c>409 pago_sin_turno</c> y no se escribe
+    /// nada (ni siquiera lo demás que traía la edición). Pedirle tesorería, que ya es, no es un cambio.</summary>
+    [Fact]
+    public async Task UnPagoSinTurnoNoPasaACajaYNoSeEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoSinTurnoNoPasaACajaYNoSeEscribeNada));
+        var pago = await RegistrarPagoAdminAsync(ctx, 70m);
+
+        var respuesta = await EditarAdminAsync(
+            ctx.Admin, pago.Id, ConOrigen(Edicion(90m, ctx.IdMedioEfectivo, concepto: "No debe guardarse"), OrigenFondosPago.CajaTurno));
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("pago_sin_turno", await CodigoDeErrorAsync(respuesta));
+
+        await using (var db = Db(ctx))
+        {
+            var fila = await db.Pagos.SingleAsync(g => g.Id == pago.Id);
+            Assert.Equal((OrigenFondosPago.Tesoreria, 70m, "Gasto admin"), (fila.OrigenFondos, fila.Importe, fila.Concepto));
+            Assert.Equal(0, await db.Auditoria.CountAsync(a => a.Accion == "pago.edicion" && a.IdEntidad == pago.Id));
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await EditarAdminAsync(
+            ctx.Admin, pago.Id, ConOrigen(Edicion(70m, ctx.IdMedioEfectivo), OrigenFondosPago.Tesoreria))).StatusCode);
+    }
+
+    /// <summary>update-404-first: el id inexistente responde 404 antes que cualquier regla del origen.</summary>
+    [Fact]
+    public async Task ElCambioDeOrigenDeUnPagoInexistenteEs404()
+    {
+        var ctx = await PrepararAsync(nameof(ElCambioDeOrigenDeUnPagoInexistenteEs404));
+
+        var respuesta = await EditarAdminAsync(
+            ctx.Admin, 987654, ConOrigen(Edicion(10m, ctx.IdMedioEfectivo), OrigenFondosPago.CajaTurno));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>dto-contract-honesty: el POS no cambia el origen, así que el campo se rechaza antes de escribir (y después
+    /// del 404, que sigue primero).</summary>
+    [Fact]
+    public async Task ElPosRechazaElOrigenDeFondosYNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(ElPosRechazaElOrigenDeFondosYNoEscribeNada));
+        await AbrirTurnoAsync(ctx, 100m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 30m, ctx.IdMedioEfectivo);
+
+        var respuesta = await EditarPosAsync(
+            ctx.Admin, pago.Id, ConOrigen(Edicion(40m, ctx.IdMedioEfectivo), OrigenFondosPago.Tesoreria));
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("origen_solo_administracion", await CodigoDeErrorAsync(respuesta));
+
+        var inexistente = await EditarPosAsync(
+            ctx.Admin, 987654, ConOrigen(Edicion(40m, ctx.IdMedioEfectivo), OrigenFondosPago.Tesoreria));
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+
+        await using var db = Db(ctx);
+        var fila = await db.Pagos.SingleAsync(g => g.Id == pago.Id);
+        Assert.Equal((OrigenFondosPago.CajaTurno, 30m), (fila.OrigenFondos, fila.Importe));
+        Assert.Equal(0, await db.Auditoria.CountAsync(a => a.Accion == "pago.edicion"));
+    }
+
     // ---- backstop de esquema --------------------------------------------------------------------
 
     [Fact]

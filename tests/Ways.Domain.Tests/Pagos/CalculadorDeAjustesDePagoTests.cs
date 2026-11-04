@@ -87,7 +87,7 @@ public class CalculadorDeAjustesDePagoTests
     {
         Assert.Equal(
             new AjusteDeTesoreria(ingreso, egreso),
-            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.Tesoreria, anterior, nuevo));
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.Tesoreria, OrigenFondosPago.Tesoreria, anterior, nuevo));
     }
 
     [Fact]
@@ -95,15 +95,15 @@ public class CalculadorDeAjustesDePagoTests
     {
         Assert.Equal(
             new AjusteDeTesoreria(250m, 0m),
-            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.Tesoreria, 250m, null));
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.Tesoreria, OrigenFondosPago.Tesoreria, 250m, null));
     }
 
     [Fact]
     public void SinCambioDeImporteOConFondosDeCajaNoHayAjusteDeTesoreria()
     {
-        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.Tesoreria, 100m, 100m));
-        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.CajaTurno, 100m, 300m));
-        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.CajaTurno, 100m, null));
+        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.Tesoreria, OrigenFondosPago.Tesoreria, 100m, 100m));
+        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.CajaTurno, OrigenFondosPago.CajaTurno, 100m, 300m));
+        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(OrigenFondosPago.CajaTurno, OrigenFondosPago.CajaTurno, 100m, null));
     }
 
     [Fact]
@@ -111,12 +111,12 @@ public class CalculadorDeAjustesDePagoTests
     {
         var caja = OrigenFondosPago.CajaTurno;
 
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), Otros(90m)));
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), Otros(100m, idMedio: 2)));
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), nuevo: null));
-        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), Proveedor(5, 100m)));
-        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(OrigenFondosPago.Tesoreria, Otros(100m), Otros(90m)));
-        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(OrigenFondosPago.Tesoreria, Otros(100m), nuevo: null));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, Otros(100m), Otros(90m)));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, Otros(100m), Otros(100m, idMedio: 2)));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, Otros(100m), nuevo: null));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, Otros(100m), Proveedor(5, 100m)));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(OrigenFondosPago.Tesoreria, OrigenFondosPago.Tesoreria, Otros(100m), Otros(90m)));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(OrigenFondosPago.Tesoreria, OrigenFondosPago.Tesoreria, Otros(100m), nuevo: null));
     }
 
     [Fact]
@@ -124,8 +124,8 @@ public class CalculadorDeAjustesDePagoTests
     {
         var caja = OrigenFondosPago.CajaTurno;
 
-        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), Otros(100m)));
-        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((2, 40m), (1, 60m))));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, Otros(100m), Otros(100m)));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, ConMedios((1, 60m), (2, 40m)), ConMedios((2, 40m), (1, 60m))));
     }
 
     [Fact]
@@ -133,8 +133,8 @@ public class CalculadorDeAjustesDePagoTests
     {
         var caja = OrigenFondosPago.CajaTurno;
 
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), ConMedios((1, 60m), (2, 40m))));
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), Otros(100m)));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, Otros(100m), ConMedios((1, 60m), (2, 40m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, ConMedios((1, 60m), (2, 40m)), Otros(100m)));
     }
 
     [Fact]
@@ -142,8 +142,8 @@ public class CalculadorDeAjustesDePagoTests
     {
         var caja = OrigenFondosPago.CajaTurno;
 
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m), (2, 30m))));
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m), (3, 40m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m), (2, 30m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m), (3, 40m))));
     }
 
     [Fact]
@@ -151,8 +151,8 @@ public class CalculadorDeAjustesDePagoTests
     {
         var caja = OrigenFondosPago.CajaTurno;
 
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m)), ConMedios((1, 60m), (2, 40m))));
-        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, ConMedios((1, 60m)), ConMedios((1, 60m), (2, 40m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m))));
     }
 
     [Fact]
@@ -164,5 +164,80 @@ public class CalculadorDeAjustesDePagoTests
         var ajuste = Assert.Single(CalculadorDeAjustesDePago.AjustesDeProveedor(anterior, nuevo: null));
 
         Assert.Equal(new AjusteDeSaldoDeProveedor(5, 100m), ajuste);
+    }
+
+    private const OrigenFondosPago Caja = OrigenFondosPago.CajaTurno;
+    private const OrigenFondosPago Tesoreria = OrigenFondosPago.Tesoreria;
+
+    [Fact]
+    public void PasarDeCajaATesoreriaEgresaElImporteNuevoDeLaTesoreria()
+    {
+        Assert.Equal(
+            new AjusteDeTesoreria(0m, 120m),
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Caja, Tesoreria, 100m, 120m));
+        Assert.Equal(
+            new AjusteDeTesoreria(0m, 100m),
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Caja, Tesoreria, 100m, 100m));
+    }
+
+    [Fact]
+    public void PasarDeTesoreriaACajaReingresaElImporteAnteriorALaTesoreria()
+    {
+        Assert.Equal(
+            new AjusteDeTesoreria(100m, 0m),
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Tesoreria, Caja, 100m, 120m));
+        Assert.Equal(
+            new AjusteDeTesoreria(100m, 0m),
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Tesoreria, Caja, 100m, 100m));
+    }
+
+    [Fact]
+    public void UnaBajaSoloReingresaLoQueEgresabaSinImportarElOrigenNuevo()
+    {
+        Assert.Equal(
+            new AjusteDeTesoreria(100m, 0m),
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Tesoreria, Tesoreria, 100m, null));
+        Assert.Equal(
+            new AjusteDeTesoreria(100m, 0m),
+            CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Tesoreria, Caja, 100m, null));
+        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Caja, Caja, 100m, null));
+        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Caja, Tesoreria, 100m, null));
+    }
+
+    [Fact]
+    public void UnPagoDeCajaQueSigueEnCajaNoMueveLaTesoreriaAunqueCambieElImporte()
+    {
+        Assert.Null(CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(Caja, Caja, 100m, 300m));
+    }
+
+    [Theory]
+    [InlineData(OrigenFondosPago.CajaTurno, OrigenFondosPago.Tesoreria)]
+    [InlineData(OrigenFondosPago.Tesoreria, OrigenFondosPago.CajaTurno)]
+    public void UnCambioDeOrigenAfectaElArqueoAunqueElRepartoNoCambie(OrigenFondosPago anteriorOrigen, OrigenFondosPago nuevoOrigen)
+    {
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(anteriorOrigen, nuevoOrigen, Otros(100m), Otros(100m)));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(anteriorOrigen, nuevoOrigen, Otros(100m), Otros(90m)));
+    }
+
+    [Fact]
+    public void UnCambioDeOrigenSinLineasEnEfectivoNoTieneNadaQueContarEnElArqueo()
+    {
+        var sinMedios = new EstadoContableDePago(CategoriaPago.Otros, null, new Dictionary<int, decimal>(), 0m);
+
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(Caja, Tesoreria, sinMedios, sinMedios));
+    }
+
+    [Fact]
+    public void UnPagoDeTesoreriaQueSigueEnTesoreriaNuncaAfectaElArqueo()
+    {
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(Tesoreria, Tesoreria, Otros(100m), Otros(90m)));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(Tesoreria, Tesoreria, Otros(100m), nuevo: null));
+    }
+
+    [Fact]
+    public void LaBajaDeUnPagoSoloAfectaElArqueoSiEraDeCaja()
+    {
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(Caja, Caja, Otros(100m), nuevo: null));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(Tesoreria, Tesoreria, Otros(100m), nuevo: null));
     }
 }

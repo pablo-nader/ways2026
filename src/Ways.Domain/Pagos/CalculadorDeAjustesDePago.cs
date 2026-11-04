@@ -43,17 +43,14 @@ public static class CalculadorDeAjustesDePago
             .ToList();
     }
 
-    /// <summary>Solo un pago pagado de la tesorería tiene movimiento de tesorería. Un importe
-    /// mayor egresa la diferencia, uno menor (o la baja) la reingresa.</summary>
+    /// <summary>La tesorería solo ve el egreso de un pago de origen tesorería (uno de caja sale del cajón del turno). El
+    /// ajuste es la diferencia entre lo que aporta el pago después y lo que aportaba antes: un importe mayor egresa la
+    /// diferencia, uno menor (o la baja) la reingresa, y cambiar de origen mueve el importe entero. Para una baja
+    /// (<paramref name="importeNuevo"/> <c>null</c>) el origen nuevo no importa.</summary>
     public static AjusteDeTesoreria? AjusteDeTesoreriaPara(
-        OrigenFondosPago origen, decimal importeAnterior, decimal? importeNuevo)
+        OrigenFondosPago origenAnterior, OrigenFondosPago origenNuevo, decimal importeAnterior, decimal? importeNuevo)
     {
-        if (origen != OrigenFondosPago.Tesoreria)
-        {
-            return null;
-        }
-
-        var diferencia = (importeNuevo ?? 0m) - importeAnterior;
+        var diferencia = AporteATesoreria(origenNuevo, importeNuevo ?? 0m) - AporteATesoreria(origenAnterior, importeAnterior);
 
         return diferencia switch
         {
@@ -63,12 +60,25 @@ public static class CalculadorDeAjustesDePago
         };
     }
 
-    /// <summary>El arqueo solo descuenta pagos de caja, por el importe de cada medio de pago: hay
-    /// efecto si el reparto por medio cambió (o si es una baja).</summary>
+    /// <summary>El arqueo solo descuenta pagos de caja, por el importe de cada medio de pago: hay efecto si lo que el pago
+    /// cuenta en el arqueo cambió, ya sea por el reparto por medio, por pasar de o a caja, o por la baja.</summary>
     public static bool AfectaElArqueo(
-        OrigenFondosPago origen, EstadoContableDePago anterior, EstadoContableDePago? nuevo) =>
-        origen == OrigenFondosPago.CajaTurno
-        && (nuevo is null || !MismoReparto(anterior.ImportePorMedio, nuevo.ImportePorMedio));
+        OrigenFondosPago origenAnterior, OrigenFondosPago origenNuevo,
+        EstadoContableDePago anterior, EstadoContableDePago? nuevo)
+    {
+        var antes = AporteAlArqueo(origenAnterior, anterior);
+        var despues = nuevo is null ? SinAporte : AporteAlArqueo(origenNuevo, nuevo);
+
+        return !MismoReparto(antes, despues);
+    }
+
+    private static readonly IReadOnlyDictionary<int, decimal> SinAporte = new Dictionary<int, decimal>();
+
+    private static decimal AporteATesoreria(OrigenFondosPago origen, decimal importe) =>
+        origen == OrigenFondosPago.Tesoreria ? importe : 0m;
+
+    private static IReadOnlyDictionary<int, decimal> AporteAlArqueo(OrigenFondosPago origen, EstadoContableDePago estado) =>
+        origen == OrigenFondosPago.CajaTurno ? estado.ImportePorMedio : SinAporte;
 
     private static bool MismoReparto(IReadOnlyDictionary<int, decimal> a, IReadOnlyDictionary<int, decimal> b) =>
         a.Count == b.Count && a.All(par => b.TryGetValue(par.Key, out var importe) && importe == par.Value);

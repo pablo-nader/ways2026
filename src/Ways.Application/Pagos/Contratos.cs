@@ -196,7 +196,8 @@ public sealed record ComandoDeEdicionDePago(
     string? Detalle,
     IReadOnlyList<LineaDePago> Lineas,
     string? NumeroFactura,
-    int? IdPersonal = null);
+    int? IdPersonal = null,
+    OrigenFondosPago? OrigenFondos = null);
 
 /// <summary>Pago de una compra con líneas por medio. Equivale a <see cref="SolicitudDePagoDeCompra"/>.</summary>
 public sealed record ComandoDePagoDeCompra(DateOnly Fecha, IReadOnlyList<LineaDePago> Lineas, string? Concepto)
@@ -254,7 +255,10 @@ public sealed record SolicitudDePagoDeAdministracionConLineas(
 /// <summary>Cuerpo de <c>PUT /api/pagos/{id}</c> y <c>PUT /api/pagos/administracion/{id}</c>: reemplaza el conjunto de líneas
 /// del pago. Edita también un pago con varios medios. <see cref="IdPersonal"/> convierte un pago de sueldos común en un pago
 /// de ese empleado en la misma transacción: exige categoría sueldos, el pago no puede ser ya de personal, y el concepto lo
-/// genera el servidor, así que <see cref="Concepto"/> tiene que venir vacío (<c>400 concepto_de_pago_de_personal</c>).</summary>
+/// genera el servidor, así que <see cref="Concepto"/> tiene que venir vacío (<c>400 concepto_de_pago_de_personal</c>).
+/// <see cref="OrigenFondos"/> cambia de dónde salió la plata del pago y solo lo acepta la edición administrativa (en el POS es
+/// <c>400 origen_solo_administracion</c>); <c>null</c> conserva el origen actual y un pago sin turno no puede pasar a caja
+/// (<c>409 pago_sin_turno</c>).</summary>
 public sealed record SolicitudDeEdicionDePagoConLineas(
     CategoriaPago Categoria,
     int? IdProveedor,
@@ -263,10 +267,11 @@ public sealed record SolicitudDeEdicionDePagoConLineas(
     string? Detalle,
     string? NumeroFactura,
     IReadOnlyList<LineaDePago> Lineas,
-    int? IdPersonal = null)
+    int? IdPersonal = null,
+    OrigenFondosPago? OrigenFondos = null)
 {
     public ComandoDeEdicionDePago AComando() => new(
-        Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura, IdPersonal);
+        Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura, IdPersonal, OrigenFondos);
 }
 
 /// <summary>Cuerpo de <c>POST /api/pagos/de-compra/{idCompra}</c>. Mismas reglas que <see cref="SolicitudDePagoDeCompra"/>
