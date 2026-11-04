@@ -39,7 +39,7 @@ No schema change.
   10246/10247 (the one failure, GrillaDeItemsDeCompra, is unrelated/flaky and passes alone 134/134); tsc -b clean; oxlint warnings only
   pre-existing. Mutation proofs: guard `if (false && ...)` kills the integration 400 test and the domain test; removing
   `readOnly` kills the modal test. Motive guard runs under the lock against the single locked read of the row.
-- [ ] T2 — judgment-day, PR, auto-merge + Auto-fix.
+- [x] T2 — judgment-day APPROVED round 1 (0 critical; two inaccurate comments fixed as info). PR, auto-merge + Auto-fix.
 
 ## Acceptance criteria
 

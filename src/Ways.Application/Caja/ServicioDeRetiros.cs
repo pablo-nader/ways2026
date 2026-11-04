@@ -204,7 +204,7 @@ public class ServicioDeRetiros(
 
     /// <summary>Cambia el importe y el motivo de un retiro. Orden de respuestas: 404 (no existe, es de otro tenant, está dado de
     /// baja o no es un retiro), 400 si el cuerpo no cumple las reglas del alta; después, bajo los
-    /// locks, 400 si cambia el motivo del retiro del cierre y 409 <c>periodo_conciliado</c>.</summary>
+    /// locks, 409 <c>periodo_conciliado</c> y 400 si cambia el motivo del retiro del cierre.</summary>
     public async Task<FilaDeRetiro> EditarAsync(int idMovimiento, SolicitudDeEdicionDeRetiro solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();

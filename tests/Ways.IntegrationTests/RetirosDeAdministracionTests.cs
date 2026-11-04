@@ -200,7 +200,7 @@ public class RetirosDeAdministracionTests(WaysApiFixture fixture) : IClassFixtur
     private static async Task<int> IdDelRetiroDeCierreAsync(WaysDbContext db, int turno) =>
         await db.MovimientosCaja.Where(m => m.IdTurnoCaja == turno && m.EsRetiroDeCierre).Select(m => m.Id).SingleAsync();
 
-    /// <summary>Fondo 1000, el cierre retira 300 y deja 700 en el cajón (el declarado). Corregir el retiro a 250 sube el esperado a
+    /// <summary>Fondo 1000, el cierre retira 300: el esperado queda en 700 y el declarado es el fondo. Corregir el retiro a 250 sube el esperado a
     /// 750 sin tocar el declarado; la tesorería recibe un ajuste de egreso de 50 (el cierre había acreditado el retiro de 300) y el turno queda marcado.</summary>
     [Fact]
     public async Task EditarElImporteDelRetiroDeCierreRecalculaElEsperadoSinTocarElDeclaradoYAjustaLaTesoreria()
