@@ -1018,6 +1018,21 @@ describe('PagosDelTurno — edición', () => {
     expect(llamadasDetalle.length).toBeGreaterThanOrEqual(2)
   })
 
+  it('el POS nunca ofrece el selector de origen ni manda origenFondos en el PUT', async () => {
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 12 })]) })
+    apiPutMock.mockResolvedValueOnce({ id: 12 })
+    render(<PagosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    await d.findByLabelText('Concepto')
+    expect(d.queryByLabelText('Origen de los fondos')).not.toBeInTheDocument()
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalled())
+    expect(apiPutMock.mock.calls[0][1]).not.toHaveProperty('origenFondos')
+  })
+
   it('un 409 gasto_turno_cerrado deja el modal abierto con el motivo y refresca el detalle', async () => {
     mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 12 })]) })
     const { ErrorApi } = await import('../api/cliente')

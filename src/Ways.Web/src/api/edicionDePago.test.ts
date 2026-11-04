@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ErrorApi } from './cliente'
 import {
   ADVERTENCIA_TURNO_CERRADO,
+  COPIA_PAGO_SIN_TURNO,
   COPIA_PAGO_TURNO_CERRADO,
   advertenciasDePagoDeAdministracion,
   esPagoOriginadoEnPersonal,
@@ -219,6 +220,31 @@ describe('aSolicitudDeEdicionConLineas', () => {
         { idMedioPago: 5, importe: 500, referencia: 'R-1' },
       ],
     })
+  })
+})
+
+describe('aSolicitudDeEdicionConLineas — origen de los fondos', () => {
+  const lineas = [{ clave: 1, idMedioPago: 4, importe: 1500, referencia: '' }]
+
+  it('incluye origenFondos cuando el elegido difiere del actual', () => {
+    const solicitud = aSolicitudDeEdicionConLineas(formularioFixture(), lineas, { actual: 'CajaTurno', elegido: 'Tesoreria' })
+    expect(solicitud.origenFondos).toBe('Tesoreria')
+  })
+
+  it('omite la propiedad cuando el origen no cambió', () => {
+    const solicitud = aSolicitudDeEdicionConLineas(formularioFixture(), lineas, { actual: 'Tesoreria', elegido: 'Tesoreria' })
+    expect('origenFondos' in solicitud).toBe(false)
+  })
+
+  it('sin origen (camino del POS) nunca lleva origenFondos', () => {
+    const solicitud = aSolicitudDeEdicionConLineas(formularioFixture(), lineas)
+    expect('origenFondos' in solicitud).toBe(false)
+  })
+})
+
+describe('copiaDeFalloDeEdicion — pago sin turno', () => {
+  it('409 pago_sin_turno rinde la copia propia', () => {
+    expect(copiaDeFalloDeEdicion(new ErrorApi(409, 'pago_sin_turno', 'x'))).toBe(COPIA_PAGO_SIN_TURNO)
   })
 })
 
