@@ -2,16 +2,30 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import { clienteDeCaja, rutasDeExportacionDeCaja } from '../api/caja'
 import { ErrorApi } from '../api/cliente'
+import { clienteDeCatalogo } from '../api/catalogos'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoResumen } from '../api/tipos'
+import {
+  puedeGestionarCatalogos,
+  type ComprobanteEmitido,
+  type DetalleDeTurno,
+  type FilaDeRetiro,
+  type MedioPagoAlta,
+  type MedioPagoListado,
+  type ResumenDeCierrePorRetiro,
+  type TicketDeTurno,
+  type TurnoResumen,
+} from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { toast } from '../toasts/toasts'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { DetalleDeTurnoListas } from '../componentes/DetalleDeTurnoListas'
+import { EdicionDePagoDelTurno } from '../componentes/EdicionDePagoDelTurno'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
+import { ModalDeCambioDeMedios } from '../componentes/ModalDeCambioDeMedios'
+import { RetirosDelTurno } from '../componentes/RetirosDelTurno'
 import { VistaDeTicket } from '../componentes/VistaDeTicket'
 import type { LineaDeTicket } from '../impresion/escpos'
 import { enEscritorio, imprimir } from '../impresion/impresora'
@@ -19,6 +33,16 @@ import { cierreDeTurno, lineasDeCierreDeTurno, lineasDeTicketDeVenta } from '../
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { formatearImporte } from '../formato/importes'
 import { fechaHoraATexto } from '../formato/fechas'
+import { ModalDeEdicionDeRetiro } from './ModalDeEdicionDeRetiro'
+
+const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
+
+/** Lo que la administración está corrigiendo; `clave` distingue una edición de otra aunque sea sobre la misma fila. */
+type EdicionSinClave =
+  | { tipo: 'ticket'; ticket: TicketDeTurno }
+  | { tipo: 'pago'; idPago: number }
+  | { tipo: 'retiro'; retiro: FilaDeRetiro }
+type Edicion = EdicionSinClave & { clave: number }
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -45,6 +69,11 @@ function formatearMoneda(valor: number): string {
  * (`cierreDeTurno` sobre `GET .../resumen-de-cierre`): en Tauri sale por la térmica; en la web, por
  * el diálogo de impresión del navegador con solo el ticket en el papel. Solo se ofrece con el
  * turno cerrado.
+ *
+ * Corrección administrativa: el Admin, y solo en la app web (no con `contextoDeImpresion`, que es el POS de escritorio),
+ * ve acciones para cambiar el medio de un ticket, editar un pago y editar un retiro del turno. Un diálogo a la vez deja
+ * inerte el resto; al guardar se avisa y se vuelve a pedir el detalle, el turno y los retiros sin vaciar lo mostrado
+ * (un fallo de esa recarga tiene su propio aviso y no desmiente el guardado).
  */
 type PropsCajaZ = {
   contextoDeImpresion?: ContextoDeImpresion
@@ -108,6 +137,18 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
   const [error, setError] = useState('')
   const generacionRef = useRef(0)
   const [generacionDelDetalle, setGeneracionDelDetalle] = useState(0)
+
+  const puedeEditar = usuario !== null && puedeGestionarCatalogos(usuario.rolId) && contextoDeImpresion === undefined
+  const [recarga, setRecarga] = useState(0)
+  const [avisoDeRecarga, setAvisoDeRecarga] = useState('')
+  const [edicion, setEdicion] = useState<Edicion | null>(null)
+  const edicionRef = useRef<Edicion | null>(null)
+  const claveDeEdicionRef = useRef(0)
+  const disparadorRef = useRef<HTMLElement | null>(null)
+  const focoPendienteRef = useRef(false)
+  const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
+  const [errorMedios, setErrorMedios] = useState('')
+  const turnoCargadoRef = useRef<number | null>(null)
 
   const [errorImpresion, setErrorImpresion] = useState('')
 
@@ -190,12 +231,17 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
   useEffect(() => {
     if (!idTurnoValido) return
     const miGeneracion = (generacionRef.current += 1)
+    const esRecarga = turnoCargadoRef.current === idTurno
+    turnoCargadoRef.current = idTurno
     setCargando(true)
     setError('')
-    setTurno(null)
-    setErrorTurno('')
-    setErrorCierre('')
-    setLineasAImprimir(null)
+    setAvisoDeRecarga('')
+    if (!esRecarga) {
+      setTurno(null)
+      setErrorTurno('')
+      setErrorCierre('')
+      setLineasAImprimir(null)
+    }
 
     clienteDeCaja
       .obtenerTurno(idTurno)
@@ -217,6 +263,10 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
+        if (esRecarga) {
+          setAvisoDeRecarga('El cambio se guardó, pero no se pudo actualizar el detalle del turno: recargá la página para verlo.')
+          return
+        }
         setDetalle(null)
         setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar el detalle del turno.')
       })
@@ -225,7 +275,60 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
         setCargando(false)
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idTurno, idTurnoValido])
+  }, [idTurno, idTurnoValido, recarga])
+
+  useEffect(() => {
+    if (!puedeEditar) return
+    let vigente = true
+    setErrorMedios('')
+    clienteMediosPago
+      .listar(true)
+      .then((lista) => {
+        if (vigente) setMedios(lista)
+      })
+      .catch(() => {
+        if (vigente) setErrorMedios('No se pudo cargar el catálogo de medios de pago: no se puede cambiar el medio de un ticket.')
+      })
+    return () => {
+      vigente = false
+    }
+  }, [puedeEditar])
+
+  useEffect(() => {
+    edicionRef.current = null
+    focoPendienteRef.current = false
+    setEdicion(null)
+  }, [idTurno])
+
+  useEffect(() => {
+    if (edicion !== null || !focoPendienteRef.current) return
+    focoPendienteRef.current = false
+    const disparador = disparadorRef.current
+    if (disparador?.isConnected && !disparador.matches(':disabled')) disparador.focus()
+  }, [edicion])
+
+  function abrirEdicion(siguiente: EdicionSinClave, disparador: HTMLElement) {
+    if (edicionRef.current !== null) return
+    const abierta: Edicion = { ...siguiente, clave: ++claveDeEdicionRef.current }
+    disparadorRef.current = disparador
+    edicionRef.current = abierta
+    setEdicion(abierta)
+  }
+
+  function cerrarEdicion(clave: number) {
+    if (edicionRef.current?.clave !== clave) return
+    focoPendienteRef.current = true
+    edicionRef.current = null
+    setEdicion(null)
+  }
+
+  /** El servidor ya corrigió: se avisa y se pide de nuevo lo que la pantalla muestra. El diálogo se cierra solo si sigue
+   * siendo la edición vigente (si cambió el turno, ya se descartó). */
+  function alGuardar(clave: number, mensaje: string) {
+    toast.exito(mensaje)
+    cerrarEdicion(clave)
+    setRecarga((n) => n + 1)
+  }
 
   if (!idTurnoValido) {
     return (
@@ -290,6 +393,9 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
           </div>
         )}
 
+        {avisoDeRecarga && <div className="alert alert-warning py-1 px-2 small mb-2 d-print-none">{avisoDeRecarga}</div>}
+        {puedeEditar && errorMedios && <div className="alert alert-warning py-1 px-2 small mb-2 d-print-none">{errorMedios}</div>}
+
         {cargando && !detalle && <Cargando />}
 
         {detalle && (
@@ -329,11 +435,60 @@ export function CajaZ({ contextoDeImpresion, alReimprimirVenta }: PropsCajaZ = {
             <h6>Medios de pago (esperado)</h6>
             <TablaDeMediosEsperados medios={detalle.resumen.medios} />
 
-            <DetalleDeTurnoListas tickets={detalle.tickets} pagos={detalle.gastos} alReimprimir={reimprimirTicket} />
+            <DetalleDeTurnoListas
+              tickets={detalle.tickets}
+              pagos={detalle.gastos}
+              edicion={
+                puedeEditar
+                  ? {
+                      alCambiarMedio: (ticket, disparador) => abrirEdicion({ tipo: 'ticket', ticket }, disparador),
+                      alEditarPago: (pago, disparador) => abrirEdicion({ tipo: 'pago', idPago: pago.id }, disparador),
+                      inerte: edicion !== null,
+                      puedeCambiarMedio: medios !== null,
+                    }
+                  : undefined
+              }
+              alReimprimir={reimprimirTicket}
+            />
+            {puedeEditar && (
+              <RetirosDelTurno
+                idTurno={idTurno}
+                recarga={recarga}
+                inerte={edicion !== null}
+                onEditar={(retiro, disparador) => abrirEdicion({ tipo: 'retiro', retiro }, disparador)}
+              />
+            )}
           </>
         )}
       </Box>
       {lineasAImprimir && <VistaDeTicket lineas={lineasAImprimir} />}
+      {puedeEditar && edicion?.tipo === 'ticket' && medios && (
+        <ModalDeCambioDeMedios
+          key={edicion.clave}
+          venta={{ id: edicion.ticket.id, numeroVisible: edicion.ticket.numeroVisible }}
+          medios={medios}
+          modo="administracion"
+          onGuardado={(corregida) => alGuardar(edicion.clave, `Se cambió el medio de pago de la venta ${corregida.numeroVisible}.`)}
+          onCerrar={() => cerrarEdicion(edicion.clave)}
+        />
+      )}
+      {puedeEditar && edicion?.tipo === 'pago' && (
+        <EdicionDePagoDelTurno
+          key={edicion.clave}
+          idPago={edicion.idPago}
+          onGuardado={() => alGuardar(edicion.clave, 'Pago actualizado.')}
+          onCerrar={() => cerrarEdicion(edicion.clave)}
+        />
+      )}
+      {puedeEditar && edicion?.tipo === 'retiro' && (
+        <ModalDeEdicionDeRetiro
+          key={edicion.clave}
+          retiro={edicion.retiro}
+          onGuardado={() => alGuardar(edicion.clave, 'Retiro actualizado.')}
+          onObsoleto={() => setRecarga((n) => n + 1)}
+          onCerrar={() => cerrarEdicion(edicion.clave)}
+        />
+      )}
     </div>
   )
 }

@@ -6,6 +6,7 @@ import type { ComprobanteEmitido, MedioPagoAlta, MedioPagoListado, PagoDeTurno, 
 import { clienteDeVentas } from '../api/ventas'
 import { fechaHoraATexto } from '../formato/fechas'
 import { formatearImporte } from '../formato/importes'
+import { esPagoOriginadoEnPersonal } from '../api/registroDePagos'
 import { etiquetaDeEstadoVenta, puedeReimprimir } from '../paginas/utilidadesVentasDelTurno'
 import { etiquetaDeOrigenFondos } from '../paginas/utilidadesPagosDelTurno'
 import { BotonIcono } from './BotonIcono'
@@ -59,9 +60,22 @@ const COLUMNAS_DE_PAGOS: ColumnasOrdenables<PagoDeTurno> = {
   importe: { valor: (g) => g.importe },
 }
 
+/** Acciones de corrección de la administración sobre un turno cerrado. El dueño abre el diálogo de cada una y
+ * decide cuándo la lista queda inerte (`inerte`). */
+export type EdicionDeTurno = {
+  alCambiarMedio: (ticket: TicketDeTurno, disparador: HTMLElement) => void
+  alEditarPago: (pago: PagoDeTurno, disparador: HTMLElement) => void
+  inerte: boolean
+  /** `false` mientras no está el catálogo de medios que necesita el cambio de medio. */
+  puedeCambiarMedio: boolean
+}
+
 type Props = {
   tickets: TicketDeTurno[]
   pagos: PagoDeTurno[]
+  /** Definido ⇒ los tickets emitidos ofrecen "Cambiar medio" y los pagos que no nacieron de personal, "Editar". Sin
+   * él la lista es de solo lectura. */
+  edicion?: EdicionDeTurno
   /** Definido ⇒ cada ticket emitido ofrece "Reimprimir". Recibe el comprobante recién pedido al
    * servidor (nunca el del listado) y puede rechazar la promesa para mostrar el error en la fila.
    * La lista nunca ofrece anular: un turno cerrado no se toca. */
@@ -75,7 +89,7 @@ type Props = {
  * El detalle lleva su generación (`react-async-state` regla 2/3): cerrar o abrir otro invalida la
  * respuesta en vuelo. La reimpresión se traba por ticket con un `ref` sincrónico (regla 11) y, igual
  * que `VentasDelTurno`, vuelve a pedir la venta: si quedó anulada no se imprime nada. */
-export function DetalleDeTurnoListas({ tickets, pagos, alReimprimir }: Props) {
+export function DetalleDeTurnoListas({ tickets, pagos, edicion, alReimprimir }: Props) {
   const [estadosActualizados, setEstadosActualizados] = useState<Record<number, TicketDeTurno['estado']>>({})
   const ticketsVigentes = useMemo(
     () => tickets.map((t) => (t.id in estadosActualizados ? { ...t, estado: estadosActualizados[t.id] } : t)),
@@ -104,6 +118,7 @@ export function DetalleDeTurnoListas({ tickets, pagos, alReimprimir }: Props) {
   }, [])
 
   const bloqueado = idDetalle !== null
+  const edicionInerte = bloqueado || (edicion?.inerte ?? false)
 
   function abrirDetalle(ticket: TicketDeTurno, disparador: HTMLElement) {
     if (bloqueado) return
@@ -221,6 +236,15 @@ export function DetalleDeTurnoListas({ tickets, pagos, alReimprimir }: Props) {
                         onClick={() => void reimprimir(t.id)}
                       />
                     )}
+                    {edicion && t.estado === 'Emitido' && (
+                      <BotonIcono
+                        icono="editar"
+                        etiqueta={`Cambiar medio de pago de la venta ${t.numeroVisible}`}
+                        title="Cambiar medio de pago"
+                        disabled={edicionInerte || !edicion.puedeCambiarMedio}
+                        onClick={(e) => edicion.alCambiarMedio(t, e.currentTarget)}
+                      />
+                    )}
                   </div>
                   {erroresReimprimir[t.id] && <div className="small text-danger mt-1">{erroresReimprimir[t.id]}</div>}
                 </td>
@@ -270,6 +294,7 @@ export function DetalleDeTurnoListas({ tickets, pagos, alReimprimir }: Props) {
               <EncabezadoOrdenable columna="importe" orden={ordenPagos.orden} onAlternar={ordenPagos.alternar} className="text-end">
                 Importe
               </EncabezadoOrdenable>
+              {edicion && <th>Acciones</th>}
             </tr>
           </thead>
           <tbody>
@@ -282,11 +307,23 @@ export function DetalleDeTurnoListas({ tickets, pagos, alReimprimir }: Props) {
                 </td>
                 <td>{textoDeMedios(g)}</td>
                 <td className="text-end">{formatearMoneda(g.importe)}</td>
+                {edicion && (
+                  <td>
+                    {!esPagoOriginadoEnPersonal(g) && (
+                      <BotonIcono
+                        icono="editar"
+                        etiqueta={`Editar el pago de ${g.categoria} del ${formatearFechaHora(g.fecha)}`}
+                        disabled={edicionInerte}
+                        onClick={(e) => edicion.alEditarPago(g, e.currentTarget)}
+                      />
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
             {pagos.length === 0 && (
               <tr>
-                <td colSpan={4} className="text-center text-muted py-3">
+                <td colSpan={edicion ? 5 : 4} className="text-center text-muted py-3">
                   Sin pagos.
                 </td>
               </tr>

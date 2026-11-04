@@ -57,7 +57,7 @@ import { formatearImporte } from '../formato/importes'
 import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
 import { ModalDeAltaDePago } from './pagos/ModalDeAltaDePago'
 import { ModalDeReasignacionDePago } from './pagos/ModalDeReasignacionDePago'
-import { areaPorDefecto } from './utilidadesPagosDelTurno'
+import { areaPorDefecto, origenEditableDelPago } from './utilidadesPagosDelTurno'
 import { errorDeLineasDePago, textoDeMediosDelPago } from '../api/lineasDePago'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { pluralizar } from '../formato/pluralizar'
@@ -1011,9 +1011,7 @@ export function Pagos() {
           personal={personal ?? []}
           errorDePersonal={errorDePersonal}
           advertencias={advertenciasDePagoDeAdministracion(edicion)}
-          origenEditable={
-            edicion.idTurnoCaja !== null ? { actual: edicion.origenFondos, turnoCerrado: !edicion.turnoAbierto } : undefined
-          }
+          origenEditable={origenEditableDelPago(edicion)}
           guardando={guardandoEdicion}
           error={errorEdicion}
           onGuardarConLineas={(solicitud) => void guardarEdicion(solicitud)}

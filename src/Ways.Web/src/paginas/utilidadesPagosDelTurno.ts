@@ -155,3 +155,12 @@ export function faltanteDeEfectivo(importe: number | null, disponible: number): 
 export function areaPorDefecto(areas: AreaListado[]): number | '' {
   return areas.find((a) => a.activo)?.id ?? ''
 }
+
+/** Qué ofrece la edición de administración sobre el origen de los fondos: solo un pago con turno puede cambiarlo; sin turno, `undefined`. */
+export function origenEditableDelPago(pago: {
+  idTurnoCaja: number | null
+  origenFondos: OrigenFondosPago
+  turnoAbierto: boolean
+}): { actual: OrigenFondosPago; turnoCerrado: boolean } | undefined {
+  return pago.idTurnoCaja !== null ? { actual: pago.origenFondos, turnoCerrado: !pago.turnoAbierto } : undefined
+}
