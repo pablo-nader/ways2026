@@ -50,7 +50,9 @@ No new tables or columns. `pagos.origen_fondos` becomes editable for rows with `
   Evidence: `npx tsc -b` clean; `npm run lint` 0 errors; vitest Pagos/PagosDelTurno/edicionDePago 196 passed; full
   `vitest run` 330 files / 10222 tests passed. POS never sends the field (builder omits it without `origen`); 409
   `pago_sin_turno` mapped in `copiaDeFalloDeEdicion`.
-- [ ] T3 — judgment-day, PR(s) stacked-to-main, auto-merge + Auto-fix.
+- [x] T3 — judgment-day, PR(s) stacked-to-main, auto-merge + Auto-fix.
+  Evidence: T1 judgment-day APPROVED round 1 → PR #631 (auto-merge + Auto-fix). T2 commit 3368d7de, judgment-day APPROVED
+  round 1 (0 findings) → PR #632 stacked to main (auto-merge).
 
 ## Acceptance criteria
 
@@ -73,5 +75,10 @@ No new tables or columns. `pagos.origen_fondos` becomes editable for rows with `
 - 2026-11-03: exploration done; scope decided by owner (POS payments only).
 
 ## Next step
+
+Done. Follow-up (out of scope): edit buttons straight from the shift detail (Caja → Histórico) for withdrawals, sales and
+payments.
+
+## Previous next step
 
 T3.
