@@ -34,7 +34,8 @@ points live only in `/caja/retiros`, `/caja/ventas` and `/pagos`.
 - [x] T1 — Edit entry points in Caja Z + Vitest tests (route: delegated writer, trigger: 2+ non-trivial files)
   - Evidence: CajaZ 49/49, DetalleDeTurnoListas/Pagos/utilidades 140/140; tsc -b clean; 5 App/POS files 834/834 after npm ci; full suite 9557 passed (one known-flaky GrillaDeItemsDeCompra test once).
   - Notes: tickets gated on estado Emitido (TicketDeTurno has no medioEditable, server 409 surfaces in the modal); retiros page clamp 200 with "Se muestran X de N" + link to /caja/retiros (no URL filters there).
-- [ ] T2 — judgment-day review, PR, auto-merge, Auto-fix
+- [x] T2 — judgment-day review, PR, auto-merge, Auto-fix
+  - judgment-day round 1 on 5d1da34e: APPROVED (0 confirmed severe; info: reload-failure copy also fires on onObsoleto/stale save, errorTurno not cleared on reload, detalle not cleared on turno change, StrictMode esRecarga).
 
 ## Acceptance criteria
 
@@ -50,4 +51,4 @@ points live only in `/caja/retiros`, `/caja/ventas` and `/pagos`.
 ## Progress
 
 - Exploration done 2026-11-03.
-- T1 done 2026-11-03. Next: T2 judgment-day.
+- T1 done 2026-11-03. T2 done 2026-11-03. Next: follow-ups from the judgment info rows.
