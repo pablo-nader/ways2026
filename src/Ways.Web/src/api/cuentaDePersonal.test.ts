@@ -10,17 +10,20 @@ import type { SolicitudDeAjusteDePersonal, SolicitudDeCargaDeHoras, SolicitudDeP
 
 const getMock = vi.fn()
 const postMock = vi.fn()
+const putMock = vi.fn()
 
 vi.mock('./cliente', () => ({
   api: {
     get: (...args: unknown[]) => getMock(...args),
     post: (...args: unknown[]) => postMock(...args),
+    put: (...args: unknown[]) => putMock(...args),
   },
 }))
 
 beforeEach(() => {
   getMock.mockReset()
   postMock.mockReset()
+  putMock.mockReset()
 })
 
 describe('filtrosDeCuentaDePersonalIniciales', () => {
@@ -139,5 +142,21 @@ describe('clienteDeCuentaDePersonal', () => {
     expect(postMock).toHaveBeenNthCalledWith(1, '/personal/7/horas', horas)
     expect(postMock).toHaveBeenNthCalledWith(2, '/personal/7/ajustes', ajuste)
     expect(postMock).toHaveBeenNthCalledWith(3, '/personal/7/pagos', pago)
+  })
+
+  it('corregirMedios hace PUT a las líneas de personal del pago con solo las líneas', () => {
+    clienteDeCuentaDePersonal.corregirMedios(90, { lineas: [{ idMedioPago: 5, importe: 1000, referencia: null }] })
+
+    expect(putMock).toHaveBeenCalledTimes(1)
+    expect(putMock).toHaveBeenCalledWith('/pagos/administracion/90/lineas-de-personal', {
+      lineas: [{ idMedioPago: 5, importe: 1000, referencia: null }],
+    })
+  })
+
+  it('anularPago hace POST a la anulación del movimiento, sin cuerpo', () => {
+    clienteDeCuentaDePersonal.anularPago(7, 20)
+
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(postMock).toHaveBeenCalledWith('/personal/7/pagos/20/anular')
   })
 })
