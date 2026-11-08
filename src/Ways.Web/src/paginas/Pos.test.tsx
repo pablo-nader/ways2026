@@ -4959,7 +4959,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     expect(boton).toHaveTextContent('(F2)')
   })
 
-  it('F9 sin ningún importe cargado enfoca el importe de la primera fila, sin abrir el diálogo', async () => {
+  it('F9 con el importe de la primera fila vaciado a mano lo enfoca, sin abrir el diálogo', async () => {
     renderPos()
     await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -4967,6 +4967,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     await screen.findByText('Coca Cola 1L')
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.clear(importe)
 
     fireEvent.keyDown(document, { key: 'F9' })
 
@@ -5213,17 +5214,50 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '50')
 
-    // Agregar la fila 2 (vacía) NO cambia `pagosCubrenElTotal` ni `puedeCobrar` (siguen en
-    // `false`) — antes del fix, ningún dep de la lista vieja cambiaba, así que el efecto no se
-    // volvía a suscribir y F9 seguía closureando `filasPago` de cuando había una sola fila.
+    // La fila 2 aparece con la propuesta de lo que falta, así que cubre el total; al vaciarla vuelve a no cubrirlo
+    // y F9 tiene que apuntar a ella, no a la fila 1 con la que se registró el listener.
     await userEvent.click(screen.getByRole('button', { name: '+ Agregar medio de pago' }))
     const importeFila2 = document.getElementById('pos-fila-pago-importe-2')
     expect(importeFila2).not.toBeNull()
+    // La fila nueva propone lo que falta ($ 50): se vacía para que siga sin cubrir el total.
+    await userEvent.clear(importeFila2 as HTMLElement)
 
     fireEvent.keyDown(document, { key: 'F9' })
 
     expect(importeFila2).toHaveFocus()
     expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+  })
+
+  it('la primera fila propone el total y ese importe es el que se cobra (F9 abre el diálogo sin tipear)', async () => {
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+
+    expect(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)).toHaveValue('100,00')
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    expect(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })).toBeInTheDocument()
+  })
+
+  it('una fila agregada con la anterior ya cargada propone lo que falta', async () => {
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.clear(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`))
+    await userEvent.type(screen.getByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '40')
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Agregar medio de pago' }))
+
+    expect(document.getElementById('pos-fila-pago-importe-2')).toHaveValue('60,00')
   })
 
   it('K1: quitar una fila de pago no deja a F9 apuntando a una fila que ya no existe', async () => {

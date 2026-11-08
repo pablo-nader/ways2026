@@ -271,6 +271,35 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         Assert.Equal(remito.Total, fila.Total);
     }
 
+    /// <summary>La facturación de remitos es un circuito de administración, en línea: la regla 9 del validador aplica entera.
+    /// Un efectivo que supera el total sin vuelto se rechaza y no nace ningún TXR; el mismo excedente devuelto como vuelto pasa.</summary>
+    [Fact]
+    public async Task FacturarRemitosConUnCobroQueSuperaElTotalSinVueltoSeRechazaYConVueltoPasa()
+    {
+        var ctx = await PrepararAsync(nameof(FacturarRemitosConUnCobroQueSuperaElTotalSinVueltoSeRechazaYConVueltoPasa));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Excedente", 120m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        var sinVuelto = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total * 10m));
+        var cuerpo = await sinVuelto.Content.ReadAsStringAsync();
+        Assert.True(sinVuelto.StatusCode == HttpStatusCode.BadRequest, cuerpo);
+        Assert.Equal("cobro_supera_el_total", JsonDocument.Parse(cuerpo).RootElement.GetProperty("codigo").GetString());
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            Assert.False(await db.ComprobantesVenta.AnyAsync());
+        }
+
+        var conVuelto = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion",
+            new SolicitudDeFacturacionDeRemitos(
+                ctx.IdPuntoVenta, [remito.Id],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, remito.Total * 10m, null, remito.Total * 9m)], "obs-txr"));
+        Assert.True(conVuelto.StatusCode == HttpStatusCode.Created, await conVuelto.Content.ReadAsStringAsync());
+    }
+
     /// <summary>El TXR nunca es un ticket: nace con <c>facturacion_decidida_en</c> fijada para no figurar entre las ventas
     /// con la decisión de facturación debida (ni competir por los lugares del barrido).</summary>
     [Fact]

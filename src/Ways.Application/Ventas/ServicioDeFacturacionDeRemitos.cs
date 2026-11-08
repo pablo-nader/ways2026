@@ -136,7 +136,7 @@ public class ServicioDeFacturacionDeRemitos(
                 var medio = medioPorId[p.IdMedioPago];
                 return new PagoAValidar(
                     p.IdMedioPago, medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia,
-                    p.Importe, p.Vuelto, p.Referencia);
+                    p.Importe, p.Vuelto, p.Referencia, medio.Nombre);
             })
             .ToList();
 

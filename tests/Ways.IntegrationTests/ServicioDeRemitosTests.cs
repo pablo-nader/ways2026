@@ -210,11 +210,11 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         return JsonSerializer.Deserialize<RemitoDetalle>(cuerpo, OpcionesJson)!;
     }
 
-    private static SolicitudDeVenta SolicitudDeVentaSimple(Contexto ctx, int idArticulo, decimal cantidad, int? idLote) =>
+    private static SolicitudDeVenta SolicitudDeVentaSimple(Contexto ctx, int idArticulo, decimal cantidad, int? idLote, decimal precio) =>
         new(
             ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
             [new LineaDeVenta(idArticulo, cantidad, null, idLote)],
-            [new PagoDeVenta(ctx.IdMedioEfectivo, cantidad * 1000m, null, 0m)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, cantidad * precio, null, 0m)],
             null, null);
 
     private static async Task<ComprobanteEmitido> EmitirVentaAsync(Contexto ctx, SolicitudDeVenta solicitud)
@@ -757,7 +757,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         // Fixture directo (sin Slice 6 — ServicioDeFacturacionDeRemitos todavía no existe): emite
         // una venta cualquiera para tener un id_comprobante_venta real y liga el remito a mano, vía
         // conexión owner (bypassa RLS/políticas de escritura de la app, no las de Postgres).
-        var venta = await EmitirVentaAsync(ctx, SolicitudDeVentaSimple(ctx, idArticuloVenta, 1m, null));
+        var venta = await EmitirVentaAsync(ctx, SolicitudDeVentaSimple(ctx, idArticuloVenta, 1m, null, 65m));
         await using (var cruda = new NpgsqlConnection(fixture.OwnerConnectionString))
         {
             await cruda.OpenAsync();
@@ -823,7 +823,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var remito = await CrearBorradorAsync(ctx.Admin, SolicitudSimple(ctx, idArticulo, 2m, idLote));
 
         var tareaRemito = ctx.Admin.PostAsync($"/api/remitos/{remito.Id}/emitir", null);
-        var tareaVenta = ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudDeVentaSimple(ctx, idArticulo, 3m, idLote));
+        var tareaVenta = ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudDeVentaSimple(ctx, idArticulo, 3m, idLote, 45m));
 
         var respuestas = await Task.WhenAll(tareaRemito, tareaVenta);
 
@@ -1074,7 +1074,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var idLoteViejoRemito = await SembrarLoteAsync(ctx, idArticuloRemito, "R-VIEJO", new DateOnly(2099, 1, 1), 5m);
         await SembrarLoteAsync(ctx, idArticuloRemito, "R-NUEVO", new DateOnly(2099, 6, 1), 5m);
 
-        var venta = await EmitirVentaAsync(ctx, SolicitudDeVentaSimple(ctx, idArticuloVenta, 1m, null));
+        var venta = await EmitirVentaAsync(ctx, SolicitudDeVentaSimple(ctx, idArticuloVenta, 1m, null, 10m));
         var idLoteElegidoPorVenta = venta.Items.Single().IdLote;
         Assert.Equal(idLoteViejoVenta, idLoteElegidoPorVenta);
 
@@ -1135,7 +1135,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(idLoteHoyRemito, emitido.Items.Single().IdLote);
 
         var respuestaVenta = await cliente.PostAsJsonAsync(
-            "/api/ventas", SolicitudDeVentaSimple(ctx, idArticuloVenta, 1m, null));
+            "/api/ventas", SolicitudDeVentaSimple(ctx, idArticuloVenta, 1m, null, 10m));
         var cuerpoVenta = await respuestaVenta.Content.ReadAsStringAsync();
         Assert.True(respuestaVenta.StatusCode == HttpStatusCode.Created, cuerpoVenta);
         var ventaEmitida = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoVenta, OpcionesJson)!;

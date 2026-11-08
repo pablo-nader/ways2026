@@ -450,7 +450,7 @@ public class PlanDeVentaFefoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     public async Task ElCheckoutEmiteDiecisieteConsultasConUnArticuloConLoteEnElCarrito()
     {
         var ctx = await PrepararAsync(nameof(ElCheckoutEmiteDiecisieteConsultasConUnArticuloConLoteEnElCarrito));
-        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-fefo-presupuesto", 10m, controlaLote: true);
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-fefo-presupuesto", 100m, controlaLote: true);
         var idLote = await SembrarLoteAsync(ctx, idArticulo, "L1", VencimientoLejanoFuturo);
         await SembrarStockLoteAsync(ctx, idArticulo, idLote, 10m);
 
@@ -468,7 +468,7 @@ public class PlanDeVentaFefoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var ctx = await PrepararAsync(nameof(ElCheckoutEmiteDieciseisConsultasSinArticuloConLoteEnElCarrito));
         // lotes_habilitado = true a nivel empresa, pero el articulo del carrito NO controla lote
         // (spec: "Module on with no lot-controlled articulo in the cart issues no FEFO query").
-        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-sin-lote-presupuesto", 10m, controlaLote: false);
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-sin-lote-presupuesto", 100m, controlaLote: false);
 
         var (total, deLotes) = await EmitirYContarConsultasAsync(ctx, idArticulo, idLote: null);
 

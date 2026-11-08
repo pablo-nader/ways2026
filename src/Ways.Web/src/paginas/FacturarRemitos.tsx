@@ -5,11 +5,12 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { clienteDeClientes } from '../api/clientes'
 import {
   aPagosDeVenta,
-  calcularExcedente,
+  aplicarImportesSugeridos,
   calcularFaltante,
   filaPagoVacia,
   filasAPagosConVuelto,
   medioDisponibleParaCliente,
+  sumarVueltos,
   validarPagosLocal,
   type FilaPago,
 } from '../api/pagos'
@@ -211,7 +212,7 @@ export function FacturarRemitos() {
 
   function cambiarImporteDeFila(id: number, importe: number | null) {
     if (ocupado) return
-    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, importe } : f)))
+    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, importe, importeEditado: true } : f)))
   }
 
   function cambiarReferenciaDeFila(id: number, referencia: string) {
@@ -224,9 +225,10 @@ export function FacturarRemitos() {
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, vueltoManual } : f)))
   }
 
-  const pagosConVuelto = filasAPagosConVuelto(filasPago, medioPorId, total)
+  const filasPagoVigentes = aplicarImportesSugeridos(filasPago, total)
+  const pagosConVuelto = filasAPagosConVuelto(filasPagoVigentes, medioPorId, total)
   const faltante = calcularFaltante(total, pagosConVuelto)
-  const excedente = calcularExcedente(total, pagosConVuelto)
+  const vueltoADevolver = sumarVueltos(pagosConVuelto)
 
   const rechazoLocal =
     seleccionados.length === 0 || !clienteElegido || !puntoVentaElegido || !parametros
@@ -427,7 +429,7 @@ export function FacturarRemitos() {
                         {errorFacturar && <div className="alert alert-danger py-1 px-2 small">{errorFacturar}</div>}
 
                         <h6>Pagos</h6>
-                        {filasPago.map((fila) => {
+                        {filasPagoVigentes.map((fila) => {
                           const medioDeFila = fila.idMedioPago === '' ? null : (medioPorId[fila.idMedioPago] ?? null)
                           const pagoDeFila = pagosConVuelto.find((p) => p.idFila === fila.id) ?? null
                           const vueltoMostrado = fila.vueltoManual !== null ? fila.vueltoManual : (pagoDeFila?.vuelto ?? 0)
@@ -506,7 +508,7 @@ export function FacturarRemitos() {
                         </div>
                         <div className="d-flex justify-content-between small mb-2">
                           <span>Vuelto</span>
-                          <span>{formatearMoneda(excedente)}</span>
+                          <span>{formatearMoneda(vueltoADevolver)}</span>
                         </div>
 
                         {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}

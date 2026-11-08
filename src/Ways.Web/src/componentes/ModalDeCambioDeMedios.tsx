@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
 import {
   cobradoDePagos,
+  cobradoObjetivoDelCambio,
   evaluarCambioDeMedios,
   filasDesdePagos,
   MENSAJES_DE_CAMBIO_DE_MEDIOS,
@@ -176,7 +177,9 @@ export function ModalDeCambioDeMedios({ venta, medios, modo = 'pos', onGuardado,
       {listo && (
         <fieldset disabled={guardando} className="border-0 p-0 m-0">
           <p className="small text-muted">
-            Corregí con qué medios se cobró la venta. Lo cobrado ({formatearImporte(cobradoOriginal, { simbolo: true })}) no puede cambiar.
+            {cobradoOriginal > total
+              ? `Corregí con qué medios se cobró la venta. Se cobró de más: lo cobrado tiene que quedar en el total de la venta (${formatearImporte(cobradoObjetivoDelCambio(total, cobradoOriginal), { simbolo: true })}).`
+              : `Corregí con qué medios se cobró la venta. Lo cobrado (${formatearImporte(cobradoOriginal, { simbolo: true })}) no puede cambiar.`}
           </p>
 
           <div className="d-flex flex-column gap-2">

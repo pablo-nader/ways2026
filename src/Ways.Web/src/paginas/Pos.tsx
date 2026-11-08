@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import {
@@ -50,11 +50,11 @@ import { importeDeEnvioAplicado, importeDeEnvioVigente, mensajeDeRechazoDeEnvio,
 import { clienteDeOfertas } from '../api/ofertas'
 import {
   aPagosDeVenta,
-  calcularExcedente,
   calcularFaltante,
   consumoCuentaCorriente,
   filaPagoInicial,
   filaPagoVacia,
+  aplicarImportesSugeridos,
   filasAPagosConVuelto,
   filasAPagosParaCalculo,
   filasConMedioInvalidoReseteado,
@@ -2931,7 +2931,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   function cambiarImporteDeFila(id: number, importe: number | null) {
     if (cobrandoRef.current) return
-    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, importe } : f)))
+    // Salir del campo sin tipear re-emite el valor propuesto: no cuenta como edición, la fila sigue a la propuesta.
+    const vigente = filasPagoVigentes.find((f) => f.id === id)
+    const cruda = filasPago.find((f) => f.id === id)
+    if (vigente && cruda && cruda.importe === null && cruda.importeEditado !== true && vigente.importe === importe) return
+    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, importe, importeEditado: true } : f)))
+  }
+
+  /** El importe propuesto queda seleccionado al enfocar: lo que se tipea lo reemplaza en vez de sumarse. Se difiere porque
+   * `CampoImporte` cambia el texto al enfocar (de "22.200,00" a "22200") y eso descartaría la selección. */
+  function seleccionarTextoAlEnfocar(e: FocusEvent<HTMLInputElement>) {
+    const campo = e.currentTarget
+    setTimeout(() => {
+      if (document.activeElement === campo) campo.select()
+    }, 0)
   }
 
   function cambiarReferenciaDeFila(id: number, referencia: string) {
@@ -3105,10 +3118,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // sintético de 0 sugeriría como vuelto el importe tendido completo (judgment-day R3, CRITICAL).
   // En su lugar, el total usado para la sugerencia de vuelto es la propia suma de los importes
   // cargados: el excedente contra ese total siempre da 0, así que el vuelto sugerido queda en 0.
-  const totalParaVuelto = previaFallida ? sumarImportes(filasAPagosParaCalculo(filasPago, medioPorId)) : totalActual
-  const pagosConVuelto = filasAPagosConVuelto(filasPago, medioPorId, totalParaVuelto)
+  // Los importes que el cajero no tocó toman la propuesta (el total, o lo que falta tras las filas anteriores); sin total
+  // confiable (previa fallida o todavía sin resolver) no se propone nada.
+  const totalParaProponer = previaFallida || (!modoPresupuesto && subtotalPrevia === null) ? null : totalActual
+  const filasPagoVigentes = aplicarImportesSugeridos(filasPago, totalParaProponer)
+  const totalParaVuelto = previaFallida ? sumarImportes(filasAPagosParaCalculo(filasPagoVigentes, medioPorId)) : totalActual
+  const pagosConVuelto = filasAPagosConVuelto(filasPagoVigentes, medioPorId, totalParaVuelto)
   const faltante = previaFallida ? 0 : calcularFaltante(totalActual, pagosConVuelto)
-  const excedente = previaFallida ? 0 : calcularExcedente(totalActual, pagosConVuelto)
+  const vueltoADevolver = previaFallida ? 0 : sumarVueltos(pagosConVuelto)
 
   // stage-pos-atajos-cobro: "cubre el total" para F9 espeja EXACTO el rechazo por tolerancia de
   // `validarPagosLocal` (`sumaImportes + toleranciaPago < total`, acá negado) — nunca un `>=`
@@ -3827,8 +3844,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * diálogo. El input se ubica por `id` (armado con el mismo `fila.id` que ya identifica cada
    * fila unívocamente, ver `etiquetaDeCampoFila`) en vez de mantener un mapa de refs aparte. */
   function enfocarPrimeraFilaDePagoPendiente() {
-    const filaVacia = filasPago.find((f) => f.importe === null)
-    const idFila = (filaVacia ?? filasPago[0])?.id
+    const filaVacia = filasPagoVigentes.find((f) => f.importe === null)
+    const idFila = (filaVacia ?? filasPagoVigentes[0])?.id
     if (idFila === undefined) return
     document.getElementById(`pos-fila-pago-importe-${idFila}`)?.focus()
   }
@@ -4831,7 +4848,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )}
 
             <h6>Pagos</h6>
-            {filasPago.map((fila) => {
+            {filasPagoVigentes.map((fila) => {
               const medioDeFila = fila.idMedioPago === '' ? null : (medioPorId[fila.idMedioPago] ?? null)
 
               return (
@@ -4870,6 +4887,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                       aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
                       valor={fila.importe}
                       disabled={pantallaCobroInerte || bloqueadoPorTurno}
+                      onFocus={seleccionarTextoAlEnfocar}
                       onChange={(v) => cambiarImporteDeFila(fila.id, v)}
                     />
                   </div>
@@ -4918,7 +4936,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             <div className="d-flex justify-content-between align-items-baseline mb-2">
               <span>{pagosCubrenElTotal ? 'Vuelto' : 'Falta'}</span>
               <span className={`fw-semibold ${previaFallida ? 'text-muted' : pagosCubrenElTotal ? 'text-success' : 'text-danger'}`}>
-                {previaFallida ? 'se confirma al cobrar' : formatearMoneda(pagosCubrenElTotal ? excedente : faltante)}
+                {previaFallida ? 'se confirma al cobrar' : formatearMoneda(pagosCubrenElTotal ? vueltoADevolver : faltante)}
               </span>
             </div>
 
@@ -4996,7 +5014,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         <ConfirmacionDeCobro
           total={totalActual}
           pagado={sumarImportes(pagosConVuelto)}
-          vuelto={excedente}
+          vuelto={vueltoADevolver}
           previaFallida={previaFallida}
           ocupado={cobrando}
           onFinalizar={confirmarYcobrar}

@@ -15,7 +15,8 @@ public readonly record struct PagoAValidar(
     bool RequiereReferencia,
     decimal Importe,
     decimal Vuelto,
-    string? Referencia);
+    string? Referencia,
+    string? NombreMedio = null);
 
 /// <summary>
 /// Valida la mezcla de pagos de un checkout (design decisión 5, Checkout Contract): pura,
@@ -49,6 +50,9 @@ public static class ValidadorDePagos
     /// cuyo dispositivo no pudo validar el límite contra el servidor y la registró igual
     /// (<c>SolicitudDeVenta.LimiteDeCreditoNoValidado</c>), o el reenvío de una venta offline que
     /// ya se emitió. La regla 5 se sigue evaluando.</param>
+    /// <param name="exigirCobroSinExcedente"><c>false</c> saltea SOLO la regla 9: el reenvío de una venta offline que ya se
+    /// emitió, que la guarda de idempotencia devuelve tal cual o rechaza por contenido distinto. Una venta emitida antes de
+    /// la regla con un excedente no puede quedar rechazada por su propio reenvío.</param>
     public static void Validar(
         decimal total,
         IReadOnlyList<PagoAValidar> pagos,
@@ -57,7 +61,8 @@ public static class ValidadorDePagos
         decimal saldoCliente,
         decimal limiteCredito,
         bool creditoIlimitado,
-        bool exigirLimiteDeCredito = true)
+        bool exigirLimiteDeCredito = true,
+        bool exigirCobroSinExcedente = true)
     {
         // 0 (nuevo, sin numeración legacy — corta ANTES que cualquier otra regla): un
         // Importe negativo permite manipular Σ importe sin que ninguna regla de abajo lo note
@@ -178,6 +183,33 @@ public static class ValidadorDePagos
         if (sumaVueltos > vueltoMaximoCoherente)
         {
             throw new ErrorDominio("vuelto_invalido", "El vuelto no coincide con lo que sobra del pago.", 400);
+        }
+
+        // 9 (nuevo): solo un medio que admite vuelto puede superar el total, y lo que sobra vuelve como vuelto. Sin esta
+        // regla un cero de más en un QR o una transferencia se registraba como cobrado y el cierre lo acreditaba en la
+        // cuenta de tesorería.
+        if (!exigirCobroSinExcedente)
+        {
+            return;
+        }
+
+        // Una nota de crédito no cobra (regla 0c): su tope parte de cero, no de su total negativo.
+        var topeDelCobro = Math.Max(0m, total) + toleranciaPago;
+        foreach (var pago in pagos)
+        {
+            if (!pago.AdmiteVuelto && pago.Importe > topeDelCobro)
+            {
+                throw new ErrorDominio(
+                    "importe_supera_el_total",
+                    $"El importe de {pago.NombreMedio ?? "un pago sin vuelto"} supera el total de la venta.", 400);
+            }
+        }
+
+        if (sumaImportes - sumaVueltos > topeDelCobro)
+        {
+            throw new ErrorDominio(
+                "cobro_supera_el_total",
+                "Lo cobrado supera el total de la venta: lo que sobra del efectivo tiene que volver como vuelto.", 400);
         }
     }
 }
