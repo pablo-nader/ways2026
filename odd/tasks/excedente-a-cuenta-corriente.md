@@ -30,7 +30,7 @@ No schema change expected.
 
 - [x] T1 Domain + application: flag, split TX/RC in one transaction, guards, unit + integration tests (route: delegated writer)
 - [x] T2 Web/POS: suggestion option, request flag, Vitest (route: delegated writer, same)
-- [ ] T3 Structural guards, judgment-day, stacked PR
+- [x] T3 Structural guards, judgment-day, stacked PR
 
 ## Checks
 
@@ -65,3 +65,7 @@ No schema change expected.
 - Base: branch `pnader/cobro-sin-excedente-392163` (#636).
 - T1/T2 verification and mutation evidence: see the writer report (dotnet build, domain, filtered integration, Application
   structural guards, Vitest, tsc, oxlint).
+- Commits 980248f7 (backend) and 51b0410e (web). Parent spot check: domain filter 63 passed. Judgment day: APPROVED in
+  round 0. Info: a retried ambiguous commit returns the sale without `PagoACuenta` (documented in the contract); no
+  end-to-end test for a CC row plus excess from another medio, or for anulación leaving the RC; the step 7 comment
+  overstates the lock order when the sale also pays with CC (INSERT only, no cycle).
