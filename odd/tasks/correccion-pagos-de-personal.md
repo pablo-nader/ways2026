@@ -43,9 +43,9 @@ has no edit or annul. Known gap: "falta anular un pago".
 
 ## Tasks
 
-- [ ] T1 Backend: edit lines + annul + migration + unit and integration tests (delegated, one writer)
-- [ ] T2 Web: actions in CuentaDePersonal with Vitest tests (delegated, one writer)
-- [ ] T3 Guards (Application.Tests full, SuperficieDeAutorizacion, Web suite), judgment-day, PR
+- [x] T1 Backend: edit lines + annul + migration + unit and integration tests (delegated, one writer)
+- [x] T2 Web: actions in CuentaDePersonal with Vitest tests (delegated, one writer)
+- [x] T3 Guards (Application.Tests full, SuperficieDeAutorizacion, Web suite), judgment-day, PR
 
 ## Route declaration
 
@@ -61,3 +61,8 @@ has no edit or annul. Known gap: "falta anular un pago".
 ## Progress
 
 - 2026-11-08: exploration done, design recorded.
+- 2026-11-08: T1 committed 42c79b65 (18 integration tests, Application 1673, Domain 2597, guards green). Legacy
+  payments have one pago per line, so the edit works per pago and annulment handles N pagos. T2 committed 52d2fbb6
+  (311 Vitest tests), edit per idGasto. Judgment-day APPROVED, no CRITICAL. Info only: reversal uses the original
+  fecha (can fall outside the default one-month window), annulling a dado-de-baja employee is 404, the annul copy
+  mentions money for discount-only payments.
