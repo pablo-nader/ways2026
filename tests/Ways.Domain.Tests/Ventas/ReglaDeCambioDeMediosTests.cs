@@ -61,23 +61,55 @@ public class ReglaDeCambioDeMediosTests
     public void LoCobradoSeComparaNetoDelVuelto()
     {
         // 1000 entregados con 200 de vuelto cobran 800: lo mismo que 800 con tarjeta.
-        ReglaDeCambioDeMedios.ExigirMismoTotalYAlgunCambio(
-            [Cobro(1, 1000m, 200m, comportamiento: ComportamientoMedioPago.Efectivo)], [Cobro(2, 800m)]);
+        ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(
+            800m, [Cobro(1, 1000m, 200m, comportamiento: ComportamientoMedioPago.Efectivo)], [Cobro(2, 800m)]);
 
         Assert.Equal("total_de_cobros_distinto", Codigo(() =>
-            ReglaDeCambioDeMedios.ExigirMismoTotalYAlgunCambio([Cobro(1, 800m)], [Cobro(2, 799m)])));
+            ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(800m, [Cobro(1, 800m)], [Cobro(2, 799m)])));
         Assert.Equal("total_de_cobros_distinto", Codigo(() =>
-            ReglaDeCambioDeMedios.ExigirMismoTotalYAlgunCambio([Cobro(1, 1000m, 200m)], [Cobro(2, 1000m)])));
+            ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(800m, [Cobro(1, 1000m, 200m)], [Cobro(2, 1000m)])));
+    }
+
+    [Fact]
+    public void UnaVentaCobradaDentroDeLaToleranciaSigueExigiendoLoMismoQueCobro()
+    {
+        // Total 1000 cobrado 995 dentro de la tolerancia: el cambio corrige el medio, no cuánto.
+        ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(1000m, [Cobro(1, 995m)], [Cobro(2, 995m)]);
+
+        Assert.Equal("total_de_cobros_distinto", Codigo(() =>
+            ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(1000m, [Cobro(1, 995m)], [Cobro(2, 1000m)])));
+    }
+
+    [Fact]
+    public void UnaVentaCobradaDeMasSeCorrigeCobrandoExactamenteElTotal()
+    {
+        // Venta 250 del relevamiento: total 22200 cobrado con un QR de 222000.
+        ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(22200m, [Cobro(4, 222000m)], [Cobro(4, 22200m)]);
+
+        var mantenerElExcedente = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(22200m, [Cobro(4, 222000m)], [Cobro(2, 222000m)]));
+        Assert.Equal("total_de_cobros_distinto", mantenerElExcedente.Codigo);
+        Assert.Equal("Los medios nuevos tienen que cobrar 22200.", mantenerElExcedente.Message);
+        Assert.Equal("total_de_cobros_distinto", Codigo(() =>
+            ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(22200m, [Cobro(4, 222000m)], [Cobro(4, 22199m)])));
+    }
+
+    [Fact]
+    public void ElCobroEsperadoEsElMenorEntreLoCobradoYElTotal()
+    {
+        Assert.Equal(800m, ReglaDeCambioDeMedios.CobroEsperado(1000m, [Cobro(1, 800m)]));
+        Assert.Equal(1000m, ReglaDeCambioDeMedios.CobroEsperado(1000m, [Cobro(1, 10000m)]));
+        Assert.Equal(1000m, ReglaDeCambioDeMedios.CobroEsperado(1000m, [Cobro(1, 1500m, 500m)]));
     }
 
     [Fact]
     public void ElMismoConjuntoEnOtroOrdenNoEsUnCambioPeroOtraReferenciaSi()
     {
         Assert.Equal("cambio_de_medios_sin_diferencia", Codigo(() =>
-            ReglaDeCambioDeMedios.ExigirMismoTotalYAlgunCambio(
-                [Cobro(1, 300m), Cobro(2, 700m, referencia: "A")], [Cobro(2, 700m, referencia: "A"), Cobro(1, 300m)])));
+            ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(
+                1000m, [Cobro(1, 300m), Cobro(2, 700m, referencia: "A")], [Cobro(2, 700m, referencia: "A"), Cobro(1, 300m)])));
 
-        ReglaDeCambioDeMedios.ExigirMismoTotalYAlgunCambio([Cobro(2, 700m, referencia: "A")], [Cobro(2, 700m, referencia: "B")]);
+        ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(700m, [Cobro(2, 700m, referencia: "A")], [Cobro(2, 700m, referencia: "B")]);
     }
 
     [Fact]

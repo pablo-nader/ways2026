@@ -497,7 +497,7 @@ public class ServicioDeVentas(
                 var medio = medioPorId[p.IdMedioPago];
                 return new PagoAValidar(
                     p.IdMedioPago, medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia,
-                    p.Importe, p.Vuelto, ReferenciaParaValidar(p));
+                    p.Importe, p.Vuelto, ReferenciaParaValidar(p), medio.Nombre);
             })
             .ToList();
 
@@ -505,11 +505,13 @@ public class ServicioDeVentas(
         // saldo actual ya incluye su propio consumo, y la regla 6 rechazaría a la misma venta que el
         // servidor ya aceptó. La guarda de idempotencia de abajo la devuelve tal cual, o la rechaza
         // si el contenido difiere; un comprobante nunca se borra, así que no hay inserción nueva
-        // posible por este camino.
+        // posible por este camino. Por lo mismo tampoco se le aplica la regla 9: una venta emitida antes de esa regla con un
+        // excedente quedaría rechazada por su propio reenvío. La primera sincronización de una venta offline sí la cumple.
         ValidadorDePagos.Validar(
             totales.Total, pagosAValidar, toleranciaPago,
             cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
-            exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida);
+            exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida,
+            exigirCobroSinExcedente: !reenvioDeVentaYaEmitida);
 
         var pagosDelPlan = pagos
             .Select(p => new PagoDelPlan(

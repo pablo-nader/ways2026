@@ -202,10 +202,10 @@ public class ServicioDeCambioDeMedios(
             venta.Total,
             nuevos.Select(n => new PagoAValidar(
                 n.IdMedioPago, n.Comportamiento, medios[n.IdMedioPago].AdmiteVuelto, medios[n.IdMedioPago].RequiereReferencia,
-                n.Importe, n.Vuelto, n.Referencia)).ToList(),
+                n.Importe, n.Vuelto, n.Referencia, medios[n.IdMedioPago].Nombre)).ToList(),
             tolerancia, esConsumidorFinal: false, saldoCliente: 0m, limiteCredito: 0m, creditoIlimitado: true,
             exigirLimiteDeCredito: false);
-        ReglaDeCambioDeMedios.ExigirMismoTotalYAlgunCambio(anteriores, nuevos);
+        ReglaDeCambioDeMedios.ExigirCobroEsperadoYAlgunCambio(venta.Total, anteriores, nuevos);
 
         await decisionDeFacturacion.MoverAportesPorCambioDeMediosAsync(
             conexion, transaccionCruda, idVenta, Cobrado(anteriores), Cobrado(nuevos), ct);
@@ -257,7 +257,7 @@ public class ServicioDeCambioDeMedios(
         string.IsNullOrWhiteSpace(referencia) ? null : referencia.Trim();
 
     private sealed record MedioDelCambio(
-        ComportamientoMedioPago Comportamiento, bool AdmiteVuelto, bool RequiereReferencia, string? Proveedor);
+        ComportamientoMedioPago Comportamiento, bool AdmiteVuelto, bool RequiereReferencia, string? Proveedor, string Nombre);
 
     /// <summary>Los medios nuevos tienen que existir y estar vivos (un medio desconocido es <c>400 referencia_invalida</c>, como
     /// en la venta); los que la venta ya tenía se leen aunque estén dados de baja.</summary>
@@ -269,8 +269,9 @@ public class ServicioDeCambioDeMedios(
 
         var vivos = await db.MediosPago
             .Where(m => nuevos.Contains(m.Id))
-            .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor })
-            .ToDictionaryAsync(m => m.Id, m => new MedioDelCambio(m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor), ct);
+            .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor, m.Nombre })
+            .ToDictionaryAsync(
+                m => m.Id, m => new MedioDelCambio(m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor, m.Nombre), ct);
 
         var faltante = nuevos.Except(vivos.Keys).ToList();
         if (faltante.Count > 0)
@@ -283,11 +284,12 @@ public class ServicioDeCambioDeMedios(
         {
             var dadosDeBaja = await db.MediosPago.IgnoreQueryFilters(["BajaLogica"])
                 .Where(m => faltantesAnteriores.Contains(m.Id))
-                .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor })
+                .Select(m => new { m.Id, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.Proveedor, m.Nombre })
                 .ToListAsync(ct);
             foreach (var medio in dadosDeBaja)
             {
-                vivos[medio.Id] = new MedioDelCambio(medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia, medio.Proveedor);
+                vivos[medio.Id] = new MedioDelCambio(
+                    medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia, medio.Proveedor, medio.Nombre);
             }
         }
 

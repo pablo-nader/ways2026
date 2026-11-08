@@ -26,7 +26,9 @@ namespace Ways.IntegrationTests;
 /// <c>PUT /api/ventas/administracion/{id}/medios</c> (Admin, cualquier turno). Cubre el reemplazo de cobros con auditoría, las
 /// guardas (turno cerrado en la caja, CAE, cuenta corriente, total distinto, conciliación, 404 antes que el cuerpo), el
 /// recálculo del arqueo de un turno cerrado con su marca, la compensación de las cuentas de tesorería, el traslado del
-/// acumulado de facturación (y que la cancelación posterior lo deje en cero) y el reenvío offline de una venta ya cambiada.
+/// acumulado de facturación (y que la cancelación posterior lo deje en cero), el reenvío offline de una venta ya cambiada, y
+/// la regla 9 del validador: ninguna venta cobra con un medio sin vuelto por encima del total, una venta cobrada de más se
+/// corrige al total y el reenvío de una venta ya emitida no se juzga contra esa regla.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class CambioDeMediosDeVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -208,12 +210,17 @@ public class CambioDeMediosDeVentaTests(WaysApiFixture fixture) : IClassFixture<
     }
 
     /// <summary>Una venta sembrada directo en la base, sin decisión de facturación (queda debida y la decisión no corre).</summary>
-    private async Task<int> SembrarVentaAsync(
-        Contexto ctx, int? idTurno, params (int IdMedioPago, decimal Importe)[] cobros)
+    private Task<int> SembrarVentaAsync(
+        Contexto ctx, int? idTurno, params (int IdMedioPago, decimal Importe)[] cobros) =>
+        SembrarVentaConTotalAsync(ctx, idTurno, cobros.Sum(c => c.Importe), cobros);
+
+    /// <summary>Como <see cref="SembrarVentaAsync"/>, con un total que puede ser menor que lo cobrado: una venta cobrada de más
+    /// antes de que el validador lo impidiera.</summary>
+    private async Task<int> SembrarVentaConTotalAsync(
+        Contexto ctx, int? idTurno, decimal total, params (int IdMedioPago, decimal Importe)[] cobros)
     {
         await using var db = Db(ctx);
         var ahora = DateTimeOffset.UtcNow;
-        var total = cobros.Sum(c => c.Importe);
         var comprobante = new ComprobanteVenta
         {
             IdTenant = ctx.IdTenant, IdTipoComprobante = ctx.IdTipoTx, Numero = Interlocked.Increment(ref _numeroSembrado),
@@ -677,5 +684,94 @@ public class CambioDeMediosDeVentaTests(WaysApiFixture fixture) : IClassFixture<
         var conLosVigentes = await VenderAsync(
             ctx, Venta(ctx, [new PagoDeVenta(ctx.IdTransferencia, 100m, "OP-3", 0m)], numero: 1));
         Assert.Equal(vendida.Id, conLosVigentes.Id);
+    }
+
+    // ---- Cobro sin excedente -------------------------------------------------------------------
+
+    [Fact]
+    public async Task UnaVentaConUnMedioSinVueltoPorEncimaDelTotalSeRechazaYElEfectivoSoloSuperaElTotalConVuelto()
+    {
+        var ctx = await PrepararAsync("mediosexcedente", escritorio: true);
+        await SembrarTurnoAbiertoAsync(ctx);
+        var qr = await CrearMedioAsync(ctx, "QR de prueba");
+
+        var conUnCeroDeMas = await ctx.Cajero.PostAsJsonAsync("/api/ventas", Venta(ctx, [new PagoDeVenta(qr, 1000m, null, 0m)]));
+        var cuerpo = await conUnCeroDeMas.Content.ReadAsStringAsync();
+        await AfirmarErrorAsync(conUnCeroDeMas, HttpStatusCode.BadRequest, "importe_supera_el_total");
+        Assert.Contains("El importe de QR de prueba supera el total de la venta.", cuerpo);
+
+        await AfirmarErrorAsync(
+            await ctx.Cajero.PostAsJsonAsync("/api/ventas", Venta(ctx, [new PagoDeVenta(ctx.IdEfectivo, 1000m, null, 0m)])),
+            HttpStatusCode.BadRequest, "cobro_supera_el_total");
+        await using (var db = Db(ctx))
+        {
+            Assert.False(await db.ComprobantesVenta.AnyAsync());
+        }
+
+        var conVuelto = await VenderAsync(
+            ctx, Venta(ctx, [new PagoDeVenta(qr, 60m, null, 0m), new PagoDeVenta(ctx.IdEfectivo, 100m, null, 60m)]));
+        Assert.Equal(100m, conVuelto.Pagos.Sum(p => p.Importe - p.Vuelto));
+    }
+
+    [Fact]
+    public async Task ElReenvioDeUnaVentaOfflineYaEmitidaCobradaDeMasDevuelveLaMismaVentaYUnaNuevaSeRechaza()
+    {
+        var ctx = await PrepararAsync("mediosreenvioexc", escritorio: true);
+        await SembrarTurnoAbiertoAsync(ctx);
+        var reserva = await ctx.Cajero.PostAsJsonAsync(
+            "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(ctx.IdPuntoVenta, "TX", 5));
+        Assert.Equal(HttpStatusCode.OK, reserva.StatusCode);
+        var qr = await CrearMedioAsync(ctx, "QR de prueba");
+
+        var vendida = await VenderAsync(ctx, Venta(ctx, [new PagoDeVenta(qr, 100m, null, 0m)], numero: 1));
+
+        // Una venta emitida antes de la regla 9 con un cero de más: se reproduce subiendo su cobro en la base.
+        await using (var db = Db(ctx))
+        {
+            var cobro = await db.Cobros.SingleAsync(c => c.IdComprobanteVenta == vendida.Id);
+            cobro.Importe = 1000m;
+            await db.SaveChangesAsync();
+        }
+
+        var reenvio = await VenderAsync(ctx, Venta(ctx, [new PagoDeVenta(qr, 1000m, null, 0m)], numero: 1));
+        Assert.Equal(vendida.Id, reenvio.Id);
+        Assert.Equal(1000m, Assert.Single(await CobrosAsync(ctx, vendida.Id)).Importe);
+
+        await AfirmarErrorAsync(
+            await ctx.Cajero.PostAsJsonAsync("/api/ventas", Venta(ctx, [new PagoDeVenta(qr, 1000m, null, 0m)], numero: 2)),
+            HttpStatusCode.BadRequest, "importe_supera_el_total");
+        await using (var db = Db(ctx))
+        {
+            Assert.Equal(1, await db.ComprobantesVenta.CountAsync());
+        }
+    }
+
+    [Fact]
+    public async Task AdministracionCorrigeUnaVentaCobradaDeMasAlTotalYCompensaElArqueoYLaCuenta()
+    {
+        var ctx = await PrepararAsync("mediosdemas");
+        var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago");
+        var qr = await CrearMedioAsync(ctx, "QR", cuenta);
+        var turno = await AbrirTurnoAsync(ctx);
+
+        // Venta 250 del relevamiento: total 22200 cobrado con un QR de 222000.
+        var venta = await SembrarVentaConTotalAsync(ctx, turno, 22200m, (qr, 222000m));
+        await CerrarPorRetiroAsync(ctx, turno);
+
+        await AfirmarErrorAsync(
+            await CambiarEnAdministracionAsync(ctx.Admin, venta, new PagoDeVenta(ctx.IdTransferencia, 222000m, "OP-1", 0m)),
+            HttpStatusCode.BadRequest, "importe_supera_el_total");
+
+        var corregida = await LeerOkAsync(await CambiarEnAdministracionAsync(ctx.Admin, venta, new PagoDeVenta(qr, 22200m, null, 0m)));
+        Assert.Equal(22200m, Assert.Single(corregida.Pagos).Importe);
+
+        await using var db = Db(ctx);
+        var arqueo = await db.ArqueosTurno.SingleAsync(a => a.IdTurnoCaja == turno && a.IdMedioPago == qr);
+        Assert.Equal((22200m, 222000m), (arqueo.ImporteEsperado, arqueo.ImporteEsperadoOriginal));
+
+        var ajuste = Assert.Single(
+            await db.MovimientosCuenta.Where(m => m.IdCuentaTesoreria == cuenta && m.Tipo == TipoMovimientoCuenta.Ajuste).ToListAsync());
+        Assert.Equal((222000m, 0m, 199800m, 22200m), (ajuste.Inicio, ajuste.Ingreso, ajuste.Egreso, ajuste.Final));
+        Assert.Equal(-199800m, ajuste.BaseBruta);
     }
 }

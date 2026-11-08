@@ -29,9 +29,14 @@ public class ValidadorDePagosTests
         decimal saldo = 0m,
         decimal limiteCredito = 0m,
         bool creditoIlimitado = false,
-        bool exigirLimiteDeCredito = true) =>
+        bool exigirLimiteDeCredito = true,
+        bool exigirCobroSinExcedente = true) =>
         ValidadorDePagos.Validar(
-            total, pagos, tolerancia, esConsumidorFinal, saldo, limiteCredito, creditoIlimitado, exigirLimiteDeCredito);
+            total, pagos, tolerancia, esConsumidorFinal, saldo, limiteCredito, creditoIlimitado, exigirLimiteDeCredito,
+            exigirCobroSinExcedente);
+
+    private static PagoAValidar Qr(decimal importe) =>
+        new(4, ComportamientoMedioPago.Electronico, AdmiteVuelto: false, RequiereReferencia: false, importe, 0m, null, "QR");
 
     // ---- 0: pago_importe_negativo -----------------------------------------------------------
 
@@ -122,7 +127,7 @@ public class ValidadorDePagosTests
     [Fact]
     public void UnComprobanteConTotalExactamenteCeroNoDisparaLaReglaDeTotalNegativo()
     {
-        Validar(0m, [Efectivo(10m)]);
+        Validar(0m, [Efectivo(10m, vuelto: 10m)]);
     }
 
     [Fact]
@@ -370,6 +375,73 @@ public class ValidadorDePagosTests
             Validar(7500m, [Efectivo(10500m, vuelto: 3500m)]));
         Assert.Equal("vuelto_invalido", excepcion.Codigo);
     }
+
+    // ---- 9: importe_supera_el_total / cobro_supera_el_total ---------------------------------
+
+    [Fact]
+    public void UnQrConUnCeroDeMasSeRechazaConElNombreDelMedio()
+    {
+        // Venta 250 del relevamiento: total 22200 cobrado con un QR de 222000 y vuelto 0.
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(22200m, [Qr(222000m)]));
+
+        Assert.Equal("importe_supera_el_total", excepcion.Codigo);
+        Assert.Equal("El importe de QR supera el total de la venta.", excepcion.Message);
+    }
+
+    [Fact]
+    public void UnMedioSinVueltoQueSuperaElTotalJuntoAEfectivoSeRechaza()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(100m, [Efectivo(20m), Tarjeta(101m)]));
+
+        Assert.Equal("importe_supera_el_total", excepcion.Codigo);
+        Assert.Equal("El importe de un pago sin vuelto supera el total de la venta.", excepcion.Message);
+    }
+
+    [Fact]
+    public void MediosSinVueltoQueJuntosSuperanElTotalSeRechazan()
+    {
+        // Ninguno supera el total por sí solo; juntos cobran 150 sobre 100.
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(100m, [Tarjeta(80m), Qr(70m)]));
+
+        Assert.Equal("cobro_supera_el_total", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnExcedenteDeEfectivoSinVueltoSeRechaza()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(100m, [Efectivo(200m)]));
+
+        Assert.Equal("cobro_supera_el_total", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void ElExcedenteDeEfectivoQueVuelveComoVueltoSeAcepta() =>
+        Validar(100m, [Qr(60m), Efectivo(100m, vuelto: 60m)]);
+
+    [Fact]
+    public void LaToleranciaTambienAcotaElExcedente()
+    {
+        Validar(100m, [Qr(110m)], tolerancia: 10m);
+
+        Assert.Equal("importe_supera_el_total", Assert.Throws<ErrorDominio>(() =>
+            Validar(100m, [Qr(110.01m)], tolerancia: 10m)).Codigo);
+        Assert.Equal("cobro_supera_el_total", Assert.Throws<ErrorDominio>(() =>
+            Validar(100m, [Qr(100m), Efectivo(10.01m)], tolerancia: 10m)).Codigo);
+    }
+
+    [Fact]
+    public void ElReenvioDeUnaVentaYaEmitidaNoSeJuzgaContraElExcedente() =>
+        Validar(22200m, [Qr(222000m)], exigirCobroSinExcedente: false);
+
+    [Fact]
+    public void SinExigirElExcedenteLasDemasReglasSiguen() =>
+        Assert.Equal("medio_no_admite_vuelto", Assert.Throws<ErrorDominio>(() =>
+            Validar(100m, [Tarjeta(150m, vuelto: 50m)], exigirCobroSinExcedente: false)).Codigo);
+
+    [Fact]
+    public void UnPagoQueNoCubreElTotalReportaLaRegla2AntesQueLa9() =>
+        Assert.Equal("tolerancia_de_pago_superada", Assert.Throws<ErrorDominio>(() =>
+            Validar(100m, [Efectivo(50m, vuelto: 50m)])).Codigo);
 
     // ---- Orden de rechazo observable --------------------------------------------------------
 

@@ -10,8 +10,8 @@ public readonly record struct CobroDeVenta(
     int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, decimal Vuelto, string? Referencia);
 
 /// <summary>
-/// Reglas puras del cambio de medios de pago de una venta ya emitida. El total cobrado no cambia: el cambio corrige con qué
-/// medio se cobró, no cuánto. La cuenta corriente queda afuera en los dos sentidos porque su cobro es un consumo del cliente
+/// Reglas puras del cambio de medios de pago de una venta ya emitida. El total cobrado no cambia, salvo que supere el total
+/// de la venta: el cambio corrige con qué medio se cobró, y solo corrige cuánto cuando se cobró de más. La cuenta corriente queda afuera en los dos sentidos porque su cobro es un consumo del cliente
 /// con su propio libro.
 /// </summary>
 public static class ReglaDeCambioDeMedios
@@ -122,14 +122,20 @@ public static class ReglaDeCambioDeMedios
             ?? (venta.CobradaConCuentaCorriente ? VentaCobradaConCuentaCorriente.Codigo : null);
     }
 
-    /// <summary>Lo cobrado (importe menos vuelto) tiene que ser lo mismo, y el conjunto nuevo tiene que diferir del que hay.</summary>
-    public static void ExigirMismoTotalYAlgunCambio(IReadOnlyList<CobroDeVenta> anteriores, IReadOnlyList<CobroDeVenta> nuevos)
+    /// <summary>Lo que los medios nuevos tienen que cobrar (importe menos vuelto): lo mismo que los anteriores, salvo que estos
+    /// superen el total de la venta. Un cobro de más (un cero tipeado de más en un QR) se corrige cobrando exactamente el total.</summary>
+    public static decimal CobroEsperado(decimal totalDeLaVenta, IReadOnlyList<CobroDeVenta> anteriores) =>
+        Math.Min(Cobrado(anteriores), totalDeLaVenta);
+
+    /// <summary>Los medios nuevos cobran lo esperado (<see cref="CobroEsperado"/>) y el conjunto nuevo difiere del que hay.</summary>
+    public static void ExigirCobroEsperadoYAlgunCambio(
+        decimal totalDeLaVenta, IReadOnlyList<CobroDeVenta> anteriores, IReadOnlyList<CobroDeVenta> nuevos)
     {
-        if (Cobrado(anteriores) != Cobrado(nuevos))
+        var esperado = CobroEsperado(totalDeLaVenta, anteriores);
+        if (Cobrado(nuevos) != esperado)
         {
             throw new ErrorDominio(
-                "total_de_cobros_distinto",
-                $"Los medios nuevos tienen que cobrar lo mismo que los anteriores ({Cobrado(anteriores)}).", 400);
+                "total_de_cobros_distinto", $"Los medios nuevos tienen que cobrar {esperado}.", 400);
         }
 
         if (Firma(anteriores).SequenceEqual(Firma(nuevos)))

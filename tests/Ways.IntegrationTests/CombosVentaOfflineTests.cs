@@ -383,7 +383,7 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
                     unidadesConsumidasPorCombo = 1.5, ahorroDeCombo = 100, idCombo = combo
                 }
             },
-            pagos = new[] { new { idMedioPago = ctx.IdMedioEfectivo, importe = 6000, vuelto = 0 } }
+            pagos = new[] { new { idMedioPago = ctx.IdMedioEfectivo, importe = 5900, vuelto = 0 } }
         };
 
         var respuesta = await ctx.Cajero!.PostAsJsonAsync("/api/ventas", cuerpo);
