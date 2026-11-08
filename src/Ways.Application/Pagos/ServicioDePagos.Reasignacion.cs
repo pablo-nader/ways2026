@@ -36,9 +36,7 @@ public partial class ServicioDePagos
             throw new ErrorDominio("personal_requerido", "Indicá el empleado al que se reasigna el pago.", 400);
         }
 
-        var idMovimiento = inmutables.IdMovimientoPersonal
-            ?? throw ErrorDominio.Conflicto(
-                "pago_sin_movimiento_de_personal", "El pago no es un pago de sueldo de un empleado.");
+        var idMovimiento = inmutables.IdMovimientoPersonal ?? throw PagoSinMovimientoDePersonal();
         var idDestino = solicitud.IdPersonal.Value;
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);

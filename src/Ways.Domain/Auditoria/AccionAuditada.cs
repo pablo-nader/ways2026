@@ -174,6 +174,12 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// personal. El <c>id_entidad</c> es el pago; el payload lleva el empleado y el concepto antes y después.</summary>
     public static readonly AccionAuditada PagoReasignacion = new("pago.reasignacion", "pago");
 
+    /// <summary>Anulación de un pago de personal (<c>POST /api/personal/{id}/pagos/{idMovimiento}/anular</c>) —
+    /// <c>Pagos/ServicioDePagos.PagosDePersonal.cs</c>. El <c>id_entidad</c> es el asiento del pago anulado; el payload
+    /// lleva el saldo del personal, los pagos dados de baja, el descuento devuelto y el asiento de la anulación. El dominio va
+    /// sin guion bajo porque el formato congelado no lo admite.</summary>
+    public static readonly AccionAuditada PagoDePersonalAnulacion = new("pagopersonal.anulacion", "movimiento_personal");
+
     /// <summary>Alta de un punto de venta sobre una empresa existente —
     /// <c>Organizacion/ServicioDeOrganizacion.cs</c>, <c>CrearPuntoVentaAsync</c>. Mismo dominio
     /// abreviado <c>pv</c> que <see cref="PuntoVentaBaja"/>. El aprovisionamiento de un tenant
@@ -283,6 +289,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         CompraRedondeo,
         PagoRedondeo,
         PagoReasignacion,
+        PagoDePersonalAnulacion,
         PuntoVentaAlta,
         CompraEdicion,
         CobroAplicacion,

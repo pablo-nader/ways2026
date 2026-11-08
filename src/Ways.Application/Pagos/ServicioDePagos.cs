@@ -539,10 +539,13 @@ public partial class ServicioDePagos(
                 idTenant, idPago, inmutables, solicitud: null, plan: null, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
     }
 
+    /// <summary><see cref="LineasDePersonal"/> es la corrección administrativa de las líneas de un pago de personal: lockea el
+    /// turno como la administración y exige, bajo el lock del pago, que siga siendo el del mismo asiento.</summary>
     private enum ModoDeEscritura
     {
         Pos,
-        Administracion
+        Administracion,
+        LineasDePersonal
     }
 
     /// <summary>Columnas que ninguna escritura cambia después del alta, así que se pueden leer
@@ -570,9 +573,7 @@ public partial class ServicioDePagos(
         Pago pago, ComandoDeEdicionDePago solicitud, PlanDeLineasDePago plan, IReadOnlyList<ItemPago> itemsVivos,
         CancellationToken ct)
     {
-        var mediosQueYaTenia = itemsVivos.Select(i => i.IdMedioPago).ToHashSet();
-        await ExigirMediosDeLasLineasValidosAsync(
-            plan.Lineas.Select(l => l.IdMedioPago).Where(id => !mediosQueYaTenia.Contains(id)), ct);
+        await ExigirMediosNuevosDeLaEdicionAsync(plan, itemsVivos, ct);
 
         if (solicitud.IdProveedor is { } idProveedor && idProveedor != pago.IdProveedor)
         {
@@ -580,9 +581,18 @@ public partial class ServicioDePagos(
         }
     }
 
+    private async Task ExigirMediosNuevosDeLaEdicionAsync(
+        PlanDeLineasDePago plan, IReadOnlyList<ItemPago> itemsVivos, CancellationToken ct)
+    {
+        var mediosQueYaTenia = itemsVivos.Select(i => i.IdMedioPago).ToHashSet();
+        await ExigirMediosDeLasLineasValidosAsync(
+            plan.Lineas.Select(l => l.IdMedioPago).Where(id => !mediosQueYaTenia.Contains(id)), ct);
+    }
+
     /// <summary>Un pago que nació de un pago de personal se mueve junto con los libros de ese pago (saldo del
-    /// personal, cuenta corriente del cliente, tesorería o cajón): tocarlo por separado los desalinearía. Anular
-    /// o revertir un pago es una operación aparte que todavía no existe.</summary>
+    /// personal, cuenta corriente del cliente, tesorería o cajón): tocarlo por separado los desalinearía. Corregir sus
+    /// líneas con el mismo total y anular el pago entero son operaciones propias
+    /// (<see cref="EditarLineasDePagoDePersonalAsync"/>, <see cref="AnularPagoDePersonalAsync"/>).</summary>
     private static void ExigirPagoSinPagoDePersonal(int? idMovimientoPersonal)
     {
         if (idMovimientoPersonal is not null)
@@ -638,7 +648,8 @@ public partial class ServicioDePagos(
         new("gasto_turno_cerrado", "El gasto solo se puede editar mientras su turno siga abierto.", 409);
 
     /// <summary>
-    /// Edición (<paramref name="solicitud"/> no nula) o baja de un pago, en una sola transacción.
+    /// Edición (<paramref name="solicitud"/> no nula), corrección de las líneas de un pago de personal (solo
+    /// <paramref name="plan"/>, <see cref="ModoDeEscritura.LineasDePersonal"/>) o baja de un pago, en una sola transacción.
     ///
     /// Orden de locks:
     /// 1) turno del pago (si tiene): POS <c>FOR SHARE</c> con el estado leído bajo el lock (mismo
@@ -695,6 +706,30 @@ public partial class ServicioDePagos(
             }
         }
 
+        var idMovimientoPersonalEsperado = modo == ModoDeEscritura.LineasDePersonal ? inmutables.IdMovimientoPersonal : null;
+        var pago = await EscribirBajoElLockDelTurnoAsync(
+            idTenant, idPago, turnoCerrado, solicitud, plan, idMovimientoPersonalEsperado, idEmpleado, momento, ct);
+
+        await transaccion.CommitAsync(ct);
+
+        return pago;
+    }
+
+    /// <summary>
+    /// El resto de <see cref="EjecutarEscrituraAsync"/>, desde el paso 2 de su orden de locks, dentro de una transacción que
+    /// el llamador ya abrió con la marca de conciliación y el turno del pago tomados, y que el llamador comitea.
+    /// <paramref name="solicitud"/> y <paramref name="plan"/> no nulos editan el pago entero; solo <paramref name="plan"/>
+    /// reemplaza nada más que sus líneas, con el mismo total; los dos nulos lo dan de baja.
+    /// <paramref name="idMovimientoPersonalEsperado"/> nulo exige un pago común; con valor, exige que el pago siga siendo el
+    /// de ese asiento del personal (la corrección de líneas y la anulación de un pago de personal).
+    /// </summary>
+    private async Task<Pago> EscribirBajoElLockDelTurnoAsync(
+        int idTenant, int idPago, TurnoBloqueado? turnoCerrado, ComandoDeEdicionDePago? solicitud,
+        PlanDeLineasDePago? plan, int? idMovimientoPersonalEsperado, int idEmpleado, DateTimeOffset momento,
+        CancellationToken ct)
+    {
+        var esBaja = plan is null;
+
         // La edición y la baja recortan, agrandan o liberan las aplicaciones del pago, así que toman el lock de TODAS sus
         // compras (las aplicadas y la del vínculo) en id ascendente ANTES que el del pago (turno → compras → pago, el
         // mismo orden que el alta, la vinculación y aplicar). Los conjuntos se pre-leen sin lock solo para saber qué
@@ -731,7 +766,14 @@ public partial class ServicioDePagos(
 
         // La conversión en pago de personal es la única escritura que cambia id_movimiento_personal después del alta: la
         // lectura previa a los locks pudo quedar vieja, así que el chequeo definitivo se hace acá, sobre el pago leído bajo su lock.
-        ExigirPagoSinPagoDePersonal(pago.IdMovimientoPersonal);
+        if (idMovimientoPersonalEsperado is null)
+        {
+            ExigirPagoSinPagoDePersonal(pago.IdMovimientoPersonal);
+        }
+        else if (pago.IdMovimientoPersonal != idMovimientoPersonalEsperado)
+        {
+            throw PagoCambioConcurrente();
+        }
 
         // El pago cuenta para el libro en su fecha; el cierre de su turno, en la del cierre (normalmente la fecha del pago es
         // anterior, y la menor de las dos es la que decide).
@@ -766,7 +808,15 @@ public partial class ServicioDePagos(
         var medioAnterior = itemsVivos.FirstOrDefault()?.IdMedioPago;
         var valorAnterior = PayloadDeEdicion(pago, medioAnterior, anterior.ImportePorMedio);
 
-        if (solicitud is not null && plan is not null)
+        if (plan is not null && solicitud is null)
+        {
+            // Solo las líneas: el total se decide sobre el pago leído bajo su lock, así que categoría, concepto, origen e
+            // importe quedan como están y las aplicaciones no cambian (un pago de sueldos no se aplica a compras).
+            ReglaDeLineasDePagoDePersonal.ExigirMismoTotal(plan, pago.Importe);
+            await ExigirMediosNuevosDeLaEdicionAsync(plan, itemsVivos, ct);
+            ReemplazarItemsDelPago(pago, itemsVivos, plan.Lineas, momento);
+        }
+        else if (solicitud is not null && plan is not null)
         {
             if (solicitud.OrigenFondos is { } origenPedido)
             {
@@ -825,15 +875,15 @@ public partial class ServicioDePagos(
         pago.UpdatedAt = momento;
         await db.SaveChangesAsync(ct);
 
-        var nuevo = solicitud is null ? null : await EstadoContableAsync(pago, ct);
-        var detalle = solicitud is null ? $"Baja del gasto #{pago.Id}" : $"Edición del gasto #{pago.Id}";
+        var nuevo = esBaja ? null : await EstadoContableAsync(pago, ct);
+        var detalle = esBaja ? $"Baja del gasto #{pago.Id}" : $"Edición del gasto #{pago.Id}";
 
         await EscribirAjustesDeProveedorAsync(
             idTenant, pago, CalculadorDeAjustesDePago.AjustesDeProveedor(anterior, nuevo), detalle, idEmpleado,
             momento, ct);
 
         await CompensarElRedondeoAsync(
-            idTenant, pago, anterior.Importe, aplicadoAntesPorCompra, comprasBloqueadas, esBaja: solicitud is null,
+            idTenant, pago, anterior.Importe, aplicadoAntesPorCompra, comprasBloqueadas, esBaja,
             cambiaLaCuenta: anterior.IdProveedor != pago.IdProveedor || anterior.Categoria != pago.Categoria,
             detalle, idEmpleado, momento, ct);
 
@@ -860,7 +910,7 @@ public partial class ServicioDePagos(
 
         var valorNuevo = PayloadDeEdicion(
             pago, plan?.IdMedioPagoDeCompatibilidad ?? medioAnterior, nuevo?.ImportePorMedio ?? anterior.ImportePorMedio);
-        if (solicitud is null)
+        if (esBaja)
         {
             valorNuevo["deleted_at"] = pago.DeletedAt;
         }
@@ -872,11 +922,9 @@ public partial class ServicioDePagos(
         }
 
         auditoria.Registrar(new RegistroDeAuditoria(
-            idTenant, pago.IdPuntoVenta, solicitud is null ? AccionAuditada.PagoBaja : AccionAuditada.PagoEdicion,
+            idTenant, pago.IdPuntoVenta, esBaja ? AccionAuditada.PagoBaja : AccionAuditada.PagoEdicion,
             pago.Id, valorAnterior, valorNuevo));
         await db.SaveChangesAsync(ct);
-
-        await transaccion.CommitAsync(ct);
 
         return pago;
     }

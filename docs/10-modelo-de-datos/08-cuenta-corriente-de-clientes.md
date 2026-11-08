@@ -286,6 +286,7 @@ movimientos_personal (                    -- [operativa — libro append-only]
     importe           numeric(14,2) NOT NULL,   -- + aumenta lo que se le debe, − lo reduce
     saldo_resultante  numeric(14,2) NOT NULL,   -- foto de personal.saldo al insertar
     detalle           text          NULL,       -- obligatorio en el ajuste (regla de servicio)
+    id_movimiento_anulado integer   NULL,       -- solo el 'ajuste' que anula un pago: FK compuesta al asiento anulado
     created_at        timestamptz   NOT NULL    -- IRelojDelSistema, sin DEFAULT now()
 );
 ```
@@ -312,6 +313,23 @@ movimientos_personal (                    -- [operativa — libro append-only]
 > `(id_personal, id_tenant, fecha)` y `ix_movimientos_personal_empleado`. RLS estándar. Un personal
 > con movimientos no se puede dar de baja (409 `personal_en_uso`). El asiento tiene la clave alterna
 > `ak_movimientos_personal_id_movimiento_id_tenant`, destino de las FKs compuestas que siguen.
+>
+> **Anulación de un pago** (`POST /api/personal/{id}/pagos/{idMovimiento}/anular`, Admin). El libro sigue siendo
+> append-only: la anulación es un asiento `ajuste` por `+total` (el opuesto del importe del pago), con la fecha del
+> pago anulado y `id_movimiento_anulado` apuntándolo. En la misma transacción da de baja los pagos del asiento por el
+> mismo camino que `DELETE /api/pagos/administracion/{id}` (arqueo de un turno cerrado, ajuste de tesorería, débitos en
+> cuentas, auditoría `pago.baja`) y, si hubo descuento de cuenta corriente, le devuelve la deuda al mismo cliente con
+> un `ajuste` de cuenta corriente por `+descuento` en el punto de venta del descuento (409
+> `cliente_del_descuento_dado_de_baja` si el cliente ya no está vivo). Un pago se anula una sola vez: índice único
+> parcial `ux_movimientos_personal_movimiento_anulado` `(id_movimiento_anulado, id_tenant)` `WHERE id_movimiento_anulado
+> IS NOT NULL` (también sostiene la FK compuesta `fk_movimientos_personal_movimiento_anulado` al propio libro,
+> RESTRICT; su 23505 responde 409 `pago_personal_ya_anulado`) y CHECK `ck_movimientos_personal_anulacion`
+> (`id_movimiento_anulado IS NULL OR tipo = 'ajuste'`). El estado de cuenta trae `idMovimientoAnulado` en la anulación
+> y `anuladoPor` (el id de la anulación) en el pago anulado. Auditoría `pagopersonal.anulacion`.
+>
+> **Corrección de los medios de un pago** (`PUT /api/pagos/administracion/{id}/lineas-de-personal`, Admin): reemplaza
+> solo las líneas del pago de un asiento, con el mismo total (400 `importe_distinto_del_pago`), por el mismo camino que
+> la edición administrativa de un pago; el libro del personal y el descuento no cambian.
 >
 > **Horas con signo.** Una carga individual (`POST /api/personal/{id}/horas`) sigue exigiendo `horas > 0`. Las
 > horas negativas son correcciones que escribe solo la carga semanal (abajo): bajar el total de un día agrega
@@ -396,7 +414,8 @@ jornadas_personal (                       -- [operativa — mutable, sin baja l�
 > Para que un cliente sepa de antemano qué pagos responderán así, los listados del POS (`GET /api/pagos`, el
 > detalle del turno) y de administración (`GET /api/pagos/administracion` y su detalle) traen
 > `idMovimientoPersonal` (nulo en un pago común) y el web deshabilita en esos pagos la edición, la baja y la
-> vinculación a una compra. Anular o revertir un pago todavía no existe. El estado de cuenta (`GET /api/personal/{id}/cuenta`) trae
+> vinculación a una compra. La corrección de sus líneas y la anulación del pago entero son operaciones propias
+> (§8c). El estado de cuenta (`GET /api/personal/{id}/cuenta`) trae
 > en cada movimiento `pago` su `desglose`: el descuento y una línea por pago (medio, importe, origen,
 > referencia).
 >

@@ -1,7 +1,16 @@
 import { LONGITUD_MINIMA_DETALLE_AJUSTE } from '../api/cuentaCorriente'
+import { type SolicitudDeCorreccionDeMedios } from '../api/cuentaDePersonal'
+import {
+  aLineasDeSolicitud,
+  diferenciaContraObjetivo,
+  errorDeLineasDePago,
+  totalDeLineasDePago,
+  type LineaDePagoEditable,
+} from '../api/lineasDePago'
 import type {
   LineaDeDesgloseDePago,
   MedioPagoListado,
+  MovimientoDePersonal,
   OrigenFondosPago,
   SolicitudDeAjusteDePersonal,
   SolicitudDeCargaDeHoras,
@@ -395,4 +404,70 @@ export function avisoDeResultadoIncierto(descripcion: string, vistaActualizada: 
   return vistaActualizada
     ? `${encabezado} ${CIERRE_DEL_AVISO_INCIERTO}`
     : `${encabezado} Tampoco se pudo actualizar la vista: recargá la pantalla y revisá los movimientos antes de volver a cargarla.`
+}
+
+// ---- Corrección de pagos -----------------------------------------------------------------
+
+/** Un pago se puede corregir mientras no lo haya revertido un ajuste. */
+export function pagoCorregible(m: Pick<MovimientoDePersonal, 'tipo' | 'anuladoPor'>): boolean {
+  return m.tipo === 'Pago' && (m.anuladoPor ?? null) === null
+}
+
+/** Las líneas de dinero de un pago, o `[]` si es solo descuento de cuenta corriente. */
+export function lineasDelPago(m: Pick<MovimientoDePersonal, 'desglose'>): LineaDeDesgloseDePago[] {
+  return m.desglose?.lineas ?? []
+}
+
+/** Solo un pago con líneas de dinero tiene medios que editar. */
+export function mediosEditables(m: Pick<MovimientoDePersonal, 'tipo' | 'anuladoPor' | 'desglose'>): boolean {
+  return pagoCorregible(m) && lineasDelPago(m).length > 0
+}
+
+/** Los pagos (gastos) que respaldan las líneas del movimiento, en orden de aparición. Un movimiento normal tiene uno;
+ * los anteriores a que se uniera el pago tenían un gasto por línea, y cada uno se corrige por separado. */
+export function pagosDelMovimiento(m: Pick<MovimientoDePersonal, 'desglose'>): { idGasto: number; lineas: LineaDeDesgloseDePago[] }[] {
+  const grupos = new Map<number, LineaDeDesgloseDePago[]>()
+  for (const l of lineasDelPago(m)) grupos.set(l.idGasto, [...(grupos.get(l.idGasto) ?? []), l])
+
+  return [...grupos].map(([idGasto, lineas]) => ({ idGasto, lineas }))
+}
+
+/** Precarga la edición con el reparto vigente de un pago del movimiento. */
+export function lineasEditablesDelPago(m: Pick<MovimientoDePersonal, 'desglose'>, idGasto: number): LineaDePagoEditable[] {
+  return lineasDelPago(m).filter((l) => l.idGasto === idGasto).map((l, indice) => ({
+    clave: indice + 1,
+    idMedioPago: l.idMedioPago,
+    importe: l.importe,
+    referencia: l.referencia ?? '',
+    nombreMedioPago: l.nombreMedioPago,
+  }))
+}
+
+/** Lo que ese pago ya movió: las nuevas líneas tienen que sumar exactamente esto. */
+export function totalRequeridoDelPago(m: Pick<MovimientoDePersonal, 'desglose'>, idGasto: number): number {
+  return totalDeLineasDePago(lineasEditablesDelPago(m, idGasto))
+}
+
+export function totalCoincide(objetivo: number, lineas: readonly LineaDePagoEditable[]): boolean {
+  return diferenciaContraObjetivo(objetivo, lineas) === 0
+}
+
+/** Primer rechazo de las líneas antes de enviar; el servidor vuelve a validar todo. */
+export function validarCorreccionDeMedios(objetivo: number, lineas: readonly LineaDePagoEditable[]): ErrorDeCuenta | null {
+  const rechazo = errorDeLineasDePago(lineas)
+  if (rechazo !== null) return error('lineas', rechazo)
+
+  return totalCoincide(objetivo, lineas)
+    ? null
+    : error('general', `Las líneas tienen que sumar ${formatearImporte(objetivo, { simbolo: true })}, el total del pago.`)
+}
+
+export function aSolicitudDeCorreccionDeMedios(lineas: readonly LineaDePagoEditable[]): SolicitudDeCorreccionDeMedios {
+  return { lineas: aLineasDeSolicitud(lineas) }
+}
+
+export function descripcionDeCorreccion(m: Pick<MovimientoDePersonal, 'fecha' | 'importe'>, accion: 'medios' | 'anulacion'): string {
+  const monto = formatearImporte(Math.abs(m.importe), { simbolo: true })
+
+  return `${accion === 'medios' ? 'corrección de los medios' : 'anulación'} del pago del ${isoATexto(m.fecha)} por ${monto}`
 }

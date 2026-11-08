@@ -4005,6 +4005,10 @@ export type MovimientoDePersonal = {
   detalle: string | null
   creadoEn: string
   desglose?: DesgloseDePago | null
+  /** Solo en el ajuste que anula un pago: id del movimiento de pago que revierte. */
+  idMovimientoAnulado?: number | null
+  /** Solo en un pago anulado: id del ajuste que lo revirtió. */
+  anuladoPor?: number | null
 }
 
 /** Espejo de `PaginaDeCuentaDePersonal`. `encabezado.saldo` sale del saldo del empleado, nunca de la

@@ -16,7 +16,9 @@ public record SolicitudDeCargaDeHoras(DateOnly? Fecha, decimal Horas, decimal? V
 /// deduce.</summary>
 public record SolicitudDeAjusteDePersonal(decimal Importe, string? Detalle, DateOnly? Fecha);
 
-/// <summary><see cref="Desglose"/> solo viene en los movimientos de tipo pago: cómo se compuso ese pago.</summary>
+/// <summary><see cref="Desglose"/> solo viene en los movimientos de tipo pago: cómo se compuso ese pago.
+/// <see cref="IdMovimientoAnulado"/> solo viene en el ajuste que anula un pago (el asiento anulado) y
+/// <see cref="AnuladoPor"/> solo en un pago anulado (el asiento de su anulación).</summary>
 public record MovimientoDePersonal(
     int IdMovimiento,
     DateOnly Fecha,
@@ -27,7 +29,9 @@ public record MovimientoDePersonal(
     decimal SaldoResultante,
     string? Detalle,
     DateTimeOffset CreadoEn,
-    DesgloseDePago? Desglose = null);
+    DesgloseDePago? Desglose = null,
+    int? IdMovimientoAnulado = null,
+    int? AnuladoPor = null);
 
 /// <summary>Respuesta de <c>POST /api/pos/personal/{id}/pagos</c>: el cajero solo ve que el pago quedó registrado, nunca el
 /// saldo del empleado.</summary>

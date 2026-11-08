@@ -4,8 +4,9 @@ import type { CampoDeCuenta, ErrorDeCuenta } from './cuentaDePersonalFormularios
 
 export type { CampoDeCuenta, ErrorDeCuenta }
 
-/** Cuál de las tres escrituras falló: un 403 y un 404 significan cosas distintas en cada una. */
-export type Escritura = 'horas' | 'ajuste' | 'pago'
+/** Cuál de las escrituras falló: un 403 y un 404 significan cosas distintas en cada una. Las dos últimas son
+ * las correcciones de un pago ya registrado (solo Admin). */
+export type Escritura = 'horas' | 'ajuste' | 'pago' | 'corregirMedios' | 'anularPago'
 
 const COPIA_GENERICA = 'No se pudo registrar.'
 
@@ -100,6 +101,23 @@ const ERROR_POR_CODIGO: ReadonlyMap<string, ErrorDeCuenta> = new Map<string, Err
       mensaje: 'El descuento supera la deuda actual del cliente vinculado. Revisá la deuda que muestra este formulario.',
     },
   ],
+  [
+    'importe_distinto_del_pago',
+    { campo: 'general', mensaje: 'Las líneas tienen que sumar exactamente el total del pago: corregir los medios no cambia el importe.' },
+  ],
+  [
+    'pago_sin_movimiento_de_personal',
+    { campo: 'general', mensaje: 'Este pago ya no figura en el libro del empleado. Actualizá la pantalla.' },
+  ],
+  ['pago_personal_ya_anulado', { campo: 'general', mensaje: 'El pago ya estaba anulado. Actualizá la pantalla.' }],
+  [
+    'cliente_del_descuento_dado_de_baja',
+    {
+      campo: 'general',
+      mensaje: 'No se puede anular: el cliente al que se le descontó de su cuenta corriente fue dado de baja.',
+    },
+  ],
+  ['movimiento_no_es_pago', { campo: 'general', mensaje: 'Solo se pueden anular los movimientos de tipo pago.' }],
   ['gasto_fecha_futura', { campo: 'fecha', mensaje: 'La fecha del pago no puede ser futura.' }],
   [
     'gasto_medio_pago_cuenta_corriente_invalido',
@@ -124,9 +142,17 @@ export function errorDeEscritura(e: ErrorApi, escritura: Escritura, origenDelPag
   if (propio) return propio
 
   if (e.estado === 403) {
+    if (escritura === 'corregirMedios' || escritura === 'anularPago') {
+      return { campo: 'general', mensaje: 'Corregir un pago requiere ser administrador.' }
+    }
+
     return escritura === 'pago' && origenDelPago === 'Tesoreria'
       ? { campo: 'origen', mensaje: 'Pagar desde la tesorería requiere ser administrador.' }
       : { campo: 'general', mensaje: 'No tenés permiso para registrar esto.' }
+  }
+
+  if (e.estado === 404 && (escritura === 'corregirMedios' || escritura === 'anularPago')) {
+    return { campo: 'general', mensaje: 'No se encontró el pago. Actualizá la pantalla e intentá de nuevo.' }
   }
 
   if (e.estado === 404) {

@@ -7,6 +7,7 @@ import { api } from './cliente'
 import { rangoUltimoMes } from './cuentaCorriente'
 import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
+  LineaDePagoSolicitud,
   MovimientoDePersonal,
   OpcionDePersonal,
   PaginaDeCuentaDePersonal,
@@ -17,6 +18,9 @@ import type {
   SolicitudDePagoDePersonal,
   SolicitudDePagoDePersonalDelPos,
 } from './tipos'
+
+/** Cuerpo de la corrección de medios: solo las líneas; el total del pago no se toca. */
+export type SolicitudDeCorreccionDeMedios = { lineas: LineaDePagoSolicitud[] }
 
 /** Claves de `orden` que acepta `GET /api/personal/{id}/cuenta`: una por cada columna de datos del libro. */
 export const COLUMNAS_ORDENABLES_DE_CUENTA_DE_PERSONAL = [
@@ -117,6 +121,13 @@ export const clienteDeCuentaDePersonal = {
     api.post<MovimientoDePersonal>(`/personal/${id}/ajustes`, solicitud),
   pagar: (id: number, solicitud: SolicitudDePagoDePersonal) =>
     api.post<MovimientoDePersonal>(`/personal/${id}/pagos`, solicitud),
+  /** `PUT /api/pagos/administracion/{idGasto}/lineas-de-personal` (Admin): reemplaza los medios de un pago del
+   * libro del personal sin cambiar su total. La respuesta es el pago; la pantalla relee la cuenta. */
+  corregirMedios: (idGasto: number, solicitud: SolicitudDeCorreccionDeMedios) =>
+    api.put<unknown>(`/pagos/administracion/${idGasto}/lineas-de-personal`, solicitud),
+  /** `POST /api/personal/{id}/pagos/{idMovimiento}/anular` (Admin): devuelve el ajuste que revierte el pago. */
+  anularPago: (id: number, idMovimiento: number) =>
+    api.post<MovimientoDePersonal>(`/personal/${id}/pagos/${idMovimiento}/anular`),
 }
 
 /** Superficie del POS (`OperacionDePos`): el cajero ve solo id y nombre y paga solo del cajón del turno, sin descuento. */

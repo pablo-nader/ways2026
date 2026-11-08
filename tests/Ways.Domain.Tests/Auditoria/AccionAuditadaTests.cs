@@ -14,7 +14,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// <c>caja.forzado</c> la agregó la guarda de rendición de cola de dispositivos: un cierre de
 /// turno forzado por encima de ella. <c>venta.sobrelimite</c> la agregó la venta local a clientes
 /// identificados: una venta con cuenta corriente que superó el límite sin poder validarlo.
-/// <c>pago.edicion</c>/<c>pago.baja</c> las agregó la edición y baja de pagos.
+/// <c>pago.edicion</c>/<c>pago.baja</c> las agregó la edición y baja de pagos; <c>pagopersonal.anulacion</c>, la anulación de un pago de personal.
 /// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente. Las cuatro de sucursales (<c>sucursal.alta|edicion|baja</c> y <c>pv.sucursal</c>) las agregó el ABM de sucursales; <c>sucursal.fusion</c>, la fusión de sucursales; <c>sucursal.mercadopago</c>, el registro de la sucursal como local de Mercado Pago; <c>pv.mercadopago</c>, el del punto de venta como caja; <c>pv.terminalmercadopago</c>, la asignación de su terminal Point.
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// <c>compra.edicion</c> la agregó la edición de una compra confirmada.
@@ -31,7 +31,7 @@ public partial class AccionAuditadaTests
     [Fact]
     public void TieneCuarentaYOchoEntradas()
     {
-        Assert.Equal(49, AccionAuditada.Todas.Count);
+        Assert.Equal(50, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -103,6 +103,7 @@ public partial class AccionAuditadaTests
             ("compra.redondeo", "comprobante_compra"),
             ("pago.redondeo", "pago"),
             ("pago.reasignacion", "pago"),
+            ("pagopersonal.anulacion", "movimiento_personal"),
             ("pv.alta", "punto_venta"),
             ("compra.edicion", "comprobante_compra"),
             ("cobro.aplicacion", "comprobante_venta"),
