@@ -303,6 +303,8 @@ export function aSolicitudDeVenta(params: {
   forzarFactura?: boolean
   /** Solo `true` viaja: el servidor agrega la línea Envío con su propio importe. */
   conEnvio?: boolean
+  /** Solo `true` viaja: lo cobrado por encima del total queda como pago a cuenta del cliente. */
+  excedenteComoPagoACuenta?: boolean
 }): SolicitudDeVenta & { idCliente: number; lineas: LineaDeVenta[] } {
   const lineasDeVenta: LineaDeVenta[] = params.lineas.map((l) => ({
     idArticulo: l.idArticulo,
@@ -324,6 +326,7 @@ export function aSolicitudDeVenta(params: {
     observaciones: params.observaciones,
     ...(params.forzarFactura ? { forzarFactura: true } : {}),
     ...(params.conEnvio ? { conEnvio: true } : {}),
+    ...(params.excedenteComoPagoACuenta ? { excedenteComoPagoACuenta: true } : {}),
   }
 }
 

@@ -55,12 +55,14 @@ import {
   filaPagoInicial,
   filaPagoVacia,
   aplicarImportesSugeridos,
+  excedenteParaPagoACuenta,
   filasAPagosConVuelto,
   filasAPagosParaCalculo,
   filasConMedioInvalidoReseteado,
   idMedioEfectivo,
   medioDisponibleParaCliente,
   sumarImportes,
+  sinVuelto,
   sumarVueltos,
   superaLimiteDeCredito,
   validarPagosLocal,
@@ -359,6 +361,8 @@ type PropsConfirmacionDeCobro = {
   total: number
   pagado: number
   vuelto: number
+  /** Lo que queda como pago a cuenta del cliente; `null` si la venta no deja nada a cuenta. */
+  aCuenta: number | null
   /** judgment-day ronda 1 (K4): bajo vista previa fallida, `total`/`pagado`/`vuelto` no son
    * confiables (el total sale de la propia suma de importes, nunca del servidor) — mostrar
    * "$0,00" ahí sería un número inventado que el cajero podría leer como una confirmación real.
@@ -394,7 +398,7 @@ type PropsConfirmacionDeCobro = {
  * Escape de `PantallaPos`, su botón "Cerrar" rompería la alternancia exacta Finalizar↔Cancelar,
  * y su devolución de foco competiría con la de `disparadorConfirmacionRef`.
  */
-function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, onFinalizar, onCancelar }: PropsConfirmacionDeCobro) {
+function ConfirmacionDeCobro({ total, pagado, vuelto, aCuenta, previaFallida, ocupado, onFinalizar, onCancelar }: PropsConfirmacionDeCobro) {
   const finalizarRef = useRef<HTMLButtonElement>(null)
   const cancelarRef = useRef<HTMLButtonElement>(null)
 
@@ -435,6 +439,7 @@ function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, on
                   <li>Total: {formatearMoneda(total)}</li>
                   <li>Pagado: {formatearMoneda(pagado)}</li>
                   <li>Vuelto: {formatearMoneda(vuelto)}</li>
+                  {aCuenta !== null && <li>A cuenta del cliente: {formatearMoneda(aCuenta)}</li>}
                 </ul>
               )}
               <div className="d-flex gap-2">
@@ -499,6 +504,8 @@ type ResumenVentaFinalizada = {
    * crédito: aviso que no bloquea nada (la venta ya quedó registrada). `null` en cualquier otro
    * caso. */
   avisoLimiteDeCredito: string | null
+  /** El recibo que se llevó lo cobrado de más (respuesta del servidor); `null` si la venta no dejó nada a cuenta. */
+  pagoACuenta: { numeroVisible: string; importe: number } | null
 }
 
 type PropsVentaFinalizada = ResumenVentaFinalizada & {
@@ -550,6 +557,7 @@ function VentaFinalizada({
   itemsVencidos,
   pendienteDeSincronizar,
   avisoLimiteDeCredito,
+  pagoACuenta,
   modoPresupuesto,
   onCerrar,
   onEscanearCodigo,
@@ -674,6 +682,11 @@ function VentaFinalizada({
               <p className="fs-4 mb-0">
                 <strong>Vuelto: {formatearMoneda(vuelto)}</strong>
               </p>
+              {pagoACuenta && (
+                <p className="mt-2 mb-0">
+                  A cuenta del cliente: {formatearMoneda(pagoACuenta.importe)} (recibo {pagoACuenta.numeroVisible})
+                </p>
+              )}
             </div>
             <div className="modal-footer">
               <button ref={aceptarRef} type="button" className="btn btn-primary" aria-keyshortcuts="F9" onClick={cerrarSinEscanear}>
@@ -946,6 +959,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // "Facturar": apagado por defecto y se apaga solo al terminar cada venta; no viaja bajo un presupuesto.
   // `facturando` solo marca la espera acotada de la factura dentro de `cobrar()`, que ya mantiene la pantalla inerte.
   const [facturar, setFacturar] = useState(false)
+  // Elección del cajero sobre dejar lo cobrado de más a cuenta del cliente; `null` sigue a la sugerencia.
+  const [excedenteACuentaElegido, setExcedenteACuentaElegido] = useState<boolean | null>(null)
   const [facturando, setFacturando] = useState(false)
 
   // stage-pos-atajos-cobro: F9 con el pago ya cubierto abre esta puerta antes de cobrar de
@@ -3123,7 +3138,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const totalParaProponer = previaFallida || (!modoPresupuesto && subtotalPrevia === null) ? null : totalActual
   const filasPagoVigentes = aplicarImportesSugeridos(filasPago, totalParaProponer)
   const totalParaVuelto = previaFallida ? sumarImportes(filasAPagosParaCalculo(filasPagoVigentes, medioPorId)) : totalActual
-  const pagosConVuelto = filasAPagosConVuelto(filasPagoVigentes, medioPorId, totalParaVuelto)
+  const pagosConVueltoSugerido = filasAPagosConVuelto(filasPagoVigentes, medioPorId, totalParaVuelto)
+  // Lo cobrado de más puede quedar como pago a cuenta solo con conexión (el servidor emite el recibo con su número) y con un
+  // cliente con cuenta corriente. Con la opción activa ningún pago da vuelto: lo que sobra entero va al recibo.
+  const propuestaDeExcedente =
+    !modoPresupuesto &&
+    subtotalPrevia !== null &&
+    sincronizacionOffline.enLinea &&
+    clienteSeleccionado !== null &&
+    !clienteSeleccionado.esConsumidorFinal
+      ? excedenteParaPagoACuenta({ total: totalActual, pagos: pagosConVueltoSugerido, toleranciaPago: parametros?.toleranciaPago ?? 0 })
+      : null
+  const excedenteACuenta =
+    propuestaDeExcedente !== null && (excedenteACuentaElegido ?? propuestaDeExcedente.sugerido) ? propuestaDeExcedente.importe : null
+  const pagosConVuelto = excedenteACuenta === null ? pagosConVueltoSugerido : sinVuelto(pagosConVueltoSugerido)
   const faltante = previaFallida ? 0 : calcularFaltante(totalActual, pagosConVuelto)
   const vueltoADevolver = previaFallida ? 0 : sumarVueltos(pagosConVuelto)
 
@@ -3147,6 +3175,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           limiteCredito: clienteSeleccionado.limiteCredito,
           creditoIlimitado: clienteSeleccionado.creditoIlimitado,
           exigirLimiteDeCredito: !previaLocal,
+          exigirCobroSinExcedente: excedenteACuenta === null,
         })
 
   // Aviso, nunca bloqueo: con la vista previa local el límite lo decide el servidor al cobrar (o,
@@ -3542,6 +3571,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               observaciones: null,
               forzarFactura,
               conEnvio,
+              excedenteComoPagoACuenta: excedenteACuenta !== null,
             })
 
       // Solo una venta que seguro se factura y tiene conexión espera la respuesta fiscal; el resto imprime el ticket al instante.
@@ -3663,7 +3693,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // las líneas con precio, números reservados): si rechaza, sigue el camino online de
         // siempre. Salvo un rechazo que el servidor ya contestó (límite superado o consulta
         // rechazada): ese se informa y la venta no se manda online sin número.
-        const instantaneaDeLaPrevia = instantaneaDeLaVistaPreviaRef.current
+        // Con lo cobrado de más a cuenta la venta va solo por el camino online: el recibo necesita un número del servidor y una
+        // venta con número pre-asignado no lo admite.
+        const instantaneaDeLaPrevia = excedenteACuenta === null ? instantaneaDeLaVistaPreviaRef.current : null
         if (instantaneaDeLaPrevia !== null) {
           const local = await encolarLocal(instantaneaDeLaPrevia)
           if (generacionCobroRef.current !== miGeneracion) return null
@@ -3735,6 +3767,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           .map((item) => ({ descripcion: item.descripcion, codigoLote: item.codigoLote })),
         pendienteDeSincronizar,
         avisoLimiteDeCredito,
+        pagoACuenta: emitido.pagoACuenta ? { numeroVisible: emitido.pagoACuenta.numeroVisible, importe: emitido.pagoACuenta.importe } : null,
       })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
@@ -3757,6 +3790,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
       setFacturar(false)
+      setExcedenteACuentaElegido(null)
       setConEnvioElegido(null)
       // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
       // venta anterior — el reset es parte del propio éxito de `cobrar()`.
@@ -4940,6 +4974,22 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </span>
             </div>
 
+            {propuestaDeExcedente && (
+              <div className="form-check mb-2">
+                <input
+                  id="excedente-a-cuenta"
+                  type="checkbox"
+                  className="form-check-input"
+                  checked={excedenteACuenta !== null}
+                  disabled={pantallaCobroInerte || bloqueadoPorTurno}
+                  onChange={(evento) => setExcedenteACuentaElegido(evento.target.checked)}
+                />
+                <label className="form-check-label" htmlFor="excedente-a-cuenta">
+                  La diferencia ({formatearMoneda(propuestaDeExcedente.importe)}) queda como pago a cuenta del cliente
+                </label>
+              </div>
+            )}
+
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
 
             {motivoDeEnvio && (
@@ -5015,6 +5065,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           total={totalActual}
           pagado={sumarImportes(pagosConVuelto)}
           vuelto={vueltoADevolver}
+          aCuenta={excedenteACuenta}
           previaFallida={previaFallida}
           ocupado={cobrando}
           onFinalizar={confirmarYcobrar}
@@ -5066,6 +5117,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           itemsVencidos={ventaFinalizada.itemsVencidos}
           pendienteDeSincronizar={ventaFinalizada.pendienteDeSincronizar}
           avisoLimiteDeCredito={ventaFinalizada.avisoLimiteDeCredito}
+          pagoACuenta={ventaFinalizada.pagoACuenta}
           modoPresupuesto={modoPresupuesto}
           onCerrar={cerrarVentaFinalizada}
           onEscanearCodigo={(codigo) => void escanear(codigo)}
