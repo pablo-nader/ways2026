@@ -45,7 +45,7 @@ No schema change.
 - [x] T1 Domain: rule 9 + reenvío flag + cambio de medios rule, unit tests (route: inline, parent)
 - [x] T2 Web: validarPagosLocal mirror, vuelto display, proposals, cambio de medios mirror, Vitest (route: delegated writer, 2+ non-trivial files)
 - [x] T3 Integration tests POST /api/ventas and PUT /api/ventas/administracion/{id}/medios (route: inline)
-- [ ] T4 Structural guard tests, judgment-day, PR
+- [x] T4 Structural guard tests, judgment-day, PR
 
 ## Checks
 
@@ -63,4 +63,7 @@ No schema change.
   `CombosVentaOfflineTests` cash = total). Filtered batch of sale-related classes: 2543/2546, the 3 failures were those
   fixtures, now green.
 - `tests/Ways.Application.Tests` (structural guards): 1660 passed.
+- Commits 5ede4421 (backend) and 9f93087a (web). Judgment day: APPROVED in round 0, no confirmed severe finding. Info:
+  FacturarRemitos marks a re-emitted proposal as edited (Pos has the guard); a row without medio still counts toward the
+  next row's proposal; the rule 9 comment sits on the early return.
 - Follow-up (stacked PR): a CC customer's non-cash excess becomes a pago a cuenta (RC) instead of being rejected.
