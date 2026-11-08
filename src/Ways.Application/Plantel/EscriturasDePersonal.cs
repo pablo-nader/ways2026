@@ -49,11 +49,30 @@ public static class EscriturasDePersonal
         return new SaldoActualizado(lector.GetDecimal(0), lector.IsDBNull(1) ? null : lector.GetInt32(1));
     }
 
-    /// <summary>El ÚNICO <c>INSERT</c> del libro de personal.</summary>
-    public static async Task<int> InsertarMovimientoAsync(
+    public static Task<int> InsertarMovimientoAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal, int idEmpleado,
         DateOnly fecha, TipoMovimientoPersonal tipo, decimal? horas, decimal? valorHora, decimal importe,
-        decimal saldoResultante, string? detalle, DateTimeOffset creadoEn, CancellationToken ct)
+        decimal saldoResultante, string? detalle, DateTimeOffset creadoEn, CancellationToken ct) =>
+        InsertarAsync(
+            conexion, transaccion, idTenant, idPersonal, idEmpleado, fecha, tipo, horas, valorHora, importe,
+            saldoResultante, detalle, idMovimientoAnulado: null, creadoEn, ct);
+
+    /// <summary>El asiento que anula un pago: un <see cref="TipoMovimientoPersonal.Ajuste"/> que apunta al pago anulado.
+    /// Tiene su propio método porque es la única forma que lleva <c>id_movimiento_anulado</c>.</summary>
+    public static Task<int> InsertarAnulacionDePagoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal, int idEmpleado,
+        DateOnly fecha, decimal importe, decimal saldoResultante, string detalle, int idMovimientoAnulado,
+        DateTimeOffset creadoEn, CancellationToken ct) =>
+        InsertarAsync(
+            conexion, transaccion, idTenant, idPersonal, idEmpleado, fecha, TipoMovimientoPersonal.Ajuste, horas: null,
+            valorHora: null, importe, saldoResultante, detalle, idMovimientoAnulado, creadoEn, ct);
+
+    /// <summary>El ÚNICO <c>INSERT</c> del libro de personal.</summary>
+    private static async Task<int> InsertarAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal, int idEmpleado,
+        DateOnly fecha, TipoMovimientoPersonal tipo, decimal? horas, decimal? valorHora, decimal importe,
+        decimal saldoResultante, string? detalle, int? idMovimientoAnulado, DateTimeOffset creadoEn,
+        CancellationToken ct)
     {
         ValidarFormaPorTipo(tipo, horas, valorHora);
 
@@ -62,8 +81,8 @@ public static class EscriturasDePersonal
         comando.CommandText =
             "INSERT INTO movimientos_personal " +
             "(id_tenant, id_personal, id_empleado, fecha, tipo, horas, valor_hora, importe, " +
-            " saldo_resultante, detalle, created_at) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
+            " saldo_resultante, detalle, created_at, id_movimiento_anulado) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) " +
             "RETURNING id_movimiento";
 
         ParametrosDeComando.Agregar(comando, idTenant);
@@ -77,6 +96,7 @@ public static class EscriturasDePersonal
         ParametrosDeComando.Agregar(comando, saldoResultante);
         ParametrosDeComando.AgregarNulo(comando, detalle);
         ParametrosDeComando.Agregar(comando, creadoEn);
+        ParametrosDeComando.AgregarNulo(comando, idMovimientoAnulado);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("No se pudo insertar el movimiento de personal.");

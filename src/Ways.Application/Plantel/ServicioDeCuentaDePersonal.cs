@@ -105,7 +105,12 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(m => new MovimientoDePersonal(
-                m.Id, m.Fecha, m.Tipo, m.Horas, m.ValorHora, m.Importe, m.SaldoResultante, m.Detalle, m.CreatedAt))
+                m.Id, m.Fecha, m.Tipo, m.Horas, m.ValorHora, m.Importe, m.SaldoResultante, m.Detalle, m.CreatedAt, null,
+                m.IdMovimientoAnulado,
+                db.MovimientosPersonal
+                    .Where(anulacion => anulacion.IdMovimientoAnulado == m.Id)
+                    .Select(anulacion => (int?)anulacion.Id)
+                    .FirstOrDefault()))
             .ToListAsync(ct);
 
         var idsDePagos = items.Where(i => i.Tipo == TipoMovimientoPersonal.Pago).Select(i => i.IdMovimiento).ToList();

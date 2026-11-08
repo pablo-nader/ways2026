@@ -33,6 +33,10 @@ public class MovimientoPersonalConfiguration : IEntityTypeConfiguration<Movimien
             t.HasCheckConstraint(
                 "ck_movimientos_personal_pago",
                 "tipo <> 'pago' OR (horas IS NULL AND valor_hora IS NULL AND importe < 0)");
+
+            t.HasCheckConstraint(
+                "ck_movimientos_personal_anulacion",
+                "id_movimiento_anulado IS NULL OR tipo = 'ajuste'");
         });
 
         builder.HasKey(m => m.Id).HasName("pk_movimientos_personal");
@@ -58,6 +62,7 @@ public class MovimientoPersonalConfiguration : IEntityTypeConfiguration<Movimien
         builder.Property(m => m.SaldoResultante)
             .HasColumnName("saldo_resultante").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(m => m.Detalle).HasColumnName("detalle").HasColumnType("text");
+        builder.Property(m => m.IdMovimientoAnulado).HasColumnName("id_movimiento_anulado");
         builder.Property(m => m.CreatedAt).HasColumnName("created_at").IsRequired();
 
         builder.HasIndex(m => m.IdTenant).HasDatabaseName("ix_movimientos_personal_tenant");
@@ -68,6 +73,12 @@ public class MovimientoPersonalConfiguration : IEntityTypeConfiguration<Movimien
 
         // FK simple a usuarios: un índice compuesto liderado por otra columna no la cubriría.
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_personal_empleado");
+
+        // Un pago se anula una sola vez; el índice también sostiene la FK compuesta al asiento anulado.
+        builder.HasIndex(m => new { m.IdMovimientoAnulado, m.IdTenant })
+            .IsUnique()
+            .HasFilter("id_movimiento_anulado IS NOT NULL")
+            .HasDatabaseName("ux_movimientos_personal_movimiento_anulado");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -80,6 +91,13 @@ public class MovimientoPersonalConfiguration : IEntityTypeConfiguration<Movimien
             .HasForeignKey(m => new { m.IdPersonal, m.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
             .HasConstraintName("fk_movimientos_personal_personal")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<MovimientoPersonal>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdMovimientoAnulado, m.IdTenant })
+            .HasPrincipalKey(m => new { m.Id, m.IdTenant })
+            .HasConstraintName("fk_movimientos_personal_movimiento_anulado")
             .OnDelete(DeleteBehavior.Restrict);
 
         // Simple: Usuario no tiene clave alterna (id_usuario, id_tenant) porque su tenant es nullable.

@@ -155,6 +155,14 @@ public static class PagosEndpoints
             "Mueve un pago de sueldo al libro de otro empleado y corrige los saldos resultantes de los dos libros; " +
             "rechaza los pagos con descuento de cuenta corriente.");
 
+        administracion.MapPut("/{id:int}/lineas-de-personal", async (
+            ServicioDePagos servicio, int id, SolicitudDeLineasDePagoDePersonal? solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.EditarLineasDePagoDePersonalAsync(id, solicitud, ct)))
+        .WithSummary(
+            "Corrige las líneas de dinero (medio y reparto) del pago de un asiento del personal sin cambiar su total; " +
+            "recalcula el arqueo si es de un turno cerrado. Un pago común responde 409 pago_sin_movimiento_de_personal y " +
+            "unas líneas que no suman el importe del pago, 400 importe_distinto_del_pago.");
+
         administracion.MapGet("/{id:int}",(ServicioDePagos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerDeAdministracionAsync(id, ct))
         .WithSummary("Detalle de un pago de gestión con sus líneas.");

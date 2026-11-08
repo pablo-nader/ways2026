@@ -5477,6 +5477,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_empleado");
 
+                    b.Property<int?>("IdMovimientoAnulado")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_movimiento_anulado");
+
                     b.Property<int>("IdPersonal")
                         .HasColumnType("integer")
                         .HasColumnName("id_personal");
@@ -5513,12 +5517,19 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_movimientos_personal_tenant");
 
+                    b.HasIndex("IdMovimientoAnulado", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_movimientos_personal_movimiento_anulado")
+                        .HasFilter("id_movimiento_anulado IS NOT NULL");
+
                     b.HasIndex("IdPersonal", "IdTenant", "Fecha")
                         .HasDatabaseName("ix_movimientos_personal_personal_fecha");
 
                     b.ToTable("movimientos_personal", null, t =>
                         {
                             t.HasCheckConstraint("ck_movimientos_personal_ajuste", "tipo <> 'ajuste' OR (horas IS NULL AND valor_hora IS NULL AND importe <> 0)");
+
+                            t.HasCheckConstraint("ck_movimientos_personal_anulacion", "id_movimiento_anulado IS NULL OR tipo = 'ajuste'");
 
                             t.HasCheckConstraint("ck_movimientos_personal_horas", "tipo <> 'horas' OR (horas IS NOT NULL AND horas >= -24 AND horas <= 24 AND horas <> 0 AND valor_hora IS NOT NULL AND valor_hora >= 0 AND importe = round(horas * valor_hora, 2))");
 
@@ -9094,6 +9105,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_movimientos_personal_tenant");
+
+                    b.HasOne("Ways.Domain.Plantel.MovimientoPersonal", null)
+                        .WithMany()
+                        .HasForeignKey("IdMovimientoAnulado", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_movimientos_personal_movimiento_anulado");
 
                     b.HasOne("Ways.Domain.Plantel.Personal", null)
                         .WithMany()

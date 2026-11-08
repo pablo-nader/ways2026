@@ -1,4 +1,5 @@
 using Ways.Api.Seguridad;
+using Ways.Application.Pagos;
 using Ways.Application.Plantel;
 
 namespace Ways.Api.Endpoints;
@@ -49,6 +50,17 @@ public static class CuentaDePersonalEndpoints
         .WithTags("CuentaDePersonal")
         .RequireAuthorization(Politicas.GestionDeCuentaDePersonal)
         .WithSummary("Registra un pago al personal: descuento de la cuenta corriente del cliente vinculado y líneas de dinero, en una sola transacción.");
+
+        // Solo Admin: deshace pagos y egresos de tesorería, igual que la baja administrativa de un pago.
+        app.MapPost("/api/personal/{id:int}/pagos/{idMovimiento:int}/anular", async (
+            ServicioDePagos servicio, int id, int idMovimiento, CancellationToken ct) =>
+            Results.Ok(await servicio.AnularPagoDePersonalAsync(id, idMovimiento, ct)))
+        .WithTags("CuentaDePersonal")
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Anula un pago al personal: un ajuste por el total en el libro, la baja de sus pagos (con el recálculo del " +
+            "arqueo y el ajuste de tesorería que corresponda) y la devolución del descuento al cliente vinculado. " +
+            "Responde el ajuste de la anulación; 409 movimiento_no_es_pago o pago_personal_ya_anulado.");
 
         // Superficie del POS, aparte a propósito: el cajero (Vendedor) no tiene GestionDeCuentaDePersonal ni
         // LecturaDePersonal. Solo ve id y nombre y solo paga del cajón del turno, sin descontar cuenta corriente.
