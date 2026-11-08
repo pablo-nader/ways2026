@@ -70,7 +70,16 @@ namespace Ways.Application.Ventas;
 /// dos reenvíos no altera el total que ve la guarda de idempotencia. En cualquier otra venta se rechaza (400 <c>importe_envio_no_admitido</c>) en vez de ignorarse,
 /// y un valor negativo, con más de dos decimales o que no entra en <c>numeric(14,2)</c> es 400 <c>importe_envio_invalido</c>.
 /// Ausente en una venta con número pre-asignado y <see cref="ConEnvio"/> (un dispositivo anterior), el importe sigue
-/// saliendo del parámetro.</summary>
+/// saliendo del parámetro.
+///
+/// <see cref="ExcedenteComoPagoACuenta"/>: el cajero elige que lo cobrado por encima del total quede como pago a cuenta del
+/// cliente en vez de rechazarse (regla 9 de <c>ValidadorDePagos</c>). La venta conserva cobros por su total y el excedente
+/// pasa a un recibo (RC) del mismo cliente, con los mismos medios, en la misma transacción; la respuesta lo informa en
+/// <see cref="ComprobanteEmitido.PagoACuenta"/>. Se rechaza en vez de ignorarse con el Consumidor Final (400
+/// <c>pago_a_cuenta_sin_cuenta_corriente</c>), en una venta con número pre-asignado (400 <c>pago_a_cuenta_sin_conexion</c>),
+/// en una nota de crédito (400 <c>pago_a_cuenta_no_admitido</c>), sin excedente (400 <c>pago_a_cuenta_sin_excedente</c>) y
+/// cuando el excedente solo puede salir de cuenta corriente o de un cobro de Mercado Pago (400
+/// <c>pago_a_cuenta_no_divisible</c>).</summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
     int? IdCliente,
@@ -85,7 +94,8 @@ public sealed record SolicitudDeVenta(
     bool LimiteDeCreditoNoValidado = false,
     bool ForzarFactura = false,
     bool ConEnvio = false,
-    decimal? ImporteEnvio = null);
+    decimal? ImporteEnvio = null,
+    bool ExcedenteComoPagoACuenta = false);
 
 /// <summary><see cref="Cantidad"/> siempre positiva, sin importar el tipo de comprobante — el
 /// signo lo deriva <see cref="ServicioDeVentas"/> a partir de <c>tipos_comprobante.signo</c>
@@ -295,7 +305,13 @@ public sealed record ComprobanteEmitido(
     IReadOnlyList<PagoEmitido> Pagos,
     int? IdPresupuestoOrigen = null,
     bool FacturaForzada = false,
-    EstadoFiscalDeVenta? Fiscal = null);
+    EstadoFiscalDeVenta? Fiscal = null,
+    PagoACuentaEmitido? PagoACuenta = null);
+
+/// <summary>El recibo (RC) que se llevó el excedente de la venta (<see cref="SolicitudDeVenta.ExcedenteComoPagoACuenta"/>).
+/// Solo viene en la respuesta de la emisión que lo escribió: ni la lectura de la venta ni la respuesta de un reintento que
+/// encuentra la venta ya comiteada lo informan, porque nada en el esquema liga el recibo a la venta salvo su observación.</summary>
+public sealed record PagoACuentaEmitido(int Id, string NumeroVisible, decimal Importe);
 
 /// <summary>Fila de <c>GET /api/ventas</c> (listado paginado) — sin items/pagos, mismo criterio
 /// que los demás <c>*Listado</c> del proyecto (evita el N+1 de traer el detalle completo de cada

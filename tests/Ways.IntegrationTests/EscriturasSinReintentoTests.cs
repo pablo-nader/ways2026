@@ -1055,6 +1055,112 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(numeroComiteado, emitido.Numero);
     }
 
+    // ---- 14. ventas: el recibo del excedente dentro del mismo lambda reintentable ---------------
+
+    /// <summary>
+    /// LA CLÁUSULA: el recibo (RC) que se lleva el excedente de una venta a cuenta corriente se escribe dentro del lambda
+    /// reintentable de <c>EmitirAsync</c>, así que depende del mismo <c>db.ChangeTracker.Clear()</c> que la venta. El quiebre
+    /// cae en el INSERT de los cobros del recibo (la segunda escritura sobre <c>cobros</c>: la primera es el lote de ítems y
+    /// cobros de la venta), cuando el comprobante del recibo ya quedó en el tracker del intento 1. Sin el Clear, el intento 2
+    /// arrastra ese comprobante y el de la venta y los vuelve a insertar.
+    /// </summary>
+    [Fact]
+    public async Task LaVentaConExcedenteACuentaReintentaYEscribeUnSoloRecibo()
+    {
+        var s = await AprovisionarAsync("con-reintento-excedente");
+        var idArticulo = await SembrarArticuloAsync(s, "Artículo vendible");
+        await SembrarPrecioAsync(s, idArticulo, 990m);
+        await AbrirTurnoAsync(s);
+
+        int idQr, idCliente;
+        await using (var db = ContextoDelTenant(s))
+        {
+            var qr = new MedioPago
+            {
+                IdTenant = s.IdTenant, Nombre = "QR", Orden = 60, Comportamiento = ComportamientoMedioPago.Electronico,
+                AdmiteVuelto = false, RequiereReferencia = false, CreatedAt = Ahora, UpdatedAt = Ahora
+            };
+            var cliente = new Cliente
+            {
+                IdTenant = s.IdTenant, Numero = 1000 + Random.Shared.Next(1, 100_000), Nombre = "Cliente con cuenta",
+                IdCondicionFiscal = s.IdCondicionFiscal, IdListaPrecio = s.IdListaDefault, CreditoIlimitado = true,
+                CreatedAt = Ahora, UpdatedAt = Ahora
+            };
+            db.MediosPago.Add(qr);
+            db.Clientes.Add(cliente);
+            await db.SaveChangesAsync();
+            (idQr, idCliente) = (qr.Id, cliente.Id);
+        }
+
+        var solicitud = new SolicitudDeVenta(
+            s.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(idQr, 1000m, null, 0m)],
+            null, null, ExcedenteComoPagoACuenta: true);
+
+        var interceptor = new InterceptorQueRompeLaEnesimaEscritura("cobros", SqlStateTransitorio, enesima: 2);
+
+        ComprobanteEmitido emitido;
+        await using (var db = ContextoConReintentos(s, interceptor))
+        {
+            emitido = await ServicioDeVentasSobre(db, s).EmitirAsync(solicitud);
+        }
+
+        Assert.Equal(1, interceptor.Disparos);
+        Assert.NotNull(emitido.PagoACuenta);
+
+        Assert.Equal(2, await ContarComprobantesAsync(s.IdPuntoVenta));
+        Assert.Equal(1, await ContarPagosDeComprobanteAsync(emitido.Id));
+        Assert.Equal(1, await ContarPagosDeComprobanteAsync(emitido.PagoACuenta!.Id));
+
+        await using var lectura = ContextoDelTenant(s);
+        Assert.Equal(-10m, await lectura.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).SingleAsync());
+        Assert.Equal(1, await lectura.MovimientosCuentaCorriente.CountAsync(m => m.IdCliente == idCliente));
+    }
+
+    /// <summary>Rompe una sola vez la <paramref name="enesima"/> ejecución que inserta en la tabla vigilada (contando también
+    /// las de un lote que la incluye), para que el quiebre caiga en una escritura posterior a otras del mismo intento.</summary>
+    private sealed class InterceptorQueRompeLaEnesimaEscritura(string tabla, string sqlState, int enesima)
+        : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        private readonly System.Text.RegularExpressions.Regex marca = new(
+            $@"INSERT INTO (?:""{System.Text.RegularExpressions.Regex.Escape(tabla)}""|{System.Text.RegularExpressions.Regex.Escape(tabla)})(?![\w$])",
+            System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(5));
+
+        private int coincidencias;
+
+        public int Disparos { get; private set; }
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>>
+            ReaderExecutingAsync(
+                System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+                Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+                CancellationToken cancellationToken = default)
+        {
+            RomperSiCorresponde(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> NonQueryExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            RomperSiCorresponde(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void RomperSiCorresponde(System.Data.Common.DbCommand comando)
+        {
+            if (!marca.IsMatch(comando.CommandText) || ++coincidencias != enesima)
+            {
+                return;
+            }
+
+            Disparos++;
+            throw new PostgresException($"falla inyectada por la prueba sobre el INSERT {tabla}", "ERROR", "ERROR", sqlState);
+        }
+    }
+
     private async Task<(int Id, long Numero)> UnicoComprobanteAsync(int idPuntoVenta)
     {
         await using var db = ContextoDePlataforma();

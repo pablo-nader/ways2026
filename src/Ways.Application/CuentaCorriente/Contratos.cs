@@ -27,7 +27,7 @@ public sealed record SolicitudDeAplicacionesDeCobro(IReadOnlyList<AplicacionDeCo
 /// Respuesta de <c>POST /api/clientes/{id}/cuenta-corriente/pagos</c>: los mismos campos que
 /// <see cref="ComprobanteEmitido"/> (la forma que leen los registros instalados) más las aplicaciones vivas del recibo
 /// (<see cref="Aplicaciones"/>, vacía si el pedido no trajo ninguna). Un recibo no tiene ítems, presupuesto de origen ni
-/// factura: esos campos viajan igual que siempre (<c>[]</c>, <c>null</c>, <c>false</c>, <c>null</c>).
+/// factura ni excedente a cuenta: esos campos viajan igual que siempre (<c>[]</c>, <c>null</c>, <c>false</c>, <c>null</c>, <c>null</c>).
 /// </summary>
 public sealed record PagoACuentaRegistrado(
     int Id,
@@ -50,13 +50,14 @@ public sealed record PagoACuentaRegistrado(
     int? IdPresupuestoOrigen,
     bool FacturaForzada,
     EstadoFiscalDeVenta? Fiscal,
+    PagoACuentaEmitido? PagoACuenta,
     IReadOnlyList<AplicacionDeCobroListada> Aplicaciones)
 {
     public static PagoACuentaRegistrado De(
         ComprobanteEmitido c, IReadOnlyList<AplicacionDeCobroListada> aplicaciones) => new(
         c.Id, c.Numero, c.NumeroVisible, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.IdComprobanteAsociado,
         c.Subtotal, c.DescuentoTotal, c.DescuentoManualTotal, c.RecargoManualTotal, c.Total, c.DireccionEntrega,
-        c.Observaciones, c.Items, c.Pagos, c.IdPresupuestoOrigen, c.FacturaForzada, c.Fiscal, aplicaciones);
+        c.Observaciones, c.Items, c.Pagos, c.IdPresupuestoOrigen, c.FacturaForzada, c.Fiscal, c.PagoACuenta, aplicaciones);
 }
 
 /// <summary>Una venta del cliente con saldo pendiente en cuenta corriente (<c>GET …/ventas-pendientes</c>):
