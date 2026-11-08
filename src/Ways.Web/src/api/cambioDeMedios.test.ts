@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cobradoDePagos,
+  cobradoObjetivoDelCambio,
   evaluarCambioDeMedios,
   filasDesdePagos,
   MENSAJES_DE_CAMBIO_DE_MEDIOS,
@@ -178,12 +179,35 @@ describe('evaluarCambioDeMedios', () => {
   })
 
   it('un total distinto sin otra regla violada se rechaza con el mensaje del cambio de medios', () => {
-    // Dos medios sin vuelto cuyo total supera lo original: ninguna regla de pago salta, solo la del total.
+    // Venta cobrada dentro de la tolerancia (995 de 1000): cobrar 1000 no viola ninguna regla de pago, pero no es lo cobrado.
+    const e = evaluar([{ id: 1, idMedioPago: 3, importe: 1000, referencia: '', vueltoManual: null }], 1000, 995)
+    expect(e.diferencia).toBe(-5)
+    expect(e.error).toBe(MENSAJES_DE_CAMBIO_DE_MEDIOS.total_de_cobros_distinto)
+  })
+
+  it('dos medios sin vuelto que juntos superan el total los frena la regla de pago, no la del total', () => {
     const e = evaluar([
       { id: 1, idMedioPago: 3, importe: 600, referencia: '', vueltoManual: null },
       { id: 2, idMedioPago: 2, importe: 500, referencia: 'c', vueltoManual: null },
     ])
-    expect(e.error).toBe(MENSAJES_DE_CAMBIO_DE_MEDIOS.total_de_cobros_distinto)
+    expect(e.error).toContain('Lo cobrado supera el total de la venta')
+  })
+
+  it('una venta cobrada de más se corrige cobrando exactamente el total', () => {
+    const e = evaluar([{ id: 1, idMedioPago: 3, importe: 1000, referencia: '', vueltoManual: null }], 1000, 10000)
+    expect(e.diferencia).toBe(0)
+    expect(e.error).toBeNull()
+  })
+
+  it('una venta cobrada de más no se puede dejar inflada', () => {
+    const e = evaluar([{ id: 1, idMedioPago: 3, importe: 10000, referencia: '', vueltoManual: null }], 1000, 10000)
+    expect(e.error).not.toBeNull()
+  })
+
+  it('una venta cobrada de más corregida por menos del total sigue sin cubrirlo', () => {
+    const e = evaluar([{ id: 1, idMedioPago: 3, importe: 900, referencia: '', vueltoManual: null }], 1000, 10000)
+    expect(e.diferencia).toBe(100)
+    expect(e.error).not.toBeNull()
   })
 
   it('el exceso en efectivo se vuelve vuelto sugerido y el total cobrado se mantiene', () => {
@@ -213,7 +237,7 @@ describe('evaluarCambioDeMedios', () => {
     const e = evaluar([{ id: 1, idMedioPago: 3, importe: 1100, referencia: '', vueltoManual: 100 }])
     expect(e.pagos[0].vuelto).toBe(0)
     expect(e.diferencia).toBe(-100)
-    expect(e.error).toBe(MENSAJES_DE_CAMBIO_DE_MEDIOS.total_de_cobros_distinto)
+    expect(e.error).toBe('El importe de Transferencia supera el total de la venta.')
   })
 
   it('una línea sin medio o sin importe se rechaza con su número de línea', () => {
@@ -231,5 +255,13 @@ describe('evaluarCambioDeMedios', () => {
   it('una venta cobrada dentro de la tolerancia (cobró menos que el total) no se rechaza de entrada', () => {
     const e = evaluar([{ id: 1, idMedioPago: 3, importe: 995, referencia: '', vueltoManual: null }], 1000, 995)
     expect(e.error).toBeNull()
+  })
+})
+
+describe('cobradoObjetivoDelCambio', () => {
+  it('conserva lo cobrado salvo que supere el total, que se corrige al total', () => {
+    expect(cobradoObjetivoDelCambio(1000, 1000)).toBe(1000)
+    expect(cobradoObjetivoDelCambio(1000, 995)).toBe(995)
+    expect(cobradoObjetivoDelCambio(1000, 10000)).toBe(1000)
   })
 })

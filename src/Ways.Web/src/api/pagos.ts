@@ -21,6 +21,8 @@ export type PagoParaCalculo = {
   requiereReferencia: boolean
   importe: number
   referencia: string | null
+  /** Nombre del medio, solo para los mensajes de rechazo. */
+  nombre?: string
   /** Quién cobra por el medio (`mercadopago_qr`): un medio con proveedor no pide referencia, la fija el servidor desde el cobro. */
   proveedor?: string | null
 }
@@ -37,6 +39,9 @@ export type FilaPago = {
   importe: number | null
   referencia: string
   vueltoManual: number | null
+  /** `true` cuando el cajero tocó el importe de la fila (aunque lo haya dejado vacío): deja de seguir a la propuesta de
+   * `aplicarImportesSugeridos`. Ausente o `false` + `importe === null` = fila que toma el importe propuesto. */
+  importeEditado?: boolean
 }
 
 export function filaPagoVacia(id: number): FilaPago {
@@ -106,6 +111,32 @@ export function superaLimiteDeCredito(
 }
 
 /**
+ * Filas con el importe propuesto en las que el cajero no tocó: cada una toma lo que falta del total después de las anteriores
+ * (`max(0, total − Σ importes anteriores)`), así la primera propone el total completo. Se aplica en cada render sobre el
+ * estado crudo, de modo que la propuesta sigue al total (el carrito crece) y es el importe que de verdad se valida y se cobra.
+ * Una fila con importe cargado, aunque no tenga la marca (borradores anteriores a `importeEditado`), no se pisa. Con `total`
+ * en `null` (total no confiable) no propone nada. Devuelve la misma referencia si no hay nada para proponer.
+ */
+export function aplicarImportesSugeridos(filas: FilaPago[], total: number | null): FilaPago[] {
+  if (total === null) return filas
+  let cambio = false
+  let acumulado = 0
+  const resultado = filas.map((fila) => {
+    let importe = fila.importe
+    if (importe === null && fila.importeEditado !== true) {
+      const sugerido = Math.max(0, redondear(total - acumulado))
+      if (sugerido > 0) {
+        importe = sugerido
+        cambio = true
+      }
+    }
+    acumulado = redondear(acumulado + (importe ?? 0))
+    return importe === fila.importe ? fila : { ...fila, importe }
+  })
+  return cambio ? resultado : filas
+}
+
+/**
  * Convierte las filas del panel en pagos de cálculo, descartando las que el cajero todavía no
  * terminó de completar (sin medio elegido o sin un importe positivo) — una fila a medio tipear
  * no debe ensuciar el cálculo de faltante/vuelto ni la validación local.
@@ -120,6 +151,7 @@ export function filasAPagosParaCalculo(filas: FilaPago[], medioPorId: Record<num
     pagos.push({
       idFila: fila.id,
       idMedioPago: medio.id,
+      nombre: medio.nombre,
       comportamiento: medio.comportamiento,
       admiteVuelto: medio.admiteVuelto,
       requiereReferencia: medio.requiereReferencia && !medio.proveedor,
@@ -156,7 +188,7 @@ export function filasConMedioInvalidoReseteado(filas: FilaPago[], medioPorId: Re
  * Asigna el excedente completo como vuelto al PRIMER pago cuyo medio admite vuelto — nunca se
  * reparte entre varios (evita ambigüedad de a qué medio "le sobra" el pago); el resto queda en
  * `0`. Si ningún medio de la mezcla admite vuelto, el excedente completo queda sin asignar (el
- * cajero tiene que ajustar el importe, la regla 2/8 del validador lo va a rechazar si corresponde).
+ * cajero tiene que ajustar el importe: la regla 9 del validador rechaza lo cobrado de más).
  */
 export function calcularPagosConVuelto(pagos: PagoParaCalculo[], total: number): (PagoParaCalculo & { vuelto: number })[] {
   const excedente = calcularExcedente(total, pagos)
@@ -280,6 +312,24 @@ export function validarPagosLocal(params: {
   const vueltoMaximoCoherente = Math.max(0, redondear(sumaImportes - total))
   if (sumaVueltos > vueltoMaximoCoherente) {
     return { codigo: 'vuelto_invalido', mensaje: 'El vuelto no coincide con lo que sobra del pago.' }
+  }
+
+  // Una nota de crédito no cobra (regla 0c): el tope parte de cero, no de su total negativo.
+  const topeDelCobro = redondear(Math.max(0, total) + toleranciaPago)
+  for (const pago of pagos) {
+    if (!pago.admiteVuelto && pago.importe > topeDelCobro) {
+      return {
+        codigo: 'importe_supera_el_total',
+        mensaje: `El importe de ${pago.nombre ?? 'un pago sin vuelto'} supera el total de la venta.`,
+      }
+    }
+  }
+
+  if (redondear(sumaImportes - sumaVueltos) > topeDelCobro) {
+    return {
+      codigo: 'cobro_supera_el_total',
+      mensaje: 'Lo cobrado supera el total de la venta: lo que sobra del efectivo tiene que volver como vuelto.',
+    }
   }
 
   return null

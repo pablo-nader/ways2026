@@ -17,7 +17,7 @@ export const MENSAJES_DE_CAMBIO_DE_MEDIOS: Readonly<Record<string, string>> = {
   venta_anulada: 'La venta está anulada: no se puede cambiar su medio de pago.',
   comprobante_sin_cambio_de_medios: 'Este comprobante no cobra con medios de pago, no hay nada para cambiar.',
   cambio_de_medios_con_cuenta_corriente: 'No se puede cambiar el medio de una venta cobrada con cuenta corriente, ni pasarla a cuenta corriente.',
-  total_de_cobros_distinto: 'Lo cobrado con los medios nuevos tiene que ser igual a lo que se cobró originalmente.',
+  total_de_cobros_distinto: 'Lo cobrado con los medios nuevos tiene que ser igual a lo que corresponde cobrar.',
   cambio_de_medios_sin_diferencia: 'Los medios indicados son los que la venta ya tiene: no hay nada para cambiar.',
   periodo_conciliado: 'La fecha de esta venta ya está conciliada en tesorería: no se puede cambiar su medio de pago.',
 }
@@ -87,10 +87,16 @@ export type EvaluacionDeCambioDeMedios = {
   pagos: PagoDeVenta[]
   /** Vuelto resuelto por fila (id de fila → vuelto). */
   vueltoPorFila: ReadonlyMap<number, number>
-  /** Lo que falta (positivo) o sobra (negativo) de lo cobrado originalmente. */
+  /** Lo que falta (positivo) o sobra (negativo) respecto de lo que corresponde cobrar (`cobradoObjetivo`). */
   diferencia: number
   /** Primer motivo por el que todavía no se puede guardar, o `null`. */
   error: string | null
+}
+
+/** Lo que los medios nuevos tienen que cobrar: lo mismo que antes, salvo que la venta se haya cobrado de más (cobro mayor al
+ * total), que se corrige a exactamente el total de la venta. */
+export function cobradoObjetivoDelCambio(totalDeLaVenta: number, cobradoOriginal: number): number {
+  return cobradoOriginal > totalDeLaVenta ? totalDeLaVenta : cobradoOriginal
 }
 
 /**
@@ -108,7 +114,7 @@ export function evaluarCambioDeMedios(params: {
   const medioPorId = Object.fromEntries(medios.map((m) => [m.id, m]))
   const pagosConVuelto = filasAPagosConVuelto([...filas], medioPorId, totalDeLaVenta)
   const vueltoPorFila = new Map(pagosConVuelto.map((p) => [p.idFila, p.vuelto]))
-  const diferencia = redondearImporte(cobradoOriginal - (sumarImportes(pagosConVuelto) - sumarVueltos(pagosConVuelto)))
+  const diferencia = redondearImporte(cobradoObjetivoDelCambio(totalDeLaVenta, cobradoOriginal) - (sumarImportes(pagosConVuelto) - sumarVueltos(pagosConVuelto)))
   const pagos = pagosConVuelto.map((p) => ({ idMedioPago: p.idMedioPago, importe: p.importe, referencia: p.referencia, vuelto: p.vuelto }))
 
   const resultado = (error: string | null): EvaluacionDeCambioDeMedios => ({ pagos, vueltoPorFila, diferencia, error })

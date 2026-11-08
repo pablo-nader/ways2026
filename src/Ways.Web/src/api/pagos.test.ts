@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   aPagosDeVenta,
+  aplicarImportesSugeridos,
   calcularExcedente,
   calcularFaltante,
   calcularPagosConVuelto,
@@ -141,10 +142,11 @@ describe('pagos — filasAPagosParaCalculo', () => {
       { id: 2, idMedioPago: 2, importe: 20, referencia: 'auth-123', vueltoManual: null },
     ]
     expect(filasAPagosParaCalculo(filas, medioPorId)).toEqual([
-      { idFila: 1, idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 80, referencia: null },
+      { idFila: 1, idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 80, referencia: null },
       {
         idFila: 2,
         idMedioPago: 2,
+        nombre: 'Tarjeta',
         comportamiento: 'Electronico',
         admiteVuelto: false,
         requiereReferencia: true,
@@ -370,6 +372,65 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
     expect(validarPagosLocal({ ...base, total: 7500, pagos })?.codigo).toBe('vuelto_invalido')
   })
 
+  it('regla 9a: un medio sin vuelto por encima del total se rechaza con el nombre del medio (222000 de QR en 22200)', () => {
+    const pagos = [{ ...pagoFixture({ comportamiento: 'Electronico', admiteVuelto: false, importe: 222000, nombre: 'QR' }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, total: 22200, toleranciaPago: 0, pagos })).toEqual({
+      codigo: 'importe_supera_el_total',
+      mensaje: 'El importe de QR supera el total de la venta.',
+    })
+  })
+
+  it('regla 9a: sin nombre del medio el mensaje usa la forma genérica', () => {
+    const pagos = [{ ...pagoFixture({ admiteVuelto: false, importe: 150 }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, pagos })?.mensaje).toBe('El importe de un pago sin vuelto supera el total de la venta.')
+  })
+
+  it('regla 9a: el límite incluye la tolerancia (total + tolerancia pasa, un centavo más no)', () => {
+    const justo = [{ ...pagoFixture({ admiteVuelto: false, importe: 110, nombre: 'QR' }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, pagos: justo })).toBeNull()
+    const pasado = [{ ...pagoFixture({ admiteVuelto: false, importe: 110.01, nombre: 'QR' }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, pagos: pasado })?.codigo).toBe('importe_supera_el_total')
+  })
+
+  it('regla 9: efectivo por encima del total con su vuelto se acepta', () => {
+    const pagos = [{ ...pagoFixture({ importe: 25000, admiteVuelto: true }), vuelto: 2800 }]
+    expect(validarPagosLocal({ ...base, total: 22200, pagos })).toBeNull()
+  })
+
+  it('regla 9b: efectivo por encima del total sin vuelto se rechaza por cobrar de más', () => {
+    const pagos = [{ ...pagoFixture({ importe: 25000, admiteVuelto: true }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, total: 22200, pagos })).toEqual({
+      codigo: 'cobro_supera_el_total',
+      mensaje: 'Lo cobrado supera el total de la venta: lo que sobra del efectivo tiene que volver como vuelto.',
+    })
+  })
+
+  it('regla 9b: dos medios que juntos superan el total se rechazan aunque cada uno quede bajo el total', () => {
+    const pagos = [
+      { ...pagoFixture({ idFila: 1, admiteVuelto: false, importe: 80, nombre: 'QR' }), vuelto: 0 },
+      { ...pagoFixture({ idFila: 2, admiteVuelto: false, importe: 80, nombre: 'Tarjeta' }), vuelto: 0 },
+    ]
+    expect(validarPagosLocal({ ...base, pagos })?.codigo).toBe('cobro_supera_el_total')
+  })
+
+  it('regla 9b: lo cobrado en el límite con tolerancia se acepta', () => {
+    const pagos = [{ ...pagoFixture({ importe: 110, admiteVuelto: true }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, pagos })).toBeNull()
+  })
+
+  it('regla 9 va después de la 8: un vuelto inválido sigue reportándose como vuelto_invalido', () => {
+    const pagos = [{ ...pagoFixture({ importe: 100, admiteVuelto: true }), vuelto: 5 }]
+    expect(validarPagosLocal({ ...base, pagos })?.codigo).toBe('vuelto_invalido')
+  })
+
+  it('regla 9 va después de la 2: un pago que no cubre sigue reportándose como regla 2', () => {
+    const pagos = [
+      { ...pagoFixture({ idFila: 1, admiteVuelto: false, importe: 500, nombre: 'QR' }), vuelto: 0 },
+      { ...pagoFixture({ idFila: 2, admiteVuelto: false, importe: 1, nombre: 'Tarjeta' }), vuelto: 0 },
+    ]
+    expect(validarPagosLocal({ ...base, total: 1000, toleranciaPago: 0, pagos })?.codigo).toBe('tolerancia_de_pago_superada')
+  })
+
   it('un payload que viola las reglas 2 y 6 a la vez reporta la 2 (la que corta primero)', () => {
     const pagos = [{ ...pagoFixture({ comportamiento: 'CuentaCorriente', importe: 50, admiteVuelto: false }), vuelto: 0 }]
     expect(
@@ -449,7 +510,7 @@ describe('pagos — filasAPagosConVuelto', () => {
     const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: 120, referencia: '', vueltoManual: null }]
     const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
     expect(resultado).toEqual([
-      { idFila: 1, idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 120, referencia: null, vuelto: 20 },
+      { idFila: 1, idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 120, referencia: null, vuelto: 20 },
     ])
   })
 
@@ -486,5 +547,61 @@ describe('pagos — aPagosDeVenta', () => {
   it('mapea al shape del request de checkout', () => {
     const pagos = calcularPagosConVuelto([pagoFixture({ importe: 120, admiteVuelto: true, referencia: 'x' })], 100)
     expect(aPagosDeVenta(pagos)).toEqual([{ idMedioPago: 1, importe: 120, referencia: 'x', vuelto: 20 }])
+  })
+})
+
+describe('pagos — filasAPagosParaCalculo (nombre del medio)', () => {
+  it('copia el nombre del medio para los mensajes de rechazo', () => {
+    const medio = medioFixture({ id: 5, nombre: 'QR Mercado Pago', comportamiento: 'Electronico' })
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 5, importe: 100, referencia: '', vueltoManual: null }]
+    expect(filasAPagosParaCalculo(filas, { 5: medio })[0].nombre).toBe('QR Mercado Pago')
+  })
+})
+
+describe('pagos — aplicarImportesSugeridos', () => {
+  const fila = (id: number, extra: Partial<FilaPago> = {}): FilaPago => ({ ...filaPagoVacia(id), ...extra })
+
+  it('la primera fila sin tocar propone el total completo', () => {
+    expect(aplicarImportesSugeridos([fila(1)], 22200)[0].importe).toBe(22200)
+  })
+
+  it('una fila nueva con filas anteriores cargadas propone lo que falta', () => {
+    const resultado = aplicarImportesSugeridos([fila(1, { importe: 10000, importeEditado: true }), fila(2)], 22200)
+    expect(resultado.map((f) => f.importe)).toEqual([10000, 12200])
+  })
+
+  it('con las anteriores cubriendo el total no propone nada (nunca negativo)', () => {
+    const resultado = aplicarImportesSugeridos([fila(1, { importe: 30000, importeEditado: true }), fila(2)], 22200)
+    expect(resultado[1].importe).toBeNull()
+  })
+
+  it('una fila tocada y vaciada a mano no vuelve a la propuesta', () => {
+    const filas = [fila(1, { importe: null, importeEditado: true })]
+    expect(aplicarImportesSugeridos(filas, 22200)).toBe(filas)
+  })
+
+  it('un importe ya cargado sin marca (borrador anterior) no se pisa', () => {
+    const filas = [fila(1, { importe: 500 })]
+    expect(aplicarImportesSugeridos(filas, 22200)[0].importe).toBe(500)
+  })
+
+  it('la propuesta sigue al total mientras la fila no se toca', () => {
+    const filas = [fila(1)]
+    expect(aplicarImportesSugeridos(filas, 100)[0].importe).toBe(100)
+    expect(aplicarImportesSugeridos(filas, 250)[0].importe).toBe(250)
+  })
+
+  it('sin total confiable o con total 0 devuelve las mismas filas', () => {
+    const filas = [fila(1)]
+    expect(aplicarImportesSugeridos(filas, null)).toBe(filas)
+    expect(aplicarImportesSugeridos(filas, 0)).toBe(filas)
+  })
+
+  it('con propuesta, la fila se valida y se cobra por ese importe (efectivo sin vuelto)', () => {
+    const efectivo = medioFixture({ id: 1, comportamiento: 'Efectivo', admiteVuelto: true })
+    const filas = aplicarImportesSugeridos([fila(1, { idMedioPago: 1 })], 22200)
+    const pagos = filasAPagosConVuelto(filas, { 1: efectivo }, 22200)
+    expect(pagos[0].importe).toBe(22200)
+    expect(pagos[0].vuelto).toBe(0)
   })
 })
