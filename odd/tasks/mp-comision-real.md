@@ -59,7 +59,7 @@ non-trivial files).
 - [x] T2 Capture at approval: Payments DTO, fee rule, call in approval path; unit + integration (webhook) tests. (route: delegated; commit df202b01)
 - [x] T3 Wiring: close, compensation, reconstruction, conciliation generator; integration tests. (route: delegated; commit 2f1f1b6e)
 - [x] T4 docs/10 part 07 updated. (route: delegated; commit 2f1f1b6e)
-- [ ] T5 judgment-day APPROVED, PR + auto-merge + Auto-fix.
+- [x] T5 judgment-day APPROVED (round 0, no fix round), PR + auto-merge + Auto-fix.
 
 ## Acceptance
 
@@ -96,4 +96,10 @@ Mutation evidence:
 Checks: build 0 errors; Ways.Domain.Tests 2621/2621; Ways.Application.Tests 1691/1691 (includes the structural guards);
 new integration tests 9/9; integration MercadoPago|CuentasTesoreria|AislamientoDeTenant|SuperficieDeAutorizacion 619/619 (42 m) on 2f1f1b6e.
 
-Next: T5 judgment-day, then PR.
+Judgment day (target 34d0d660): 0 CRITICAL. Both judges: WARNING, a 401 on `/v1/payments` goes through the shared client and
+marks the connection `requiere_reconexion`; accepted as info because the order read with the same token succeeds just before, so a
+401 there means a revoked token. Suspects (one judge each, info): fee read only once with no retry; empty `fee_details` with
+net == amount stored as 0; no integration test kills each clause of the qualifying rule; the `Base > bruto` guard would abort a
+close if ever reached (unreachable today). Verdict: APPROVED.
+
+Next: follow-ups only (retry of an unread fee, qualifying-rule clause tests).
