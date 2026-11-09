@@ -105,6 +105,23 @@ public static class MercadoPagoEndpoints
             "mercadopago_estado_invalido, 403 mercadopago_estado_ajeno, 409 mercadopago_ya_conectada|mercadopago_cuenta_en_uso, " +
             "502 mercadopago_intercambio_fallido.");
 
+        var diagnostico = app.MapGroup("/api/empresas/{idEmpresa:int}/mercadopago/diagnostico")
+            .WithTags("Mercado Pago")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        diagnostico.MapGet("/pagos-recibidos", (
+            ServicioDeDiagnosticoMercadoPago servicio, int idEmpresa, int? horas, CancellationToken ct) =>
+            servicio.PagosRecibidosAsync(idEmpresa, horas, ct))
+        .WithSummary(
+            "Diagnóstico de solo lectura: los pagos que Mercado Pago informa como recibidos en las últimas horas (1 a 168, 24 por defecto) y " +
+            "la lista de reportes de transacciones, con campos saneados (del pagador solo el nombre).")
+        .WithDescription(
+            "Llama a GET /v1/payments/search y a GET /v1/account/settlement_report/list con el token de la conexión de la empresa; devuelve los " +
+            "primeros 100 pagos (total es el conteo de Mercado Pago) y no crea reportes. Como cualquier llamada a Mercado Pago, un 401 " +
+            "marca la conexión para reconectar. Si la lista de reportes falla, reportes es null y errorReportes lleva el código. 404 empresa inexistente, " +
+            "400 horas_invalidas, 409 mercadopago_no_conectada|mercadopago_requiere_reconexion, 502 mercadopago_solicitud_rechazada, " +
+            "503 mercadopago_no_disponible.");
+
         var locales = app.MapGroup("/api/sucursales/{idSucursal:int}/mercadopago")
             .WithTags("Mercado Pago")
             .RequireAuthorization(Politicas.GestionDeCatalogo);

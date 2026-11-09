@@ -43,6 +43,15 @@ public interface IClienteApiMercadoPago
     /// <summary><c>GET /terminals/v1/list</c>: las terminales Point del vendedor, filtradas opcionalmente por store y por POS.</summary>
     Task<ListadoDeTerminalesMercadoPago> ListarTerminalesAsync(
         int idEmpresa, long? idStore = null, long? idPos = null, CancellationToken ct = default);
+
+    /// <summary><c>GET /v1/payments/search</c> acotado a <c>date_created</c> entre <paramref name="desde"/> y <paramref name="hasta"/>
+    /// (los más nuevos primero, hasta 100). Solo diagnóstico: devuelve campos saneados, sin datos personales del pagador.</summary>
+    Task<ListadoDePagosRecibidosMercadoPago> BuscarPagosRecibidosAsync(
+        int idEmpresa, DateTimeOffset desde, DateTimeOffset hasta, CancellationToken ct = default);
+
+    /// <summary><c>GET /v1/account/settlement_report/list</c>: los reportes de transacciones ya generados. No crea ninguno.</summary>
+    Task<IReadOnlyList<ReporteDeTransaccionesMercadoPago>> ListarReportesDeTransaccionesAsync(
+        int idEmpresa, CancellationToken ct = default);
 }
 
 /// <summary>

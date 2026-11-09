@@ -240,6 +240,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeLocalesMercadoPago>();
         services.AddScoped<ServicioDeCajasMercadoPago>();
         services.AddScoped<ServicioDeTerminalesMercadoPago>();
+        services.AddScoped<ServicioDeDiagnosticoMercadoPago>();
         services.AddScoped<ServicioDeCobrosMercadoPago>();
         services.AddScoped<ServicioDeConciliacionMercadoPago>();
         services.AddScoped<ServicioDePropuestasDeTesoreriaMercadoPago>();
