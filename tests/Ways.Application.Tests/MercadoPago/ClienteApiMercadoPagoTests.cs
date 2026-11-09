@@ -392,6 +392,21 @@ public class ClienteApiMercadoPagoTests
     }
 
     [Fact]
+    public async Task UnCuatroXxDejaEnElLogElCodigoYElMensajeSaneadosDeMercadoPago()
+    {
+        var cuerpo = JsonSerializer.Serialize(new { error = "validation_error", message = $"amount invalido {Token}" });
+        var (cliente, _, _, logs) = Crear((_, _) => Json(HttpStatusCode.BadRequest, cuerpo));
+
+        await Assert.ThrowsAsync<ErrorDeApiMercadoPago>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v1/orders?x=1"));
+
+        var rechazo = Assert.Single(logs.Mensajes, m => m.Contains("rechazó"));
+        Assert.Contains("POST v1/orders", rechazo);
+        Assert.Contains("validation_error", rechazo);
+        Assert.Contains("amount invalido ***", rechazo);
+        Assert.All(logs.Mensajes, m => Assert.DoesNotContain(Token, m));
+    }
+
+    [Fact]
     public async Task UnErrorDeLecturaDelCuerpoDeUnCuatroXxPorTiempoAgotadoEsNoDisponible()
     {
         var (cliente, _, proveedor, logs) = Crear(

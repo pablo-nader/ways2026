@@ -86,6 +86,9 @@ public sealed class ClienteApiMercadoPago(
                     else if (estado is >= 400 and < 500 and not 408 and not 429)
                     {
                         var (codigo, mensaje) = await LeerErrorAsync(respuesta, token.AccessToken, metodo, rutaSinConsulta, ct);
+                        log.LogWarning(
+                            "Mercado Pago rechazó {Metodo} {Ruta}: código {CodigoMercadoPago}, mensaje {MensajeMercadoPago}.",
+                            metodo.Method, rutaSinConsulta, codigo, mensaje);
                         throw new ErrorDeApiMercadoPago(estado, codigo, mensaje);
                     }
                     else
