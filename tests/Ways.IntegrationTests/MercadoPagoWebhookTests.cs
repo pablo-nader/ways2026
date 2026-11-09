@@ -106,6 +106,76 @@ public partial class MercadoPagoCobrosTests
         Assert.Equal($"/v1/orders/{orden}", lectura.Uri.AbsolutePath);
     }
 
+    // Clausula: al aprobar, el pago del cobro se lee en /v1/payments/{reference_id} y comision_informada guarda la suma de las comisiones
+    // a cargo del vendedor (la del comprador no cuenta).
+    [Fact]
+    public async Task UnAvisoDeUnaOrdenPagadaGuardaLaComisionInformadaDelPago()
+    {
+        var e = await PrepararAsync("mp-webhook-comision");
+        e.Ordenes.Pago = id => PagoAprobado(id, 100m, "3.17");
+        var orden = await PendienteConOrdenAsync(e, 7101);
+        e.Ordenes.Estados[orden] = "processed";
+
+        Assert.Equal(HttpStatusCode.OK, (await AvisarAsync(ClienteDelWebhook(e), orden, FirmaValida(e, orden))).StatusCode);
+
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("aprobado", fila["estado"]);
+        Assert.Equal(3.17m, fila["comision_informada"]);
+        Assert.Equal("/v1/payments/9876543", Assert.Single(LecturasDePagos(e)).Uri.AbsolutePath);
+    }
+
+    // Clausula: si Mercado Pago no contesta el pago (500), el cobro se aprueba igual y comision_informada queda nula.
+    [Fact]
+    public async Task SiElPagoNoSePuedeLeerElCobroSeApruebaSinComisionInformada()
+    {
+        var e = await PrepararAsync("mp-webhook-comision-error");
+        e.Ordenes.Pago = _ => Json(HttpStatusCode.InternalServerError, """{"message": "boom"}""");
+        var orden = await PendienteConOrdenAsync(e, 7102);
+        e.Ordenes.Estados[orden] = "processed";
+
+        Assert.Equal(HttpStatusCode.OK, (await AvisarAsync(ClienteDelWebhook(e), orden, FirmaValida(e, orden))).StatusCode);
+
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("aprobado", fila["estado"]);
+        Assert.Null(fila["comision_informada"]);
+        Assert.Single(LecturasDePagos(e));
+    }
+
+    // Clausula: sin reference_id numerico no hay pago que leer: el cobro se aprueba sin pedir /v1/payments.
+    [Fact]
+    public async Task SinReferenciaDelPagoNoSeLeeLaComision()
+    {
+        var e = await PrepararAsync("mp-webhook-comision-sin-referencia");
+        e.Ordenes.ReferenceId = null;
+        e.Ordenes.Pago = id => PagoAprobado(id, 100m, "3.17");
+        var orden = await PendienteConOrdenAsync(e, 7103);
+        e.Ordenes.Estados[orden] = "processed";
+
+        Assert.Equal(HttpStatusCode.OK, (await AvisarAsync(ClienteDelWebhook(e), orden, FirmaValida(e, orden))).StatusCode);
+
+        var fila = Assert.Single(await FilasAsync(e.IdPuntoVenta));
+        Assert.Equal("aprobado", fila["estado"]);
+        Assert.Null(fila["comision_informada"]);
+        Assert.Empty(LecturasDePagos(e));
+    }
+
+    // Clausula: ck_cobros_mercadopago_comision_informada: una comision informada negativa la rechaza la base (23514).
+    [Fact]
+    public async Task LaBaseRechazaUnaComisionInformadaNegativa()
+    {
+        var e = await PrepararAsync("mp-webhook-comision-ck");
+        await PendienteConOrdenAsync(e, 7104);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText = "UPDATE cobros_mercadopago SET comision_informada = -0.01 WHERE id_punto_venta = $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdPuntoVenta });
+        var rechazo = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+
+        Assert.Equal("23514", rechazo.SqlState);
+        Assert.Equal("ck_cobros_mercadopago_comision_informada", rechazo.ConstraintName);
+    }
+
     [Fact]
     public async Task ElTipoPuedeVenirSoloEnElCuerpoDelAviso()
     {

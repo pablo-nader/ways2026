@@ -125,6 +125,11 @@ public class CobroMercadoPago : EntidadTenant
     /// <summary>Lo que Mercado Pago dice que se pagó; puede diferir de <see cref="Importe"/>.</summary>
     public decimal? ImportePagado { get; set; }
 
+    /// <summary>La comisión que Mercado Pago informó en <c>/v1/payments</c> al aprobar el cobro (suma de <c>fee_details</c> a cargo del vendedor);
+    /// nula si no se pudo leer. Se escribe solo en la transición a <see cref="EstadosDeCobroMercadoPago.Aprobado"/> y nunca después: el cierre del
+    /// turno la descuenta en lugar del porcentaje del medio. No es <see cref="ComisionReal"/>, que es de la conciliación.</summary>
+    public decimal? ComisionInformada { get; set; }
+
     /// <summary>Solo Point: la terminal (<c>id_terminal_point</c> de la caja) a la que se pidió la orden, tal como se pidió: reintentar una
     /// creación reenvía la misma orden aunque la caja haya cambiado de terminal. Nulo exactamente en los cobros QR.</summary>
     public string? IdTerminalPoint { get; set; }

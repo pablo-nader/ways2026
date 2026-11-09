@@ -160,3 +160,15 @@ public sealed record PagoDeOrdenMercadoPago(
         _ => null
     };
 }
+
+/// <summary>Un pago tal como lo devuelve <c>GET /v1/payments/{id}</c>; solo lo que hace falta para su comisión, el resto se ignora.</summary>
+public sealed record PagoDeMercadoPago(
+    long? Id,
+    string? Status,
+    decimal? TransactionAmount,
+    IReadOnlyList<ComisionDePagoMercadoPago?>? FeeDetails,
+    DetalleDeTransaccionMercadoPago? TransactionDetails);
+
+public sealed record ComisionDePagoMercadoPago(string? Type, decimal? Amount, string? FeePayer);
+
+public sealed record DetalleDeTransaccionMercadoPago(decimal? NetReceivedAmount);

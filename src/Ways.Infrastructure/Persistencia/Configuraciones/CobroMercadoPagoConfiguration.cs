@@ -25,6 +25,8 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
                 "estado IN ('creando', 'pendiente', 'aprobado', 'cancelado', 'expirado', 'devuelto', 'sin_venta', 'fallido')");
             t.HasCheckConstraint("ck_cobros_mercadopago_importe", "importe > 0");
             t.HasCheckConstraint("ck_cobros_mercadopago_importe_pagado", "importe_pagado IS NULL OR importe_pagado >= 0");
+            t.HasCheckConstraint(
+                "ck_cobros_mercadopago_comision_informada", "comision_informada IS NULL OR comision_informada >= 0");
             t.HasCheckConstraint("ck_cobros_mercadopago_intento", "intento >= 1");
             t.HasCheckConstraint("ck_cobros_mercadopago_numero", "numero_preasignado > 0");
             t.HasCheckConstraint(
@@ -69,6 +71,7 @@ public class CobroMercadoPagoConfiguration : IEntityTypeConfiguration<CobroMerca
         builder.Property(c => c.IdPagoMercadoPago).HasColumnName("id_pago_mercadopago").HasMaxLength(64);
         builder.Property(c => c.ReferenciaPagoMercadoPago).HasColumnName("referencia_pago_mercadopago");
         builder.Property(c => c.ImportePagado).HasColumnName("importe_pagado").HasColumnType("numeric(18,2)");
+        builder.Property(c => c.ComisionInformada).HasColumnName("comision_informada").HasColumnType("numeric(18,2)");
         builder.Property(c => c.IdTerminalPoint).HasColumnName("id_terminal_point").HasMaxLength(80);
         builder.Property(c => c.SituacionTerminal).HasColumnName("situacion_terminal").HasMaxLength(20);
         builder.Property(c => c.QrData).HasColumnName("qr_data").HasColumnType("text");

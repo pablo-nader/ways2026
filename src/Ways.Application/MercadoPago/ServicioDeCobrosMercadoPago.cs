@@ -799,7 +799,14 @@ public class ServicioDeCobrosMercadoPago(
             venta = await LeerVentaDelNumeroBloqueandoAsync(cobro, ct);
         }
 
-        if (!AplicarOrden(cobro, orden, ahora, venta is not null) || venta is not { } existente)
+        var estadoAnterior = cobro.Estado;
+        var aprobo = AplicarOrden(cobro, orden, ahora, venta is not null);
+        if (aprobo && estadoAnterior != EstadosDeCobroMercadoPago.Aprobado && cobro.Estado == EstadosDeCobroMercadoPago.Aprobado)
+        {
+            await LeerComisionInformadaAsync(cobro, ct);
+        }
+
+        if (!aprobo || venta is not { } existente)
         {
             return;
         }
@@ -816,6 +823,31 @@ public class ServicioDeCobrosMercadoPago(
                     ["origen"] = "cobro_aprobado_despues_de_la_venta"
                 }),
             contexto.UsuarioId > 0 ? null : existente.IdEmpleado);
+    }
+
+    /// <summary>Al aprobarse el cobro, lee su pago en <c>/v1/payments</c> y guarda la comisión que Mercado Pago informa
+    /// (<see cref="ComisionInformadaDeMercadoPago"/>). Es la única escritura de <see cref="CobroMercadoPago.ComisionInformada"/>: después de la
+    /// aprobación no cambia, y el cierre del turno se apoya en eso. Un error de Mercado Pago o de la red no impide aprobar: la comisión queda
+    /// nula y el cierre usa el porcentaje del medio.</summary>
+    private async Task LeerComisionInformadaAsync(CobroMercadoPago cobro, CancellationToken ct)
+    {
+        if (cobro.ReferenciaPagoMercadoPago is not { } referencia)
+        {
+            return;
+        }
+
+        try
+        {
+            var pago = await api.EnviarAsync<PagoDeMercadoPago>(
+                cobro.IdEmpresa, HttpMethod.Get, $"/v1/payments/{referencia.ToString(CultureInfo.InvariantCulture)}", ct: ct);
+            cobro.ComisionInformada = ComisionInformadaDeMercadoPago.Calcular(pago, cobro.ImportePagado);
+        }
+        catch (ErrorDominio error) when (!ct.IsCancellationRequested)
+        {
+            log.LogWarning(
+                "No se pudo leer el pago {ReferenciaPago} del cobro {IdCobro} en Mercado Pago ({Codigo}): el cobro se aprueba sin comisión informada.",
+                referencia, cobro.Id, error.Codigo);
+        }
     }
 
     /// <summary>La venta vigente (no anulada) que ya usó el número del cobro y tiene al menos un pago <c>sin_verificar</c> (la aprobación

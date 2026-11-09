@@ -185,4 +185,63 @@ public class CalculadorDeMovimientosDeCuentaTests
             Assert.Equal(c.Tipo != TipoMovimientoCuenta.Cobro, c.PorcentajeAplicado is not null);
         });
     }
+    [Fact]
+    public void ConLaComisionInformadaDeTodoElBrutoLaFilaDeComisionEsEsaComisionYLasRetencionesSiguenSobreElBruto()
+    {
+        var componentes = CalculadorDeMovimientosDeCuenta.Calcular(
+            1000m, new PorcentajesDeCobro(5m, 1m, 0m, 0m), new ComisionConocida(1000m, 37.12m));
+
+        Assert.Equal(
+            [
+                new ComponenteDeMovimientoDeCuenta(TipoMovimientoCuenta.Cobro, 1000m, 0m, 1000m, null),
+                new ComponenteDeMovimientoDeCuenta(TipoMovimientoCuenta.Comision, 0m, 37.12m, 1000m, 5m),
+                new ComponenteDeMovimientoDeCuenta(TipoMovimientoCuenta.RetencionIibb, 0m, 10m, 1000m, 1m)
+            ],
+            componentes);
+    }
+
+    [Fact]
+    public void ConParteDelBrutoInformadaLaComisionSumaLoInformadoYElPorcentajeSobreElResto()
+    {
+        var componentes = CalculadorDeMovimientosDeCuenta.Calcular(
+            1500.10m, new PorcentajesDeCobro(5m, 0m, 0m, 0m), new ComisionConocida(1000m, 37.12m));
+
+        var comision = Assert.Single(componentes, c => c.Tipo == TipoMovimientoCuenta.Comision);
+        Assert.Equal(37.12m + 25.01m, comision.Egreso);
+        Assert.Equal(1500.10m, comision.BaseBruta);
+        Assert.Equal(5m, comision.PorcentajeAplicado);
+    }
+
+    [Fact]
+    public void UnaComisionInformadaCeroSobreTodoElBrutoNoGeneraFilaDeComision()
+    {
+        var componentes = CalculadorDeMovimientosDeCuenta.Calcular(
+            800m, new PorcentajesDeCobro(5m, 0m, 0m, 0m), new ComisionConocida(800m, 0m));
+
+        Assert.Equal(TipoMovimientoCuenta.Cobro, Assert.Single(componentes).Tipo);
+    }
+
+    [Theory]
+    [InlineData("1234.56")]
+    [InlineData("-321.45")]
+    [InlineData("0")]
+    public void SinComisionConocidaElResultadoEsElDeSiempre(string bruto)
+    {
+        var brutoDecimal = D(bruto);
+        var porcentajes = new PorcentajesDeCobro(3.3m, 1.1m, 0.7m, 2.2m);
+
+        Assert.Equal(
+            CalculadorDeMovimientosDeCuenta.Calcular(brutoDecimal, porcentajes),
+            CalculadorDeMovimientosDeCuenta.Calcular(brutoDecimal, porcentajes, new ComisionConocida(0m, 0m)));
+    }
+
+    [Theory]
+    [InlineData("100", "100.01", "1")]
+    [InlineData("100", "-1", "1")]
+    [InlineData("100", "50", "-1")]
+    public void UnaComisionConocidaImposibleSeRechaza(string bruto, string baseConocida, string comision)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => CalculadorDeMovimientosDeCuenta.Calcular(
+            D(bruto), new PorcentajesDeCobro(5m, 0m, 0m, 0m), new ComisionConocida(D(baseConocida), D(comision))));
+    }
 }

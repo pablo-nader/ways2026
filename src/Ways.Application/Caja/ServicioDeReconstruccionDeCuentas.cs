@@ -22,7 +22,8 @@ namespace Ways.Application.Caja;
 /// acredita por cada medio que HOY tiene una cuenta viva de la misma empresa, tiene cobros netos distintos de cero y todavía no
 /// tiene filas de cierre (cobro, comisión o retenciones) para ese turno y medio. Las filas son las del cierre
 /// (<see cref="CalculadorDeMovimientosDeCuenta"/> y <see cref="EscriturasDeCuentaDeTesoreria.ArmarFila"/>) con los porcentajes
-/// vigentes del medio, porque los porcentajes no tienen historia. Un turno ya acreditado al cierre no se toca, aunque hoy su medio
+/// vigentes del medio, porque los porcentajes no tienen historia, y con las comisiones informadas por Mercado Pago de los pagos que califican
+/// (<see cref="ComisionesInformadasDePagos"/>), como en el cierre. Un turno ya acreditado al cierre no se toca, aunque hoy su medio
 /// tenga otros porcentajes.
 ///
 /// Vista previa y aplicación comparten <c>PlanearAsync</c>: la vista previa lee sin lock; la aplicación toma los locks y recién
@@ -300,6 +301,7 @@ public class ServicioDeReconstruccionDeCuentas(
             .ToHashSet();
 
         var brutoPorTurnoYMedio = cobros.ToDictionary(c => (c.IdTurno, c.IdMedioPago), c => c.Bruto);
+        var conocidas = await ComisionesInformadasDePagos.PorTurnoYMedioAsync(db, idsDeTurno, idsDeMedio, ct);
 
         var acreditaciones = new List<AcreditacionDeReconstruccion>();
         var congeladas = new List<AcreditacionDeReconstruccion>();
@@ -317,7 +319,8 @@ public class ServicioDeReconstruccionDeCuentas(
                     continue;
                 }
 
-                var componentes = CalculadorDeMovimientosDeCuenta.Calcular(bruto, medio.Porcentajes);
+                var componentes = CalculadorDeMovimientosDeCuenta.Calcular(
+                    bruto, medio.Porcentajes, conocidas.GetValueOrDefault((turno.Id, medio.IdMedioPago)));
                 var acreditacion = new AcreditacionDeReconstruccion(
                     turno.Id, turno.FechaCierre, medio.IdMedioPago, medio.Nombre, medio.IdCuenta, cuenta.Nombre, bruto,
                     componentes.Sum(c => c.Ingreso - c.Egreso),

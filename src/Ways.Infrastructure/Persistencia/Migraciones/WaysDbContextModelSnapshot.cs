@@ -3626,6 +3626,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("character varying(64)")
                         .HasColumnName("clave_idempotencia");
 
+                    b.Property<decimal?>("ComisionInformada")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("comision_informada");
+
                     b.Property<decimal?>("ComisionReal")
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("comision_real");
@@ -3812,6 +3816,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_cobros_mercadopago_aprobacion", "estado <> 'aprobado' OR fecha_aprobacion IS NOT NULL");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_aprobado_con_pago", "estado <> 'aprobado' OR id_pago_mercadopago IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_cobros_mercadopago_comision_informada", "comision_informada IS NULL OR comision_informada >= 0");
 
                             t.HasCheckConstraint("ck_cobros_mercadopago_conciliacion", "id_fila_conciliacion IS NOT NULL OR (comision_real IS NULL AND neto_real IS NULL AND fecha_liberacion IS NULL)");
 
