@@ -202,6 +202,72 @@ public sealed class ClienteApiMercadoPago(
             terminales, respuesta.Paging?.Total ?? terminales.Count, respuesta.Paging?.Offset ?? 0, respuesta.Paging?.Limit ?? 0);
     }
 
+    public async Task<ListadoDePagosRecibidosMercadoPago> BuscarPagosRecibidosAsync(
+        int idEmpresa, DateTimeOffset desde, DateTimeOffset hasta, CancellationToken ct = default)
+    {
+        var ruta = "v1/payments/search?sort=date_created&criteria=desc&range=date_created" +
+            $"&begin_date={FechaUtc(desde)}&end_date={FechaUtc(hasta)}&limit=100&offset=0";
+        var respuesta = await EnviarAsync<RespuestaDeBusquedaDePagos>(idEmpresa, HttpMethod.Get, ruta, ct: ct);
+
+        var pagos = (respuesta.Results ?? []).Where(p => p.Id is not null).Select(MapearPago).ToList();
+        return new ListadoDePagosRecibidosMercadoPago(pagos, respuesta.Paging?.Total ?? pagos.Count);
+    }
+
+    public async Task<IReadOnlyList<ReporteDeTransaccionesMercadoPago>> ListarReportesDeTransaccionesAsync(
+        int idEmpresa, CancellationToken ct = default)
+    {
+        var respuesta = await EnviarAsync<List<ReporteCrudo>>(idEmpresa, HttpMethod.Get, "v1/account/settlement_report/list", ct: ct);
+        return [.. respuesta.Select(r => new ReporteDeTransaccionesMercadoPago(
+            r.FileName, r.BeginDate, r.EndDate, r.DateCreated, r.Status))];
+    }
+
+    private static string FechaUtc(DateTimeOffset fecha) =>
+        Uri.EscapeDataString(fecha.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture));
+
+    private static PagoRecibidoMercadoPago MapearPago(PagoCrudo p)
+    {
+        var nombre = $"{p.Payer?.FirstName?.Trim()} {p.Payer?.LastName?.Trim()}".Trim();
+        return new PagoRecibidoMercadoPago(
+            p.Id!.Value,
+            p.DateCreated,
+            p.DateApproved,
+            p.Status,
+            p.StatusDetail,
+            p.OperationType,
+            p.PaymentTypeId,
+            p.PaymentMethodId,
+            p.TransactionAmount,
+            p.TransactionDetails?.NetReceivedAmount,
+            p.TransactionDetails?.TotalPaidAmount,
+            p.CurrencyId,
+            p.Description,
+            p.ExternalReference,
+            p.PointOfInteraction?.Type,
+            p.CollectorId,
+            nombre.Length == 0 ? null : nombre,
+            [.. (p.FeeDetails ?? []).Select(f => new ComisionDePagoMercadoPago(f.Type, f.Amount))],
+            [.. LeerImpuestos(p.Taxes)],
+            [.. (p.ChargesDetails ?? []).Select(c => new CargoDePagoMercadoPago(c.Name, c.Type, c.Amounts?.Original))]);
+    }
+
+    /// <summary>Los impuestos de un pago no tienen forma documentada: se toleran campos de más o de menos y valores que no son números.</summary>
+    private static IEnumerable<ImpuestoDePagoMercadoPago> LeerImpuestos(JsonElement? impuestos)
+    {
+        if (impuestos is not { ValueKind: JsonValueKind.Array } lista)
+        {
+            yield break;
+        }
+
+        foreach (var item in lista.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.Object))
+        {
+            var tipo = Texto(item, "type") ?? Texto(item, "id") ?? Texto(item, "name");
+            decimal? valor = item.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d)
+                ? d
+                : null;
+            yield return new ImpuestoDePagoMercadoPago(tipo, valor);
+        }
+    }
+
     private async Task<TRespuesta> LeerAsync<TRespuesta>(
         HttpResponseMessage respuesta, HttpMethod metodo, string ruta, CancellationToken ct)
     {
@@ -321,6 +387,107 @@ public sealed class ClienteApiMercadoPago(
 
     private static ErrorDominio NoDisponible() =>
         new(CodigosDeErrorDeMercadoPago.NoDisponible, "Mercado Pago no está disponible en este momento. Probá de nuevo más tarde.", 503);
+
+    private sealed class RespuestaDeBusquedaDePagos
+    {
+        public List<PagoCrudo>? Results { get; init; }
+
+        public PaginacionDeTerminales? Paging { get; init; }
+    }
+
+    private sealed class PagoCrudo
+    {
+        public long? Id { get; init; }
+
+        public string? DateCreated { get; init; }
+
+        public string? DateApproved { get; init; }
+
+        public string? Status { get; init; }
+
+        public string? StatusDetail { get; init; }
+
+        public string? OperationType { get; init; }
+
+        public string? PaymentTypeId { get; init; }
+
+        public string? PaymentMethodId { get; init; }
+
+        public decimal? TransactionAmount { get; init; }
+
+        public DetalleDeTransaccionCrudo? TransactionDetails { get; init; }
+
+        public string? CurrencyId { get; init; }
+
+        public string? Description { get; init; }
+
+        public string? ExternalReference { get; init; }
+
+        public InteraccionCruda? PointOfInteraction { get; init; }
+
+        public long? CollectorId { get; init; }
+
+        public PagadorCrudo? Payer { get; init; }
+
+        public List<ComisionCruda>? FeeDetails { get; init; }
+
+        public JsonElement? Taxes { get; init; }
+
+        public List<CargoCrudo>? ChargesDetails { get; init; }
+    }
+
+    private sealed class DetalleDeTransaccionCrudo
+    {
+        public decimal? NetReceivedAmount { get; init; }
+
+        public decimal? TotalPaidAmount { get; init; }
+    }
+
+    private sealed class InteraccionCruda
+    {
+        public string? Type { get; init; }
+    }
+
+    private sealed class PagadorCrudo
+    {
+        public string? FirstName { get; init; }
+
+        public string? LastName { get; init; }
+    }
+
+    private sealed class ComisionCruda
+    {
+        public string? Type { get; init; }
+
+        public decimal? Amount { get; init; }
+    }
+
+    private sealed class CargoCrudo
+    {
+        public string? Name { get; init; }
+
+        public string? Type { get; init; }
+
+        public MontosCrudos? Amounts { get; init; }
+    }
+
+    private sealed class MontosCrudos
+    {
+        public decimal? Original { get; init; }
+    }
+
+    private sealed class ReporteCrudo
+    {
+        public string? FileName { get; init; }
+
+        public string? BeginDate { get; init; }
+
+        public string? EndDate { get; init; }
+
+        public string? DateCreated { get; init; }
+
+        public string? Status { get; init; }
+    }
 
     private sealed class RespuestaDeTerminales
     {

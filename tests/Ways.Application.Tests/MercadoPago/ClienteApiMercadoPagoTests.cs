@@ -629,4 +629,137 @@ public class ClienteApiMercadoPagoTests
         Assert.Empty(listado.Terminales);
         Assert.Equal(0, listado.Total);
     }
+
+    // ---- Diagnóstico de pagos recibidos -----------------------------------------------------------------------------
+
+    private const string PagosRecibidos =
+        """
+        {"paging":{"total":57,"limit":100,"offset":0},"results":[
+          {"id":123456789,"date_created":"2026-11-09T10:15:00.000-03:00","date_approved":"2026-11-09T10:15:05.000-03:00",
+           "status":"approved","status_detail":"accredited","operation_type":"money_transfer","payment_type_id":"account_money",
+           "payment_method_id":"account_money","transaction_amount":1500.5,
+           "transaction_details":{"net_received_amount":1450.25,"total_paid_amount":1500.5,"installment_amount":0},
+           "currency_id":"ARS","description":"Transferencia alias","external_reference":"ref-1",
+           "point_of_interaction":{"type":"TRANSFER","business_info":{"unit":"x"}},"collector_id":987654321,
+           "payer":{"first_name":" Juan ","last_name":"Pérez","email":"juan.perez@correo.test","phone":{"number":"3415550000"},
+                    "identification":{"type":"DNI","number":"30111222"}},
+           "fee_details":[{"type":"mercadopago_fee","amount":50.25,"fee_payer":"collector"}],
+           "taxes":[{"type":"iibb","value":3.5},{"id":"retencion","value":"no numérico"}],
+           "charges_details":[{"name":"mp_fee","type":"fee","amounts":{"original":50.25,"refunded":0}},{"type":"shipping"}]},
+          {"id":2},
+          {"description":"sin id"}
+        ]}
+        """;
+
+    [Fact]
+    public async Task BuscarPagosRecibidosPideLaBusquedaPorFechaDeCreacionEnUtcYMapeaTodosLosCampos()
+    {
+        var (cliente, manejador, _, _) = Crear((_, _) => Json(HttpStatusCode.OK, PagosRecibidos));
+        var desde = new DateTimeOffset(2026, 11, 8, 21, 0, 0, TimeSpan.FromHours(-3));
+        var hasta = new DateTimeOffset(2026, 11, 9, 21, 30, 15, 123, TimeSpan.FromHours(-3));
+
+        var listado = await cliente.BuscarPagosRecibidosAsync(IdEmpresa, desde, hasta);
+
+        var (pedido, _) = Assert.Single(manejador.Pedidos);
+        Assert.Equal(HttpMethod.Get, pedido.Method);
+        Assert.Equal(
+            "https://api.mp.test/v1/payments/search?sort=date_created&criteria=desc&range=date_created" +
+            "&begin_date=2026-11-09T00%3A00%3A00.000Z&end_date=2026-11-10T00%3A30%3A15.123Z&limit=100&offset=0",
+            pedido.RequestUri!.ToString());
+        Assert.Equal(57, listado.Total);
+        Assert.Equal([123456789L, 2L], listado.Pagos.Select(p => p.Id));
+
+        var pago = listado.Pagos[0];
+        Assert.Equal("2026-11-09T10:15:00.000-03:00", pago.FechaCreacion);
+        Assert.Equal("2026-11-09T10:15:05.000-03:00", pago.FechaAprobacion);
+        Assert.Equal(("approved", "accredited", "money_transfer"), (pago.Estado, pago.DetalleDelEstado, pago.TipoDeOperacion));
+        Assert.Equal(("account_money", "account_money"), (pago.TipoDePago, pago.MedioDePago));
+        Assert.Equal((1500.5m, 1450.25m, 1500.5m), (pago.Monto, pago.NetoRecibido, pago.TotalPagado));
+        Assert.Equal(("ARS", "Transferencia alias", "ref-1"), (pago.Moneda, pago.Descripcion, pago.ReferenciaExterna));
+        Assert.Equal(("TRANSFER", 987654321L, "Juan Pérez"), (pago.TipoDeInteraccion, pago.IdCobrador, pago.NombreDelPagador));
+        Assert.Equal([new ComisionDePagoMercadoPago("mercadopago_fee", 50.25m)], pago.Comisiones);
+        Assert.Equal(
+            [new ImpuestoDePagoMercadoPago("iibb", 3.5m), new ImpuestoDePagoMercadoPago("retencion", null)], pago.Impuestos);
+        Assert.Equal(
+            [new CargoDePagoMercadoPago("mp_fee", "fee", 50.25m), new CargoDePagoMercadoPago(null, "shipping", null)], pago.Cargos);
+    }
+
+    [Fact]
+    public async Task BuscarPagosRecibidosNoDejaPasarElEmailNiElDocumentoNiElTelefonoDelPagadorNiElToken()
+    {
+        var (cliente, _, _, _) = Crear((_, _) => Json(HttpStatusCode.OK, PagosRecibidos));
+
+        var listado = await cliente.BuscarPagosRecibidosAsync(IdEmpresa, DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow);
+
+        var texto = JsonSerializer.Serialize(listado);
+        Assert.DoesNotContain("juan.perez@correo.test", texto);
+        Assert.DoesNotContain("30111222", texto);
+        Assert.DoesNotContain("3415550000", texto);
+        Assert.DoesNotContain(Token, texto);
+    }
+
+    [Fact]
+    public async Task BuscarPagosRecibidosToleraCamposAusentesYUnPagadorSinNombre()
+    {
+        var (cliente, _, _, _) = Crear((_, _) => Json(
+            HttpStatusCode.OK,
+            """{"results":[{"id":9,"payer":{"email":"x@y.test","first_name":" ","last_name":null},"taxes":{"raro":1},"campo_nuevo":[1]}]}"""));
+
+        var listado = await cliente.BuscarPagosRecibidosAsync(IdEmpresa, DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow);
+
+        var pago = Assert.Single(listado.Pagos);
+        Assert.Equal(1, listado.Total);
+        Assert.Null(pago.NombreDelPagador);
+        Assert.Null(pago.Monto);
+        Assert.Null(pago.NetoRecibido);
+        Assert.Empty(pago.Comisiones);
+        Assert.Empty(pago.Impuestos);
+        Assert.Empty(pago.Cargos);
+    }
+
+    [Fact]
+    public async Task BuscarPagosRecibidosSinResultadosEsUnListadoVacio()
+    {
+        var (cliente, _, _, _) = Crear((_, _) => Json(HttpStatusCode.OK, """{"paging":{"total":0},"results":[]}"""));
+
+        var listado = await cliente.BuscarPagosRecibidosAsync(IdEmpresa, DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow);
+
+        Assert.Empty(listado.Pagos);
+        Assert.Equal(0, listado.Total);
+    }
+
+    // ---- Diagnóstico de reportes de transacciones --------------------------------------------------------------------
+
+    [Fact]
+    public async Task ListarReportesLlamaALaListaConGetYMapeaLosCamposTolerandoLosDesconocidos()
+    {
+        var (cliente, manejador, _, _) = Crear((_, _) => Json(
+            HttpStatusCode.OK,
+            """
+            [{"id":1,"file_name":"settlement-2026-11-01.csv","begin_date":"2026-11-01T00:00:00Z","end_date":"2026-11-02T00:00:00Z",
+              "date_created":"2026-11-02T03:00:00Z","status":"processed","mas":{"x":1}},
+             {"file_name":"parcial.csv"}]
+            """));
+
+        var reportes = await cliente.ListarReportesDeTransaccionesAsync(IdEmpresa);
+
+        var (pedido, _) = Assert.Single(manejador.Pedidos);
+        Assert.Equal(HttpMethod.Get, pedido.Method);
+        Assert.Equal("https://api.mp.test/v1/account/settlement_report/list", pedido.RequestUri!.ToString());
+        Assert.Equal(
+            [
+                new ReporteDeTransaccionesMercadoPago(
+                    "settlement-2026-11-01.csv", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z", "2026-11-02T03:00:00Z", "processed"),
+                new ReporteDeTransaccionesMercadoPago("parcial.csv", null, null, null, null)
+            ],
+            reportes);
+    }
+
+    [Fact]
+    public async Task ListarReportesConUnaListaVaciaDevuelveVacio()
+    {
+        var (cliente, _, _, _) = Crear((_, _) => Json(HttpStatusCode.OK, "[]"));
+
+        Assert.Empty(await cliente.ListarReportesDeTransaccionesAsync(IdEmpresa));
+    }
 }
