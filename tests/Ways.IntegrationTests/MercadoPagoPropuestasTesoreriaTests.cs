@@ -113,6 +113,90 @@ public partial class MercadoPagoVentaTests
         Assert.Equal(HttpStatusCode.NotFound, (await e.Ctx.Admin.GetAsync(RutaPropuestas(importada.Conciliacion.Id + 999))).StatusCode);
     }
 
+    /// <summary>La fila de comisión que el cierre escribió para el medio del escenario: (egreso, base bruta, porcentaje aplicado).</summary>
+    private async Task<(decimal Egreso, decimal BaseBruta, decimal? Porcentaje)> PropComisionDelCierreAsync(Escenario e)
+    {
+        var fila = (await ConsultarAsync(
+            "SELECT egreso, base_bruta, porcentaje_aplicado FROM movimientos_cuenta " +
+            "WHERE id_cuenta_tesoreria = $1 AND id_medio_pago = $2 AND tipo = 'comision'", e.Ctx.IdCuenta, e.IdMedio)).Single();
+        return ((decimal)fila["egreso"]!, (decimal)fila["base_bruta"]!, (decimal?)fila["porcentaje_aplicado"]);
+    }
+
+    // Clausula: el cierre descuenta la comision que Mercado Pago informo al aprobar el cobro (3,17) mas el porcentaje del medio solo sobre
+    // el resto del bruto (el otro cobro, sin comision informada: 5 % de 100); la fila conserva el porcentaje y el bruto completo.
+    [Fact]
+    public async Task ElCierreDescuentaLaComisionInformadaYElPorcentajeSoloSobreElResto()
+    {
+        var e = await PrepararAsync("mp-prop-cierre-informada");
+        e.Ordenes.ComisionDelPago = "3.17";
+        var (conInformada, _) = await PropVentaAsync(e, e.Desde, porcentaje: 5m, cerrar: false);
+        e.Ordenes.ComisionDelPago = null;
+        await PropVentaAsync(e, e.Desde + 1, porcentaje: 5m);
+
+        Assert.Equal(3.17m, (decimal)(await ConsultarAsync(
+            "SELECT comision_informada FROM cobros_mercadopago WHERE id_cobro_mercadopago = $1", conInformada.IdCobro)).Single()["comision_informada"]!);
+        Assert.Equal((8.17m, 200m, (decimal?)5m), await PropComisionDelCierreAsync(e));
+    }
+
+    // Clausula: si la comision del reporte es la que Mercado Pago informo al aprobar, el cierre ya la desconto: no hay diferencia que proponer
+    // (contra el 5 % estimado habria propuesto acreditar 1,83).
+    [Fact]
+    public async Task UnaComisionRealIgualALaInformadaNoProponeNada()
+    {
+        var e = await PrepararAsync("mp-prop-informada-igual");
+        e.Ordenes.ComisionDelPago = "3.17";
+        var (_, datos) = await PropVentaAsync(e, e.Desde, porcentaje: 5m);
+        Assert.Equal(3.17m, (await PropComisionDelCierreAsync(e)).Egreso);
+
+        var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFilaDelCobro(datos, "-3.17")));
+
+        Assert.Empty(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
+    }
+
+    // Clausula: si el reporte trae otra comision, la propuesta es solo el residuo contra la informada (3,50 − 3,17), no contra el porcentaje.
+    [Fact]
+    public async Task UnaComisionRealDistintaDeLaInformadaProponeSoloElResiduo()
+    {
+        var e = await PrepararAsync("mp-prop-informada-residuo");
+        e.Ordenes.ComisionDelPago = "3.17";
+        var (_, datos) = await PropVentaAsync(e, e.Desde, porcentaje: 5m);
+
+        var importada = await ConcSubirOkAsync(e.Ctx.Admin, e.Ctx.IdEmpresa, Reporte(PropFilaDelCobro(datos, "-3.50")));
+
+        var propuesta = Assert.Single(await PropListarAsync(e.Ctx.Admin, importada.Conciliacion.Id));
+        Assert.Equal(-0.33m, propuesta.Importe);
+        Assert.Equal(3.17m, propuesta.Detalle!.ComisionEstimadaTotal);
+        Assert.Equal(0.33m, Assert.Single(propuesta.Detalle.Lineas).Diferencia);
+    }
+
+    // Clausula: la reconstruccion de un turno que el cierre no acredito (el medio no tenia cuenta) usa la comision informada como el cierre,
+    // en la vista previa y al aplicar.
+    [Fact]
+    public async Task LaReconstruccionUsaLaComisionInformada()
+    {
+        var e = await PrepararAsync("mp-prop-reconstruccion-informada");
+        e.Ordenes.ComisionDelPago = "3.17";
+        await PropVentaAsync(e, e.Desde, porcentaje: 5m, cerrar: false);
+        await EjecutarAsync("UPDATE medios_pago SET id_cuenta_tesoreria = NULL WHERE id_medio_pago = $1", e.IdMedio);
+        await PropCerrarTurnoAsync(e);
+        Assert.Equal(0L, await PropCantidadDeFilasAsync(e.Ctx.IdCuenta));
+        await EjecutarAsync("UPDATE medios_pago SET id_cuenta_tesoreria = $1 WHERE id_medio_pago = $2", e.Ctx.IdCuenta, e.IdMedio);
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var pedido = new SolicitudDeReconstruccionDeCuentas(e.Ctx.IdEmpresa, hoy.AddDays(-1), hoy.AddDays(1));
+
+        var vista = await LeerAsync<PlanDeReconstruccion>(
+            await e.Ctx.Admin.PostAsJsonAsync("/api/cuentas-tesoreria/reconstruccion/vista-previa", pedido));
+        var aplicado = await LeerAsync<PlanDeReconstruccion>(await e.Ctx.Admin.PostAsJsonAsync("/api/cuentas-tesoreria/reconstruccion", pedido));
+
+        foreach (var plan in new[] { vista, aplicado })
+        {
+            var acreditacion = Assert.Single(plan.Acreditaciones, a => a.IdMedioPago == e.IdMedio);
+            Assert.Equal(3.17m, Assert.Single(acreditacion.Componentes, c => c.Tipo == Ways.Domain.Caja.TipoMovimientoCuenta.Comision).Egreso);
+        }
+
+        Assert.Equal((3.17m, 100m, (decimal?)5m), await PropComisionDelCierreAsync(e));
+    }
+
     // Clausula: la diferencia tiene signo: si Mercado Pago cobro MENOS que lo estimado, la propuesta acredita la cuenta.
     [Fact]
     public async Task UnaComisionRealMenorQueLaEstimadaProponeAcreditarLaCuenta()
