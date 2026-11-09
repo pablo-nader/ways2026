@@ -6,7 +6,8 @@ namespace Ways.Application.MercadoPago;
 
 /// <summary>
 /// Diagnóstico de solo lectura (Admin): qué devuelve Mercado Pago, con el token de la conexión de la empresa, para los pagos recibidos
-/// en las últimas <c>horas</c> y para la lista de reportes de transacciones. No escribe nada ni crea reportes. Si la lista de reportes
+/// en las últimas <c>horas</c> (los primeros 100; <c>Total</c> trae el conteo de Mercado Pago) y para la lista de reportes de
+/// transacciones. Solo hace GET y no crea reportes; como cualquier llamada a Mercado Pago, un 401 marca la conexión para reconectar. Si la lista de reportes
 /// falla con un error de Mercado Pago, los pagos igual se devuelven y la sección de reportes queda en <c>null</c> con el código; un
 /// fallo de los pagos se propaga con el error de siempre (404 empresa, 409 sin conexión, 502/503 de Mercado Pago).
 /// </summary>
