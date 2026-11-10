@@ -677,7 +677,7 @@ public class ClienteApiMercadoPagoTests
         Assert.Equal((1500.5m, 1450.25m, 1500.5m), (pago.Monto, pago.NetoRecibido, pago.TotalPagado));
         Assert.Equal(("ARS", "Transferencia alias", "ref-1"), (pago.Moneda, pago.Descripcion, pago.ReferenciaExterna));
         Assert.Equal(("TRANSFER", 987654321L, "Juan Pérez"), (pago.TipoDeInteraccion, pago.IdCobrador, pago.NombreDelPagador));
-        Assert.Equal([new ComisionDePagoMercadoPago("mercadopago_fee", 50.25m)], pago.Comisiones);
+        Assert.Equal([new ComisionEnDiagnosticoMercadoPago("mercadopago_fee", 50.25m)], pago.Comisiones);
         Assert.Equal(
             [new ImpuestoDePagoMercadoPago("iibb", 3.5m), new ImpuestoDePagoMercadoPago("retencion", null)], pago.Impuestos);
         Assert.Equal(

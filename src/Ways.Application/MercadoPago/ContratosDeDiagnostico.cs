@@ -1,6 +1,6 @@
 namespace Ways.Application.MercadoPago;
 
-public sealed record ComisionDePagoMercadoPago(string? Tipo, decimal? Monto);
+public sealed record ComisionEnDiagnosticoMercadoPago(string? Tipo, decimal? Monto);
 
 public sealed record ImpuestoDePagoMercadoPago(string? Tipo, decimal? Valor);
 
@@ -25,7 +25,7 @@ public sealed record PagoRecibidoMercadoPago(
     string? TipoDeInteraccion,
     long? IdCobrador,
     string? NombreDelPagador,
-    IReadOnlyList<ComisionDePagoMercadoPago> Comisiones,
+    IReadOnlyList<ComisionEnDiagnosticoMercadoPago> Comisiones,
     IReadOnlyList<ImpuestoDePagoMercadoPago> Impuestos,
     IReadOnlyList<CargoDePagoMercadoPago> Cargos);
 
