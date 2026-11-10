@@ -1,37 +1,46 @@
 import { describe, expect, it } from 'vitest'
 import {
   aSolicitudDeAjuste,
+  aSolicitudDeCorreccionDeMedios,
   aSolicitudDeHoras,
   aSolicitudDePago,
   avisoDeUbicacionDelPago,
   avisoDeResultadoIncierto,
   deudaDeCliente,
   descripcionDeAjuste,
+  descripcionDeCorreccion,
   descripcionDeHoras,
   descripcionDePago,
   etiquetaDeTipo,
+  lineasEditablesDelPago,
   formularioDeAjusteVacio,
   formularioDeHorasVacio,
   formularioDePagoVacio,
   importeDeHoras,
   importeFirmadoDeAjuste,
   MAXIMO_DE_LINEAS,
+  mediosEditables,
   mediosOfrecidos,
+  pagoCorregible,
+  pagosDelMovimiento,
   parsearHoras,
   saldoTrasMovimiento,
   saldoTrasPago,
   sanearTipeoDeHoras,
   textoDeLineaDeDesglose,
   textoDeSaldo,
+  totalCoincide,
   totalDelPago,
+  totalRequeridoDelPago,
   validarAjuste,
+  validarCorreccionDeMedios,
   validarHoras,
   validarPago,
   type ContextoDePago,
   type FormularioDePago,
   type LineaDeFormulario,
 } from './cuentaDePersonalFormularios'
-import type { MedioPagoListado } from '../api/tipos'
+import type { DesgloseDePago, MedioPagoListado } from '../api/tipos'
 
 const HOY = '2026-10-12'
 
@@ -519,5 +528,108 @@ describe('descripción y aviso de una escritura de resultado incierto', () => {
     expect(avisoDeResultadoIncierto('pago del 03/10/2026 por $ 6.500,00', false)).toBe(
       'No se pudo confirmar si se registró esta operación: pago del 03/10/2026 por $ 6.500,00. Tampoco se pudo actualizar la vista: recargá la pantalla y revisá los movimientos antes de volver a cargarla.',
     )
+  })
+})
+
+describe('corrección de pagos', () => {
+  const desglose: DesgloseDePago = {
+    descuentoDeCuentaCorriente: 100,
+    lineas: [
+      { idGasto: 90, idItem: 900, idMedioPago: 4, nombreMedioPago: 'Efectivo', importe: 600.1, origenFondos: 'CajaTurno', referencia: null },
+      { idGasto: 90, idItem: 901, idMedioPago: 5, nombreMedioPago: null, importe: 399.9, origenFondos: 'Tesoreria', referencia: 'op-1' },
+    ],
+  }
+  const pago = { tipo: 'Pago' as const, anuladoPor: null, desglose }
+
+  it('un pago es corregible hasta que lo anula un ajuste', () => {
+    expect(pagoCorregible(pago)).toBe(true)
+    expect(pagoCorregible({ ...pago, anuladoPor: undefined })).toBe(true)
+    expect(pagoCorregible({ ...pago, anuladoPor: 23 })).toBe(false)
+    expect(pagoCorregible({ ...pago, tipo: 'Ajuste' })).toBe(false)
+    expect(pagoCorregible({ ...pago, tipo: 'Horas' })).toBe(false)
+  })
+
+  it('los medios solo se editan si hay líneas de dinero', () => {
+    expect(mediosEditables(pago)).toBe(true)
+    expect(mediosEditables({ ...pago, desglose: { descuentoDeCuentaCorriente: 100, lineas: [] } })).toBe(false)
+    expect(mediosEditables({ ...pago, desglose: null })).toBe(false)
+    expect(mediosEditables({ ...pago, desglose: undefined })).toBe(false)
+    expect(mediosEditables({ ...pago, anuladoPor: 23 })).toBe(false)
+  })
+
+  it('agrupa las líneas por pago en orden de aparición, y no hay ningún pago sin líneas', () => {
+    expect(pagosDelMovimiento(pago).map((p) => [p.idGasto, p.lineas.length])).toEqual([[90, 2]])
+    expect(pagosDelMovimiento({ desglose: { descuentoDeCuentaCorriente: 100, lineas: [] } })).toEqual([])
+    expect(pagosDelMovimiento({ desglose: null })).toEqual([])
+  })
+
+  it('un movimiento anterior a la unión del pago tiene un pago por línea', () => {
+    const [primera, segunda] = desglose.lineas
+    const viejo = { desglose: { descuentoDeCuentaCorriente: null, lineas: [primera, { ...segunda, idGasto: 91 }, { ...primera, idItem: 902, idGasto: 90, importe: 10 }] } }
+
+    expect(pagosDelMovimiento(viejo).map((p) => [p.idGasto, p.lineas.map((l) => l.idItem)])).toEqual([
+      [90, [900, 902]],
+      [91, [901]],
+    ])
+    expect(totalRequeridoDelPago(viejo, 90)).toBe(610.1)
+    expect(totalRequeridoDelPago(viejo, 91)).toBe(399.9)
+    expect(lineasEditablesDelPago(viejo, 91)).toEqual([{ clave: 1, idMedioPago: 5, importe: 399.9, referencia: 'op-1', nombreMedioPago: null }])
+  })
+
+  it('las líneas editables precargan medio, importe y referencia, con una clave estable por fila', () => {
+    expect(lineasEditablesDelPago(pago, 90)).toEqual([
+      { clave: 1, idMedioPago: 4, importe: 600.1, referencia: '', nombreMedioPago: 'Efectivo' },
+      { clave: 2, idMedioPago: 5, importe: 399.9, referencia: 'op-1', nombreMedioPago: null },
+    ])
+    expect(lineasEditablesDelPago({ desglose: null }, 90)).toEqual([])
+  })
+
+  it('el total requerido suma las líneas al centavo y deja afuera el descuento', () => {
+    expect(totalRequeridoDelPago(pago, 90)).toBe(1000)
+  })
+
+  it('el total coincide solo cuando la diferencia es exactamente cero', () => {
+    const lineas = lineasEditablesDelPago(pago, 90)
+
+    expect(totalCoincide(1000, lineas)).toBe(true)
+    expect(totalCoincide(1000.01, lineas)).toBe(false)
+    expect(totalCoincide(999.99, lineas)).toBe(false)
+    expect(totalCoincide(1000, [{ ...lineas[0], importe: null }, lineas[1]])).toBe(false)
+  })
+
+  it('valida las líneas antes que el total, y avisa el total cuando no cierra', () => {
+    const lineas = lineasEditablesDelPago(pago, 90)
+
+    expect(validarCorreccionDeMedios(1000, lineas)).toBeNull()
+    expect(validarCorreccionDeMedios(1000, [])).toEqual({ campo: 'lineas', mensaje: 'Agregá al menos un medio de pago.' })
+    expect(validarCorreccionDeMedios(1000, [{ ...lineas[0], idMedioPago: '' }, lineas[1]])).toEqual({
+      campo: 'lineas',
+      mensaje: 'Línea 1: elegí el medio de pago.',
+    })
+    expect(validarCorreccionDeMedios(1200, lineas)).toEqual({
+      campo: 'general',
+      mensaje: 'Las líneas tienen que sumar $ 1.200,00, el total del pago.',
+    })
+  })
+
+  it('la solicitud lleva solo las líneas, con la referencia en blanco como null', () => {
+    const lineas = [
+      { clave: 1, idMedioPago: 4, importe: 600, referencia: '   ' },
+      { clave: 7, idMedioPago: 5, importe: 400, referencia: ' op-1 ' },
+    ]
+
+    expect(aSolicitudDeCorreccionDeMedios(lineas)).toEqual({
+      lineas: [
+        { idMedioPago: 4, importe: 600, referencia: null },
+        { idMedioPago: 5, importe: 400, referencia: 'op-1' },
+      ],
+    })
+  })
+
+  it('la descripción nombra la operación, el día y el monto sin signo', () => {
+    const movimiento = { fecha: '2026-10-07', importe: -1000 }
+
+    expect(descripcionDeCorreccion(movimiento, 'medios')).toBe('corrección de los medios del pago del 07/10/2026 por $ 1.000,00')
+    expect(descripcionDeCorreccion(movimiento, 'anulacion')).toBe('anulación del pago del 07/10/2026 por $ 1.000,00')
   })
 })

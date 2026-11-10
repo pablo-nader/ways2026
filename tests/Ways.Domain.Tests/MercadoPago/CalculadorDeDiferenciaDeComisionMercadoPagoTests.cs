@@ -7,8 +7,9 @@ public class CalculadorDeDiferenciaDeComisionMercadoPagoTests
     private static Dictionary<(int, int), CierreDeMedioEnCuenta> Cierres(params ((int Turno, int Medio) Clave, int Cuenta, decimal Porcentaje)[] cierres) =>
         cierres.ToDictionary(c => c.Clave, c => new CierreDeMedioEnCuenta(c.Cuenta, c.Porcentaje));
 
-    private static PagoConciliadoParaComision Pago(int idCobroMp, decimal importe, decimal? real, int? turno = 1, int medio = 7) =>
-        new(idCobroMp, idCobroMp * 10, turno, medio, importe, real);
+    private static PagoConciliadoParaComision Pago(
+        int idCobroMp, decimal importe, decimal? real, int? turno = 1, int medio = 7, decimal? informada = null) =>
+        new(idCobroMp, idCobroMp * 10, turno, medio, importe, real, informada);
 
     [Fact]
     public void SiMercadoPagoCobroMasDeLoQueElCierreDescontoLaCuentaSeDebita()
@@ -163,5 +164,40 @@ public class CalculadorDeDiferenciaDeComisionMercadoPagoTests
             [Pago(1, 100m, real: 4m)], Cierres(((1, 7), 3, 0m)));
 
         Assert.Equal(-4m, Assert.Single(resultado.PorCuenta).Importe);
+    }
+    [Fact]
+    public void UnPagoConComisionInformadaIgualALaRealNoTieneDiferencia()
+    {
+        var resultado = CalculadorDeDiferenciaDeComisionMercadoPago.Calcular(
+            [Pago(1, 100m, real: 3.17m, informada: 3.17m)], Cierres(((1, 7), 3, 5m)));
+
+        var linea = Assert.Single(resultado.Lineas);
+        Assert.Equal(3.17m, linea.ComisionEstimada);
+        Assert.Equal(0m, linea.Diferencia);
+        Assert.Empty(resultado.PorCuenta);
+    }
+
+    [Fact]
+    public void UnPagoConComisionInformadaDistintaDeLaRealSoloProponeElResiduo()
+    {
+        var resultado = CalculadorDeDiferenciaDeComisionMercadoPago.Calcular(
+            [Pago(1, 100m, real: 3.50m, informada: 3.17m)], Cierres(((1, 7), 3, 5m)));
+
+        Assert.Equal(0.33m, Assert.Single(resultado.Lineas).Diferencia);
+        Assert.Equal(-0.33m, Assert.Single(resultado.PorCuenta).Importe);
+    }
+
+    [Fact]
+    public void EnUnGrupoMixtoElPorcentajeSoloSeRepartePorLosPagosSinComisionInformada()
+    {
+        var resultado = CalculadorDeDiferenciaDeComisionMercadoPago.Calcular(
+            [Pago(1, 100m, real: 3.17m, informada: 3.17m), Pago(2, 33.33m, real: 2m), Pago(3, 33.33m, real: 2m)],
+            Cierres(((1, 7), 3, 5m)));
+
+        var lineas = resultado.Lineas.OrderBy(l => l.IdCobroMercadoPago).ToList();
+        Assert.Equal(3.17m, lineas[0].ComisionEstimada);
+        Assert.Equal(0m, lineas[0].Diferencia);
+        Assert.Equal(3.33m, lineas[1].ComisionEstimada + lineas[2].ComisionEstimada);
+        Assert.Equal(6.50m, Assert.Single(resultado.PorCuenta).ComisionEstimadaTotal);
     }
 }

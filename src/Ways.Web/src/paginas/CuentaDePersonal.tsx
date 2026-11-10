@@ -15,6 +15,7 @@ import {
 } from '../api/cuentaDePersonal'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { puedeGestionarCatalogos } from '../api/tipos'
+import type { LineaDePagoEditable } from '../api/lineasDePago'
 import type {
   EmpresaListado,
   MedioPagoAlta,
@@ -28,28 +29,37 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { EncabezadoOrdenable } from '../componentes/grilla'
 import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { isoATexto } from '../formato/fechas'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { toast } from '../toasts/toasts'
-import { ModalDeAjuste, ModalDeHoras, ModalDePago } from './CuentaDePersonalModales'
+import { ModalDeAjuste, ModalDeCorreccionDeMedios, ModalDeHoras, ModalDePago } from './CuentaDePersonalModales'
 import { desactualizaLaDeuda, errorDeEscritura, esRechazoCierto, type Escritura } from './cuentaDePersonalErrores'
 import {
   aSolicitudDeAjuste,
+  aSolicitudDeCorreccionDeMedios,
   aSolicitudDeHoras,
   aSolicitudDePago,
   avisoDeResultadoIncierto,
   descripcionDeAjuste,
+  descripcionDeCorreccion,
   descripcionDeHoras,
   descripcionDePago,
   deudaDeCliente,
   etiquetaDeTipo,
+  lineasEditablesDelPago,
+  mediosEditables,
   mediosOfrecidos,
+  pagoCorregible,
+  pagosDelMovimiento,
   textoDeLineaDeDesglose,
   textoDeSaldo,
+  totalRequeridoDelPago,
   validarAjuste,
+  validarCorreccionDeMedios,
   validarHoras,
   validarPago,
   type ContextoDePago,
@@ -73,12 +83,13 @@ function moneda(valor: number): string {
 
 const notaDeRangoAmpliado = (fecha: string) => `Se amplió el rango del estado de cuenta para incluir el ${isoATexto(fecha)}.`
 
-type ModalAbierta = 'horas' | 'ajuste' | 'pago' | null
+type ModalAbierta = 'horas' | 'ajuste' | 'pago' | 'corregirMedios' | 'anularPago' | null
 
 /** Una escritura en curso: lo que la identifica ante el usuario y lo que la pantalla necesita saber de ella. */
 type Operacion = {
   escritura: Escritura
-  /** Día del movimiento: el rango del estado de cuenta tiene que incluirlo para que la fila se vea. */
+  /** Día del movimiento: el rango del estado de cuenta tiene que incluirlo para que la fila se vea. Una anulación
+   * lo reemplaza por el día del ajuste que devolvió el servidor. */
   fecha: string
   /** Cómo se nombra si no se puede confirmar si quedó registrada. */
   descripcion: string
@@ -151,6 +162,11 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
 
   const [modal, setModal] = useState<ModalAbierta>(null)
   const [errorDeModal, setErrorDeModal] = useState<ErrorDeCuenta | null>(null)
+  /** Pago sobre el que está abierta una corrección, y el botón que la abrió (para devolverle el foco al cerrar). */
+  const [pagoEnCorreccion, setPagoEnCorreccion] = useState<MovimientoDePersonal | null>(null)
+  /** Pago (gasto) cuyos medios se editan: un movimiento puede tener varios. */
+  const [idGastoEnCorreccion, setIdGastoEnCorreccion] = useState<number | null>(null)
+  const [disparadorDeCorreccion, setDisparadorDeCorreccion] = useState<HTMLElement | null>(null)
   /** Persistente: tras una escritura confirmada la vista pudo quedar vieja y un toast se iría antes de que se lea. */
   const [avisoDeRefrescoFallido, setAvisoDeRefrescoFallido] = useState(false)
   /** Una entrada por escritura de resultado incierto. Solo se agregan y solo las quita su propio "Ya lo revisé". */
@@ -315,7 +331,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
     setAvisosInciertos((previos) => previos.map((a) => (a.id === id ? { id, texto } : a)))
   }
 
-  async function escribir(operacion: Operacion, accion: () => Promise<MovimientoDePersonal>) {
+  async function escribir(operacion: Operacion, accion: () => Promise<unknown>) {
     if (ocupadoRef.current) return
 
     ocupadoRef.current = true
@@ -388,7 +404,51 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
     void escribir(operacion, () => clienteDeCuentaDePersonal.pagar(idPersonal, aSolicitudDePago(f, ctx)))
   }
 
-  function abrir(cual: Exclude<ModalAbierta, null>) {
+  function enviarCorreccionDeMedios(lineas: LineaDePagoEditable[]) {
+    if (pagoEnCorreccion === null) return
+    const idPago = idGastoEnCorreccion
+    if (idPago === null) return
+
+    const rechazo = validarCorreccionDeMedios(totalRequeridoDelPago(pagoEnCorreccion, idPago), lineas)
+    if (rechazo) return setErrorDeModal(rechazo)
+
+    const operacion: Operacion = {
+      escritura: 'corregirMedios',
+      fecha: pagoEnCorreccion.fecha,
+      descripcion: descripcionDeCorreccion(pagoEnCorreccion, 'medios'),
+      mensajeOk: 'Medios del pago actualizados.',
+      origenDelPago: null,
+    }
+    void escribir(operacion, () => clienteDeCuentaDePersonal.corregirMedios(idPago, aSolicitudDeCorreccionDeMedios(lineas)))
+  }
+
+  function confirmarAnulacion() {
+    if (pagoEnCorreccion === null) return
+
+    const pago = pagoEnCorreccion
+    const operacion: Operacion = {
+      escritura: 'anularPago',
+      fecha: pago.fecha,
+      descripcion: descripcionDeCorreccion(pago, 'anulacion'),
+      mensajeOk: 'Pago anulado.',
+      origenDelPago: null,
+    }
+    void escribir(operacion, async () => {
+      const reversion = await clienteDeCuentaDePersonal.anularPago(idPersonal, pago.idMovimiento)
+      if (typeof reversion?.fecha === 'string') operacion.fecha = reversion.fecha
+    })
+  }
+
+  function abrirCorreccion(cual: 'corregirMedios' | 'anularPago', pago: MovimientoDePersonal, disparador: HTMLElement, idGasto: number | null = null) {
+    setAvisoDeRefrescoFallido(false)
+    setErrorDeModal(null)
+    setPagoEnCorreccion(pago)
+    setIdGastoEnCorreccion(idGasto)
+    setDisparadorDeCorreccion(disparador)
+    setModal(cual)
+  }
+
+  function abrir(cual: 'horas' | 'ajuste' | 'pago') {
     setAvisoDeRefrescoFallido(false)
     setErrorDeModal(null)
     setHoy(fechaDeHoyParaPago())
@@ -398,6 +458,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   function cerrarModal() {
     setModal(null)
     setErrorDeModal(null)
+    setPagoEnCorreccion(null)
   }
 
   if (noEncontrado) return <SinEmpleado />
@@ -406,6 +467,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   const bloqueado = escribiendo
   const catalogosListos = medios !== null && (!esAdmin || empresas !== null)
   const puedeEscribir = empleado !== null && cuenta !== null && !bloqueado
+  const mediosListos = medios !== null && !mediosFallaron
   const totalDePaginas = cuenta ? Math.max(1, Math.ceil(cuenta.total / cuenta.tamanio)) : 1
   const deudaDelCliente = saldoDelCliente === null || errorDeuda ? null : deudaDeCliente(saldoDelCliente)
   const leyendoDeuda = hayClienteVigente && !errorDeuda && saldoDelCliente === null
@@ -566,6 +628,12 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
                       <td className="text-end">{textoDeSaldo(m.saldoResultante)}</td>
                       <td>
                         {m.detalle}
+                        {m.idMovimientoAnulado != null && <div className="small text-muted fst-italic">Anula el pago #{m.idMovimientoAnulado}</div>}
+                        {m.tipo === 'Pago' && m.anuladoPor != null && (
+                          <div>
+                            <span className="badge text-bg-secondary">Anulado</span>
+                          </div>
+                        )}
                         {m.desglose && (
                           <ul className="list-unstyled small text-muted mb-0">
                             {m.desglose.descuentoDeCuentaCorriente !== null && (
@@ -575,6 +643,26 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
                               <li key={l.idItem}>{textoDeLineaDeDesglose(l)}</li>
                             ))}
                           </ul>
+                        )}
+                        {esAdmin && pagoCorregible(m) && (
+                          <div className="d-flex flex-wrap gap-2 mt-1">
+                            {mediosEditables(m) &&
+                              pagosDelMovimiento(m).map((pago, _i, pagos) => (
+                                <button
+                                  key={pago.idGasto}
+                                  type="button"
+                                  className="btn btn-sm btn-outline-secondary"
+                                  disabled={!puedeEscribir || !mediosListos}
+                                  title={mediosListos ? undefined : 'Cargando los medios de pago…'}
+                                  onClick={(e) => abrirCorreccion('corregirMedios', m, e.currentTarget, pago.idGasto)}
+                                >
+                                  {pagos.length === 1 ? 'Editar medios' : `Editar medios (pago #${pago.idGasto})`}
+                                </button>
+                              ))}
+                            <button type="button" className="btn btn-sm btn-outline-danger" disabled={!puedeEscribir} onClick={(e) => abrirCorreccion('anularPago', m, e.currentTarget)}>
+                              Anular
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -650,6 +738,34 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
           onCambio={() => setErrorDeModal(null)}
           onCerrar={cerrarModal}
           onEnviar={enviarPago}
+        />
+      )}
+      {modal === 'corregirMedios' && pagoEnCorreccion && idGastoEnCorreccion !== null && (
+        <ModalDeCorreccionDeMedios
+          fechaDelPago={isoATexto(pagoEnCorreccion.fecha)}
+          lineasActuales={lineasEditablesDelPago(pagoEnCorreccion, idGastoEnCorreccion)}
+          medios={medios ?? []}
+          error={errorDeModal}
+          escribiendo={escribiendo}
+          focoDeReserva={contenedorRef}
+          onCambio={() => setErrorDeModal(null)}
+          onCerrar={cerrarModal}
+          onEnviar={enviarCorreccionDeMedios}
+        />
+      )}
+      {modal === 'anularPago' && pagoEnCorreccion && (
+        <ConfirmacionDeBaja
+          titulo={`el pago del ${isoATexto(pagoEnCorreccion.fecha)} por ${moneda(-pagoEnCorreccion.importe)}`}
+          pregunta="Anular"
+          nota="Se devuelve el dinero a la caja o la tesorería, se corrige el saldo del empleado con un ajuste a su favor y se revierte el descuento de cuenta corriente, si lo había. El pago queda marcado como anulado y no se puede deshacer."
+          etiquetaConfirmar="Confirmar anulación"
+          etiquetaEnCurso="Anulando…"
+          ocupado={escribiendo}
+          disparador={disparadorDeCorreccion}
+          regreso={contenedorRef}
+          error={errorDeModal?.mensaje ?? null}
+          onConfirmar={confirmarAnulacion}
+          onCancelar={cerrarModal}
         />
       )}
     </div>

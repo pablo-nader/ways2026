@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Caja;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
@@ -118,9 +119,11 @@ public static class GeneradorDePropuestasDeTesoreriaMercadoPago
                 select new { IdCobroMercadoPago = p.IdCobroMercadoPago!.Value, IdCobro = p.Id, p.IdMedioPago, p.Importe, c.IdTurnoCaja })
             .ToListAsync(ct);
 
+        var informadas = await ComisionesInformadasDePagos.PorPagoAsync(db, pagos.Select(p => p.IdCobro).ToList(), ct);
         var paraCalcular = pagos
             .Select(p => new PagoConciliadoParaComision(
-                p.IdCobroMercadoPago, p.IdCobro, p.IdTurnoCaja, p.IdMedioPago, p.Importe, cobrosAplicados[p.IdCobroMercadoPago]))
+                p.IdCobroMercadoPago, p.IdCobro, p.IdTurnoCaja, p.IdMedioPago, p.Importe, cobrosAplicados[p.IdCobroMercadoPago],
+                informadas.TryGetValue(p.IdCobro, out var informada) ? informada : null))
             .ToList();
 
         var cierres = await LeerCierresAsync(db, paraCalcular, ct);

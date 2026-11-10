@@ -272,6 +272,11 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_aplicaciones_cobro_cobro_venta" } =>
                 (StatusCodes.Status409Conflict, "Ese recibo ya está aplicado a esa venta.", "aplicacion_cobro_duplicada"),
 
+            // Una sola anulación por pago de personal. La anulación lo revisa bajo el lock de la fila del personal, así que
+            // este índice es el respaldo de una escritura que se salte ese lock.
+            { SqlState: "23505", ConstraintName: "ux_movimientos_personal_movimiento_anulado" } =>
+                (StatusCodes.Status409Conflict, "El pago ya está anulado.", "pago_personal_ya_anulado"),
+
             { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
                 (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
 

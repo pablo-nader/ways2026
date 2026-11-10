@@ -28,6 +28,11 @@ describe('errorDeEscritura — por código, en el campo que corresponde', () => 
     ['pago_personal_punto_venta_requerido', 400, 'general'],
     ['turno_no_abierto', 409, 'origen'],
     ['personal_sin_cliente_vinculado', 409, 'general'],
+    ['importe_distinto_del_pago', 400, 'general'],
+    ['pago_sin_movimiento_de_personal', 409, 'general'],
+    ['pago_personal_ya_anulado', 409, 'general'],
+    ['cliente_del_descuento_dado_de_baja', 409, 'general'],
+    ['movimiento_no_es_pago', 409, 'general'],
     ['descuento_supera_la_deuda', 409, 'descuento'],
     ['gasto_fecha_futura', 400, 'fecha'],
     ['gasto_medio_pago_cuenta_corriente_invalido', 400, 'lineas'],
@@ -132,5 +137,25 @@ describe('desactualizaLaDeuda', () => {
 
   it('otros rechazos no piden releer nada', () => {
     expect(desactualizaLaDeuda(rechazo(409, 'turno_no_abierto'))).toBe(false)
+  })
+})
+
+describe('errorDeEscritura — corrección de pagos', () => {
+  it.each(['corregirMedios', 'anularPago'] as const)('%s: un 403 pide ser administrador y un 404 dice que falta el pago', (escritura) => {
+    expect(errorDeEscritura(rechazo(403, 'prohibido'), escritura)).toEqual({
+      campo: 'general',
+      mensaje: 'Corregir un pago requiere ser administrador.',
+    })
+    expect(errorDeEscritura(rechazo(404, 'no_encontrado'), escritura)).toEqual({
+      campo: 'general',
+      mensaje: 'No se encontró el pago. Actualizá la pantalla e intentá de nuevo.',
+    })
+  })
+
+  it('un código que la pantalla no conoce (conciliación, turno) muestra el mensaje del servidor', () => {
+    expect(errorDeEscritura(rechazo(409, 'conciliacion_cerrada', 'El pago está conciliado.'), 'corregirMedios')).toEqual({
+      campo: 'general',
+      mensaje: 'El pago está conciliado.',
+    })
   })
 })

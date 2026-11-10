@@ -53,7 +53,9 @@ public static class EscriturasDeCuentaDeTesoreria
     /// <summary>Saldo vigente de la cuenta y fecha de su último movimiento (<c>null</c> sin movimientos).</summary>
     public sealed record ColaDeCuenta(decimal Saldo, DateTimeOffset? Fecha);
 
-    /// <summary>Sin cuenta (o con una cuenta dada de baja o de otra empresa que la del turno) un medio electrónico no escribe nada y no
+    /// <summary>La comisión de cada medio es la que Mercado Pago informó para los pagos que califican (<see cref="ComisionesInformadasDePagos"/>)
+    /// más el porcentaje del medio sobre el resto de su bruto (<see cref="CalculadorDeMovimientosDeCuenta"/>).
+    /// Sin cuenta (o con una cuenta dada de baja o de otra empresa que la del turno) un medio electrónico no escribe nada y no
     /// frena el cierre. Un bruto cero no genera filas. Una cuenta inactiva igual recibe movimientos: desactivarla solo
     /// impide asignarla a medios nuevos.</summary>
     public static async Task AcreditarAsync(
@@ -87,9 +89,13 @@ public static class EscriturasDeCuentaDeTesoreria
             fechas[idCuenta] = FechaMonotona(momento, cola.Fecha);
         }
 
+        var conocidas = await ComisionesInformadasDePagos.PorTurnoYMedioAsync(
+            db, [idTurnoCaja], medios.Select(m => m.IdMedioPago).ToList(), ct);
+
         foreach (var medio in medios.Where(m => saldos.ContainsKey(m.IdCuenta)))
         {
-            foreach (var componente in CalculadorDeMovimientosDeCuenta.Calcular(medio.Bruto, medio.Porcentajes))
+            var conocida = conocidas.GetValueOrDefault((idTurnoCaja, medio.IdMedioPago));
+            foreach (var componente in CalculadorDeMovimientosDeCuenta.Calcular(medio.Bruto, medio.Porcentajes, conocida))
             {
                 var inicio = saldos[medio.IdCuenta];
                 var final = inicio + componente.Ingreso - componente.Egreso;
@@ -113,10 +119,11 @@ public static class EscriturasDeCuentaDeTesoreria
     /// Por cada medio con cuenta cuya variación de bruto no es cero:
     /// <list type="bullet">
     /// <item>si el turno ya le escribió sus filas de cierre (cobro, comisión, retenciones), se agrega una fila <c>ajuste</c> con el
-    /// neto de la variación (comisión y retenciones con los porcentajes actuales del medio, como el cierre), con el turno y el
-    /// medio para rastrearla. Las filas de cierre no se tocan: su índice único las admite una sola vez por turno y medio;</item>
+    /// neto de la variación (comisión y retenciones con los porcentajes actuales del medio; la variación nunca incluye un pago ligado a
+    /// Mercado Pago, que no cambia de medio, así que no hay comisión informada que usar), con el turno y el medio para rastrearla. Las filas de cierre no se tocan: su índice único las admite una sola vez por turno y medio;</item>
     /// <item>si no las tiene y la variación es positiva, se escriben las filas de cierre con todo lo que ese medio cobra ahora en el
-    /// turno: lo mismo que haría la reconstrucción del historial, que después ya no vuelve a acreditar ese par;</item>
+    /// turno, con las comisiones informadas que valen como en el cierre (<see cref="ComisionesInformadasDePagos"/>): lo mismo que haría la
+    /// reconstrucción del historial, que después ya no vuelve a acreditar ese par;</item>
     /// <item>si no las tiene y la variación es negativa, no se escribe nada: la cuenta nunca recibió ese cobro.</item>
     /// </list>
     /// Las fechas siguen <see cref="FechaMonotona"/>.
@@ -150,9 +157,9 @@ public static class EscriturasDeCuentaDeTesoreria
                 .ToListAsync(ct))
             .ToHashSet();
 
-        var brutoActual = await BrutoDelTurnoPorMedioAsync(
-            db, idTurnoCaja, medios.Where(m => !acreditados.Contains(m.IdMedioPago) && m.Bruto > 0m).Select(m => m.IdMedioPago).ToList(),
-            ct);
+        var aAcreditar = medios.Where(m => !acreditados.Contains(m.IdMedioPago) && m.Bruto > 0m).Select(m => m.IdMedioPago).ToList();
+        var brutoActual = await BrutoDelTurnoPorMedioAsync(db, idTurnoCaja, aAcreditar, ct);
+        var conocidas = await ComisionesInformadasDePagos.PorTurnoYMedioAsync(db, [idTurnoCaja], aAcreditar, ct);
 
         var saldos = new Dictionary<int, decimal>();
         var fechas = new Dictionary<int, DateTimeOffset>();
@@ -198,7 +205,8 @@ public static class EscriturasDeCuentaDeTesoreria
             var bruto = brutoActual.GetValueOrDefault(medio.IdMedioPago);
             if (bruto > 0m)
             {
-                foreach (var componente in CalculadorDeMovimientosDeCuenta.Calcular(bruto, medio.Porcentajes))
+                var conocida = conocidas.GetValueOrDefault((idTurnoCaja, medio.IdMedioPago));
+                foreach (var componente in CalculadorDeMovimientosDeCuenta.Calcular(bruto, medio.Porcentajes, conocida))
                 {
                     var inicio = saldos[medio.IdCuenta];
                     saldos[medio.IdCuenta] = inicio + componente.Ingreso - componente.Egreso;

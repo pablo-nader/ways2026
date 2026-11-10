@@ -48,5 +48,9 @@ public class MovimientoPersonal
 
     public string? Detalle { get; set; }
 
+    /// <summary>Solo en el <see cref="TipoMovimientoPersonal.Ajuste"/> que anula un pago: el asiento del pago anulado.
+    /// Un pago se anula una sola vez.</summary>
+    public int? IdMovimientoAnulado { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 }

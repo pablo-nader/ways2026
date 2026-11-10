@@ -4,6 +4,10 @@ namespace Ways.Domain.Caja;
 public readonly record struct PorcentajesDeCobro(
     decimal Comision, decimal RetencionIibb, decimal RetencionIva, decimal RetencionGanancias);
 
+/// <summary>La parte del bruto de un medio cuya comisión ya informó el proveedor: <see cref="Base"/> es la suma de los importes de esos pagos y
+/// <see cref="Comision"/> la suma de sus comisiones informadas.</summary>
+public readonly record struct ComisionConocida(decimal Base, decimal Comision);
+
 /// <summary>Una fila a agregar al libro de la cuenta: un solo lado distinto de cero y el snapshot con el que se calculó.
 /// <see cref="PorcentajeAplicado"/> es null en el cobro.</summary>
 public readonly record struct ComponenteDeMovimientoDeCuenta(
@@ -25,8 +29,21 @@ public static class CalculadorDeMovimientosDeCuenta
     /// punto medio hacia afuera del cero, y no hay un componente que compense el redondeo: la suma de los componentes puede
     /// pasar del bruto por centavos (bruto 0,50 con cuatro porcentajes de 25 % da cuatro egresos de 0,13 y un neto de −0,02),
     /// y eso se acepta. Un componente que redondea a cero se omite, y un bruto cero no genera ninguno.</summary>
-    public static IReadOnlyList<ComponenteDeMovimientoDeCuenta> Calcular(decimal bruto, PorcentajesDeCobro porcentajes)
+    public static IReadOnlyList<ComponenteDeMovimientoDeCuenta> Calcular(decimal bruto, PorcentajesDeCobro porcentajes) =>
+        Calcular(bruto, porcentajes, default);
+
+    /// <summary>Como <see cref="Calcular(decimal, PorcentajesDeCobro)"/>, pero la comisión es la informada de <paramref name="conocida"/> más el
+    /// porcentaje sobre el resto del bruto, redondeado una vez: <c>conocida.Comision + round((bruto − conocida.Base) × porcentaje)</c>. La fila
+    /// conserva el porcentaje del medio y el bruto completo como base; las retenciones se calculan sobre el bruto completo, como siempre. Sin
+    /// comisión conocida (base y comisión cero) el resultado es idéntico al de la otra sobrecarga. Una base negativa o mayor que el bruto, o una
+    /// comisión negativa, no la produce ningún llamador (la base sale de un subconjunto de los mismos pagos) y se rechaza.</summary>
+    public static IReadOnlyList<ComponenteDeMovimientoDeCuenta> Calcular(decimal bruto, PorcentajesDeCobro porcentajes, ComisionConocida conocida)
     {
+        if (conocida.Base < 0m || conocida.Base > Math.Max(bruto, 0m) || conocida.Comision < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(conocida), conocida, "La comisión conocida no corresponde al bruto del medio.");
+        }
+
         if (bruto == 0m)
         {
             return [];
@@ -39,7 +56,9 @@ public static class CalculadorDeMovimientosDeCuenta
                 : new(TipoMovimientoCuenta.Cobro, 0m, -bruto, bruto, null)
         };
 
-        AgregarDescuento(componentes, TipoMovimientoCuenta.Comision, bruto, porcentajes.Comision);
+        AgregarComponente(
+            componentes, TipoMovimientoCuenta.Comision, bruto, porcentajes.Comision,
+            conocida.Comision + Redondear((bruto - conocida.Base) * porcentajes.Comision / 100m));
         AgregarDescuento(componentes, TipoMovimientoCuenta.RetencionIibb, bruto, porcentajes.RetencionIibb);
         AgregarDescuento(componentes, TipoMovimientoCuenta.RetencionIva, bruto, porcentajes.RetencionIva);
         AgregarDescuento(componentes, TipoMovimientoCuenta.RetencionGanancias, bruto, porcentajes.RetencionGanancias);
@@ -47,10 +66,15 @@ public static class CalculadorDeMovimientosDeCuenta
         return componentes;
     }
 
+    private static decimal Redondear(decimal valor) => Math.Round(valor, Decimales, MidpointRounding.AwayFromZero);
+
     private static void AgregarDescuento(
-        List<ComponenteDeMovimientoDeCuenta> componentes, TipoMovimientoCuenta tipo, decimal bruto, decimal porcentaje)
+        List<ComponenteDeMovimientoDeCuenta> componentes, TipoMovimientoCuenta tipo, decimal bruto, decimal porcentaje) =>
+        AgregarComponente(componentes, tipo, bruto, porcentaje, Redondear(bruto * porcentaje / 100m));
+
+    private static void AgregarComponente(
+        List<ComponenteDeMovimientoDeCuenta> componentes, TipoMovimientoCuenta tipo, decimal bruto, decimal porcentaje, decimal importe)
     {
-        var importe = Math.Round(bruto * porcentaje / 100m, Decimales, MidpointRounding.AwayFromZero);
         if (importe == 0m)
         {
             return;

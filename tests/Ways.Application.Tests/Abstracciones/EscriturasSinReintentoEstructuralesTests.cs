@@ -146,6 +146,13 @@ public class EscriturasSinReintentoEstructuralesTests
         // idempotencia; un reintento tras un commit ambiguo los desplazaría dos veces.
         { "Ways.Application/Pagos/ServicioDePagos.Reasignacion.cs", "ReasignarPersonalAsync" },
 
+        // Corrección de las líneas de un pago de personal: mismo camino que la edición administrativa (arqueo, ajuste de
+        // tesorería). Anulación de un pago de personal: mueve dos saldos, escribe asientos y da de baja pagos sin clave de
+        // idempotencia; un reintento tras un commit ambiguo respondería 409 pago_personal_ya_anulado a una anulación que sí
+        // tuvo éxito.
+        { "Ways.Application/Pagos/ServicioDePagos.PagosDePersonal.cs", "EditarLineasDePagoDePersonalAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.PagosDePersonal.cs", "AnularPagoDePersonalAsync" },
+
         // Familias de artículos: editar el nombre y el estado de una familia lee la fila bajo su FOR UPDATE; un
         // reintento tras un commit ambiguo la leería ya editada por el intento anterior, mismo criterio que
         // ServicioDeArticulos.ActualizarAsync.

@@ -252,6 +252,25 @@ public partial class MercadoPagoCobrosTests
         Assert.Equal($"PAY{IdDeLaOrden(e)}", fila["id_pago_mercadopago"]);
     }
 
+    // Clausula: un Point aprobado por la consulta del dispositivo lee su pago y guarda la comision informada; una consulta posterior del
+    // cobro ya aprobado no vuelve a leer el pago ni cambia la comision aunque Mercado Pago informe otra.
+    [Fact]
+    public async Task UnPointAprobadoGuardaLaComisionInformadaUnaSolaVez()
+    {
+        var (e, medio) = await PrepararPointAsync("mp-point-comision");
+        e.Ordenes.Pago = id => PagoAprobado(id, 300m, "15.42");
+        var cobro = await CrearPointOkAsync(e, medio, 6014, 300m);
+        e.Ordenes.Estados[IdDeLaOrden(e)] = "processed";
+
+        Assert.Equal("aprobado", (await LeerAsync<CobroDeMercadoPago>(await ConsultarAsync(e, cobro.IdCobro))).Estado);
+        e.Ordenes.Pago = id => PagoAprobado(id, 300m, "1.00");
+        e.Reloj.Ahora = e.Reloj.Ahora.AddSeconds(3);
+        await ConsultarAsync(e, cobro.IdCobro);
+
+        Assert.Equal(15.42m, Assert.Single(await FilasAsync(e.IdPuntoVenta))["comision_informada"]);
+        Assert.Single(LecturasDePagos(e));
+    }
+
     // Clausula: failed es una regla de Point; una orden QR en failed sigue como estaba.
     [Fact]
     public async Task UnaOrdenFailedDeUnCobroQrNoLoCierra()

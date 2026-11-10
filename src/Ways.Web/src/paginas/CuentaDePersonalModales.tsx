@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import type { InputHTMLAttributes, ReactNode } from 'react'
+import { totalDeLineasDePago, type LineaDePagoEditable } from '../api/lineasDePago'
 import { ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type { EmpresaListado, MedioPagoListado, OrigenFondosPago, PuntoVentaListado } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { EditorDeLineasDePago } from '../componentes/EditorDeLineasDePago'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
 import { formatearImporte } from '../formato/importes'
@@ -23,6 +25,7 @@ import {
   sanearTipeoDeHoras,
   saldoTrasPago,
   textoDeSaldo,
+  totalCoincide,
   totalDelPago,
   type CampoDeCuenta,
   type ContextoDePago,
@@ -74,12 +77,23 @@ type PropsComunes = {
   onCerrar: () => void
 }
 
-type PropsDeFormulario = Omit<PropsComunes, 'onCambio'> & { idFormulario: string; titulo: string; textoDeEnvio: string; children: ReactNode; onEnviar: () => void }
+type PropsDeFormulario = Omit<PropsComunes, 'onCambio'> & {
+  idFormulario: string
+  titulo: string
+  textoDeEnvio: string
+  textoEnCurso?: string
+  /** Deshabilita el envío por una condición del formulario, además de la escritura en vuelo. */
+  envioDeshabilitado?: boolean
+  children: ReactNode
+  onEnviar: () => void
+}
 
 function ModalDeFormulario({
   idFormulario,
   titulo,
   textoDeEnvio,
+  textoEnCurso = 'Registrando…',
+  envioDeshabilitado = false,
   error,
   escribiendo,
   focoDeReserva,
@@ -92,8 +106,8 @@ function ModalDeFormulario({
       <button type="button" className="btn btn-outline-secondary" onClick={onCerrar} disabled={escribiendo}>
         Cancelar
       </button>
-      <button type="submit" form={idFormulario} className="btn btn-success" disabled={escribiendo}>
-        {escribiendo ? 'Registrando…' : textoDeEnvio}
+      <button type="submit" form={idFormulario} className="btn btn-success" disabled={escribiendo || envioDeshabilitado}>
+        {escribiendo ? textoEnCurso : textoDeEnvio}
       </button>
     </>
   )
@@ -463,6 +477,60 @@ export function ModalDePago({
         <div className="small text-muted">Saldo actual: {textoDeSaldo(saldo)}</div>
         <div className="fs-6">Total del pago: {moneda(total)}</div>
         <div className="fs-6">Saldo después del pago: {textoDeSaldo(saldoResultante)}</div>
+      </div>
+    </ModalDeFormulario>
+  )
+}
+
+// ---- Corrección de medios ----------------------------------------------------------------
+
+type PropsDeCorreccionDeMedios = PropsComunes & {
+  /** Fecha ya formateada del pago, para nombrarlo en el título. */
+  fechaDelPago: string
+  /** Reparto vigente del pago: precarga las líneas y fija el total que las nuevas tienen que sumar. */
+  lineasActuales: LineaDePagoEditable[]
+  medios: MedioPagoListado[]
+  onEnviar: (lineas: LineaDePagoEditable[]) => void
+}
+
+export function ModalDeCorreccionDeMedios({ fechaDelPago, lineasActuales, medios, onEnviar, onCambio, ...resto }: PropsDeCorreccionDeMedios) {
+  const [lineas, setLineas] = useState<LineaDePagoEditable[]>(lineasActuales)
+  const [objetivo] = useState(() => totalDeLineasDePago(lineasActuales))
+  const { error, escribiendo } = resto
+  const coincide = totalCoincide(objetivo, lineas)
+
+  return (
+    <ModalDeFormulario
+      idFormulario="formulario-correccion-medios"
+      titulo={`Editar medios del pago del ${fechaDelPago}`}
+      textoDeEnvio="Guardar medios"
+      textoEnCurso="Guardando…"
+      envioDeshabilitado={!coincide}
+      onEnviar={() => onEnviar(lineas)}
+      {...resto}
+    >
+      <div className="col-12">
+        <p className="small text-muted mb-1">
+          Corregir los medios no cambia el importe del pago ni el saldo del empleado: las líneas tienen que sumar el mismo total.
+        </p>
+        <div className="fs-6">Total del pago: {moneda(objetivo)}</div>
+      </div>
+      <div className="col-12">
+        <EditorDeLineasDePago
+          lineas={lineas}
+          medios={medios}
+          objetivo={objetivo}
+          deshabilitado={escribiendo}
+          onCambio={(cambios) => {
+            setLineas(cambios)
+            onCambio()
+          }}
+        />
+        {error?.campo === 'lineas' && (
+          <div role="alert" className="invalid-feedback d-block">
+            {error.mensaje}
+          </div>
+        )}
       </div>
     </ModalDeFormulario>
   )

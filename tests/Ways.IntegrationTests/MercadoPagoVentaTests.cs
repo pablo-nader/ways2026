@@ -65,6 +65,10 @@ public partial class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixtu
 
         /// <summary>Lo que Mercado Pago informa como pagado; por defecto, el total de la orden.</summary>
         public decimal? Pagado { get; set; }
+
+        /// <summary>La comisión a cargo del vendedor que informa <c>GET /v1/payments/{id}</c> (aprobado por 100); nula contesta 404 y el cobro
+        /// se aprueba sin comisión informada.</summary>
+        public string? ComisionDelPago { get; set; }
     }
 
     private sealed class Escenario
@@ -155,6 +159,14 @@ public partial class MercadoPagoVentaTests(WaysApiFixture fixture) : IClassFixtu
             if (ruta.StartsWith("/v1/orders/", StringComparison.Ordinal) && pedido.Metodo == HttpMethod.Get)
             {
                 return Json(HttpStatusCode.OK, JsonDeOrden(ordenes, ruta.Split('/')[3]));
+            }
+
+            if (ruta.StartsWith("/v1/payments/", StringComparison.Ordinal) && pedido.Metodo == HttpMethod.Get
+                && ordenes.ComisionDelPago is { } comision)
+            {
+                return Json(
+                    HttpStatusCode.OK,
+                    $$"""{"id": {{ruta.Split('/')[3]}}, "status": "approved", "transaction_amount": 100, "fee_details": [{"type": "mercadopago_fee", "amount": {{comision}}, "fee_payer": "collector"}]}""");
             }
 
             return new HttpResponseMessage(HttpStatusCode.NotFound);

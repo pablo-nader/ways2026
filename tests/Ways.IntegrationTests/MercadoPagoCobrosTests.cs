@@ -71,6 +71,10 @@ public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixt
 
         /// <summary>Una orden sin <c>type_response</c>.</summary>
         public bool SinQr { get; set; }
+
+        /// <summary>Respuesta de <c>GET /v1/payments/{id}</c> según el id de la ruta; nulo contesta 404 y el cobro se aprueba sin comisión
+        /// informada.</summary>
+        public Func<string, HttpResponseMessage>? Pago { get; set; }
     }
 
     private sealed class Escenario
@@ -163,6 +167,11 @@ public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixt
                     : cuerpo.RootElement.GetProperty("transactions").GetProperty("payments")[0].GetProperty("amount").GetString()!;
                 ordenes.Totales[id] = decimal.Parse(textoDelTotal, CultureInfo.InvariantCulture);
                 return Json(HttpStatusCode.Created, JsonDeOrden(ordenes, id));
+            }
+
+            if (ruta.StartsWith("/v1/payments/", StringComparison.Ordinal) && pedido.Metodo == HttpMethod.Get)
+            {
+                return ordenes.Pago?.Invoke(IdDeOrdenEnRuta(ruta)) ?? new HttpResponseMessage(HttpStatusCode.NotFound);
             }
 
             if (ruta.StartsWith("/v1/orders/", StringComparison.Ordinal))
@@ -314,6 +323,18 @@ public partial class MercadoPagoCobrosTests(WaysApiFixture fixture) : IClassFixt
 
     private static IReadOnlyList<PedidoRegistrado> Lecturas(Escenario e) =>
         [.. Pedidos(e).Where(p => p.Metodo == HttpMethod.Get)];
+
+    /// <summary>Las lecturas de <c>GET /v1/payments/{id}</c>, que <see cref="Pedidos"/> no cuenta (solo mira órdenes).</summary>
+    private static IReadOnlyList<PedidoRegistrado> LecturasDePagos(Escenario e) =>
+        [.. e.Ctx.MercadoPago.Pedidos.Where(p => EsDeLaApi(p) && p.Uri.AbsolutePath.StartsWith("/v1/payments/", StringComparison.Ordinal))];
+
+    /// <summary>Un pago de <c>/v1/payments</c> aprobado por <paramref name="importe"/> con una comisión a cargo del vendedor y otra del comprador.</summary>
+    private static HttpResponseMessage PagoAprobado(string id, decimal importe, string comisionDelVendedor) =>
+        Json(HttpStatusCode.OK, $$"""
+            {"id": {{id}}, "status": "approved", "transaction_amount": {{importe.ToString(CultureInfo.InvariantCulture)}},
+             "fee_details": [{"type": "mercadopago_fee", "amount": {{comisionDelVendedor}}, "fee_payer": "collector"},
+                             {"type": "financing_fee", "amount": 7.77, "fee_payer": "payer"}]}
+            """);
 
     private static IReadOnlyList<PedidoRegistrado> Cancelaciones(Escenario e) =>
         [.. Pedidos(e).Where(p => p.Uri.AbsolutePath.EndsWith("/cancel", StringComparison.Ordinal))];

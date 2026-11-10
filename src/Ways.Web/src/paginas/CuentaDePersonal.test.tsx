@@ -19,11 +19,13 @@ import type {
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -264,6 +266,7 @@ beforeEach(() => {
   puntoVentaActual = PUNTO_DE_VENTA
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  apiPutMock.mockReset()
   mockearRutas()
 })
 
@@ -2061,5 +2064,433 @@ describe('CuentaDePersonal — orden en el servidor', () => {
 
     const fila = (await screen.findByText('Primero por importe')).closest('tr')!
     expect(within(fila).getByText('$ 987.654,00')).toBeInTheDocument()
+  })
+})
+
+describe('CuentaDePersonal — corrección de pagos', () => {
+  const LINEAS_DEL_PAGO = [
+    { idGasto: 90, idItem: 900, idMedioPago: 4, nombreMedioPago: 'Efectivo', importe: 600, origenFondos: 'CajaTurno' as const, referencia: null },
+    { idGasto: 90, idItem: 901, idMedioPago: 5, nombreMedioPago: 'Transferencia', importe: 400, origenFondos: 'CajaTurno' as const, referencia: 'op-1' },
+  ]
+  const PAGO_CON_LINEAS = movimiento({
+    idMovimiento: 20,
+    fecha: '2026-10-07',
+    tipo: 'Pago',
+    importe: -1000,
+    detalle: 'Pago con líneas',
+    desglose: { descuentoDeCuentaCorriente: null, lineas: LINEAS_DEL_PAGO },
+  })
+  const PAGO_SOLO_DESCUENTO = movimiento({
+    idMovimiento: 21,
+    fecha: '2026-10-06',
+    tipo: 'Pago',
+    importe: -300,
+    detalle: 'Pago solo descuento',
+    desglose: { descuentoDeCuentaCorriente: 300, lineas: [] },
+  })
+  const PAGO_ANULADO = movimiento({
+    idMovimiento: 22,
+    fecha: '2026-10-05',
+    tipo: 'Pago',
+    importe: -200,
+    detalle: 'Pago anulado',
+    anuladoPor: 23,
+    desglose: { descuentoDeCuentaCorriente: null, lineas: [{ ...LINEAS_DEL_PAGO[0], idGasto: 91, importe: 200 }] },
+  })
+  const REVERSION = movimiento({
+    idMovimiento: 23,
+    fecha: '2026-10-05',
+    tipo: 'Ajuste',
+    importe: 200,
+    detalle: 'Anulación del pago',
+    idMovimientoAnulado: 22,
+  })
+
+  function conPagos() {
+    mockearRutas({
+      cuenta: () =>
+        Promise.resolve(paginaDeCuenta({ items: [MOV_HORAS, PAGO_CON_LINEAS, PAGO_SOLO_DESCUENTO, PAGO_ANULADO, REVERSION], total: 5 })),
+    })
+  }
+
+  const fila = (detalle: string) => screen.getByText(detalle).closest('tr') as HTMLElement
+
+  /** Espera a los medios (el botón queda inerte hasta que llegan) y abre la corrección del pago con líneas. */
+  async function abrirEdicion(evento: Evento) {
+    const boton = within(fila('Pago con líneas')).getByRole('button', { name: 'Editar medios' })
+    await waitFor(() => expect(boton).toBeEnabled())
+    await evento.click(boton)
+
+    return screen.findByRole('dialog', { name: 'Editar medios del pago del 07/10/2026' })
+  }
+
+  async function abrirAnulacion(evento: Evento) {
+    const boton = within(fila('Pago con líneas')).getByRole('button', { name: 'Anular' })
+    await waitFor(() => expect(boton).toBeEnabled())
+    await evento.click(boton)
+
+    return screen.findByRole('alertdialog')
+  }
+
+  async function escribirImporte(evento: Evento, dialogo: HTMLElement, linea: number, valor: string) {
+    const campo = within(dialogo).getByLabelText(`Importe de la línea ${linea}`)
+    await evento.clear(campo)
+    await evento.type(campo, valor)
+  }
+
+  describe('visibilidad', () => {
+    it('el Admin ve Editar medios y Anular en un pago con líneas, solo Anular si es solo descuento, y ninguna en uno anulado', async () => {
+      conPagos()
+      renderCuenta()
+      await esperarCuenta()
+
+      const conLineas = fila('Pago con líneas')
+      expect(within(conLineas).getByRole('button', { name: 'Editar medios' })).toBeInTheDocument()
+      expect(within(conLineas).getByRole('button', { name: 'Anular' })).toBeInTheDocument()
+
+      const soloDescuento = fila('Pago solo descuento')
+      expect(within(soloDescuento).queryByRole('button', { name: 'Editar medios' })).not.toBeInTheDocument()
+      expect(within(soloDescuento).getByRole('button', { name: 'Anular' })).toBeInTheDocument()
+
+      const anulado = fila('Pago anulado')
+      expect(within(anulado).getByText('Anulado')).toBeInTheDocument()
+      expect(within(anulado).queryByRole('button', { name: 'Editar medios' })).not.toBeInTheDocument()
+      expect(within(anulado).queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument()
+    })
+
+    it('la reversión dice qué pago anula y no ofrece acciones', async () => {
+      conPagos()
+      renderCuenta()
+      await esperarCuenta()
+
+      const reversion = fila('Anulación del pago')
+      expect(within(reversion).getByText('Anula el pago #22')).toBeInTheDocument()
+      expect(within(reversion).queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument()
+    })
+
+    it('el Supervisor no ve ninguna de las dos acciones', async () => {
+      rolActual = ROL.Supervisor
+      conPagos()
+      renderCuenta()
+      await esperarCuenta()
+
+      expect(screen.queryByRole('button', { name: 'Editar medios' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument()
+    })
+
+    it('Editar medios queda inerte mientras los medios no llegan', async () => {
+      const medios = diferido<MedioPagoListado[]>()
+      mockearRutas({
+        cuenta: () => Promise.resolve(paginaDeCuenta({ items: [MOV_HORAS, PAGO_CON_LINEAS], total: 2 })),
+        medios: () => medios.promesa,
+      })
+      renderCuenta()
+      await esperarCuenta()
+
+      const boton = within(fila('Pago con líneas')).getByRole('button', { name: 'Editar medios' })
+      expect(boton).toBeDisabled()
+      await act(async () => medios.resolver(MEDIOS))
+      await waitFor(() => expect(boton).toBeEnabled())
+    })
+  })
+
+  describe('Editar medios', () => {
+    it('precarga las líneas del pago y muestra el total requerido', async () => {
+      conPagos()
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+
+      expect(within(dialogo).getByLabelText('Medio de la línea 1')).toHaveValue('4')
+      expect(within(dialogo).getByLabelText('Medio de la línea 2')).toHaveValue('5')
+      expect(within(dialogo).getByLabelText('Importe de la línea 1')).toHaveValue('600,00')
+      expect(within(dialogo).getByLabelText('Importe de la línea 2')).toHaveValue('400,00')
+      expect(within(dialogo).getByLabelText('Referencia de la línea 2')).toHaveValue('op-1')
+      expect(within(dialogo).getByText('Total del pago: $ 1.000,00')).toBeInTheDocument()
+      expect(within(dialogo).getByText('Sin diferencia')).toBeInTheDocument()
+    })
+
+    it('guardar envía las líneas con el medio nuevo, avisa y relee la cuenta', async () => {
+      conPagos()
+      apiPutMock.mockResolvedValue({})
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+      const lecturasAntes = lecturasDeCuenta().length
+
+      await evento.selectOptions(within(dialogo).getByLabelText('Medio de la línea 1'), '5')
+      await evento.click(within(dialogo).getByRole('button', { name: 'Guardar medios' }))
+
+      await toastDeExito('Medios del pago actualizados.')
+      expect(apiPutMock).toHaveBeenCalledTimes(1)
+      expect(apiPutMock).toHaveBeenCalledWith('/pagos/administracion/90/lineas-de-personal', {
+        lineas: [
+          { idMedioPago: 5, importe: 600, referencia: null },
+          { idMedioPago: 5, importe: 400, referencia: 'op-1' },
+        ],
+      })
+      await waitFor(() => expect(lecturasDeCuenta().length).toBe(lecturasAntes + 1))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('se puede quitar una línea siempre que las que quedan sumen el total', async () => {
+      conPagos()
+      apiPutMock.mockResolvedValue({})
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Quitar línea 2' }))
+      expect(within(dialogo).getByRole('button', { name: 'Guardar medios' })).toBeDisabled()
+      await escribirImporte(evento, dialogo, 1, '1000')
+      expect(within(dialogo).getByRole('button', { name: 'Guardar medios' })).toBeEnabled()
+      await evento.click(within(dialogo).getByRole('button', { name: 'Guardar medios' }))
+
+      await toastDeExito('Medios del pago actualizados.')
+      expect(apiPutMock).toHaveBeenCalledWith('/pagos/administracion/90/lineas-de-personal', {
+        lineas: [{ idMedioPago: 4, importe: 1000, referencia: null }],
+      })
+    })
+
+    it('Guardar queda deshabilitado mientras las líneas no suman el total del pago, y lo dice', async () => {
+      conPagos()
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+      const guardar = within(dialogo).getByRole('button', { name: 'Guardar medios' })
+      expect(guardar).toBeEnabled()
+
+      await escribirImporte(evento, dialogo, 1, '500')
+
+      expect(guardar).toBeDisabled()
+      expect(within(dialogo).getByText('Falta $ 100,00')).toBeInTheDocument()
+      expect(apiPutMock).not.toHaveBeenCalled()
+
+      await escribirImporte(evento, dialogo, 1, '700')
+      expect(guardar).toBeDisabled()
+      expect(within(dialogo).getByText('Sobra $ 100,00')).toBeInTheDocument()
+
+      await escribirImporte(evento, dialogo, 1, '600')
+      expect(guardar).toBeEnabled()
+    })
+
+    it('un rechazo del servidor deja la modal abierta con su mensaje y no relee', async () => {
+      conPagos()
+      apiPutMock.mockRejectedValue(new ErrorApi(409, 'conciliacion_cerrada', 'El pago pertenece a una conciliación cerrada.'))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+      const lecturasAntes = lecturasDeCuenta().length
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Guardar medios' }))
+
+      expect(await within(dialogo).findByText('El pago pertenece a una conciliación cerrada.')).toBeInTheDocument()
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(lecturasDeCuenta()).toHaveLength(lecturasAntes)
+    })
+
+    it('importe_distinto_del_pago se explica en la modal', async () => {
+      conPagos()
+      apiPutMock.mockRejectedValue(new ErrorApi(400, 'importe_distinto_del_pago', 'distinto'))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Guardar medios' }))
+
+      expect(await within(dialogo).findByText(/tienen que sumar exactamente el total del pago/)).toBeInTheDocument()
+    })
+
+    it('un doble clic sincrónico en Guardar emite una sola request', async () => {
+      conPagos()
+      apiPutMock.mockImplementation(() => new Promise(() => {}))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+
+      const guardar = within(dialogo).getByRole('button', { name: 'Guardar medios' })
+      await act(async () => {
+        guardar.click()
+        guardar.click()
+        await Promise.resolve()
+      })
+
+      expect(apiPutMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('cancelar no envía nada', async () => {
+      conPagos()
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const dialogo = await abrirEdicion(evento)
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(apiPutMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('un movimiento con varios pagos (uno por línea)', () => {
+    const PAGO_VIEJO = movimiento({
+      idMovimiento: 24,
+      fecha: '2026-10-07',
+      tipo: 'Pago',
+      importe: -1000,
+      detalle: 'Pago viejo',
+      desglose: {
+        descuentoDeCuentaCorriente: null,
+        lineas: [
+          { ...LINEAS_DEL_PAGO[0], idGasto: 80, idItem: 800 },
+          { ...LINEAS_DEL_PAGO[1], idGasto: 81, idItem: 810 },
+        ],
+      },
+    })
+
+    function conPagoViejo() {
+      mockearRutas({ cuenta: () => Promise.resolve(paginaDeCuenta({ items: [MOV_HORAS, PAGO_VIEJO], total: 2 })) })
+    }
+
+    it('ofrece un Editar medios por pago, rotulado con su número', async () => {
+      conPagoViejo()
+      renderCuenta()
+      await esperarCuenta()
+
+      const pago = fila('Pago viejo')
+      expect(within(pago).getByRole('button', { name: 'Editar medios (pago #80)' })).toBeInTheDocument()
+      expect(within(pago).getByRole('button', { name: 'Editar medios (pago #81)' })).toBeInTheDocument()
+      expect(within(pago).queryByRole('button', { name: 'Editar medios' })).not.toBeInTheDocument()
+    })
+
+    it('el segundo pago precarga solo sus líneas y envía el PUT a su id con su propio total', async () => {
+      conPagoViejo()
+      apiPutMock.mockResolvedValue({})
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const boton = within(fila('Pago viejo')).getByRole('button', { name: 'Editar medios (pago #81)' })
+      await waitFor(() => expect(boton).toBeEnabled())
+      await evento.click(boton)
+      const dialogo = await screen.findByRole('dialog', { name: 'Editar medios del pago del 07/10/2026' })
+
+      expect(within(dialogo).queryByLabelText('Medio de la línea 2')).not.toBeInTheDocument()
+      expect(within(dialogo).getByLabelText('Medio de la línea 1')).toHaveValue('5')
+      expect(within(dialogo).getByText('Total del pago: $ 400,00')).toBeInTheDocument()
+
+      await evento.selectOptions(within(dialogo).getByLabelText('Medio de la línea 1'), '4')
+      await evento.click(within(dialogo).getByRole('button', { name: 'Guardar medios' }))
+
+      await toastDeExito('Medios del pago actualizados.')
+      expect(apiPutMock).toHaveBeenCalledTimes(1)
+      expect(apiPutMock).toHaveBeenCalledWith('/pagos/administracion/81/lineas-de-personal', {
+        lineas: [{ idMedioPago: 4, importe: 400, referencia: 'op-1' }],
+      })
+    })
+  })
+
+  describe('Anular', () => {
+    it('pide confirmación, explica el efecto y sin confirmar no envía nada', async () => {
+      conPagos()
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const puerta = await abrirAnulacion(evento)
+
+      expect(within(puerta).getByText(/¿Anular el pago del 07\/10\/2026 por \$ 1\.000,00\?/)).toBeInTheDocument()
+      expect(within(puerta).getByText(/se corrige el saldo del empleado/)).toBeInTheDocument()
+      expect(within(puerta).getByText(/descuento de cuenta corriente/)).toBeInTheDocument()
+      expect(apiPostMock).not.toHaveBeenCalled()
+
+      await evento.click(within(puerta).getByRole('button', { name: 'Cancelar' }))
+
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+
+    it('confirmar envía el POST sin cuerpo, avisa y relee la cuenta', async () => {
+      conPagos()
+      apiPostMock.mockResolvedValue(movimiento({ idMovimiento: 30, tipo: 'Ajuste', importe: 1000, fecha: HOY, idMovimientoAnulado: 20 }))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const puerta = await abrirAnulacion(evento)
+      const lecturasAntes = lecturasDeCuenta().length
+
+      await evento.click(within(puerta).getByRole('button', { name: 'Confirmar anulación' }))
+
+      await toastDeExito('Pago anulado.')
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+      expect(apiPostMock).toHaveBeenCalledWith('/personal/1/pagos/20/anular')
+      await waitFor(() => expect(lecturasDeCuenta().length).toBe(lecturasAntes + 1))
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+
+    it('un doble clic sincrónico en Confirmar emite una sola request', async () => {
+      conPagos()
+      apiPostMock.mockImplementation(() => new Promise(() => {}))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const puerta = await abrirAnulacion(evento)
+
+      const confirmar = within(puerta).getByRole('button', { name: 'Confirmar anulación' })
+      await act(async () => {
+        confirmar.click()
+        confirmar.click()
+        await Promise.resolve()
+      })
+
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('mientras la anulación está en vuelo la pantalla queda inerte', async () => {
+      conPagos()
+      apiPostMock.mockImplementation(() => new Promise(() => {}))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const puerta = await abrirAnulacion(evento)
+
+      await evento.click(within(puerta).getByRole('button', { name: 'Confirmar anulación' }))
+
+      expect(await within(puerta).findByRole('button', { name: 'Anulando…' })).toBeDisabled()
+      expect(within(puerta).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Cargar horas' })).toBeDisabled()
+    })
+
+    it('un rechazo 409 deja la puerta abierta con el mensaje', async () => {
+      conPagos()
+      apiPostMock.mockRejectedValue(new ErrorApi(409, 'pago_personal_ya_anulado', 'ya anulado'))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const puerta = await abrirAnulacion(evento)
+
+      await evento.click(within(puerta).getByRole('button', { name: 'Confirmar anulación' }))
+
+      expect(await within(puerta).findByText('El pago ya estaba anulado. Actualizá la pantalla.')).toBeInTheDocument()
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    })
+
+    it('un cliente del descuento dado de baja se explica con el motivo', async () => {
+      conPagos()
+      apiPostMock.mockRejectedValue(new ErrorApi(409, 'cliente_del_descuento_dado_de_baja', 'baja'))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const puerta = await abrirAnulacion(evento)
+
+      await evento.click(within(puerta).getByRole('button', { name: 'Confirmar anulación' }))
+
+      expect(await within(puerta).findByText(/fue dado de baja/)).toBeInTheDocument()
+    })
   })
 })
