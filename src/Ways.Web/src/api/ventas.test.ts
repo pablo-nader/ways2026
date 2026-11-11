@@ -399,6 +399,12 @@ describe('aSolicitudDeVenta — forzarFactura', () => {
     expect(aSolicitudDeVenta(base)).not.toHaveProperty('conEnvio')
   })
 
+  it('con el excedente a cuenta manda excedenteComoPagoACuenta: true; apagado o ausente omite la clave', () => {
+    expect(aSolicitudDeVenta({ ...base, excedenteComoPagoACuenta: true }).excedenteComoPagoACuenta).toBe(true)
+    expect(aSolicitudDeVenta({ ...base, excedenteComoPagoACuenta: false })).not.toHaveProperty('excedenteComoPagoACuenta')
+    expect(aSolicitudDeVenta(base)).not.toHaveProperty('excedenteComoPagoACuenta')
+  })
+
   it('la solicitud de conversión de un presupuesto nunca lo lleva', () => {
     expect(aSolicitudDeVentaDesdePresupuesto(7, 12, base.pagos)).not.toHaveProperty('forzarFactura')
   })

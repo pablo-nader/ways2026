@@ -248,8 +248,20 @@ export function validarPagosLocal(params: {
   /** `false` en una venta local: el límite lo juzga la consulta al servidor antes de encolar, y los
    * datos del cliente que tiene la pantalla pueden ser viejos. Default `true`. */
   exigirLimiteDeCredito?: boolean
+  /** `false` saltea solo la regla 9, como el servidor con `excedenteComoPagoACuenta`: lo que sobra pasa a un pago a cuenta. */
+  exigirCobroSinExcedente?: boolean
 }): RechazoDePago | null {
-  const { total, pagos, toleranciaPago, esConsumidorFinal, saldoCliente, limiteCredito, creditoIlimitado, exigirLimiteDeCredito = true } = params
+  const {
+    total,
+    pagos,
+    toleranciaPago,
+    esConsumidorFinal,
+    saldoCliente,
+    limiteCredito,
+    creditoIlimitado,
+    exigirLimiteDeCredito = true,
+    exigirCobroSinExcedente = true,
+  } = params
 
   for (const pago of pagos) {
     if (pago.importe < 0) {
@@ -314,6 +326,8 @@ export function validarPagosLocal(params: {
     return { codigo: 'vuelto_invalido', mensaje: 'El vuelto no coincide con lo que sobra del pago.' }
   }
 
+  if (!exigirCobroSinExcedente) return null
+
   // Una nota de crédito no cobra (regla 0c): el tope parte de cero, no de su total negativo.
   const topeDelCobro = redondear(Math.max(0, total) + toleranciaPago)
   for (const pago of pagos) {
@@ -333,6 +347,34 @@ export function validarPagosLocal(params: {
   }
 
   return null
+}
+
+/**
+ * Excedente que se puede dejar como pago a cuenta (espejo de `RepartoDeExcedente`): con todo el vuelto en cero, lo cobrado por
+ * encima del total. `null` cuando no hay excedente, cuando no alcanza con los pagos que el servidor puede ceder (cuenta
+ * corriente no cede) o cuando algún pago es de un medio con proveedor: su cobro viaja con el número reservado para él, y el
+ * servidor no admite el pago a cuenta en una venta con número pre-asignado. `sugerido` cuando el excedente no puede volver como
+ * vuelto: ningún pago admite vuelto, o un medio sin vuelto supera el total más la tolerancia.
+ */
+export function excedenteParaPagoACuenta(params: {
+  total: number
+  pagos: PagoParaCalculo[]
+  toleranciaPago: number
+}): { importe: number; sugerido: boolean } | null {
+  const { total, pagos, toleranciaPago } = params
+  if (pagos.some((p) => p.proveedor)) return null
+  const importe = redondear(sumarImportes(pagos) - total)
+  if (importe <= 0) return null
+  const cedible = sumarImportes(pagos.filter((p) => p.comportamiento !== 'CuentaCorriente'))
+  if (cedible < importe) return null
+  const tope = redondear(Math.max(0, total) + toleranciaPago)
+  const sugerido = !pagos.some((p) => p.admiteVuelto) || pagos.some((p) => !p.admiteVuelto && p.importe > tope)
+  return { importe, sugerido }
+}
+
+/** Los pagos tal como viajan cuando el excedente queda a cuenta: ninguno da vuelto, lo que sobra lo cede el servidor al recibo. */
+export function sinVuelto<T extends { vuelto: number }>(pagos: T[]): T[] {
+  return pagos.map((p) => (p.vuelto === 0 ? p : { ...p, vuelto: 0 }))
 }
 
 /** Pagos de cálculo (ya con vuelto derivado) → `PagoDeVenta[]` del request de checkout. */

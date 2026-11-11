@@ -282,7 +282,9 @@ public class EscriturasSinReintentoEstructuralesTests
     /// El <c>Regex</c> de abajo es el kill de las dos últimas a la vez: exige el <c>Clear</c> y la
     /// guarda CONTIGUOS y en ese orden justo después de abrir el lambda, así que mover el
     /// <c>Clear</c> abajo de la guarda, meter cualquier otra sentencia antes, o borrarlo, dejan la
-    /// prueba en rojo. Se afirma además que hay EXACTAMENTE DOS <c>CreateExecutionStrategy</c>.
+    /// prueba en rojo. Se afirma además que hay EXACTAMENTE TRES <c>CreateExecutionStrategy</c>: la numeración de la venta,
+    /// la del recibo del excedente a cuenta (también numeración cruda, reintentable a propósito, y reservada ANTES de abrir
+    /// la escritura) y la escritura.
     ///
     /// judgment-day (WARNING, ronda 1): esta prueba ya NO exige una variable
     /// <c>estrategiaNumeracion</c> declarada afuera del ternario y usada igual en los dos
@@ -306,7 +308,7 @@ public class EscriturasSinReintentoEstructuralesTests
         var reintentables = Regex.Matches(
             cuerpo, @"CreateExecutionStrategy\(\)", RegexOptions.None, TimeSpan.FromSeconds(5));
 
-        Assert.Equal(2, reintentables.Count);
+        Assert.Equal(3, reintentables.Count);
         // La LLAMADA, no el nombre suelto: el doc-comment del método explica por qué este sitio no
         // usa la fábrica, y nombrarla ahí no la invoca.
         Assert.DoesNotContain(
@@ -326,8 +328,20 @@ public class EscriturasSinReintentoEstructuralesTests
             cuerpo,
             StringComparison.Ordinal);
 
+        Assert.Matches(
+            new Regex(
+                @"var numeroRc = await db\.Database\.CreateExecutionStrategy\(\)\.ExecuteAsync\(async \(\) =>\s*"
+                + @"await AsignadorDeNumeroComprobante\.AsignarComprometidoAsync\(",
+                RegexOptions.None,
+                TimeSpan.FromSeconds(5)),
+            cuerpo);
+
         var numeracion = Posicion(cuerpo, "var numero = solicitud.NumeroPreasignado is { } numeroPreasignado");
+        var numeracionDelRecibo = Posicion(cuerpo, "var numeroRc = await db.Database.CreateExecutionStrategy()");
         var escritura = Posicion(cuerpo, "var estrategia = db.Database.CreateExecutionStrategy();");
+
+        Assert.True(numeracion < numeracionDelRecibo && numeracionDelRecibo < escritura,
+            "El número del recibo se compromete después del de la venta y ANTES de abrir la escritura.");
         var limpieza = Posicion(cuerpo, "db.ChangeTracker.Clear();");
         var guarda = Posicion(cuerpo, "await BuscarPorNumeroComprometidoAsync(");
         var transaccion = Posicion(cuerpo, "await EjecutarTransaccionAsync(");

@@ -129,7 +129,7 @@ public class ServicioDeCuentaCorriente(
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransaccionAsync(
                 idTenant, idEmpleado, momento, tipo.Id, numero, puntoVenta.Id, turno.Id, cliente.Id, importeAplicado,
-                pagos, NormalizarOpcional(solicitud.Observaciones), aplicaciones, ct));
+                pagos, medioPorId, NormalizarOpcional(solicitud.Observaciones), aplicaciones, ct));
     }
 
     /// <summary>Design: Transactions — AJUSTE MANUAL (orden pineado: "fuera:
@@ -307,7 +307,7 @@ public class ServicioDeCuentaCorriente(
     private async Task<PagoACuentaRegistrado> EjecutarTransaccionAsync(
         int idTenant, int idEmpleado, DateTimeOffset momento, int idTipoComprobante, long numero, int idPuntoVenta,
         int idTurnoCaja, int idCliente, decimal importeAplicado, IReadOnlyList<PagoDeCuenta> pagos,
-        string? observaciones, IReadOnlyList<AplicacionDeCobroPedida> aplicaciones, CancellationToken ct)
+        IReadOnlyDictionary<int, MedioPago> medioPorId, string? observaciones, IReadOnlyList<AplicacionDeCobroPedida> aplicaciones, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -316,46 +316,11 @@ public class ServicioDeCuentaCorriente(
         // abierto arriba, ANTES de esta transacción.
         await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(idTurnoCaja, ct);
 
-        // 2. Comprobante — cero items por construcción (afecta_stock = false de RC, design:
-        // Table Shapes B). Subtotal/DescuentoTotal no tienen concepto propio sin líneas: se
-        // igualan al total, sin descuento.
-        var comprobante = new ComprobanteVenta
-        {
-            IdTipoComprobante = idTipoComprobante,
-            Numero = numero,
-            Fecha = momento,
-            IdPuntoVenta = idPuntoVenta,
-            IdTurnoCaja = idTurnoCaja,
-            IdEmpleado = idEmpleado,
-            IdCliente = idCliente,
-            Subtotal = importeAplicado,
-            DescuentoTotal = 0m,
-            Total = importeAplicado,
-            Observaciones = observaciones,
-            Estado = EstadoComprobante.Emitido,
-            FacturacionDecididaEn = momento,
-            CreatedAt = momento,
-            UpdatedAt = momento
-        };
-        db.ComprobantesVenta.Add(comprobante);
-        await db.SaveChangesAsync(ct);
-
-        // 3. Pagos — sin items, sin movimientos_stock (spec: RC Carries Zero Items And No Stock
-        // Effect).
-        var pagosEntidad = pagos
-            .Select(p => new Cobro
-            {
-                IdComprobanteVenta = comprobante.Id,
-                IdMedioPago = p.IdMedioPago,
-                Importe = p.Importe,
-                Referencia = p.Referencia,
-                Vuelto = p.Vuelto,
-                CreatedAt = momento,
-                UpdatedAt = momento
-            })
-            .ToList();
-        db.Cobros.AddRange(pagosEntidad);
-        await db.SaveChangesAsync(ct);
+        // 2 + 3. Comprobante y cobros — cero items, sin movimientos_stock (spec: RC Carries Zero Items And No Stock Effect).
+        var recibo = new ReciboAEscribir(
+            idTenant, idEmpleado, momento, idTipoComprobante, numero, idPuntoVenta, idTurnoCaja, idCliente, importeAplicado,
+            observaciones);
+        var (comprobante, pagosEntidad) = await EscriturasDeRecibo.InsertarAsync(db, recibo, pagos, medioPorId, ct);
 
         // 3b. Aplicaciones (E7-S3). Antes de la fila del cliente (paso 4): el orden de locks de ServicioDeCobros pone los
         // comprobantes (las ventas, en id ascendente) antes que el cliente, y la anulación de una venta toma la venta y
@@ -367,19 +332,10 @@ public class ServicioDeCuentaCorriente(
                 idTenant, comprobante.Id, aplicaciones, idEmpleado, momento, ct);
         }
 
+        // 4 + 5. Cuenta corriente.
         var conexion = await ObtenerConexionAbiertaAsync(ct);
-        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
-
-        // 4. Cuenta corriente — un único movimiento Pago, negativo (reduce la deuda).
-        var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
-            conexion, transaccionCruda, idTenant, idCliente, -importeAplicado, ct);
-
-        // 5. Movimiento — id_cobro siempre NULL en un Pago (design decisión 1/5): a
-        // diferencia de un Consumo, no hay UN pago físico que "lo generó" — lo genera el
-        // comprobante entero, que puede traer varios medios.
-        await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
-            conexion, transaccionCruda, idTenant, idCliente, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCc.Pago, comprobante.Id, null, -importeAplicado, nuevoSaldo, detalle: null, ct);
+        await EscriturasDeRecibo.AcreditarAsync(
+            conexion, db.Database.CurrentTransaction?.GetDbTransaction(), recibo, comprobante.Id, ct);
 
         await transaccion.CommitAsync(ct);
 

@@ -6,6 +6,7 @@ import {
   calcularFaltante,
   calcularPagosConVuelto,
   consumoCuentaCorriente,
+  excedenteParaPagoACuenta,
   filaPagoInicial,
   filaPagoVacia,
   filasAPagosConVuelto,
@@ -13,6 +14,7 @@ import {
   filasConMedioInvalidoReseteado,
   idMedioEfectivo,
   medioDisponibleParaCliente,
+  sinVuelto,
   sumarImportes,
   sumarVueltos,
   validarPagosLocal,
@@ -380,6 +382,21 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
     })
   })
 
+  it('regla 9: con exigirCobroSinExcedente en false lo cobrado de más no se rechaza, el resto de las reglas sí', () => {
+    const qr = [{ ...pagoFixture({ comportamiento: 'Electronico', admiteVuelto: false, importe: 1000, nombre: 'QR' }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, total: 900, toleranciaPago: 0, pagos: qr })?.codigo).toBe('importe_supera_el_total')
+    expect(validarPagosLocal({ ...base, total: 900, toleranciaPago: 0, pagos: qr, exigirCobroSinExcedente: false })).toBeNull()
+
+    const efectivo = [{ ...pagoFixture({ importe: 1000 }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, total: 900, toleranciaPago: 0, pagos: efectivo })?.codigo).toBe('cobro_supera_el_total')
+    expect(validarPagosLocal({ ...base, total: 900, toleranciaPago: 0, pagos: efectivo, exigirCobroSinExcedente: false })).toBeNull()
+
+    const sinReferencia = [{ ...pagoFixture({ importe: 1000, admiteVuelto: false, requiereReferencia: true }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, total: 900, pagos: sinReferencia, exigirCobroSinExcedente: false })?.codigo).toBe(
+      'referencia_de_pago_requerida',
+    )
+  })
+
   it('regla 9a: sin nombre del medio el mensaje usa la forma genérica', () => {
     const pagos = [{ ...pagoFixture({ admiteVuelto: false, importe: 150 }), vuelto: 0 }]
     expect(validarPagosLocal({ ...base, pagos })?.mensaje).toBe('El importe de un pago sin vuelto supera el total de la venta.')
@@ -603,5 +620,58 @@ describe('pagos — aplicarImportesSugeridos', () => {
     const pagos = filasAPagosConVuelto(filas, { 1: efectivo }, 22200)
     expect(pagos[0].importe).toBe(22200)
     expect(pagos[0].vuelto).toBe(0)
+  })
+})
+
+describe('pagos — excedenteParaPagoACuenta', () => {
+  const qr = (importe: number) => pagoFixture({ idFila: 2, idMedioPago: 2, comportamiento: 'Electronico', admiteVuelto: false, importe })
+
+  it('un QR por encima del total deja la diferencia sugerida a cuenta, aunque entre en la tolerancia', () => {
+    expect(excedenteParaPagoACuenta({ total: 990, pagos: [qr(1000)], toleranciaPago: 10 })).toEqual({ importe: 10, sugerido: true })
+  })
+
+  it('con efectivo en la mezcla la diferencia se ofrece sin sugerir: puede volver como vuelto', () => {
+    expect(excedenteParaPagoACuenta({ total: 990, pagos: [pagoFixture({ importe: 500 }), qr(600)], toleranciaPago: 0 })).toEqual({
+      importe: 110,
+      sugerido: false,
+    })
+  })
+
+  it('un medio sin vuelto por encima del total más la tolerancia la sugiere aunque haya efectivo', () => {
+    expect(excedenteParaPagoACuenta({ total: 990, pagos: [pagoFixture({ importe: 100 }), qr(1001)], toleranciaPago: 10 })).toEqual({
+      importe: 111,
+      sugerido: true,
+    })
+  })
+
+  it('sin excedente no hay nada para dejar a cuenta', () => {
+    expect(excedenteParaPagoACuenta({ total: 990, pagos: [qr(990)], toleranciaPago: 0 })).toBeNull()
+    expect(excedenteParaPagoACuenta({ total: 990, pagos: [qr(900)], toleranciaPago: 100 })).toBeNull()
+  })
+
+  it('la cuenta corriente no cede: si el excedente solo sale de ella no se ofrece', () => {
+    const cc = pagoFixture({ idFila: 3, idMedioPago: 3, comportamiento: 'CuentaCorriente', admiteVuelto: false, importe: 900 })
+    expect(excedenteParaPagoACuenta({ total: 500, pagos: [cc, qr(100)], toleranciaPago: 0 })).toBeNull()
+    const ccChica = { ...cc, importe: 400 }
+    expect(excedenteParaPagoACuenta({ total: 500, pagos: [ccChica, qr(900)], toleranciaPago: 0 })).toEqual({ importe: 800, sugerido: true })
+  })
+
+  it('un medio con proveedor en la mezcla nunca lo ofrece', () => {
+    expect(excedenteParaPagoACuenta({ total: 990, pagos: [{ ...qr(1000), proveedor: 'mercadopago_qr' }], toleranciaPago: 0 })).toBeNull()
+  })
+})
+
+describe('pagos — sinVuelto', () => {
+  it('pone el vuelto de cada pago en cero sin tocar el resto', () => {
+    const pagos = [
+      { ...pagoFixture({ importe: 1000 }), vuelto: 10 },
+      { ...pagoFixture({ idFila: 2, importe: 50 }), vuelto: 0 },
+    ]
+    const resultado = sinVuelto(pagos)
+    expect(resultado.map((p) => [p.importe, p.vuelto])).toEqual([
+      [1000, 0],
+      [50, 0],
+    ])
+    expect(resultado[1]).toBe(pagos[1])
   })
 })

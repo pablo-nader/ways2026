@@ -63,7 +63,7 @@ public class EscritoresDePagosDeVentaEstructuralTests
             .ToList();
 
         Assert.Equal(
-            ["ServicioDeCambioDeMedios.cs", "ServicioDeCuentaCorriente.cs", "ServicioDeFacturacionDeRemitos.cs", "ServicioDeVentas.cs"],
+            ["EscriturasDeRecibo.cs", "ServicioDeCambioDeMedios.cs", "ServicioDeFacturacionDeRemitos.cs", "ServicioDeVentas.cs"],
             conCobro);
     }
 

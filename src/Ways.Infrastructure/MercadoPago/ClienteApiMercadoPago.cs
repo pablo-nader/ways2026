@@ -245,7 +245,7 @@ public sealed class ClienteApiMercadoPago(
             p.PointOfInteraction?.Type,
             p.CollectorId,
             nombre.Length == 0 ? null : nombre,
-            [.. (p.FeeDetails ?? []).Select(f => new ComisionDePagoMercadoPago(f.Type, f.Amount))],
+            [.. (p.FeeDetails ?? []).Select(f => new ComisionEnDiagnosticoMercadoPago(f.Type, f.Amount))],
             [.. LeerImpuestos(p.Taxes)],
             [.. (p.ChargesDetails ?? []).Select(c => new CargoDePagoMercadoPago(c.Name, c.Type, c.Amounts?.Original))]);
     }

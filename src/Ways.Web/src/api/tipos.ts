@@ -2286,6 +2286,10 @@ export type SolicitudDeVenta = {
   /** Importe del envío que cobró la caja: solo en una venta local (con `numeroPreasignado`) y con `conEnvio`; el servidor lo
    * graba tal cual en vez de leer `importe_envio`. En cualquier otra venta el servidor lo rechaza (`importe_envio_no_admitido`). */
   importeEnvio?: number
+  /** Solo se manda en `true`: lo cobrado por encima del total pasa a un pago a cuenta (RC) del cliente en vez de rechazarse. Solo
+   * con conexión y un cliente con cuenta corriente: el servidor lo rechaza con el Consumidor Final, con `numeroPreasignado` o
+   * sin excedente. */
+  excedenteComoPagoACuenta?: boolean
 }
 
 // --- POS: reserva de numeración offline (stage-pos-reserva-de-numeracion) ---
@@ -2481,7 +2485,11 @@ export type ComprobanteEmitido = {
   idPresupuestoOrigen: number | null
   /** Ausente en un comprobante sintético de una venta encolada o de un servidor anterior al campo. */
   fiscal?: FiscalDeVenta | null
+  /** El recibo que se llevó el excedente (`excedenteComoPagoACuenta`). Solo en la respuesta de la emisión que lo escribió. */
+  pagoACuenta?: PagoACuentaEmitido | null
 }
+
+export type PagoACuentaEmitido = { id: number; numeroVisible: string; importe: number }
 
 // --- Cuenta corriente: estado de cuenta y pago a cuenta (stage-7-cuenta-corriente, Slice 5) ---
 // Espejo de `Ways.Application.CuentaCorriente.Contratos` — header + movimientos en un único GET

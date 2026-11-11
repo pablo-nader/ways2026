@@ -7166,6 +7166,71 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     return apiPostMock.mock.calls.filter((c) => c[0] === ruta)
   }
 
+  describe('excedente como pago a cuenta con la copia local', () => {
+    const clienteLocalConCuenta = () =>
+      clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false })
+
+    it('con red y vista previa local, la venta que deja la diferencia a cuenta va online, sin número pre-asignado ni cola', async () => {
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ clientes: [clienteDeInstantaneaFixture(), clienteLocalConCuenta()] }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      const delServidor = clienteFixture({ id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false })
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve({ items: [delServidor], total: 1, pagina: 1, tamanio: 25 })
+        if (ruta === '/clientes/30') return Promise.resolve(delServidor)
+        return undefined
+      })
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? Promise.resolve(comprobanteEmitidoFixture()) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montarConInstantanea()
+      await buscarYElegirCliente('gómez', /José Gómez/)
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      const campo = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+      await userEvent.clear(campo)
+      await userEvent.type(campo, '150')
+
+      await userEvent.click(await screen.findByRole('checkbox', { name: /queda como pago a cuenta del cliente/ }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      await waitFor(() => expect(llamadasPost('/ventas')).toHaveLength(1))
+      const solicitud = llamadasPost('/ventas')[0][1] as { excedenteComoPagoACuenta?: boolean; numeroPreasignado?: number }
+      expect(solicitud.excedenteComoPagoACuenta).toBe(true)
+      expect(solicitud).not.toHaveProperty('numeroPreasignado')
+      expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    it('sin conexión la opción no se ofrece aunque el cliente tenga cuenta y el pago supere el total', async () => {
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ clientes: [clienteDeInstantaneaFixture(), clienteLocalConCuenta()] }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      mockearApiGet((ruta) => {
+        if (ruta === '/pos/instantanea') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      const campo = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+      await userEvent.clear(campo)
+      await userEvent.type(campo, '150')
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      expect(screen.queryByRole('checkbox', { name: /queda como pago a cuenta del cliente/ })).not.toBeInTheDocument()
+    })
+  })
+
   describe('venta con envío en la cola local (T4)', () => {
     const clienteDeLaCopiaLocal = () =>
       clienteDeInstantaneaFixture({
@@ -12568,5 +12633,108 @@ describe('Pos — cobro con QR de Mercado Pago', () => {
       await screen.findByText(`Cobrando en la terminal ${TERMINAL}…`)
       expect(crearCobroLlamadas().map(([, cuerpo]) => (cuerpo as { numeroPreasignado: number }).numeroPreasignado)).toEqual([500, 500])
     })
+  })
+})
+
+describe('Pos — excedente como pago a cuenta del cliente', () => {
+  const OPCION = /queda como pago a cuenta del cliente/
+
+  /** Coca Cola de $ 100 en el carrito, el cliente elegido y una fila del medio con el importe tipeado (pisa la propuesta). */
+  async function cargarPago(medio: MedioPagoListado, importe: string, cliente: 'cuenta' | 'consumidorFinal') {
+    renderPos()
+    await esperarAlConsumidorFinal()
+    if (cliente === 'cuenta') {
+      await buscarYElegirCliente('perez', /Juan Pérez/)
+      // La opción de cuenta corriente solo aparece con el cliente identificado ya aplicado al panel.
+      await screen.findByRole('option', { name: medioCuentaCorriente.nombre })
+    }
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await screen.findByRole('option', { name: medio.nombre })
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medio.nombre)
+    if (medio.requiereReferencia) await userEvent.type(await screen.findByLabelText(`Referencia de ${medio.nombre} (fila 1)`), 'OP-1')
+    const campo = await screen.findByLabelText(`Importe de ${medio.nombre} (fila 1)`)
+    await userEvent.clear(campo)
+    await userEvent.type(campo, importe)
+  }
+
+  function solicitudDeVenta() {
+    const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/ventas')
+    return llamada?.[1] as { pagos: { idMedioPago: number; importe: number; vuelto: number }[]; excedenteComoPagoACuenta?: boolean }
+  }
+
+  it('un medio sin vuelto por encima del total con un cliente con cuenta propone la opción tildada y la venta la manda', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+        return Promise.resolve(
+          resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]),
+        )
+      }
+      if (ruta === '/ventas') {
+        return Promise.resolve(comprobanteEmitidoFixture({ pagoACuenta: { id: 901, numeroVisible: '0001-00000901', importe: 50 } }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    await cargarPago(medioTarjeta, '150', 'cuenta')
+
+    const opcion = await screen.findByRole('checkbox', { name: OPCION })
+    expect(opcion).toBeChecked()
+    expect(screen.getByText('La diferencia ($ 50,00) queda como pago a cuenta del cliente')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    const dialogo = await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+    expect(within(dialogo).getByText('A cuenta del cliente: $ 50,00')).toBeInTheDocument()
+    await userEvent.click(within(dialogo).getByRole('button', { name: /Finalizar/ }))
+
+    await waitFor(() => expect(solicitudDeVenta()).toBeDefined())
+    expect(solicitudDeVenta().excedenteComoPagoACuenta).toBe(true)
+    expect(solicitudDeVenta().pagos).toEqual([{ idMedioPago: medioTarjeta.id, importe: 150, referencia: 'OP-1', vuelto: 0 }])
+    expect(await screen.findByText('A cuenta del cliente: $ 50,00 (recibo 0001-00000901)')).toBeInTheDocument()
+  })
+
+  it('destildada la opción vuelve la regla estricta: lo cobrado de más se rechaza y Cobrar queda deshabilitado', async () => {
+    await cargarPago(medioTarjeta, '150', 'cuenta')
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: OPCION }))
+
+    expect(screen.getByRole('checkbox', { name: OPCION })).not.toBeChecked()
+    expect(await screen.findByText('El importe de Tarjeta supera el total de la venta.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+
+  it('con efectivo el excedente es vuelto: la opción aparece sin tildar y tildarla manda la diferencia a cuenta sin vuelto', async () => {
+    await cargarPago(medioEfectivo, '150', 'cuenta')
+
+    const opcion = await screen.findByRole('checkbox', { name: OPCION })
+    expect(opcion).not.toBeChecked()
+    await userEvent.click(opcion)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(solicitudDeVenta()).toBeDefined())
+    expect(solicitudDeVenta().excedenteComoPagoACuenta).toBe(true)
+    expect(solicitudDeVenta().pagos).toEqual([{ idMedioPago: medioEfectivo.id, importe: 150, referencia: null, vuelto: 0 }])
+  })
+
+  it('sin tildar, el efectivo de más se cobra con su vuelto y la venta no manda la opción', async () => {
+    await cargarPago(medioEfectivo, '150', 'cuenta')
+    await screen.findByRole('checkbox', { name: OPCION })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(solicitudDeVenta()).toBeDefined())
+    expect(solicitudDeVenta()).not.toHaveProperty('excedenteComoPagoACuenta')
+    expect(solicitudDeVenta().pagos).toEqual([{ idMedioPago: medioEfectivo.id, importe: 150, referencia: null, vuelto: 50 }])
+  })
+
+  it('con el Consumidor Final la opción nunca aparece y rige la regla estricta', async () => {
+    await cargarPago(medioTarjeta, '150', 'consumidorFinal')
+
+    expect(await screen.findByText('El importe de Tarjeta supera el total de la venta.')).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: OPCION })).not.toBeInTheDocument()
   })
 })

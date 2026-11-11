@@ -86,6 +86,16 @@ public class ServicioDeVentas(
                 400);
         }
 
+        // El excedente a cuenta emite un recibo con número del servidor en la misma transacción: una venta offline ya se
+        // cobró con su propia numeración y no tiene dónde reservarlo.
+        if (solicitud.ExcedenteComoPagoACuenta && solicitud.NumeroPreasignado is not null)
+        {
+            throw new ErrorDominio(
+                "pago_a_cuenta_sin_conexion",
+                "La diferencia solo puede quedar como pago a cuenta en una venta con conexión.",
+                400);
+        }
+
         // stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — ":59"): con
         // idPresupuestoOrigen, lineas tiene que llegar vacío/ausente (400 lineas_no_admitidas,
         // dto-contract-honesty regla 1) — el valor REAL (los items del presupuesto) se resuelve
@@ -132,6 +142,14 @@ public class ServicioDeVentas(
             throw new ErrorDominio(
                 "forzar_factura_no_admitido",
                 "Solo una venta puede marcarse para facturar; una nota de crédito no.",
+                400);
+        }
+
+        if (solicitud.ExcedenteComoPagoACuenta && tipo.Signo <= 0)
+        {
+            throw new ErrorDominio(
+                "pago_a_cuenta_no_admitido",
+                "Solo una venta puede dejar a cuenta lo que se cobró de más; una nota de crédito no cobra.",
                 400);
         }
 
@@ -190,6 +208,16 @@ public class ServicioDeVentas(
         else
         {
             cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
+        }
+
+        // Mismo criterio que el pago a cuenta de ServicioDeCuentaCorriente: todo cliente salvo el Consumidor Final tiene
+        // cuenta corriente.
+        if (solicitud.ExcedenteComoPagoACuenta && cliente.EsConsumidorFinal)
+        {
+            throw new ErrorDominio(
+                "pago_a_cuenta_sin_cuenta_corriente",
+                "El Consumidor Final no tiene cuenta corriente: lo que se cobró de más no puede quedar a cuenta.",
+                400);
         }
 
         var reenvioDeVentaYaEmitida = solicitud.NumeroPreasignado is { } numeroDelReenvio
@@ -511,7 +539,57 @@ public class ServicioDeVentas(
             totales.Total, pagosAValidar, toleranciaPago,
             cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
             exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida,
-            exigirCobroSinExcedente: !reenvioDeVentaYaEmitida);
+            exigirCobroSinExcedente: !reenvioDeVentaYaEmitida && !solicitud.ExcedenteComoPagoACuenta);
+
+        // Con el excedente a cuenta, la venta conserva cobros por exactamente su total y lo que sobra pasa a un recibo del
+        // cliente con los mismos medios: el cierre del turno cuenta los cobros del recibo como los de la venta, así que cada
+        // peso queda en uno solo de los dos.
+        IReadOnlyList<PagoDeCuenta> pagosACuenta = [];
+        if (solicitud.ExcedenteComoPagoACuenta)
+        {
+            var excedente = RepartoDeExcedente.Repartir(
+                totales.Total,
+                pagos.Select(p => new PagoARepartir(
+                        p.Importe, p.Vuelto, medioPorId[p.IdMedioPago].AdmiteVuelto,
+                        Divisible: medioPorId[p.IdMedioPago].Comportamiento != ComportamientoMedioPago.CuentaCorriente
+                            && medioPorId[p.IdMedioPago].Proveedor is null
+                            && p.IdCobroMercadoPago is null
+                            && !p.AprobacionManualSinVerificar))
+                    .ToList());
+
+            var pagosPedidos = pagos;
+            pagosACuenta = excedente.PagosACuenta
+                .Select(c => new PagoDeCuenta(
+                    pagosPedidos[c.IndiceDelPago].IdMedioPago, c.Importe, pagosPedidos[c.IndiceDelPago].Referencia, Vuelto: 0m))
+                .ToList();
+            ValidadorDePagoACuenta.Validar(pagosACuenta
+                .Select(p =>
+                {
+                    var medio = medioPorId[p.IdMedioPago];
+                    return new PagoAValidar(
+                        p.IdMedioPago, medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia,
+                        p.Importe, p.Vuelto, p.Referencia);
+                })
+                .ToList());
+
+            var importesDeLaVenta = excedente.ImportesDeLaVenta;
+            pagos = pagos
+                .Select((p, indice) => p with { Importe = importesDeLaVenta[indice] })
+                .Where(p => p.Importe > 0m)
+                .ToList();
+
+            ValidadorDePagos.Validar(
+                totales.Total,
+                pagos.Select(p =>
+                    {
+                        var medio = medioPorId[p.IdMedioPago];
+                        return new PagoAValidar(
+                            p.IdMedioPago, medio.Comportamiento, medio.AdmiteVuelto, medio.RequiereReferencia,
+                            p.Importe, p.Vuelto, ReferenciaParaValidar(p), medio.Nombre);
+                    })
+                    .ToList(),
+                toleranciaPago, cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado);
+        }
 
         var pagosDelPlan = pagos
             .Select(p => new PagoDelPlan(
@@ -548,6 +626,22 @@ public class ServicioDeVentas(
             ? await ExigirNumeroPreasignadoPropioAsync(numeroPreasignado, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct)
             : await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
                 await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct));
+
+        // El recibo del excedente reserva su número igual que la venta, en su propia transacción y antes de la que escribe.
+        // Un reintento de la venta reusa este mismo número: venta y recibo comitean juntos, así que la guarda de idempotencia
+        // de la venta también cubre al recibo.
+        if (pagosACuenta.Count > 0)
+        {
+            var tipoRc = await ResolverTipoRcAsync(ct);
+            var numeroRc = await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, tipoRc.Codigo, ct));
+            plan = plan with
+            {
+                PagoACuenta = new PagoACuentaDelPlan(
+                    tipoRc.Id, numeroRc, pagosACuenta.Sum(p => p.Importe), pagosACuenta, medioPorId,
+                    $"Excedente de la venta {NumeroDeComprobante.Formatear(plan.IdPuntoVenta, numero)}")
+            };
+        }
 
         // ADR-16 (mismo trámite que ServicioDeAprovisionamiento/ServicioDeOfertas): la
         // transacción se abre ACÁ ADENTRO — EnableRetryOnFailure exige que la apertura viva
@@ -2104,12 +2198,32 @@ public class ServicioDeVentas(
                 ct);
         }
 
+        // 7. Recibo del excedente: después del paso 6, así el orden de locks sigue siendo turno, comprobantes, cliente. Sin
+        // aplicaciones, como un pago a cuenta sin ventas elegidas.
+        PagoACuentaEmitido? pagoACuentaEmitido = null;
+        if (plan.PagoACuenta is { } pagoACuenta)
+        {
+            var recibo = new ReciboAEscribir(
+                plan.IdTenant, plan.IdEmpleado, plan.Momento, pagoACuenta.IdTipoComprobante, pagoACuenta.Numero,
+                plan.IdPuntoVenta, plan.IdTurnoCaja, plan.IdCliente, pagoACuenta.ImporteAplicado, pagoACuenta.Observaciones);
+            var (reciboEmitido, _) = await EscriturasDeRecibo.InsertarAsync(db, recibo, pagoACuenta.Pagos, pagoACuenta.MedioPorId, ct);
+            await EscriturasDeRecibo.AcreditarAsync(conexion, transaccionCruda, recibo, reciboEmitido.Id, ct);
+
+            pagoACuentaEmitido = new PagoACuentaEmitido(
+                reciboEmitido.Id, NumeroDeComprobante.Formatear(reciboEmitido.IdPuntoVenta, reciboEmitido.Numero),
+                pagoACuenta.ImporteAplicado);
+        }
+
         await transaccion.CommitAsync(ct);
 
-        return Proyectar(comprobante, itemsEntidad, pagosEntidad, plan.Items);
+        return Proyectar(comprobante, itemsEntidad, pagosEntidad, plan.Items) with { PagoACuenta = pagoACuentaEmitido };
     }
 
     // ---- Resolución de datos, fuera de la transacción ----------------------------------------
+
+    private async Task<TipoComprobante> ResolverTipoRcAsync(CancellationToken ct) =>
+        await db.TiposComprobante.FirstOrDefaultAsync(t => t.Codigo == "RC", ct)
+            ?? throw new InvalidOperationException("El tenant actual no tiene el tipo de comprobante RC sembrado.");
 
     private async Task<TipoComprobante> ResolverTipoComprobanteAsync(string codigo, CancellationToken ct)
     {
@@ -3208,5 +3322,11 @@ public class ServicioDeVentas(
         int? IdPresupuestoOrigen = null,
         DateOnly? HoyDelPuntoVenta = null,
         bool LimiteDeCreditoNoValidado = false,
-        bool ForzarFactura = false);
+        bool ForzarFactura = false,
+        PagoACuentaDelPlan? PagoACuenta = null);
+
+    /// <summary>El recibo (RC) que se lleva el excedente de la venta, con su número ya reservado.</summary>
+    private sealed record PagoACuentaDelPlan(
+        int IdTipoComprobante, long Numero, decimal ImporteAplicado, IReadOnlyList<PagoDeCuenta> Pagos,
+        IReadOnlyDictionary<int, MedioPago> MedioPorId, string Observaciones);
 }

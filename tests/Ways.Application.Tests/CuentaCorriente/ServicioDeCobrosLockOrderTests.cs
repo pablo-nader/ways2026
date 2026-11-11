@@ -90,17 +90,53 @@ public class ServicioDeCobrosLockOrderTests
             "private async Task<Cliente> ResolverClienteAsync(");
 
         var apertura = Indice(metodo, "db.Database.BeginTransactionAsync(ct);");
-        var recibo = Indice(metodo, "db.ComprobantesVenta.Add(comprobante);");
-        var cobros = Indice(metodo, "db.Cobros.AddRange(");
+        var recibo = Indice(metodo, "EscriturasDeRecibo.InsertarAsync(");
         var aplicar = Indice(metodo, "servicioDeCobros.AplicarBajoLocksAsync(");
-        var cliente = Indice(metodo, "EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(");
+        var cliente = Indice(metodo, "EscriturasDeRecibo.AcreditarAsync(");
         var commit = Indice(metodo, "transaccion.CommitAsync(ct);");
 
-        Assert.True(apertura < recibo && recibo < cobros, "El recibo y sus cobros se escriben antes de aplicarlos.");
-        Assert.True(cobros < aplicar, "Los topes miden contra los cobros ya escritos del recibo.");
+        Assert.True(apertura < recibo, "El recibo y sus cobros se escriben dentro de la transacción.");
+        Assert.True(recibo < aplicar, "Los topes miden contra los cobros ya escritos del recibo.");
         Assert.True(aplicar < cliente, "Las ventas se bloquean antes que la fila del cliente.");
         Assert.True(cliente < commit);
         Assert.Contains("if (aplicaciones.Count > 0)", metodo, StringComparison.Ordinal);
+    }
+
+    /// <summary>La escritura compartida del recibo: comprobante antes que sus cobros, y la fila del cliente recién en el
+    /// segundo paso; ninguno de los dos abre ni comitea la transacción.</summary>
+    [Fact]
+    public void LaEscrituraDelReciboEscribeElComprobanteYSusCobrosYDespuesTomaLaFilaDelCliente()
+    {
+        var fuente = LeerFuente("Ways.Application", "CuentaCorriente", "EscriturasDeRecibo.cs");
+        var insercion = Metodo(fuente, "InsertarAsync(", "AcreditarAsync(");
+        var acreditacion = SinComentarios(fuente[fuente.IndexOf("public static async Task AcreditarAsync(", StringComparison.Ordinal)..]);
+
+        Assert.True(Indice(insercion, "db.ComprobantesVenta.Add(comprobante);") < Indice(insercion, "db.Cobros.AddRange("));
+        Assert.DoesNotContain("EscriturasDeCuentaCorriente", insercion, StringComparison.Ordinal);
+        Assert.True(
+            Indice(acreditacion, "EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(")
+                < Indice(acreditacion, "EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync("));
+        Assert.DoesNotContain("BeginTransactionAsync", fuente, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommitAsync", fuente, StringComparison.Ordinal);
+    }
+
+    /// <summary>El recibo del excedente de una venta se escribe después de la cuenta corriente de la venta (paso 6) y antes
+    /// del commit: la venta ya tomó turno y comprobantes, así que el orden turno, comprobantes, cliente se conserva.</summary>
+    [Fact]
+    public void LaVentaEscribeElReciboDelExcedenteDespuesDeSuCuentaCorrienteYAntesDelCommit()
+    {
+        var metodo = Metodo(
+            LeerFuente("Ways.Application", "Ventas", "ServicioDeVentas.cs"),
+            "private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(PlanDeVenta plan",
+            "private async Task<TipoComprobante> ResolverTipoRcAsync(");
+
+        var turno = Indice(metodo, "servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(");
+        var cuentaDeLaVenta = Indice(metodo, "TipoMovimientoCc.Consumo");
+        var recibo = Indice(metodo, "EscriturasDeRecibo.InsertarAsync(");
+        var cliente = Indice(metodo, "EscriturasDeRecibo.AcreditarAsync(");
+        var commit = Indice(metodo, "transaccion.CommitAsync(ct);");
+
+        Assert.True(turno < cuentaDeLaVenta && cuentaDeLaVenta < recibo && recibo < cliente && cliente < commit);
     }
 
     /// <summary>Lo aplicado del recibo se lee UNA vez (la lista trackeada) y de ahí salen el disponible de los topes y el
