@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import {
   clienteDeCompras,
   esColumnaOrdenableDeCompras,
+  esNotaDeCredito,
   claseDeBadgeDeEstadoPagoDeLista,
   etiquetaDeEstadoCompra,
   etiquetaDeEstadoPagoDeLista,
@@ -448,7 +449,12 @@ export function Compras() {
                       {c.origen === 'Asistente' && <span className="badge text-bg-info ms-2">Asistente</span>}
                     </td>
                     <td>{c.nombreProveedor ?? `Proveedor #${c.idProveedor}`}</td>
-                    <td>{tipoPorId[c.idTipoComprobante]?.codigo ?? `#${c.idTipoComprobante}`}</td>
+                    <td>
+                      {tipoPorId[c.idTipoComprobante]?.codigo ?? `#${c.idTipoComprobante}`}
+                      {esNotaDeCredito(tipoPorId[c.idTipoComprobante] ?? null) && (
+                        <span className="badge text-bg-warning ms-2">Nota de crédito</span>
+                      )}
+                    </td>
                     <td>
                       <span className={`badge ${claseDeBadgeDeEstado(c.estado)}`}>{etiquetaDeEstadoCompra(c.estado)}</span>
                     </td>
@@ -463,7 +469,11 @@ export function Compras() {
                     </td>
                     <td>{formatearFecha(c.fechaRecepcion)}</td>
                     <td>{formatearFechaDeCalendario(c.fechaComprobante)}</td>
-                    <td className="text-end">{formatearMoneda(c.total)}</td>
+                    <td className="text-end">
+                      {esNotaDeCredito(tipoPorId[c.idTipoComprobante] ?? null)
+                        ? `−${formatearMoneda(c.total)}`
+                        : formatearMoneda(c.total)}
+                    </td>
                   </tr>
                 ))}
                 {pagina.items.length === 0 && (

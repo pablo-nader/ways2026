@@ -37,7 +37,7 @@ their own NC document (one sign per voucher), never as negative lines.
 ## Tasks
 
 - [x] T1 Backend: NC types, sign in stock/balance/VAT book, cost guard, association, tests. Route: delegated (writer, 2+ non-trivial files). Evidence: commits feat(compras): notas de crédito de compra + fix(compras): pagos y cuenta corriente respetan notas de crédito. Domain 2647/2647, Application 1707/1707, Integration (Compra|LibroIva|NotaDeCredito|Proveedor|Pago|CuentaCorriente|ConectorMcp|FiscalSchema|SuperficieDeAutorizacion|AislamientoDeTenant) 2502/2503; the one failure (CuentaCorrienteEtapa7BackstopTests catalog count) was fixed to 19 tipos and that class rerun 3/3, the broad filter was not rerun. Mutation evidence: cost guard, association (draft-time and confirm-time), pagos guard (BloquearCompraAsync) each turn their test red.
-- [ ] T2 Web: NC types in the purchase editor, associated invoice selector, tests. Route: delegated.
+- [x] T2 Web: NC types in the purchase editor, associated invoice selector, tests. Route: delegated (writer). Evidence: feat(compras): carga de notas de crédito en el editor de compras. `npm run build` OK, `npm run lint` 0 errors (4 pre-existing warnings), `npx vitest run` 332 files / 10337 tests passed. RED observed first on comprasNotaDeCredito.test.ts (4 failing). Server messages are shown verbatim, so no new error translations. The selector lists the latest 200 confirmed invoices with an explicit hint when there are more.
 
 ## Acceptance criteria
 
