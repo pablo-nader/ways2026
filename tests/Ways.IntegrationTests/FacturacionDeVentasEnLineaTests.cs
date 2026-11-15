@@ -553,7 +553,7 @@ public partial class FacturacionDeVentasEmisionTests
 
         var origen = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, forzar: false));
         var devolucion = await VenderEnLineaAsync(
-            t.Cajero, VentaDeCobro(t, tipo: "NCX", efectivo: 0m, idAsociado: origen.Id));
+            t.Cajero, VentaDeCobro(t, tipo: "NCX", efectivo: 100m, idAsociado: origen.Id));
         Assert.Equal(EstadosFiscalesDeVenta.NoCorresponde, devolucion.Fiscal!.Estado);
 
         await EjecutarComoOwnerAsync("UPDATE certificados_fiscales SET activo = false WHERE id_empresa = $1", t.C.IdEmpresa);

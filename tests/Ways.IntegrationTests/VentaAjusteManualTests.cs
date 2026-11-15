@@ -478,7 +478,8 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         var devolucionDelDescuento = await EmitirOkAsync(
             ctx.Cliente,
             new SolicitudDeVenta(
-                ctx.IdPuntoVenta, null, "NCX", conDescuento.Id, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
+                ctx.IdPuntoVenta, null, "NCX", conDescuento.Id, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, 90m, null, 0m)], null, null));
         Assert.Equal(-90m, devolucionDelDescuento.Total);
         Assert.Equal(0m, devolucionDelDescuento.DescuentoManualTotal);
         Assert.Equal(0m, devolucionDelDescuento.RecargoManualTotal);
@@ -487,7 +488,8 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         var devolucionDelRecargo = await EmitirOkAsync(
             ctx.Cliente,
             new SolicitudDeVenta(
-                ctx.IdPuntoVenta, null, "NCX", conRecargo.Id, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
+                ctx.IdPuntoVenta, null, "NCX", conRecargo.Id, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, 110m, null, 0m)], null, null));
         Assert.Equal(-110m, devolucionDelRecargo.Total);
         Assert.Equal(0m, devolucionDelRecargo.RecargoManualTotal);
 

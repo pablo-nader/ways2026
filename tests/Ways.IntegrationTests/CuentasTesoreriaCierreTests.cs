@@ -417,12 +417,13 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         Assert.StartsWith("Devolución de comisión", libro[1].Concepto);
     }
 
-    /// <summary>Una nota de crédito (total negativo) no lleva pagos: la API la rechaza con <c>pago_en_comprobante_negativo</c>, así
-    /// que su dinero nunca llega al cierre. Sin pagos se acepta y el cierre no la cuenta ni en el arqueo ni en la cuenta.</summary>
+    /// <summary>Una nota de crédito reintegra solo en efectivo: con un medio digital la API la rechaza con <c>devolucion_solo_en_efectivo</c>, sin
+    /// pagos con <c>devolucion_reintegro_invalido</c>, y con el efectivo por su total se emite. Al cerrar, el reintegro baja el esperado
+    /// del efectivo y no toca ni el arqueo del medio digital ni su cuenta de tesorería (que solo existe en medios electrónicos).</summary>
     [Fact]
-    public async Task UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo()
+    public async Task UnaNotaDeCreditoReintegraEnEfectivoYNoTocaLaCuentaDeTesoreria()
     {
-        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo));
+        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoReintegraEnEfectivoYNoTocaLaCuentaDeTesoreria));
         using var _ = ctx.Admin;
         var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago");
         var medio = await CrearMedioAsync(ctx, "QR MP", cuenta, comision: 10m);
@@ -463,19 +464,27 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(HttpStatusCode.Created, origen.StatusCode);
         var idOrigen = (await origen.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
 
-        var conPagos = await ctx.Admin.PostAsJsonAsync(
+        var conMedioDigital = await ctx.Admin.PostAsJsonAsync(
             "/api/ventas",
             new SolicitudDeVenta(
                 ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idOrigen, [new LineaDeVenta(idArticulo, 1m, null)],
                 [new PagoDeVenta(medio, 100m, null, 0m)], null, null));
-        Assert.Equal(HttpStatusCode.BadRequest, conPagos.StatusCode);
-        Assert.Equal("pago_en_comprobante_negativo", await CodigoAsync(conPagos));
+        Assert.Equal(HttpStatusCode.BadRequest, conMedioDigital.StatusCode);
+        Assert.Equal("devolucion_solo_en_efectivo", await CodigoAsync(conMedioDigital));
 
         var sinPagos = await ctx.Admin.PostAsJsonAsync(
             "/api/ventas",
             new SolicitudDeVenta(
                 ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idOrigen, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
-        Assert.Equal(HttpStatusCode.Created, sinPagos.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, sinPagos.StatusCode);
+        Assert.Equal("devolucion_reintegro_invalido", await CodigoAsync(sinPagos));
+
+        var enEfectivo = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas",
+            new SolicitudDeVenta(
+                ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idOrigen, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)], null, null));
+        Assert.Equal(HttpStatusCode.Created, enEfectivo.StatusCode);
 
         await CerrarOkAsync(ctx, turno);
 
@@ -487,6 +496,8 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         await using var dbArqueo = Db(ctx);
         Assert.Equal(200m, await dbArqueo.ArqueosTurno
             .Where(a => a.IdTurnoCaja == turno && a.IdMedioPago == medio).Select(a => a.ImporteEsperado).SingleAsync());
+        Assert.Equal(0m, await dbArqueo.ArqueosTurno
+            .Where(a => a.IdTurnoCaja == turno && a.IdMedioPago == ctx.IdMedioEfectivo).Select(a => a.ImporteEsperado).SingleAsync());
     }
 
     private static async Task<string?> CodigoAsync(HttpResponseMessage respuesta) =>

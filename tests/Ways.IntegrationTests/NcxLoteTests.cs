@@ -225,14 +225,13 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
 
     // spec comprobantes-venta / Devoluciones As NCX Comprobantes: Cantidad siempre POSITIVA en el
     // request (design decisión 4) — el signo lo aplica ServicioDeVentas a partir de
-    // tipos_comprobante.signo. Sin pagos: una devolución no cobra, el total negativo no exige
-    // ninguna línea de pago (mismo patrón que VentasCheckoutTests.DevolucionStandaloneSePersisteComoNcxSinAsociado).
+    // tipos_comprobante.signo. La devolución reintegra en efectivo lo que vale (cantidad × 100, el precio de SolicitudTx).
     private static SolicitudDeVenta SolicitudNcx(
         Contexto ctx, int idArticulo, decimal cantidad, int? idLote, int? idComprobanteAsociado = null) =>
         new(
             ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idComprobanteAsociado,
             [new LineaDeVenta(idArticulo, cantidad, null, idLote)],
-            [],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, cantidad * 100m, null, 0m)],
             null, null);
 
     private static async Task<ComprobanteEmitido> EmitirAsync(Contexto ctx, SolicitudDeVenta solicitud)

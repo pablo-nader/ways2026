@@ -310,7 +310,7 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var devolucion = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "NCX", emitidoOriginal.Id,
             [new LineaDeVenta(idArticulo, 1m, null)],
-            [],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)],
             null, null);
         var respuestaDevolucion = await ctx.Admin.PostAsJsonAsync("/api/ventas", devolucion);
         Assert.Equal(HttpStatusCode.Created, respuestaDevolucion.StatusCode);

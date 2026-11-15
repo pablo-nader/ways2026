@@ -55,12 +55,21 @@ movimientos_caja (            -- [operativa]  — plata física fuera de la vent
 
 arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PAGO
     id_arqueo, id_turno_caja, id_medio_pago,
-    importe_esperado numeric(14,2),          -- calculado: cobros + fondo − vueltos − pagos − retiros
+    importe_esperado numeric(14,2),          -- calculado: cobros − reintegros de NCX + fondo − vueltos − pagos − retiros
     importe_declarado numeric(14,2),         -- lo que el cajero contó
     diferencia numeric(14,2),                -- esperado − declarado (el "saldo" del legacy, por medio)
     importe_esperado_original numeric(14,2) NULL  -- esperado del cierre, si un recálculo lo cambió
 );
 ```
+
+> **Reintegro de una devolución (`devoluciones-pos`, T2).** El esperado por medio suma `importe × signo` de los cobros de los
+> comprobantes emitidos del turno (`LectorDeMovimientosDelTurno`): una venta suma lo cobrado y una NCX resta lo que reintegró, que
+> es siempre efectivo (`ValidadorDePagos`, regla 0c). El cobro de la NCX se guarda positivo y el signo es el del total del
+> comprobante (negativo solo en una NCX; sin join con `tipos_comprobante`, cuyo filtro de baja lógica haría desaparecer cobros), así que el resumen parcial, el cierre (clásico o por retiro), el recálculo de un turno cerrado y el detalle del turno restan el
+> reintegro por la misma derivación, sin segunda copia. Anular la NCX (con el turno abierto) lo vuelve a sumar. Las cuentas de
+> tesorería (`id_cuenta_tesoreria` solo existe en medios electrónicos) y el libro, que parte de los retiros, no tocan el
+> reintegro: el efectivo devuelto sale del cajón antes de cualquier retiro y solo se refleja en el esperado y, si el cajero declara
+> otra cosa, en la diferencia del arqueo.
 
 > **Corrección administrativa de retiros.** Los refuerzos y las aperturas de cajón son
 > append-only; un retiro manual lo puede corregir un Admin (`PUT`/`DELETE /api/caja/retiros/{id}`)
@@ -262,11 +271,12 @@ movimientos_cuenta (          -- [operativa — libro encadenado por cuenta, ord
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
 > ajuste manual (ver "Ajuste manual"). (b) Los pagos anteriores a los débitos de pago no debitaron la cuenta hasta que la
-> reconstrucción los cargue. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
-> `pago_en_comprobante_negativo` un comprobante de total negativo con algún pago de importe o vuelto positivo, así que el lector del
-> turno, que suma los importes sin el signo del documento, nunca cuenta como cobrado el dinero de una nota de crédito (fijado por
-> `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo`). La regla vive en el servicio: ninguna CHECK puede
-> ligar `cobros` con el total de `comprobantes_venta`, así que una fila anterior a la regla no está protegida por la base.
+> reconstrucción los cargue. Una devolución solo reintegra efectivo: `ValidadorDePagos` (regla 0c) exige que los pagos de un comprobante de total negativo sean
+> efectivo, sin vuelto y por exactamente su total, y el lector del turno resta ese cobro (`importe × signo` del total, ver arriba), así que el
+> reintegro baja el esperado del arqueo y nunca llega a una cuenta de tesorería, que solo tiene medios electrónicos (fijado por
+> `ElReintegroEnEfectivoBajaElEsperadoDelTurnoYElCierreCuadra` y por `UnaNotaDeCreditoReintegraEnEfectivoYNoTocaLaCuentaDeTesoreria`).
+> La regla vive en el servicio: ninguna CHECK puede ligar `cobros` con el total de `comprobantes_venta` ni con el medio, así que una
+> fila anterior a la regla no está protegida por la base.
 >
 > **Locks del escritor.** Orden: fila del turno (exclusivo) → advisory de la empresa (tesorería de efectivo) → medios
 > `FOR SHARE` por id ascendente → cuentas de la empresa del turno `FOR NO KEY UPDATE` por id ascendente (las de otra empresa no se bloquean porque no se acreditan). El medio se lee una sola vez bajo su lock (cuenta

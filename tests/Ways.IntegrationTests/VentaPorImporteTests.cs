@@ -230,8 +230,10 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             [new PagoDeVenta(ctx.IdMedioEfectivo, pagado, null, 0m)], null, null,
             IdPresupuestoOrigen: null, NumeroPreasignado: numero);
 
+    /// <summary>Una devolución trae un pago en efectivo en cero como marca: <see cref="EmitirOkAsync(HttpClient, SolicitudDeVenta)"/> lo
+    /// completa con el reintegro que el servidor informa en <c>datos.reintegro</c>.</summary>
     private static SolicitudDeVenta Devolucion(Contexto ctx, int? idAsociado, params LineaDeVenta[] lineas) =>
-        new(ctx.IdPuntoVenta, null, "NCX", idAsociado, lineas, [], null, null);
+        new(ctx.IdPuntoVenta, null, "NCX", idAsociado, lineas, [new PagoDeVenta(ctx.IdMedioEfectivo, 0m, null, 0m)], null, null);
 
     /// <summary>Cliente con una lista propia: <c>Fija</c> sin precios, o <c>Derivada</c> de la default con el porcentaje
     /// pedido. Devuelve el cliente y su lista.</summary>
@@ -278,12 +280,23 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             [new PagoDeVenta(ctx.IdMedioEfectivo, pagado, null, 0m)], null, null);
 
     private static SolicitudDeVenta DevolucionDeCliente(Contexto ctx, int idCliente, int idAsociado, params LineaDeVenta[] lineas) =>
-        new(ctx.IdPuntoVenta, idCliente, "NCX", idAsociado, lineas, [], null, null);
+        new(ctx.IdPuntoVenta, idCliente, "NCX", idAsociado, lineas, [new PagoDeVenta(ctx.IdMedioEfectivo, 0m, null, 0m)], null, null);
 
     private static async Task<ComprobanteEmitido> EmitirOkAsync(HttpClient cliente, SolicitudDeVenta solicitud)
     {
         var respuesta = await cliente.PostAsJsonAsync("/api/ventas", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        if (respuesta.StatusCode == HttpStatusCode.BadRequest && solicitud.Pagos is [{ Importe: 0m } marca])
+        {
+            var problema = JsonDocument.Parse(cuerpo).RootElement;
+            if (problema.GetProperty("codigo").GetString() == "devolucion_reintegro_invalido")
+            {
+                var reintegro = problema.GetProperty("datos").GetProperty("reintegro").GetDecimal();
+                respuesta = await cliente.PostAsJsonAsync("/api/ventas", solicitud with { Pagos = [marca with { Importe = reintegro }] });
+                cuerpo = await respuesta.Content.ReadAsStringAsync();
+            }
+        }
+
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
     }

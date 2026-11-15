@@ -100,8 +100,9 @@ tiene que traer `id_cobro_mercadopago` (400 `cobro_mercadopago_requerido`) y un 
 `cobro_mercadopago_en_medio_sin_proveedor`). Solo se admite en una venta con número preasignado (400
 `cobro_mercadopago_sin_numero_preasignado`), sin `referencia` propia (400 `cobro_mercadopago_referencia_no_admitida`: la fija el
 servidor con el id del pago de Mercado Pago) y sin repetir el cobro en dos pagos (400 `cobro_mercadopago_repetido`). En una
-devolución (nota de crédito) el medio con proveedor es solo el medio de devolución y no lleva cobro (400
-`cobro_mercadopago_no_admitido_en_devolucion` si lo trae). La emisión toma `FOR UPDATE` del cobro después del turno y antes del
+devolución (nota de crédito) un medio con proveedor no lleva cobro (400
+`cobro_mercadopago_no_admitido_en_devolucion` si lo trae) y, de todos modos, una devolución solo se reintegra en efectivo (400
+`devolucion_solo_en_efectivo`, ver "Devoluciones"). La emisión toma `FOR UPDATE` del cobro después del turno y antes del
 comprobante, lo lee una vez bajo ese lock y exige que sea de la misma venta (punto de venta, número y medio; si no, 409
 `cobro_mercadopago_de_otra_venta`), esté `aprobado` (409 `cobro_mercadopago_no_aprobado`), no esté ligado a otra venta (409
 `cobro_mercadopago_ya_usado`) y haya cobrado exactamente el importe del pago (409 `cobro_mercadopago_importe_distinto`); un cobro
@@ -306,15 +307,18 @@ cambios de esquema: usa `id_comprobante_asociado`, `items_comprobante_venta.id_l
   `credito = round(T × (tomadas + u) / Q) − acreditado`, al peso entero (`AwayFromZero`),
 
   con `tomadas` y `acreditado` lo ya tomado y acreditado de ese item (por NCX anteriores y por líneas anteriores del mismo
-  documento). `T` es el total del item vendido: ya descuenta descuentos de línea, ofertas, la parte del combo y el ajuste manual
+  documento; lo "ya acreditado" de las NCX emitidas es lo que sus items guardaron de verdad, sumado por conjunto y cargado al último item
+  que esas notas tocaron, no una repetición del reparto: al anular una NCX intermedia las que sobreviven pudieron acreditar un peso distinto
+  y repetir el reparto haría que lo acreditado superara `T`). `T` es el total del item vendido: ya descuenta descuentos de línea, ofertas, la parte del combo y el ajuste manual
   de esa línea. Devolver todas las unidades de un item acredita exactamente `T`, y como el redondeo es monótono ninguna toma es
   negativa ni la suma supera `T`, sea cual sea la partición en líneas o en notas. Cada tramo graba un item con el precio
   unitario, la alícuota, la lista, la oferta, el combo y el lote del item vendido, y como descuento la diferencia entre su bruto
   y lo acreditado. Las líneas de una NCX no admiten `ajusteManualPorcentaje` (`400 ajuste_manual_no_admitido_en_devolucion`): el
   del ticket ya está en `T`.
 - **Lote.** Las unidades vuelven al lote del item del ticket que las cubre (`id_lote` del snapshot), sin que el cliente mande
-  `idLote`. Si lo manda, tiene que ser uno de los lotes que el ticket vendió de ese artículo (`400 lote_invalido`) y se usa para
-  todos los tramos de la línea. Si el item vendido no tenía lote y el artículo hoy lo controla, o si el lote del que salió se dio de baja después de la venta, vuelven al lote sin identificar (un `idLote` del cliente dado de baja sigue siendo `400 lote_invalido`).
+  `idLote`. Si lo manda, tiene que ser uno de los lotes que el ticket vendió de ese artículo y, además, el de TODOS los tramos
+  de la línea: un `idLote` que no es el del item que cubre algún tramo es `400 lote_invalido` (cada tramo vuelve siempre al lote de su
+  propio item; el `idLote` del cliente nunca pisa el de otro tramo). Si el item vendido no tenía lote y el artículo hoy lo controla, o si el lote del que salió se dio de baja después de la venta, vuelven al lote sin identificar (un `idLote` del cliente dado de baja sigue siendo `400 lote_invalido`).
   Una NCX nunca usa FEFO.
 - **Factura fiscal.** Si el ticket tiene una factura espejo aprobada (con o sin observaciones) o en trámite, `409
   devolucion_requiere_nota_de_credito_fiscal`: devolverlo exige una nota de crédito fiscal que todavía no existe. Una factura
@@ -340,8 +344,19 @@ cambios de esquema: usa `id_comprobante_asociado`, `items_comprobante_venta.id_l
   pendientes) e `importeDeLoRestante` (lo que se acredita por todas las unidades pendientes). Las líneas se informan también
   cuando el ticket no es devolvible. Es una lectura sin lock: la emisión re-juzga. Un id que es una factura espejo, un número
   sin ticket o un comprobante de otro tenant es `404`.
-- **Fuera de este tramo.** El dinero de la devolución (`ValidadorDePagos`, regla 0c: una NCX no lleva pagos) y la pantalla del POS
-  son de tareas siguientes.
+- **Reintegro en efectivo (feature `devoluciones-pos`, T2).** La plata de una devolución sale SIEMPRE en efectivo de la caja del turno
+  (decisión del dueño, 2026-11-15). Una NCX con total negativo lleva en `pagos` el reintegro, y `ValidadorDePagos` (regla 0c, que
+  reemplaza a la vieja "una NCX no lleva pagos") exige: solo medios de comportamiento `efectivo` (`400 devolucion_solo_en_efectivo`;
+  cuenta corriente, electrónicos y cualquier otro medio quedan afuera), sin vuelto (`400 devolucion_con_vuelto`) y por exactamente
+  `-total` (`400 devolucion_reintegro_invalido`, que también rechaza una NCX sin pagos y no se relaja con `toleranciaPago`). El rechazo
+  por importe trae `datos.reintegro` con lo que vale la devolución pedida, para que el cliente lo muestre y reenvíe. Una NCX sin pagos
+  deja de aceptarse: ningún flujo del producto emite hoy una NCX (el POS todavía no devuelve; lo hará online, T3) y sin reintegro el efectivo
+  que sale del cajón no quedaría en el arqueo. Una NCX de total cero no exige pagos. No cambia el esquema: el cobro de la NCX se guarda con
+  importe positivo (`ck_cobros_importe_no_negativo`) y su signo lo da el comprobante: los reportes de ventas por medio de pago usan el
+  `signo` del tipo (`importe − vuelto` por `signo`) y el esperado del arqueo, el total negativo del comprobante. Ver §7 (esperado del arqueo).
+  La anulación de una NCX no necesita código propio: el esperado excluye los cobros de comprobantes anulados, así que anularla vuelve a
+  sumar el efectivo (y anular exige turno abierto, igual que para un TX).
+- **Fuera de este tramo.** La pantalla del POS (T3) y el cálculo del reintegro en el cliente antes de enviar.
 
 ### Fiscal ARCA (Etapa 19a)
 

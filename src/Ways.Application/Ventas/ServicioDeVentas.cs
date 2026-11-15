@@ -9,6 +9,7 @@ using Ways.Application.Caja;
 using Ways.Application.Combos;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
+using Ways.Application.Familias;
 using Ways.Application.Fiscal;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -575,11 +576,21 @@ public class ServicioDeVentas(
         // si el contenido difiere; un comprobante nunca se borra, así que no hay inserción nueva
         // posible por este camino. Por lo mismo tampoco se le aplica la regla 9: una venta emitida antes de esa regla con un
         // excedente quedaría rechazada por su propio reenvío. La primera sincronización de una venta offline sí la cumple.
-        ValidadorDePagos.Validar(
-            totales.Total, pagosAValidar, toleranciaPago,
-            cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
-            exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida,
-            exigirCobroSinExcedente: !reenvioDeVentaYaEmitida && !solicitud.ExcedenteComoPagoACuenta);
+        try
+        {
+            ValidadorDePagos.Validar(
+                totales.Total, pagosAValidar, toleranciaPago,
+                cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
+                exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida,
+                exigirCobroSinExcedente: !reenvioDeVentaYaEmitida && !solicitud.ExcedenteComoPagoACuenta);
+        }
+        catch (ErrorDominio error) when (error.Codigo == "devolucion_reintegro_invalido")
+        {
+            // El cliente de una devolución no calcula el reparto por unidades acumuladas del ticket: el rechazo le dice cuánto
+            // es el reintegro de lo que pidió, para que lo muestre y lo reenvíe.
+            throw new ErrorDominioConDatos(
+                error.Codigo, error.Message, error.EstadoHttp, new Dictionary<string, object?> { ["reintegro"] = -totales.Total });
+        }
 
         // Con el excedente a cuenta, la venta conserva cobros por exactamente su total y lo que sobra pasa a un recibo del
         // cliente con los mismos medios: el cierre del turno cuenta los cobros del recibo como los de la venta, así que cada
