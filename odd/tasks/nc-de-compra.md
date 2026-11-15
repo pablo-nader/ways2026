@@ -36,7 +36,7 @@ their own NC document (one sign per voucher), never as negative lines.
 
 ## Tasks
 
-- [x] T1 Backend: NC types, sign in stock/balance/VAT book, cost guard, association, tests. Route: delegated (writer, 2+ non-trivial files). Evidence: commit see git log (feat(compras): notas de crédito de compra); Domain 2647/2647, Application 1706/1706, Integration (Compra|LibroIva|NotaDeCredito|Proveedor) 1169/1170 (the failure was ComprasRemitoYAlicuotasTests, fixed afterwards and rerun green); guards SuperficieDeAutorizacion/AislamientoDeTenant/RutasDeLaSpa/FiscalSchema rerun: only FiscalSchemaTests.LosTresDataStatementsAterrizan... fails (expects 9 tipos, now 12; file outside the allowed surfaces). Open: payments on an NC (ServicioDePagos.BloquearCompraAsync, Pagos/** outside surface), CC estado-de-cuenta saldo pendiente of NC (CuentaCorriente/**), MCP context listing (ConectorMcp/**).
+- [x] T1 Backend: NC types, sign in stock/balance/VAT book, cost guard, association, tests. Route: delegated (writer, 2+ non-trivial files). Evidence: commits feat(compras): notas de crédito de compra + fix(compras): pagos y cuenta corriente respetan notas de crédito. Domain 2647/2647, Application 1707/1707, Integration (Compra|LibroIva|NotaDeCredito|Proveedor|Pago|CuentaCorriente|ConectorMcp|FiscalSchema|SuperficieDeAutorizacion|AislamientoDeTenant) 2503/2503 after fixing CuentaCorrienteEtapa7BackstopTests (19 tipos). Mutation evidence: cost guard, association (draft-time and confirm-time), pagos guard (BloquearCompraAsync) each turn their test red.
 - [ ] T2 Web: NC types in the purchase editor, associated invoice selector, tests. Route: delegated.
 
 ## Acceptance criteria

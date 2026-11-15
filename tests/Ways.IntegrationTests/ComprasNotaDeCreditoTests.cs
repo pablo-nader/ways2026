@@ -7,6 +7,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Organizacion;
+using Ways.Application.Pagos;
 using Ways.Application.Reportes;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
@@ -15,6 +16,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Pagos;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Stock;
 using Ways.Infrastructure.Multitenancy;
@@ -476,5 +478,91 @@ public class ComprasNotaDeCreditoTests(WaysApiFixture fixture) : IClassFixture<W
         var fila = Assert.Single(reporte.PorProveedor, p => p.IdProveedor == ctx.IdProveedor);
         Assert.Equal(factura.Total - nota.Total, fila.Total);
         Assert.Equal(2, fila.CantidadCompras);
+    }
+
+    // ---- pagos y cuenta corriente ----------------------------------------------------------------
+
+    private async Task<int> MedioEfectivoAsync(Contexto ctx)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        return await db.MediosPago.Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
+    }
+
+    private async Task<(Contexto Ctx, CompraDetalle Nota, int IdMedio)> NotaConfirmadaAsync(string nombre)
+    {
+        var ctx = await PrepararAsync(nombre);
+        var factura = await FacturaConfirmadaAsync(ctx);
+        var nota = await ConfirmarAsync(ctx, (await CrearBorradorAsync(ctx, Nota(ctx, factura.Id))).Id);
+        return (ctx, nota, await MedioEfectivoAsync(ctx));
+    }
+
+    [Fact]
+    public async Task PagarUnaNotaDeCreditoEsRechazadoYNoCreaNingunPago()
+    {
+        // Cláusula bajo prueba: el rechazo de BloquearCompraAsync (único punto por el que pasan pagos, aplicaciones,
+        // vínculos y redondeo contra una compra).
+        var (ctx, nota, medio) = await NotaConfirmadaAsync(nameof(PagarUnaNotaDeCreditoEsRechazadoYNoCreaNingunPago));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/compras/{nota.Id}/pagos", new SolicitudDePagoDeCompra(DateOnly.FromDateTime(DateTime.UtcNow), 100m, medio, null));
+
+        Assert.Equal("compra_es_nota_de_credito", await CodigoDeRechazoAsync(respuesta, HttpStatusCode.BadRequest));
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.Pagos.CountAsync());
+    }
+
+    [Fact]
+    public async Task UnPagoNoSeVinculaNiSeAplicaNiSeAltaContraUnaNotaDeCredito()
+    {
+        var (ctx, nota, medio) = await NotaConfirmadaAsync(nameof(UnPagoNoSeVinculaNiSeAplicaNiSeAltaContraUnaNotaDeCredito));
+
+        SolicitudDePagoDeAdministracionConLineas Alta(int? idCompra) => PagoDeUnMedio.Administracion(
+            DateOnly.FromDateTime(DateTime.UtcNow), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null,
+            "Pago de prueba", null, medio, null, 100m, idCompra);
+
+        var altaLigada = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", Alta(nota.Id));
+        Assert.Equal("compra_es_nota_de_credito", await CodigoDeRechazoAsync(altaLigada, HttpStatusCode.BadRequest));
+
+        var altaLibre = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", Alta(null));
+        Assert.Equal(HttpStatusCode.Created, altaLibre.StatusCode);
+        var idPago = (await altaLibre.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+
+        var aplicar = await ctx.Admin.PostAsJsonAsync(
+            $"/api/pagos/{idPago}/aplicaciones", new SolicitudDeAplicarPago([new AplicacionSolicitada(nota.Id, 50m)]));
+        Assert.Equal("compra_es_nota_de_credito", await CodigoDeRechazoAsync(aplicar, HttpStatusCode.BadRequest));
+
+        var vincular = await ctx.Admin.PostAsJsonAsync($"/api/pagos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(nota.Id));
+        Assert.Equal("compra_es_nota_de_credito", await CodigoDeRechazoAsync(vincular, HttpStatusCode.BadRequest));
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.AplicacionesPago.CountAsync());
+    }
+
+    [Fact]
+    public async Task ElRedondeoDeUnaNotaDeCreditoEsRechazado()
+    {
+        var (ctx, nota, _) = await NotaConfirmadaAsync(nameof(ElRedondeoDeUnaNotaDeCreditoEsRechazado));
+
+        var respuesta = await ctx.Admin.PostAsync($"/api/compras/{nota.Id}/ajuste-de-redondeo", null);
+
+        Assert.Equal("compra_es_nota_de_credito", await CodigoDeRechazoAsync(respuesta, HttpStatusCode.BadRequest));
+    }
+
+    [Fact]
+    public async Task ElEstadoDeCuentaMuestraLaNotaConSaldoPendienteCeroYLaFacturaConElSuyo()
+    {
+        var (ctx, nota, _) = await NotaConfirmadaAsync(nameof(ElEstadoDeCuentaMuestraLaNotaConSaldoPendienteCeroYLaFacturaConElSuyo));
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/proveedores/{ctx.IdProveedor}/cuenta-corriente");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var pagina = JsonSerializer.Deserialize<PaginaDeEstadoDeCuentaDeProveedor>(cuerpo, OpcionesJson)!;
+
+        var filaDeLaNota = Assert.Single(pagina.Items, m => m.IdComprobanteCompra == nota.Id);
+        Assert.Equal(-nota.Total, filaDeLaNota.Importe);
+        Assert.Equal(0m, filaDeLaNota.SaldoPendienteDeLaCompra);
+
+        var filaDeLaFactura = Assert.Single(pagina.Items, m => m.IdComprobanteCompra == nota.IdComprobanteCompraAsociado);
+        Assert.True(filaDeLaFactura.SaldoPendienteDeLaCompra > 0m);
     }
 }

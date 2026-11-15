@@ -393,8 +393,9 @@ public partial class ServicioDePagos(
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
         comando.CommandText =
-            "SELECT estado::text, id_proveedor, id_punto_venta, total FROM comprobantes_compra " +
-            "WHERE id_comprobante_compra = $1 AND id_tenant = $2 FOR UPDATE";
+            "SELECT c.estado::text, c.id_proveedor, c.id_punto_venta, c.total, t.signo FROM comprobantes_compra c " +
+            "JOIN tipos_comprobante t ON t.id_tipo_comprobante = c.id_tipo_comprobante " +
+            "WHERE c.id_comprobante_compra = $1 AND c.id_tenant = $2 FOR UPDATE OF c";
         ParametrosDeComando.Agregar(comando, idComprobanteCompra);
         ParametrosDeComando.Agregar(comando, idTenant);
 
@@ -408,6 +409,13 @@ public partial class ServicioDePagos(
         var idProveedor = lector.GetInt32(1);
         var idPuntoVenta = lector.GetInt32(2);
         var total = lector.GetDecimal(3);
+
+        // Una nota de crédito es un crédito, no una deuda: no se paga, no recibe aplicaciones ni redondeo.
+        if (ReglaDeNotaDeCredito.EsNotaDeCredito(lector.GetInt16(4)))
+        {
+            throw new ErrorDominio(
+                "compra_es_nota_de_credito", "La compra es una nota de crédito: no admite pagos ni aplicaciones.", 400);
+        }
 
         if (exigirConfirmada)
         {

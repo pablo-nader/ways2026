@@ -22,9 +22,9 @@ public class ComposicionDeLibroIvaTests
     private static CompraParaLibro Compra(
         string numero = "0001-00000001", string tipo = "C-FA", bool discrimina = true, decimal total = 0m,
         IReadOnlyList<AlicuotaDeCompraParaLibro>? alicuotas = null, decimal percepcionIva = 0m,
-        decimal percepcionIibb = 0m, DateOnly? fecha = null, decimal impuestosInternos = 0m) =>
+        decimal percepcionIibb = 0m, DateOnly? fecha = null, decimal impuestosInternos = 0m, short signo = 1) =>
         new(fecha ?? new DateOnly(2026, 5, 10), tipo, numero, "Proveedor SA", "30-11111111-8", discrimina, total,
-            alicuotas ?? [], percepcionIva, percepcionIibb, impuestosInternos);
+            alicuotas ?? [], percepcionIva, percepcionIibb, impuestosInternos, signo);
 
     private static VentaParaLibro Venta(
         IReadOnlyList<LineaFiscal> lineas, decimal total, short signo = 1, string tipo = "FA",
@@ -293,5 +293,27 @@ public class ComposicionDeLibroIvaTests
         var fila = Assert.Single(ComposicionDeLibroIva.DeVentas(Desde, Hasta, null, null, [venta]).Filas);
 
         Assert.Equal(9m, fila.Diferencia);
+    }
+
+    [Fact]
+    public void UnaNotaDeCreditoDeCompraEntraConTodosSusImportesNegativosYRestaEnLosTotales()
+    {
+        var factura = Compra(total: 1331m, alicuotas: [Gravada(21m, 1000m, 210m)], percepcionIibb: 11m, impuestosInternos: 110m);
+        var nota = Compra(
+            "0001-00000009", "C-NCA", total: 675.5m, alicuotas: [Gravada(21m, 500m, 105m), Exento(10m)], percepcionIibb: 5.5m,
+            impuestosInternos: 55m, signo: -1);
+
+        var libro = ComposicionDeLibroIva.DeCompras(Desde, Hasta, null, [factura, nota]);
+
+        var fila = libro.Filas.Single(f => f.TipoComprobante == "C-NCA");
+        Assert.Equal(-675.5m, fila.Total);
+        Assert.Equal(-500m, fila.NetoGravado);
+        Assert.Equal(-105m, fila.IvaTotal);
+        Assert.Equal(-10m, fila.Exento);
+        Assert.Equal(-5.5m, fila.PercepcionIibb);
+        Assert.Equal(-55m, fila.ImpuestosInternos);
+        Assert.Equal(0m, fila.Diferencia);
+        Assert.Equal(1331m - 675.5m, libro.Totales.Total);
+        Assert.Equal(55m, libro.Totales.ImpuestosInternos);
     }
 }

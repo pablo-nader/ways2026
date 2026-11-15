@@ -155,7 +155,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
 
         var codigos = await db.TiposComprobante.Select(t => t.Codigo).OrderBy(c => c).ToListAsync();
 
-        Assert.Equal(16, codigos.Count);
+        Assert.Equal(19, codigos.Count);
         Assert.Contains("RC", codigos);
         Assert.Contains("FA", codigos);
         Assert.Contains("TX", codigos);
@@ -164,6 +164,9 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
         Assert.Contains("C-FB", codigos);
         Assert.Contains("C-FC", codigos);
         Assert.Contains("C-RM", codigos);
+        Assert.Contains("C-NCA", codigos);
+        Assert.Contains("C-NCB", codigos);
+        Assert.Contains("C-NCC", codigos);
     }
 
     // ---- RC idempotente en una base ya migrada desde stage 6 (task 1.9) ----------------------
