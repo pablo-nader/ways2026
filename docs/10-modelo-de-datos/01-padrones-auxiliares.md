@@ -331,8 +331,15 @@ Mismo mecanismo de siembra doble que `C-FA`: en la lista de arriba para una base
 forma idempotente (guard `AND EXISTS`), dentro de la migración `ComprasRemitoYAlicuotas` para una
 base ya migrada, de modo que todos los tenants existentes lo reciben.
 
+**`C-NCA`/`C-NCB`/`C-NCC` (notas de crédito de compra, doc 10 §5):** `clase compra`, `letra`
+A/B/C, `signo -1`, `discrimina_iva` solo en `C-NCA`, `es_fiscal false`, `afecta_stock true`,
+`registra_libro_iva true`. Se cargan con cantidades e importes **positivos**, igual que una
+factura: el signo lo aplica cada consumidor (stock, cuenta corriente del proveedor, libro IVA,
+reportes). Misma siembra doble que `C-RM`: la lista de arriba para una base nueva y, de forma
+idempotente (guard `AND EXISTS`), la migración `NotasDeCreditoDeCompra` para una ya migrada.
+
 **`registra_libro_iva`:** distingue las facturas (que se declaran en el libro IVA) de todo lo
-demás. Vale `true` en `C-FA`, `C-FB` y `C-FC` y `false` en el resto, ventas incluidas: el libro de
+demás. Vale `true` en `C-FA`, `C-FB`, `C-FC` y las notas de crédito de compra y `false` en el resto, ventas incluidas: el libro de
 ventas no lee este flag, entran los comprobantes con `es_fiscal` y CAE aprobado (ver "Libro IVA" en
 §5). En compras cumple además otra función: un tipo que registra libro IVA es
 una factura y su letra fija si discrimina IVA; un tipo que no lo registra deja esa decisión a quien

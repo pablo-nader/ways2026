@@ -218,12 +218,14 @@ public class ServicioDeFichaDeArticulo(
     }
 
     /// <summary>Compras confirmadas con una línea de este artículo (borradores y anuladas no cuentan), en los puntos
-    /// de venta de la empresa si se indicó una.</summary>
+    /// de venta de la empresa si se indicó una. Las notas de crédito quedan afuera: devuelven mercadería, no la
+    /// compran, y no mueven el costo del artículo, así que no son parte de su historia de compras.</summary>
     private IQueryable<LineaDeCompra> ComprasConfirmadas(int idArticulo, int? idEmpresa) =>
         from i in db.ItemsComprobanteCompra
         where i.IdArticulo == idArticulo
         join c in db.ComprobantesCompra on i.IdComprobanteCompra equals c.Id
         where c.Estado == EstadoCompra.Confirmada
+            && !db.TiposComprobante.IgnoreQueryFilters(new[] { "BajaLogica" }).Any(t => t.Id == c.IdTipoComprobante && t.Signo < 0)
             && (idEmpresa == null || db.PuntosVenta.Any(pv => pv.Id == c.IdPuntoVenta && pv.IdEmpresa == idEmpresa))
         select new LineaDeCompra
         {

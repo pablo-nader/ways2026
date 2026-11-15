@@ -176,7 +176,7 @@ public class ComprasRemitoYAlicuotasTests(WaysApiFixture fixture) : IClassFixtur
             .Select(t => t.Codigo)
             .OrderBy(c => c)
             .ToListAsync();
-        Assert.Equal(["C-FA", "C-FB", "C-FC"], conLibroIva);
+        Assert.Equal(["C-FA", "C-FB", "C-FC", "C-NCA", "C-NCB", "C-NCC"], conLibroIva);
     }
 
     [Fact]

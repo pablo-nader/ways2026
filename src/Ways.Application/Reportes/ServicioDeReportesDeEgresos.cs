@@ -44,12 +44,24 @@ public class ServicioDeReportesDeEgresos(IWaysDbContext db, LectorDeSerieTempora
         var (_, zona) = await ResolverZonaAsync(idEmpresa, idPuntoVenta, ct);
         var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
 
+        // Una nota de crédito guarda su total en positivo: resta del gasto con proveedor. Los tipos se leen sin el
+        // filtro de baja lógica para que dar de baja un tipo no devuelva sus notas al signo positivo.
+        var idsTipoDeCredito = await db.TiposComprobante.IgnoreQueryFilters(["BajaLogica"])
+            .Where(t => t.Clase == ClaseComprobante.Compra && t.Signo < 0)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
         var filas = await db.ComprobantesCompra
             .Where(c => idsPuntoVenta.Contains(c.IdPuntoVenta))
             .Where(c => c.Estado == EstadoCompra.Confirmada)
             .Where(c => c.FechaRecepcion >= rango.DesdeUtc && c.FechaRecepcion < rango.HastaUtcExclusivo)
             .GroupBy(c => c.IdProveedor)
-            .Select(g => new { IdProveedor = g.Key, Total = g.Sum(c => c.Total), Cantidad = g.Count() })
+            .Select(g => new
+            {
+                IdProveedor = g.Key,
+                Total = g.Sum(c => idsTipoDeCredito.Contains(c.IdTipoComprobante) ? -c.Total : c.Total),
+                Cantidad = g.Count()
+            })
             .ToListAsync(ct);
 
         var idsProveedor = filas.Select(f => f.IdProveedor).ToList();

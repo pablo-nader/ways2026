@@ -141,7 +141,15 @@ public class InicializadorDeBaseDeDatos(
         // Remito o comprobante no fiscal del proveedor: no entra al libro IVA, y si discrimina IVA
         // lo decide quien carga el comprobante (nace sin discriminar). Se siembra acá para una base
         // nueva y, de forma idempotente, en la migración ComprasRemitoYAlicuotas para una ya migrada.
-        (ClaseComprobante.Compra, "C-RM", "Remito / comprobante no fiscal", 'X', 1, false, false, true, true, null, false)
+        (ClaseComprobante.Compra, "C-RM", "Remito / comprobante no fiscal", 'X', 1, false, false, true, true, null, false),
+
+        // Notas de crédito del proveedor: signo -1, entran al libro IVA (con importes negativos) y sacan stock.
+        // Se cargan con importes positivos, igual que una factura; el signo lo aplica cada consumidor. Se
+        // siembran acá para una base nueva y, de forma idempotente, en la migración NotasDeCreditoDeCompra para
+        // una ya migrada.
+        (ClaseComprobante.Compra, "C-NCA", "Nota de crédito A de compra", 'A', -1, true, false, true, true, null, true),
+        (ClaseComprobante.Compra, "C-NCB", "Nota de crédito B de compra", 'B', -1, false, false, true, true, null, true),
+        (ClaseComprobante.Compra, "C-NCC", "Nota de crédito C de compra", 'C', -1, false, false, true, true, null, true)
     ];
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)

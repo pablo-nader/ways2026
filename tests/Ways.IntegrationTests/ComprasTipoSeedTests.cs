@@ -61,7 +61,8 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private static readonly string[] CodigosDeVentaEsperadosTrasRemitosEtapa17 =
         [.. CodigosDeVentaEsperados, "TXR"];
 
-    private static readonly string[] CodigosDeCompraEsperados = ["C-FA", "C-FB", "C-FC", "C-RM"];
+    private static readonly string[] CodigosDeCompraEsperados =
+        ["C-FA", "C-FB", "C-FC", "C-NCA", "C-NCB", "C-NCC", "C-RM"];
 
     [Fact]
     public async Task UnaBaseFrescaSiembraLosTiposDeCompraSinTocarElCatalogoDeVenta()
@@ -95,7 +96,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             .Select(t => t.Codigo)
             .OrderBy(c => c)
             .ToListAsync();
-        Assert.Equal(["C-FA", "C-FB", "C-FC"], conLibroIva);
+        Assert.Equal(["C-FA", "C-FB", "C-FC", "C-NCA", "C-NCB", "C-NCC"], conLibroIva);
 
         var codigosInactivos = await db.TiposComprobante
             .Where(t => !t.Activo)
@@ -226,7 +227,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     conLibroIva.Add(lector.GetString(0));
                 }
 
-                Assert.Equal(["C-FA", "C-FB", "C-FC"], conLibroIva);
+                Assert.Equal(["C-FA", "C-FB", "C-FC", "C-NCA", "C-NCB", "C-NCC"], conLibroIva);
             }
 
             // Re-ejecuta a mano el mismo INSERT idempotente de la migración (simula un reintento

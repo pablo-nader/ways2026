@@ -79,4 +79,10 @@ public class ComprobanteCompra : EntidadTenant
     /// <see cref="EstadoCompra.Borrador"/> (<c>ExigirOrdenLigableAsync</c>, slice 3); congelado
     /// una vez que el comprobante deja de ser borrador.</summary>
     public int? IdOrdenCompra { get; set; }
+
+    /// <summary>Solo en una nota de crédito: la factura (<c>C-FA</c>/<c>C-FB</c>/<c>C-FC</c>) del mismo proveedor y
+    /// empresa a la que corrige. Opcional y puramente informativa: no aplica la nota contra la factura ni
+    /// toca su saldo. Se valida al guardar el borrador y de nuevo, bajo lock, al confirmar; después queda fija
+    /// porque una confirmada que es nota de crédito no se edita.</summary>
+    public int? IdComprobanteCompraAsociado { get; set; }
 }

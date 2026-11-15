@@ -70,9 +70,18 @@ public partial class ServicioDeCompras(
             .ToListAsync(ct);
 
         var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [id], ct)).GetValueOrDefault(id, 0m);
+        var esNotaDeCredito = await EsNotaDeCreditoAsync(comprobante.IdTipoComprobante, ct);
 
-        return Proyectar(comprobante, items, alicuotas, percepciones, pagado);
+        return Proyectar(comprobante, items, alicuotas, percepciones, pagado, esNotaDeCredito);
     }
+
+    /// <summary>El signo es del tipo, un catálogo global: se lee sin el filtro de baja lógica para que dar de baja un
+    /// tipo no devuelva sus notas de crédito al signo positivo.</summary>
+    private async Task<bool> EsNotaDeCreditoAsync(int idTipoComprobante, CancellationToken ct) =>
+        await db.TiposComprobante.IgnoreQueryFilters(["BajaLogica"])
+            .Where(t => t.Id == idTipoComprobante)
+            .Select(t => t.Signo < 0)
+            .FirstOrDefaultAsync(ct);
 
     public async Task<PaginaDeCompras> ListarAsync(
         FiltrosDeListadoDeCompras? filtros = null,
@@ -180,20 +189,28 @@ public partial class ServicioDeCompras(
         var idsConfirmadas = items.Where(c => c.Estado == EstadoCompra.Confirmada).Select(c => c.Id).ToList();
         var pagadoPorCompra = await LectorDePagadoPorCompra.LeerAsync(db, idsConfirmadas, ct);
         var nombres = await NombresDeProveedorAsync(items.Select(c => c.IdProveedor).ToList(), ct);
+        var idsTipoDeCredito = await IdsDeTiposDeCreditoAsync(ct);
 
         return items
             .Select(c =>
             {
                 var pagado = pagadoPorCompra.GetValueOrDefault(c.Id, 0m);
+                var esNotaDeCredito = idsTipoDeCredito.Contains(c.IdTipoComprobante);
                 return c with
                 {
-                    SaldoPendiente = ReglaDePagoDeCompra.SaldoPendiente(c.Estado, c.Total, pagado),
-                    EstadoPago = ReglaDePagoDeCompra.EstadoDePago(c.Estado, c.Total, pagado)?.ToString(),
+                    SaldoPendiente = ReglaDePagoDeCompra.SaldoPendiente(c.Estado, esNotaDeCredito, c.Total, pagado),
+                    EstadoPago = ReglaDePagoDeCompra.EstadoDePago(c.Estado, esNotaDeCredito, c.Total, pagado)?.ToString(),
                     NombreProveedor = nombres.GetValueOrDefault(c.IdProveedor)
                 };
             })
             .ToList();
     }
+
+    private async Task<HashSet<int>> IdsDeTiposDeCreditoAsync(CancellationToken ct) =>
+        [.. await db.TiposComprobante.IgnoreQueryFilters(["BajaLogica"])
+            .Where(t => t.Clase == ClaseComprobante.Compra && t.Signo < 0)
+            .Select(t => t.Id)
+            .ToListAsync(ct)];
 
     /// <summary>Nombre de fantasía recortado si no está en blanco, si no la razón social. Igual que
     /// <see cref="ReferenciasDeListado.ProveedoresVisiblesAsync"/>, solo Admin lo recibe y un proveedor dado de baja o
@@ -289,6 +306,7 @@ public partial class ServicioDeCompras(
             // las aplicaciones la filtra el modelo también dentro de la subconsulta.
             var pagadas = ep == EstadoDePagoDeCompra.Pagada;
             query = query.Where(c => c.Estado == EstadoCompra.Confirmada
+                && !db.TiposComprobante.IgnoreQueryFilters(new[] { "BajaLogica" }).Any(t => t.Id == c.IdTipoComprobante && t.Signo < 0)
                 && (c.Total
                     - (db.AplicacionesPago.Where(a => a.IdComprobanteCompra == c.Id).Sum(a => (decimal?)a.Importe) ?? 0m)
                     + (db.MovimientosCuentaCorrienteProveedor
@@ -325,21 +343,27 @@ public partial class ServicioDeCompras(
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        // Etapa 12, slice 5 (spec comprobantes-compra: "Expired Reception Is Refused") — chequeo
-        // puro, sin base de datos, ANTES de cualquier lectura: fecha_vencimiento en el pasado se
-        // rechaza al guardar, no solo al confirmar.
         ValidarLineasDeConcepto(solicitud.Items);
-        ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
-        var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var (tipo, _, puntoVenta, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var esNotaDeCredito = await ValidarSegunElTipoAsync(tipo, solicitud, puntoVenta, momento, ct);
+
+        // El asistente carga facturas de proveedor: no tiene dónde indicar la factura que una nota corrige ni sabe
+        // de devoluciones, así que una nota de crédito se carga a mano.
+        if (esNotaDeCredito && origen == OrigenCompra.Asistente)
+        {
+            throw new ErrorDominio(
+                "nota_de_credito_solo_manual", "Las notas de crédito se cargan a mano en Ways, no con el asistente.", 400);
+        }
+
         var numeroExterno = NormalizarNumeroExterno(tipo, solicitud.NumeroExterno);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
         var (lineas, calculada) = Calcular(
             solicitud.Items, discriminaIva, porcentajePorAlicuota, margenes, ConvertirIvaImpreso(solicitud.IvaImpreso),
-            solicitud.PreciosIncluyenIva, percepciones, redondeoDeSugerencia);
+            solicitud.PreciosIncluyenIva, percepciones, redondeoDeSugerencia, esNotaDeCredito);
 
         // Una sola transacción sin reintento (forma (b) de ef-retry-safe-writes): encabezado, líneas,
         // alícuotas y percepciones se confirman juntos o ninguno. Sin reintento, porque repetir el alta
@@ -388,6 +412,7 @@ public partial class ServicioDeCompras(
             Estado = EstadoCompra.Borrador,
             Origen = origen,
             IdOrdenCompra = solicitud.IdOrdenCompra,
+            IdComprobanteCompraAsociado = solicitud.IdComprobanteCompraAsociado,
             CreatedAt = momento,
             UpdatedAt = momento
         };
@@ -424,19 +449,19 @@ public partial class ServicioDeCompras(
 
         var momento = reloj.Ahora;
 
-        // Etapa 12, slice 5: mismo chequeo que CrearBorradorAsync — un PUT también es un "save".
+        // Mismo chequeo que CrearBorradorAsync — un PUT también es un "save".
         ValidarLineasDeConcepto(solicitud.Items);
-        ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
-        var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var (tipo, _, puntoVenta, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var esNotaDeCredito = await ValidarSegunElTipoAsync(tipo, solicitud, puntoVenta, momento, ct);
         var numeroExterno = NormalizarNumeroExterno(tipo, solicitud.NumeroExterno);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
         var (lineas, calculada) = Calcular(
             solicitud.Items, discriminaIva, porcentajePorAlicuota, margenes, ConvertirIvaImpreso(solicitud.IvaImpreso),
-            solicitud.PreciosIncluyenIva, percepciones, redondeoDeSugerencia);
+            solicitud.PreciosIncluyenIva, percepciones, redondeoDeSugerencia, esNotaDeCredito);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
@@ -498,6 +523,7 @@ public partial class ServicioDeCompras(
         comprobante.IdPuntoVenta = solicitud.IdPuntoVenta;
         comprobante.Observaciones = NormalizarOpcional(solicitud.Observaciones);
         comprobante.IdOrdenCompra = solicitud.IdOrdenCompra;
+        comprobante.IdComprobanteCompraAsociado = solicitud.IdComprobanteCompraAsociado;
         comprobante.Subtotal = calculada.Subtotal;
         comprobante.DescuentoTotal = calculada.DescuentoTotal;
         comprobante.ImpuestosInternos = calculada.ImpuestosInternos;
@@ -795,6 +821,28 @@ public partial class ServicioDeCompras(
             await EscriturasDeOrdenDeCompra.ProyectarEstadoAsync(conexion, transaccionCruda, idTenant, idOc, momento, ct);
         }
 
+        // 1.c. Nota de crédito (signo del tipo que ESTE lock vio): si corrige una factura, esa factura se relee
+        // FOR SHARE ahora y no más tarde, en la posición 2 del orden de locks, antes de lotes y stock. Una anulación
+        // de la factura toma su header exclusivo y después mueve stock: leerla después de tomar lotes cerraría un
+        // ciclo con ella. El FOR SHARE se sostiene hasta el commit, así que la factura no puede anularse entre este
+        // chequeo y el asiento de la nota.
+        var esNotaDeCredito = ReglaDeNotaDeCredito.EsNotaDeCredito(
+            await db.TiposComprobante.IgnoreQueryFilters(["BajaLogica"])
+                .Where(t => t.Id == encabezado.IdTipoComprobante)
+                .Select(t => t.Signo)
+                .FirstAsync(ct));
+
+        var idEmpresa = await db.PuntosVenta
+            .Where(pv => pv.Id == encabezado.IdPuntoVenta)
+            .Select(pv => pv.IdEmpresa)
+            .FirstAsync(ct);
+
+        if (esNotaDeCredito && encabezado.IdComprobanteCompraAsociado is { } idFactura)
+        {
+            var factura = await BloquearFacturaAsociadaAsync(conexion, transaccionCruda, idFactura, idTenant, ct);
+            ReglaDeNotaDeCredito.ExigirFacturaAsociable(factura, idFactura, encabezado.IdProveedor, idEmpresa);
+        }
+
         // 2. El read set de items queda congelado bajo el lock del header (design decisión 1).
         var todosLosItems = await db.ItemsComprobanteCompra
             .Where(i => i.IdComprobanteCompra == id)
@@ -827,11 +875,7 @@ public partial class ServicioDeCompras(
 
         // EsLoteEfectivo necesita controla_lote por artículo y lotes_habilitado de la empresa del
         // encabezado — ambos FUERA del presupuesto de comandos del checkout (design: Write site
-        // 2), esta clase no comparte ese presupuesto.
-        var idEmpresa = await db.PuntosVenta
-            .Where(pv => pv.Id == encabezado.IdPuntoVenta)
-            .Select(pv => pv.IdEmpresa)
-            .FirstAsync(ct);
+        // 2), esta clase no comparte ese presupuesto. La empresa ya se resolvió en el paso 1.c.
         var controlaLotePorArticulo = await db.Articulos
             .Where(a => idsArticulo.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, a => a.ControlaLote, ct);
@@ -860,8 +904,9 @@ public partial class ServicioDeCompras(
 
             // Rechequeo al confirmar (spec: "This check MUST fire when the line is saved or
             // edited, not only at confirm") — el guardado del borrador ya lo probó una vez, pero
-            // el reloj pudo avanzar entre el último save y este confirm.
-            if (ReglaDeLotes.EstaVencido(item.FechaVencimiento, hoy))
+            // el reloj pudo avanzar entre el último save y este confirm. Una nota de crédito devuelve mercadería:
+            // el lote vencido puede salir.
+            if (!esNotaDeCredito && ReglaDeLotes.EstaVencido(item.FechaVencimiento, hoy))
             {
                 throw new ErrorDominio(
                     "lote_vencido_en_recepcion",
@@ -885,20 +930,27 @@ public partial class ServicioDeCompras(
         // SIEMPRE, lot-effective o no (byte-idéntico al camino previo a esta etapa cuando no lo
         // es); el upsert de stock_lotes solo cuando el item resolvió un lote.
         // La mercadería entra al stock de la sucursal de la caja de recepción, resuelta acá, dentro de la transacción.
+        // Una nota de crédito la saca: el asiento lleva la cantidad con signo negativo (las líneas se guardan en positivo) y
+        // no puede dejar el stock del artículo ni el de su lote por debajo de cero, igual que la anulación de una compra.
         if (items.Count > 0)
         {
             var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, encabezado.IdPuntoVenta, ct);
 
-            await EscritorDeStock.AsentarAsync(
+            var asentados = await EscritorDeStock.AsentarAsync(
                 conexion, transaccionCruda,
                 items.Select(item => new AsientoDeStock(
-                    idTenant, idSucursal, encabezado.IdPuntoVenta, item.IdArticulo!.Value, item.Cantidad, MotivoStock.Compra,
-                    idEmpleado, momento)
+                    idTenant, idSucursal, encabezado.IdPuntoVenta, item.IdArticulo!.Value,
+                    esNotaDeCredito ? -item.Cantidad : item.Cantidad, MotivoStock.Compra, idEmpleado, momento)
                 {
                     IdLote = item.IdLote,
                     IdComprobanteCompra = id
                 }),
                 ct);
+
+            if (esNotaDeCredito)
+            {
+                ExigirStockSuficienteParaLaNotaDeCredito(asentados);
+            }
         }
 
         // 4. costo_nominal — solo las líneas que CalculadorDeCompra.ActualizaElCosto admite (actualiza_costo,
@@ -916,11 +968,14 @@ public partial class ServicioDeCompras(
                 CostoEfectivo: CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
                     i.Total, i.Cantidad, i.PorcentajeIva, discriminaIva, preciosIncluyenIva, i.ImpuestoInterno)))
             .ToList();
-        var idsConCosto = itemsParaCosto
-            .Where(CalculadorDeCompra.ActualizaElCosto)
-            .Select(i => i.IdArticulo!.Value)
-            .Distinct()
-            .ToList();
+        // Una nota de crédito nunca actualiza el costo, aunque una línea llegara con actualiza_costo verdadero.
+        var idsConCosto = esNotaDeCredito
+            ? []
+            : itemsParaCosto
+                .Where(CalculadorDeCompra.ActualizaElCosto)
+                .Select(i => i.IdArticulo!.Value)
+                .Distinct()
+                .ToList();
 
         if (idsConCosto.Count > 0)
         {
@@ -941,7 +996,10 @@ public partial class ServicioDeCompras(
         // en curso hace esperar al paso 3 y este statement, con foto propia, ya la ve comiteada; una baja posterior
         // espera a esta transacción y luego da de baja también el código asociado. Mover este paso antes del 3
         // reabre la carrera.
-        var lineasConCodigo = items.Select(i => new LineaConCodigoDeProveedor(i.Orden, i.IdArticulo, i.CodigoProveedor));
+        // Una nota de crédito no asocia códigos: solo mueve stock y cuenta corriente.
+        var lineasConCodigo = esNotaDeCredito
+            ? []
+            : items.Select(i => new LineaConCodigoDeProveedor(i.Orden, i.IdArticulo, i.CodigoProveedor)).ToList();
         foreach (var candidata in AsociacionDeCodigosDeProveedor.Seleccionar(lineasConCodigo))
         {
             await AsociarCodigoDeProveedorSiEstaLibreAsync(
@@ -953,8 +1011,10 @@ public partial class ServicioDeCompras(
         // proveedores-ledger, design decisión 5): recién acá, después de items/lotes/stock/costo,
         // nunca antes — moverlo invertiría el orden total pineado (mutation target #19) y podría
         // reintroducir el deadlock que ese orden existe para evitar.
+        // Una nota de crédito baja la deuda: el total se guarda en positivo y el asiento lo lleva con signo negativo.
+        var importeDelAsiento = esNotaDeCredito ? -encabezado.Total : encabezado.Total;
         var nuevoSaldoProveedor = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
-            conexion, transaccionCruda, idTenant, encabezado.IdProveedor, encabezado.Total, ct);
+            conexion, transaccionCruda, idTenant, encabezado.IdProveedor, importeDelAsiento, ct);
 
         // 6. El ÚNICO movimiento `compra` de esta confirmación — importe = total, positivo,
         // origen = esta compra (design decisión 5). saldo_resultante viene del RETURNING del
@@ -962,7 +1022,7 @@ public partial class ServicioDeCompras(
         // se invirtiera, saldo_resultante dejaría de coincidir con el saldo post-UPDATE).
         await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, encabezado.IdProveedor, momento, encabezado.IdPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Compra, id, idPago: null, encabezado.Total, nuevoSaldoProveedor, detalle: null, ct);
+            TipoMovimientoCcProveedor.Compra, id, idPago: null, importeDelAsiento, nuevoSaldoProveedor, detalle: null, ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -1023,6 +1083,16 @@ public partial class ServicioDeCompras(
         }
 
         var idPuntoVenta = encabezadoAnulado.Value.IdPuntoVenta;
+
+        // 1.1. Una factura que tiene notas de crédito confirmadas no se anula: la nota seguiría apuntando a una factura
+        // anulada. Se anula primero la nota. Se lee después del lock exclusivo del header de arriba: una nota que se
+        // confirmaba a la vez ya terminó, porque su FOR SHARE sobre este header la obligaba a coordinarse con él.
+        if (await ContarNotasDeCreditoConfirmadasAsync(id, ct) > 0)
+        {
+            throw new ErrorDominio(
+                "compra_con_notas_de_credito",
+                "La factura tiene notas de crédito confirmadas: anulá primero las notas de crédito.", 409);
+        }
 
         // 1.4. E3-S1b: las aplicaciones vivas de los pagos a esta compra se liberan en la misma transacción. El
         // trigger diferido de aplicaciones_pago exige que una compra no confirmada no tenga ninguna viva y se evalúa
@@ -1206,6 +1276,12 @@ public partial class ServicioDeCompras(
                 "compra_no_confirmada", "Solo una compra confirmada tiene precio_sugerido para aplicar.", 409);
         }
 
+        if (await EsNotaDeCreditoAsync(comprobante.IdTipoComprobante, ct))
+        {
+            throw new ErrorDominio(
+                "nota_de_credito_no_aplica_precios", "Una nota de crédito no tiene precios para aplicar.", 400);
+        }
+
         var items = await db.ItemsComprobanteCompra
             .Where(i => i.IdComprobanteCompra == id && i.IdArticulo != null && i.PrecioSugerido != null)
             .OrderBy(i => i.Orden)
@@ -1280,7 +1356,7 @@ public partial class ServicioDeCompras(
     /// IVA al derivar el costo efectivo, y un <c>PUT</c> concurrente pudo cambiarlo antes del lock.</summary>
     private readonly record struct EncabezadoConfirmado(
         int IdPuntoVenta, int IdTipoComprobante, int IdProveedor, decimal Total, int? IdOrdenCompra, bool DiscriminaIva,
-        bool PreciosIncluyenIva);
+        bool PreciosIncluyenIva, int? IdComprobanteCompraAsociado);
 
     /// <summary>El predicado incluye <c>numero_externo</c>/<c>fecha_comprobante IS NOT NULL</c>
     /// además de <c>estado='borrador'</c> — validación bajo el mismo lock, resuelta por el propio
@@ -1302,7 +1378,7 @@ public partial class ServicioDeCompras(
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'borrador'::estado_compra " +
             "AND numero_externo IS NOT NULL AND fecha_comprobante IS NOT NULL " +
             "RETURNING id_punto_venta, id_tipo_comprobante, id_proveedor, total, id_orden_compra, discrimina_iva, " +
-            "precios_incluyen_iva";
+            "precios_incluyen_iva, id_comprobante_compra_asociado";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
@@ -1316,7 +1392,76 @@ public partial class ServicioDeCompras(
 
         return new EncabezadoConfirmado(
             lector.GetInt32(0), lector.GetInt32(1), lector.GetInt32(2), lector.GetDecimal(3),
-            lector.IsDBNull(4) ? null : lector.GetInt32(4), lector.GetBoolean(5), lector.GetBoolean(6));
+            lector.IsDBNull(4) ? null : lector.GetInt32(4), lector.GetBoolean(5), lector.GetBoolean(6),
+            lector.IsDBNull(7) ? null : lector.GetInt32(7));
+    }
+
+    /// <summary>Misma negativa que la anulación de una compra: el agregado del artículo y el saldo del lote no pueden
+    /// quedar por debajo de cero. Los saldos son los del <c>RETURNING</c> de cada upsert, bajo el lock que ya tiene la
+    /// transacción.</summary>
+    private static void ExigirStockSuficienteParaLaNotaDeCredito(IReadOnlyList<AsientoAplicado> asentados)
+    {
+        foreach (var asentado in asentados)
+        {
+            if (asentado.CantidadAgregada < 0m)
+            {
+                throw new ErrorDominio(
+                    "nota_de_credito_stock_negativo",
+                    $"El artículo {asentado.Asiento.IdArticulo} quedaría con stock negativo al confirmar esta nota de crédito.",
+                    409);
+            }
+
+            if (asentado.CantidadDelLote < 0m)
+            {
+                throw new ErrorDominio(
+                    "nota_de_credito_stock_negativo",
+                    $"El lote {asentado.Asiento.IdLote} del artículo {asentado.Asiento.IdArticulo} quedaría con stock " +
+                    "negativo al confirmar esta nota de crédito.",
+                    409);
+            }
+        }
+    }
+
+    /// <summary>Las notas de crédito confirmadas que corrigen a esta factura. Se lee bajo el lock exclusivo del header de
+    /// la factura, así que una nota que se está confirmando ya terminó (su FOR SHARE sobre la factura la hacía esperar) o
+    /// todavía no tomó ese lock.</summary>
+    private async Task<int> ContarNotasDeCreditoConfirmadasAsync(int idFactura, CancellationToken ct) =>
+        await db.ComprobantesCompra.AsNoTracking()
+            .CountAsync(c => c.IdComprobanteCompraAsociado == idFactura && c.Estado == EstadoCompra.Confirmada, ct);
+
+    /// <summary>La factura que una nota de crédito dice corregir, leída <c>FOR SHARE</c> bajo la transacción de la
+    /// confirmación de la nota: una anulación de la factura toma el header exclusivo, así que o espera a esta
+    /// confirmación o ya está comiteada y se la ve anulada. Un solo statement trae la factura, su tipo y la empresa de su
+    /// punto de venta; el lock es solo de la fila del comprobante.</summary>
+    private static async Task<FacturaAsociada?> BloquearFacturaAsociadaAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idFactura, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT c.estado::text, c.id_proveedor, t.signo, t.registra_libro_iva, pv.id_empresa " +
+            "FROM comprobantes_compra c " +
+            "JOIN tipos_comprobante t ON t.id_tipo_comprobante = c.id_tipo_comprobante " +
+            "JOIN puntos_venta pv ON pv.id_punto_venta = c.id_punto_venta " +
+            "WHERE c.id_comprobante_compra = $1 AND c.id_tenant = $2 " +
+            "FOR SHARE OF c";
+        ParametrosDeComando.Agregar(comando, idFactura);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        var estado = lector.GetString(0) switch
+        {
+            "borrador" => EstadoCompra.Borrador,
+            "confirmada" => EstadoCompra.Confirmada,
+            _ => EstadoCompra.Anulada
+        };
+
+        return new FacturaAsociada(estado, lector.GetInt32(1), lector.GetInt16(2), lector.GetBoolean(3), lector.GetInt32(4));
     }
 
     /// <summary>Fila devuelta por el UPDATE...RETURNING de <see cref="MarcarAnuladaAsync"/>.
@@ -1664,18 +1809,24 @@ public partial class ServicioDeCompras(
         IReadOnlyDictionary<int, decimal>? ivaImpreso,
         bool preciosIncluyenIva,
         IReadOnlyList<PercepcionDeCompra> percepciones,
-        decimal redondeoDeSugerencia)
+        decimal redondeoDeSugerencia,
+        bool esNotaDeCredito = false)
     {
         var orden = 1;
         var lineas = items
             .Select(i => new LineaDeCompra(
                 orden++, i.IdArticulo, i.Descripcion, i.Unidades, i.Bultos, i.UnidadesPorBulto,
                 i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, porcentajePorAlicuota[i.IdAlicuotaIva],
-                i.ActualizaCosto ?? i.IdArticulo is not null, i.ImpuestoInterno))
+                !esNotaDeCredito && (i.ActualizaCosto ?? i.IdArticulo is not null), i.ImpuestoInterno))
             .ToList();
 
+        // Una nota de crédito no mueve costos, así que tampoco sugiere precios: sin márgenes el cálculo no sugiere ninguno.
+        var margenesDelCalculo = esNotaDeCredito
+            ? new Dictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)>()
+            : margenes;
+
         var calculada = CalculadorDeCompra.Calcular(
-            lineas, discriminaIva, margenes, ivaImpreso, preciosIncluyenIva, percepciones, redondeoDeSugerencia);
+            lineas, discriminaIva, margenesDelCalculo, ivaImpreso, preciosIncluyenIva, percepciones, redondeoDeSugerencia);
         return (lineas, calculada);
     }
 
@@ -1847,6 +1998,48 @@ public partial class ServicioDeCompras(
         }
     }
 
+    /// <summary>Las validaciones del guardado de un borrador que dependen del tipo del comprobante. Una nota de crédito
+    /// devuelve mercadería, así que un lote vencido puede devolverse y su fecha en el pasado no se rechaza; el resto de
+    /// sus reglas (<see cref="ReglaDeNotaDeCredito"/>) y la factura asociada se validan acá. La lectura de la factura es
+    /// un chequeo de UX sin lock: la autoridad es la relectura bajo lock de <see cref="EjecutarConfirmarAsync"/>.
+    /// Devuelve si el tipo es una nota de crédito.</summary>
+    private async Task<bool> ValidarSegunElTipoAsync(
+        TipoComprobante tipo, SolicitudDeCompra solicitud, PuntoVenta puntoVenta, DateTimeOffset momento, CancellationToken ct)
+    {
+        var esNotaDeCredito = ReglaDeNotaDeCredito.EsNotaDeCredito(tipo.Signo);
+
+        ValidarVencimientosDeRecepcion(
+            solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime), esNotaDeCredito ? _ => true : null);
+        ReglaDeNotaDeCredito.ExigirCoherenciaConElTipo(
+            tipo.Signo, solicitud.IdComprobanteCompraAsociado, solicitud.IdOrdenCompra, solicitud.Items.Select(i => i.ActualizaCosto));
+
+        if (solicitud.IdComprobanteCompraAsociado is { } idAsociada)
+        {
+            var asociada = await db.ComprobantesCompra.AsNoTracking()
+                .Where(c => c.Id == idAsociada)
+                .Join(
+                    db.TiposComprobante.IgnoreQueryFilters(["BajaLogica"]), c => c.IdTipoComprobante, t => t.Id,
+                    (c, t) => new { c.Estado, c.IdProveedor, c.IdPuntoVenta, t.Signo, t.RegistraLibroIva })
+                .FirstOrDefaultAsync(ct);
+
+            var idEmpresaDeLaFactura = asociada is null
+                ? 0
+                : await db.PuntosVenta.IgnoreQueryFilters(["BajaLogica"])
+                    .Where(pv => pv.Id == asociada.IdPuntoVenta)
+                    .Select(pv => pv.IdEmpresa)
+                    .FirstAsync(ct);
+
+            ReglaDeNotaDeCredito.ExigirFacturaAsociable(
+                asociada is null
+                    ? null
+                    : new FacturaAsociada(
+                        asociada.Estado, asociada.IdProveedor, asociada.Signo, asociada.RegistraLibroIva, idEmpresaDeLaFactura),
+                idAsociada, solicitud.IdProveedor, puntoVenta.IdEmpresa);
+        }
+
+        return esNotaDeCredito;
+    }
+
     private async Task<TipoComprobante> ResolverTipoDeCompraAsync(int idTipoComprobante, CancellationToken ct)
     {
         var tipo = await db.TiposComprobante.FirstOrDefaultAsync(t => t.Id == idTipoComprobante, ct);
@@ -1903,7 +2096,7 @@ public partial class ServicioDeCompras(
     private CompraDetalle Proyectar(
         ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items,
         IReadOnlyList<AlicuotaComprobanteCompra> alicuotas, IReadOnlyList<PercepcionComprobanteCompra> percepciones,
-        decimal pagado) => new(
+        decimal pagado, bool esNotaDeCredito = false) => new(
         comprobante.Id, comprobante.IdProveedor, comprobante.IdTipoComprobante, comprobante.IdPuntoVenta,
         comprobante.NumeroExterno, comprobante.FechaComprobante, comprobante.FechaRecepcion,
         comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.IvaTotal, comprobante.Total,
@@ -1931,7 +2124,8 @@ public partial class ServicioDeCompras(
                 x.Tipo, x.Alicuota, PuedeVerCostos ? x.BaseImponible : null, PuedeVerCostos ? x.Importe : null))
             .ToList(),
         pagado,
-        ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, comprobante.Total, pagado),
+        ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, esNotaDeCredito, comprobante.Total, pagado),
         comprobante.Origen,
-        comprobante.ImpuestosInternos);
+        comprobante.ImpuestosInternos,
+        comprobante.IdComprobanteCompraAsociado);
 }

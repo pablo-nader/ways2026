@@ -94,6 +94,7 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
         // que llegó sin orden, el 100% del tráfico previo a esta etapa y un estado
         // permanentemente legítimo.
         builder.Property(c => c.IdOrdenCompra).HasColumnName("id_orden_compra");
+        builder.Property(c => c.IdComprobanteCompraAsociado).HasColumnName("id_comprobante_compra_asociado");
 
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();
@@ -171,5 +172,18 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
 
         builder.HasIndex(c => new { c.IdOrdenCompra, c.IdTenant })
             .HasDatabaseName("ix_comprobantes_compra_orden_compra");
+
+        // Nota de crédito -> factura que corrige: compuesta, MATCH SIMPLE (con NULL no se chequea), mismo patrón que la
+        // orden de compra. El servicio exige que la factura exista, sea del mismo proveedor y empresa y esté confirmada;
+        // el 23503 de esta FK cae en el mapeo genérico de ManejadorDeErrores como referencia_invalida.
+        builder.HasOne<ComprobanteCompra>()
+            .WithMany()
+            .HasForeignKey(c => new { c.IdComprobanteCompraAsociado, c.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_comprobantes_compra_comprobante_asociado")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(c => new { c.IdComprobanteCompraAsociado, c.IdTenant })
+            .HasDatabaseName("ix_comprobantes_compra_comprobante_asociado");
     }
 }

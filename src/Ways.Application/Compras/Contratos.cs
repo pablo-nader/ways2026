@@ -68,7 +68,12 @@ public sealed record PercepcionSolicitada(string Tipo, decimal BaseImponible, de
 /// <see cref="PreciosIncluyenIva"/> declara que el costo unitario tipeado ya trae el IVA (modo
 /// "precio final"): solo vale en un comprobante que discrimina IVA y pedirlo en otro es 400, nunca
 /// se descarta. <see cref="Percepciones"/> reemplaza el conjunto completo del borrador; sin ellas
-/// (<c>null</c> o vacío) el comprobante queda sin percepciones.</summary>
+/// (<c>null</c> o vacío) el comprobante queda sin percepciones.
+///
+/// <see cref="IdComprobanteCompraAsociado"/> solo existe en una nota de crédito (tipo con signo negativo): la factura
+/// confirmada del mismo proveedor y empresa a la que corrige. Es opcional; en otro tipo de comprobante es 400
+/// <c>asociacion_solo_en_nota_de_credito</c>. Una nota de crédito se carga con cantidades e importes positivos, no
+/// admite <c>actualizaCosto</c> verdadero ni orden de compra, y no puede editarse una vez confirmada.</summary>
 public sealed record SolicitudDeCompra(
     int IdProveedor,
     int IdTipoComprobante,
@@ -81,7 +86,8 @@ public sealed record SolicitudDeCompra(
     bool? DiscriminaIva = null,
     IReadOnlyList<IvaImpresoSolicitado>? IvaImpreso = null,
     bool PreciosIncluyenIva = false,
-    IReadOnlyList<PercepcionSolicitada>? Percepciones = null);
+    IReadOnlyList<PercepcionSolicitada>? Percepciones = null,
+    int? IdComprobanteCompraAsociado = null);
 
 /// <summary>Un item ya persistido, con su <c>precioSugerido</c> (design: API Surface — "Header +
 /// items + precioSugerido per item"). Sin <c>unidades</c> propio: solo <see cref="Cantidad"/>
@@ -138,7 +144,9 @@ public sealed record PercepcionDeCompraDetalle(string Tipo, decimal Alicuota, de
 /// <c>ReglaDePagoDeCompra</c>; son datos de encabezado (como <see cref="Total"/>), no de costo, así
 /// que los ve también el vendedor. El saldo pendiente es cero fuera de una compra confirmada.
 /// <see cref="ImpuestosInternos"/> es la suma de los impuestos internos de las líneas: integra <see cref="Total"/> y es
-/// un dato de encabezado, que ve también el vendedor.</summary>
+/// un dato de encabezado, que ve también el vendedor. <see cref="IdComprobanteCompraAsociado"/> es la factura a la
+/// que corrige una nota de crédito (<c>null</c> en cualquier otro comprobante); una nota de crédito nunca tiene saldo
+/// pendiente.</summary>
 public sealed record CompraDetalle(
     int Id,
     int IdProveedor,
@@ -162,7 +170,8 @@ public sealed record CompraDetalle(
     decimal Pagado,
     decimal SaldoPendiente,
     OrigenCompra Origen,
-    decimal ImpuestosInternos = 0m);
+    decimal ImpuestosInternos = 0m,
+    int? IdComprobanteCompraAsociado = null);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
 /// <c>ComprobanteListado</c>/<c>PagoListado</c>. <see cref="EstadoPago"/> es <c>Pagada</c> o <c>Pendiente</c>

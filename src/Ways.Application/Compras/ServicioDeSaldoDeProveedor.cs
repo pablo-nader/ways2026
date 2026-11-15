@@ -23,8 +23,10 @@ public class ServicioDeSaldoDeProveedor(IWaysDbContext db)
     {
         var saldo = await ResolverSaldoDeProveedorAsync(idProveedor, ct);
 
+        // Una nota de crédito baja el saldo pero no se paga: no tiene estado de pago, así que no figura en esta lista.
         var compras = await db.ComprobantesCompra
             .Where(c => c.IdProveedor == idProveedor && c.Estado == EstadoCompra.Confirmada)
+            .Where(c => !db.TiposComprobante.IgnoreQueryFilters(new[] { "BajaLogica" }).Any(t => t.Id == c.IdTipoComprobante && t.Signo < 0))
             .Select(c => new { c.Id, c.NumeroExterno, c.Total })
             .ToListAsync(ct);
 

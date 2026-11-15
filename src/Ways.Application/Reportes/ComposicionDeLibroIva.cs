@@ -16,7 +16,8 @@ public sealed record CompraParaLibro(
     IReadOnlyList<AlicuotaDeCompraParaLibro> Alicuotas,
     decimal PercepcionIva,
     decimal PercepcionIibb,
-    decimal ImpuestosInternos = 0m);
+    decimal ImpuestosInternos = 0m,
+    short Signo = 1);
 
 /// <summary><see cref="Signo"/> viene de <c>tipos_comprobante.signo</c>: la emisión fiscal guarda
 /// los importes de una nota de crédito en positivo (exige cantidades positivas), así que el libro
@@ -96,9 +97,13 @@ public static class ComposicionDeLibroIva
             noGravado = compra.Total - compra.PercepcionIva - compra.PercepcionIibb;
         }
 
+        // Una nota de crédito guarda sus importes en positivo, igual que una factura: el libro los resta acá.
+        var signo = compra.Signo;
         return NuevaFila(
-            compra.Fecha, compra.CodigoTipo, compra.Numero, compra.Proveedor, compra.Cuit, alicuotas, noGravado,
-            exento, compra.PercepcionIva, compra.PercepcionIibb, compra.Total, advertencias, compra.ImpuestosInternos);
+            compra.Fecha, compra.CodigoTipo, compra.Numero, compra.Proveedor, compra.Cuit,
+            [.. alicuotas.Select(a => new AlicuotaDeLibroIva(a.Porcentaje, signo * a.Neto, signo * a.Iva))],
+            signo * noGravado, signo * exento, signo * compra.PercepcionIva, signo * compra.PercepcionIibb,
+            signo * compra.Total, advertencias, signo * compra.ImpuestosInternos);
     }
 
     private static FilaDeLibroIva FilaDeVenta(VentaParaLibro venta)
