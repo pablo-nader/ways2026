@@ -74,6 +74,18 @@ public static class VentasEndpoints
         .WithSummary(
             "Ventas de un turno (incluye anuladas), con cliente, medios de pago y estado fiscal — pantalla Ventas del turno.");
 
+        // Devoluciones: el ticket de origen con lo que queda por devolver de cada artículo. Solo lee, bajo el mismo gate y el mismo
+        // alcance (tenant y RLS) que el resto de las lecturas de ventas. La emisión de la nota de crédito re-juzga todo bajo lock.
+        grupo.MapGet("/devolvibles", (IWaysDbContext db, int idPuntoVenta, long numero, CancellationToken ct) =>
+            ConsultaDeDevolvibles.BuscarPorNumeroAsync(db, idPuntoVenta, numero, ct))
+        .WithSummary(
+            "Busca un ticket de venta por número y punto de venta y devuelve sus líneas con lo vendido, lo ya devuelto, lo que queda por " +
+            "devolver y el importe, más si el ticket admite una devolución (anulado, con factura fiscal y sin unidades por devolver no).");
+
+        grupo.MapGet("/{id:int}/devolvibles", (IWaysDbContext db, int id, CancellationToken ct) =>
+            ConsultaDeDevolvibles.ObtenerAsync(db, id, ct))
+        .WithSummary("Lo mismo que GET /api/ventas/devolvibles, para un ticket que ya se eligió de un listado.");
+
         // stage-5-pos-ventas (Slice 5, task 5.2, design: API Surface): POST, no DELETE — produce
         // filas (movimientos inversos + contramovimiento CC), no elimina ninguna. Sin
         // GestionDeCatalogo apilado (spec: OperacionDePos Authorization For Emission and

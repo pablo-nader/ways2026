@@ -864,8 +864,10 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var nota = await EmitirOkAsync(
             ctx.Cliente, Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, Importe: 150m)));
+
+        // Una nota de crédito no es un ticket de venta que devolver.
         Assert.Equal(
-            "importe_devolucion_inexistente",
+            "comprobante_asociado_invalido",
             await CodigoDeRechazoAsync(
                 ctx.Cliente, Devolucion(ctx, nota.Id, new LineaDeVenta(fiambreria, 1m, null, Importe: 150m))));
     }
@@ -889,11 +891,12 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal([-100m, -150m], nota.Items.Select(i => i.Total).ToList());
     }
 
-    /// <summary>Una devolución offline ya se entregó en la caja: no se rechaza por no coincidir con la venta asociada.</summary>
+    /// <summary>Una devolución se juzga contra el ticket de origen, que cambia con cada nota emitida: con número pre-asignado (la cola
+    /// offline) se rechaza, aunque la reserva del bloque exista.</summary>
     [Fact]
-    public async Task UnaDevolucionOfflineNoSeRechazaPorElImporteDeLaVentaAsociada()
+    public async Task UnaDevolucionOfflineSeRechazaPorqueLasDevolucionesSoloSeEmitenConConexion()
     {
-        var ctx = await PrepararOfflineAsync(nameof(UnaDevolucionOfflineNoSeRechazaPorElImporteDeLaVentaAsociada));
+        var ctx = await PrepararOfflineAsync(nameof(UnaDevolucionOfflineSeRechazaPorqueLasDevolucionesSoloSeEmitenConConexion));
         var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
         var venta = await EmitirOkAsync(
             ctx.Cliente, VentaOffline(ctx, 150m, 1, new LineaDeVenta(fiambreria, 1m, null, Importe: 150m)));
@@ -901,28 +904,32 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(ctx.IdPuntoVenta, "NCX", 5));
         Assert.Equal(HttpStatusCode.OK, reserva.StatusCode);
 
-        var nota = await EmitirOkAsync(
-            ctx.Cliente,
-            new SolicitudDeVenta(
-                ctx.IdPuntoVenta, null, "NCX", venta.Id, [new LineaDeVenta(fiambreria, 1m, null, Importe: 100m)], [], null, null,
-                IdPresupuestoOrigen: null, NumeroPreasignado: 1));
-
-        Assert.Equal(-100m, nota.Total);
+        Assert.Equal(
+            "devolucion_sin_conexion",
+            await CodigoDeRechazoAsync(
+                ctx.Cliente,
+                new SolicitudDeVenta(
+                    ctx.IdPuntoVenta, null, "NCX", venta.Id, [new LineaDeVenta(fiambreria, 1m, null, Importe: 150m)], [], null, null,
+                    IdPresupuestoOrigen: null, NumeroPreasignado: 1)));
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
     [Fact]
-    public async Task LaDevolucionSinComprobanteAsociadoTomaElImporteTipeado()
+    public async Task LaDevolucionSinComprobanteAsociadoSeRechazaYSinImporteSePideElImporte()
     {
-        var ctx = await PrepararOnlineAsync(nameof(LaDevolucionSinComprobanteAsociadoTomaElImporteTipeado));
+        var ctx = await PrepararOnlineAsync(nameof(LaDevolucionSinComprobanteAsociadoSeRechazaYSinImporteSePideElImporte));
         var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
 
-        var nota = await EmitirOkAsync(
-            ctx.Cliente, Devolucion(ctx, null, new LineaDeVenta(fiambreria, 1m, null, Importe: 95m)));
+        Assert.Equal(
+            "comprobante_asociado_requerido",
+            await CodigoDeRechazoAsync(
+                ctx.Cliente, Devolucion(ctx, null, new LineaDeVenta(fiambreria, 1m, null, Importe: 95m))));
 
-        Assert.Equal(-95m, nota.Total);
+        var venta = await EmitirOkAsync(
+            ctx.Cliente, VentaOnline(ctx, 95m, new LineaDeVenta(fiambreria, 1m, null, Importe: 95m)));
         Assert.Equal(
             "importe_requerido",
-            await CodigoDeRechazoAsync(ctx.Cliente, Devolucion(ctx, null, new LineaDeVenta(fiambreria, 1m, null))));
+            await CodigoDeRechazoAsync(ctx.Cliente, Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null))));
     }
 
     // ---- escaneo -------------------------------------------------------------------------------
@@ -1092,12 +1099,12 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
-    /// <summary>Una venta de 150 con −50 % cobró 75: devolver 150 sin el ajuste reembolsaría más de lo cobrado, así que la
-    /// línea devuelta tiene que coincidir con la vendida en artículo, importe Y porcentaje de ajuste manual.</summary>
+    /// <summary>Una venta de 150 con −50 % cobró 75: la devolución se pide por el importe (150) y acredita lo cobrado (75), que ya
+    /// lleva el ajuste; el porcentaje no se pide en la línea ni se admite.</summary>
     [Fact]
-    public async Task LaDevolucionPorImporteTieneQueCoincidirTambienEnElAjusteManualDeLaVenta()
+    public async Task LaDevolucionPorImporteAcreditaLoCobradoConElAjusteDeLaVentaSinPedirloEnLaLinea()
     {
-        var ctx = await PrepararOnlineAsync(nameof(LaDevolucionPorImporteTieneQueCoincidirTambienEnElAjusteManualDeLaVenta));
+        var ctx = await PrepararOnlineAsync(nameof(LaDevolucionPorImporteAcreditaLoCobradoConElAjusteDeLaVentaSinPedirloEnLaLinea));
         var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
         var venta = await EmitirOkAsync(
             ctx.Cliente,
@@ -1105,18 +1112,13 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(75m, venta.Total);
 
         Assert.Equal(
-            "importe_devolucion_inexistente",
-            await CodigoDeRechazoAsync(
-                ctx.Cliente, Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, Importe: 150m))));
-        Assert.Equal(
-            "importe_devolucion_inexistente",
+            "ajuste_manual_no_admitido_en_devolucion",
             await CodigoDeRechazoAsync(
                 ctx.Cliente,
-                Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, AjusteManualPorcentaje: -25m, Importe: 150m))));
+                Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, AjusteManualPorcentaje: -50m, Importe: 150m))));
 
         var nota = await EmitirOkAsync(
-            ctx.Cliente,
-            Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, AjusteManualPorcentaje: -50m, Importe: 150m)));
+            ctx.Cliente, Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, Importe: 150m)));
         Assert.Equal(-75m, nota.Total);
     }
 

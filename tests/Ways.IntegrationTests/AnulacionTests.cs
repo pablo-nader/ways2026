@@ -609,17 +609,23 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-anulacion-ncx", 100m);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente Anulación NCX");
 
-        var ncx = await EmitirNcxAsync(ctx, idCliente, idArticulo, cantidad: 3m);
+        var original = await ctx.Admin.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null, [new LineaDeVenta(idArticulo, 3m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 300m, null, 0m)], null, null));
+        Assert.Equal(HttpStatusCode.Created, original.StatusCode);
+        var idOriginal = JsonDocument.Parse(await original.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt32();
+
+        var ncx = await EmitirNcxAsync(ctx, idCliente, idArticulo, idOriginal, cantidad: 3m);
 
         var (cantidadTrasNcx, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
-        Assert.Equal(3m, cantidadTrasNcx);
+        Assert.Equal(0m, cantidadTrasNcx);
 
         var respuestaAnulacion = await ctx.Admin.PostAsync($"/api/ventas/{ncx.Id}/anulacion", null);
         var cuerpo = await respuestaAnulacion.Content.ReadAsStringAsync();
         Assert.True(respuestaAnulacion.StatusCode == HttpStatusCode.OK, cuerpo);
 
         var (cantidadTrasAnulacion, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
-        Assert.Equal(0m, cantidadTrasAnulacion);
+        Assert.Equal(-3m, cantidadTrasAnulacion);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var movimientoInverso = await db.MovimientosStock
@@ -628,10 +634,10 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     }
 
     private static async Task<ComprobanteEmitido> EmitirNcxAsync(
-        Contexto ctx, int idCliente, int idArticulo, decimal cantidad = 1m)
+        Contexto ctx, int idCliente, int idArticulo, int idAsociado, decimal cantidad = 1m)
     {
         var solicitud = new SolicitudDeVenta(
-            ctx.IdPuntoVenta, idCliente, "NCX", null,
+            ctx.IdPuntoVenta, idCliente, "NCX", idAsociado,
             [new LineaDeVenta(idArticulo, cantidad, null)],
             [],
             null, null);

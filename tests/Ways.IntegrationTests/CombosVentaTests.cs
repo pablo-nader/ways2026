@@ -243,6 +243,17 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
     }
 
+    /// <summary>Emite una devolución y la anula enseguida: libera sus unidades para el tope por ticket, así un mismo ticket
+    /// sirve para comparar varias devoluciones distintas.</summary>
+    private static async Task<ComprobanteEmitido> EmitirYAnularAsync(Contexto ctx, SolicitudDeVenta solicitud)
+    {
+        var emitido = await EmitirAsync(ctx, solicitud);
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        return emitido;
+    }
+
     private static Task<ComprobanteEmitido> EmitirAsync(
         Contexto ctx, decimal total, params (int IdArticulo, decimal Cantidad)[] lineas) =>
         EmitirAsync(ctx, Venta(ctx, total, lineas));
@@ -750,9 +761,9 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     [Fact]
-    public async Task UnaNotaDeCreditoSinVentaAsociadaNoDetectaCombos()
+    public async Task UnaNotaDeCreditoSinVentaAsociadaSeRechazaYNoDetectaCombos()
     {
-        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoSinVentaAsociadaNoDetectaCombos));
+        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoSinVentaAsociadaSeRechazaYNoDetectaCombos));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
@@ -762,14 +773,10 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
             [new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)],
             [], null, null);
 
-        var ncx = await EmitirAsync(ctx, solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
 
-        Assert.Equal(-5500m, ncx.Total);
-        Assert.All(ncx.Items, i =>
-        {
-            Assert.Equal(0m, i.Descuento);
-            Assert.Null(i.IdCombo);
-        });
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Contains("comprobante_asociado_requerido", await respuesta.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -987,7 +994,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var venta = await EmitirAsync(ctx, 10000m, (pancho, 2m), (coca, 2m));
         Assert.Equal([5454m, 4546m], venta.Items.Select(i => i.Total));
 
-        var uno = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        var uno = await EmitirYAnularAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
         var item = Assert.Single(uno.Items);
         Assert.Equal(-2727m, item.Total);
         Assert.Equal(-2727m, uno.Total);
@@ -1001,9 +1008,9 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     [Fact]
-    public async Task UnaLineaDevueltaQueNoEstabaEnElComboSePreciaComoSiempreYLaDelComboAlPrecioCobrado()
+    public async Task UnaLineaDevueltaQueNoEstabaEnElComboSeAcreditaPorLoCobradoIgualQueLaDelCombo()
     {
-        var ctx = await PrepararAsync(nameof(UnaLineaDevueltaQueNoEstabaEnElComboSePreciaComoSiempreYLaDelComboAlPrecioCobrado));
+        var ctx = await PrepararAsync(nameof(UnaLineaDevueltaQueNoEstabaEnElComboSeAcreditaPorLoCobradoIgualQueLaDelCombo));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         var otro = await ArticuloAsync(ctx, "otro", 100m);
@@ -1014,17 +1021,18 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var ncx = await EmitirAsync(
             ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(otro, 1m, null), new LineaDeVenta(pancho, 1m, null)));
 
-        // El artículo que nunca estuvo en un combo se acredita al precio de HOY (con su oferta de hoy); el del combo, a lo cobrado.
-        Assert.Equal([-80m, -2727m], ncx.Items.Select(i => i.Total));
-        Assert.Equal([-20m, -273m], ncx.Items.Select(i => i.Descuento));
+        // El artículo que nunca estuvo en un combo se acredita por lo cobrado en el ticket (100), no por la oferta de hoy (80); el del
+        // combo, también por lo cobrado.
+        Assert.Equal([-100m, -2727m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([0m, -273m], ncx.Items.Select(i => i.Descuento));
         Assert.Null(ncx.Items[0].IdCombo);
         Assert.NotNull(ncx.Items[1].IdCombo);
     }
 
     [Fact]
-    public async Task LaDevolucionDeUnaVentaSinCombosSeSigueUsandoAlPrecioDeHoyYNoAlCobrado()
+    public async Task LaDevolucionDeUnaVentaSinCombosAcreditaLoCobradoConSuOfertaYNoElPrecioDeHoy()
     {
-        var ctx = await PrepararAsync(nameof(LaDevolucionDeUnaVentaSinCombosSeSigueUsandoAlPrecioDeHoyYNoAlCobrado));
+        var ctx = await PrepararAsync(nameof(LaDevolucionDeUnaVentaSinCombosAcreditaLoCobradoConSuOfertaYNoElPrecioDeHoy));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await OfertaDePrecioAsync(ctx, pancho, 2700m);
@@ -1035,12 +1043,12 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var ncx = await EmitirAsync(
             ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)));
 
-        // Se cobraron 5200 con la oferta; sin combos la nota de crédito no mira lo cobrado: precia con la lista de hoy.
-        Assert.Equal(-5500m, ncx.Total);
-        Assert.Equal([-3000m, -2500m], ncx.Items.Select(i => i.Total));
-        Assert.Equal([0m, 0m], ncx.Items.Select(i => i.Descuento));
+        // Se cobraron 5200 con la oferta (aunque hoy esté desactivada): la nota de crédito devuelve lo cobrado, con la oferta del item.
+        Assert.Equal(-5200m, ncx.Total);
+        Assert.Equal([-2700m, -2500m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-300m, 0m], ncx.Items.Select(i => i.Descuento));
         Assert.All(ncx.Items, i => Assert.Null(i.IdCombo));
-        Assert.All(ncx.Items, i => Assert.Null(i.IdOferta));
+        Assert.Equal(venta.Items.Select(i => i.IdOferta), ncx.Items.Select(i => i.IdOferta));
     }
 
     [Fact]
@@ -1068,23 +1076,19 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     [Fact]
-    public async Task ElAjusteManualDeLaLineaDeLaNotaDeCreditoSeAplicaSobreLoDevueltoComoEnCualquierNotaDeCredito()
+    public async Task LaLineaDeUnaNotaDeCreditoNoAdmiteAjusteManualPorqueLoCobradoYaLoIncluye()
     {
-        var ctx = await PrepararAsync(nameof(ElAjusteManualDeLaLineaDeLaNotaDeCreditoSeAplicaSobreLoDevueltoComoEnCualquierNotaDeCredito));
+        var ctx = await PrepararAsync(nameof(LaLineaDeUnaNotaDeCreditoNoAdmiteAjusteManualPorqueLoCobradoYaLoIncluye));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
         var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
 
-        var ncx = await EmitirAsync(
-            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas", Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
 
-        // Neto devuelto −2273; −10 % sobre ese neto: −2273 × −0.10 = +227.3, al peso +227 (se devuelve menos).
-        var item = Assert.Single(ncx.Items);
-        Assert.Equal(-10m, item.AjusteManualPorcentaje);
-        Assert.Equal(227m, item.AjusteManual);
-        Assert.Equal(-2046m, item.Total);
-        Assert.Equal(-2046m, ncx.Total);
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Contains("ajuste_manual_no_admitido_en_devolucion", await respuesta.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -1148,10 +1152,10 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
                 new LineaDeVenta(coca, 1m, null)));
         Assert.Equal([2727m, 2273m, 2454m, 2273m], venta.Items.Select(i => i.Total));
 
-        var unaUnidad = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        var unaUnidad = await EmitirYAnularAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
         Assert.Equal(-2727m, Assert.Single(unaUnidad.Items).Total);
 
-        var dosUnidades = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
+        var dosUnidades = await EmitirYAnularAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
         Assert.Equal([-2727m, -2454m], dosUnidades.Items.Select(i => i.Total));
         Assert.Equal(-5181m, dosUnidades.Total);
 
@@ -1161,10 +1165,10 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     [Fact]
-    public async Task ConElMismoArticuloEnUnItemDeComboYEnOtroFueraDelComboSeDevuelveElDelComboPrimeroYElExcedenteAlPrecioDeHoy()
+    public async Task ConElMismoArticuloEnUnItemDeComboYEnOtroFueraDelComboSeDevuelveElDelComboPrimeroYElOtroPorLoCobrado()
     {
         var ctx = await PrepararAsync(
-            nameof(ConElMismoArticuloEnUnItemDeComboYEnOtroFueraDelComboSeDevuelveElDelComboPrimeroYElExcedenteAlPrecioDeHoy));
+            nameof(ConElMismoArticuloEnUnItemDeComboYEnOtroFueraDelComboSeDevuelveElDelComboPrimeroYElOtroPorLoCobrado));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
@@ -1172,57 +1176,58 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.Equal([combo, combo, (int?)null], venta.Items.Select(i => i.IdCombo));
         await OfertaDePrecioAsync(ctx, pancho, 2900m);
 
-        var una = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        var una = await EmitirYAnularAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
         var item = Assert.Single(una.Items);
         Assert.Equal(-2727m, item.Total);
         Assert.Equal(combo, item.IdCombo);
 
-        // La segunda unidad ya no la cubre ningún item de combo: se precia con la lista y la oferta de hoy.
+        // La segunda unidad sale del item que se vendió fuera del combo: se acredita lo cobrado por él (3000), no la oferta de hoy.
         var dos = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
-        Assert.Equal([-2727m, -2900m], dos.Items.Select(i => i.Total));
+        Assert.Equal([-2727m, -3000m], dos.Items.Select(i => i.Total));
         Assert.Equal([combo, (int?)null], dos.Items.Select(i => i.IdCombo));
         Assert.Equal([-1m, -1m], dos.Items.Select(i => i.Cantidad));
-        Assert.Equal(-5627m, dos.Total);
+        Assert.Equal(-5727m, dos.Total);
     }
 
     [Fact]
-    public async Task LasUnidadesQueExcedenLasVendidasEnComboSePreciaComoSiempreSinDetectarUnComboNuevo()
+    public async Task LasUnidadesQueExcedenLasVendidasSeRechazanEnVezDePreciarseConLaListaDeHoy()
     {
-        var ctx = await PrepararAsync(nameof(LasUnidadesQueExcedenLasVendidasEnComboSePreciaComoSiempreSinDetectarUnComboNuevo));
+        var ctx = await PrepararAsync(nameof(LasUnidadesQueExcedenLasVendidasSeRechazanEnVezDePreciarseConLaListaDeHoy));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
         var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
 
-        var ncx = await EmitirAsync(
-            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null), new LineaDeVenta(coca, 1m, null)));
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas", Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null), new LineaDeVenta(coca, 1m, null)));
 
-        Assert.Equal([-2727m, -3000m, -2273m], ncx.Items.Select(i => i.Total));
-        Assert.Equal([-1m, -1m, -1m], ncx.Items.Select(i => i.Cantidad));
-        Assert.Null(ncx.Items[1].IdCombo);
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Contains("devolucion_excede_lo_vendido", await respuesta.Content.ReadAsStringAsync());
     }
 
     [Fact]
-    public async Task DosNotasDeCreditoDeLaMismaVentaNoSeDescuentanLoYaDevueltoEntreSiHoyElTopeEsPorDocumento()
+    public async Task DosNotasDeCreditoDeLaMismaVentaSeDescuentanLoYaDevueltoEntreSi()
     {
-        var ctx = await PrepararAsync(nameof(DosNotasDeCreditoDeLaMismaVentaNoSeDescuentanLoYaDevueltoEntreSiHoyElTopeEsPorDocumento));
+        var ctx = await PrepararAsync(nameof(DosNotasDeCreditoDeLaMismaVentaSeDescuentanLoYaDevueltoEntreSi));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
         var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
 
         var primera = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
-        var segunda = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
-
-        // Sin acumulado de lo devuelto por documentos anteriores: cada nota de crédito parte de la venta original.
         Assert.Equal(-2727m, primera.Total);
-        Assert.Equal(-2727m, segunda.Total);
+
+        // El tope es por ticket: la unidad de pancho ya se devolvió y la segunda nota no la puede devolver otra vez.
+        var segunda = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas", Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        Assert.Equal(HttpStatusCode.Conflict, segunda.StatusCode);
+        Assert.Contains("devolucion_excede_lo_vendido", await segunda.Content.ReadAsStringAsync());
     }
 
     [Fact]
-    public async Task LaDevolucionDeUnArticuloConLoteDeUnaVentaConComboExigeIdLoteYReponeElLoteIndicado()
+    public async Task LaDevolucionDeUnArticuloConLoteDeUnaVentaConComboReponeElLoteDeOrigenSinIdLote()
     {
-        var ctx = await PrepararAsync(nameof(LaDevolucionDeUnArticuloConLoteDeUnaVentaConComboExigeIdLoteYReponeElLoteIndicado));
+        var ctx = await PrepararAsync(nameof(LaDevolucionDeUnArticuloConLoteDeUnaVentaConComboReponeElLoteDeOrigenSinIdLote));
         await HabilitarLotesAsync(ctx);
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m, controlaLote: true);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
@@ -1254,14 +1259,10 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
 
-        var sinLote = await ctx.Admin.PostAsJsonAsync(
-            "/api/ventas", Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)));
-        Assert.Equal(HttpStatusCode.BadRequest, sinLote.StatusCode);
-        Assert.Contains("lote_requerido", await sinLote.Content.ReadAsStringAsync());
-
+        // Sin idLote: las unidades vuelven solas al lote del que salieron.
         var ncx = await EmitirAsync(
             ctx,
-            Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null, idLote), new LineaDeVenta(coca, 1m, null)));
+            Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)));
 
         Assert.Equal(-5000m, ncx.Total);
         Assert.Equal(idLote, ncx.Items[0].IdLote);
@@ -1386,21 +1387,20 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     [Fact]
-    public async Task UnArticuloDelComboSinPrecioVigenteSeDevuelveSiLoCubrenLosItemsVendidosEnComboYFallaSiHayExcedente()
+    public async Task UnArticuloSinPrecioVigenteSeDevuelvePorLoCobradoPeroNoMasDeLoVendido()
     {
-        var ctx = await PrepararAsync(
-            nameof(UnArticuloDelComboSinPrecioVigenteSeDevuelveSiLoCubrenLosItemsVendidosEnComboYFallaSiHayExcedente));
+        var ctx = await PrepararAsync(nameof(UnArticuloSinPrecioVigenteSeDevuelvePorLoCobradoPeroNoMasDeLoVendido));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
         var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
         await CerrarElPrecioVigenteAsync(ctx, pancho);
 
-        // Con excedente: la segunda unidad no la cubre ningún item de combo y se precia con la lista de hoy, que ya no existe.
+        // Con excedente: la segunda unidad no la vendió el ticket, y la lista de hoy (que ya no existe) no interviene.
         var conExcedente = await ctx.Admin.PostAsJsonAsync(
             "/api/ventas", Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
-        Assert.Equal(HttpStatusCode.BadRequest, conExcedente.StatusCode);
-        Assert.Contains("articulo_sin_precio_vigente", await conExcedente.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.Conflict, conExcedente.StatusCode);
+        Assert.Contains("devolucion_excede_lo_vendido", await conExcedente.Content.ReadAsStringAsync());
 
         // Cubierto por completo por el item vendido: se acredita lo cobrado sin necesitar el precio de hoy.
         var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
@@ -1448,7 +1448,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
                 new LineaDeVenta(coca, 2m, null)));
         Assert.Equal([4909m, 4546m], venta.Items.Select(i => i.Total));
 
-        var todas = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
+        var todas = await EmitirYAnularAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
         Assert.Equal(-4909m, Assert.Single(todas.Items).Total);
 
         // De a una unidad en el mismo documento: 4909 / 2 = 2454.5 acredita 2455 la primera y el resto, 2454, la segunda.

@@ -131,40 +131,48 @@ public class ReglaDeComprobantesTests
         Assert.Equal("transicion_de_estado_invalida", excepcion.Codigo);
     }
 
-    // ---- ValidarComprobanteAsociado: opcional, solo NCX, mismo punto de venta/cliente -------
+    // ---- ValidarComprobanteAsociado: obligatorio en un NCX, que devuelve un TX emitido del mismo punto de venta/cliente -------
+
+    private static void Validar(
+        short signo, int? id, ComprobanteVenta? asociado, int idPuntoVenta = 1, int idCliente = 10, string? codigoTipo = "TX") =>
+        ReglaDeComprobantes.ValidarComprobanteAsociado(signo, id, asociado, codigoTipo, idPuntoVenta, idCliente);
 
     [Fact]
-    public void SinComprobanteAsociadoEsSiempreValidoSinImportarElSigno()
+    public void UnTxSinComprobanteAsociadoEsValido()
     {
-        // Escenario: devolución standalone sin comprobante original (spec: Standalone
-        // devolución without an original) — id_comprobante_asociado NULL, no dispara nada.
-        ReglaDeComprobantes.ValidarComprobanteAsociado(-1, null, null, idPuntoVenta: 1, idCliente: 10);
-        ReglaDeComprobantes.ValidarComprobanteAsociado(1, null, null, idPuntoVenta: 1, idCliente: 10);
+        Validar(1, null, null);
+    }
+
+    [Fact]
+    public void UnNcxSinComprobanteAsociadoSeRechaza()
+    {
+        // Una devolución siempre sale de un ticket de origen: la devolución sin ticket ya no existe.
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-1, null, null));
+
+        Assert.Equal("comprobante_asociado_requerido", excepcion.Codigo);
+        Assert.Equal(400, excepcion.EstadoHttp);
     }
 
     [Fact]
     public void UnTxNoPuedeTenerComprobanteAsociado()
     {
         var original = CrearComprobante();
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            ReglaDeComprobantes.ValidarComprobanteAsociado(1, original.Id, original, idPuntoVenta: 1, idCliente: 10));
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(1, original.Id, original));
         Assert.Equal("comprobante_asociado_no_permitido", excepcion.Codigo);
     }
 
     [Fact]
     public void UnNcxQueReferenciaUnTxEmitidoDelMismoPuntoDeVentaYClienteEsValido()
     {
-        // spec: Devolución referencing an original — id_comprobante_asociado = 501.
         var original = CrearComprobante(id: 501, idPuntoVenta: 1, idCliente: 10);
 
-        ReglaDeComprobantes.ValidarComprobanteAsociado(-1, original.Id, original, idPuntoVenta: 1, idCliente: 10);
+        Validar(-1, original.Id, original);
     }
 
     [Fact]
     public void UnNcxCuyoAsociadoNoExisteSeRechaza()
     {
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            ReglaDeComprobantes.ValidarComprobanteAsociado(-1, 999, null, idPuntoVenta: 1, idCliente: 10));
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-1, 999, null, codigoTipo: null));
         Assert.Equal("comprobante_asociado_invalido", excepcion.Codigo);
         Assert.Equal(404, excepcion.EstadoHttp);
     }
@@ -174,8 +182,7 @@ public class ReglaDeComprobantesTests
     {
         var original = CrearComprobante(estado: EstadoComprobante.Anulado);
 
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            ReglaDeComprobantes.ValidarComprobanteAsociado(-1, original.Id, original, idPuntoVenta: 1, idCliente: 10));
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-1, original.Id, original));
         Assert.Equal("comprobante_asociado_invalido", excepcion.Codigo);
     }
 
@@ -184,8 +191,7 @@ public class ReglaDeComprobantesTests
     {
         var original = CrearComprobante(idPuntoVenta: 1, idCliente: 10);
 
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            ReglaDeComprobantes.ValidarComprobanteAsociado(-1, original.Id, original, idPuntoVenta: 2, idCliente: 10));
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-1, original.Id, original, idPuntoVenta: 2));
         Assert.Equal("comprobante_asociado_invalido", excepcion.Codigo);
     }
 
@@ -194,9 +200,23 @@ public class ReglaDeComprobantesTests
     {
         var original = CrearComprobante(idPuntoVenta: 1, idCliente: 10);
 
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            ReglaDeComprobantes.ValidarComprobanteAsociado(-1, original.Id, original, idPuntoVenta: 1, idCliente: 99));
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-1, original.Id, original, idCliente: 99));
         Assert.Equal("comprobante_asociado_invalido", excepcion.Codigo);
+    }
+
+    [Theory]
+    [InlineData("NCX")]
+    [InlineData("RC")]
+    [InlineData("TXR")]
+    [InlineData("FA")]
+    [InlineData(null)]
+    public void UnNcxCuyoAsociadoNoEsUnTicketDeVentaSeRechaza(string? codigoTipo)
+    {
+        var original = CrearComprobante();
+
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-1, original.Id, original, codigoTipo: codigoTipo));
+        Assert.Equal("comprobante_asociado_invalido", excepcion.Codigo);
+        Assert.Equal(400, excepcion.EstadoHttp);
     }
 
     [Fact]
@@ -205,8 +225,7 @@ public class ReglaDeComprobantesTests
         var espejo = CrearComprobante();
         espejo.IdVentaOrigen = 77;
 
-        var excepcion = Assert.Throws<ErrorDominio>(() =>
-            ReglaDeComprobantes.ValidarComprobanteAsociado(-1, espejo.Id, espejo, idPuntoVenta: 1, idCliente: 10));
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-1, espejo.Id, espejo));
         Assert.Equal("comprobante_asociado_es_espejo_fiscal", excepcion.Codigo);
         Assert.Equal(400, excepcion.EstadoHttp);
     }
