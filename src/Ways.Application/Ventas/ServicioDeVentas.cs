@@ -465,6 +465,17 @@ public class ServicioDeVentas(
                 // idLote (validado arriba contra los que vendió el ticket), a ese. Si el ticket vendió la unidad sin lote, vuelve al
                 // lote sin identificar.
                 var idLoteDelCliente = lineas[lineaDeItem[indice]].IdLote;
+
+                // Cada tramo vuelve al lote de SU item original: un idLote del cliente que no es el de este tramo no se reparte
+                // sobre todos los tramos de la línea.
+                if (devolucion is not null && idLoteDelCliente is not null && idLoteDelCliente != item.IdLote)
+                {
+                    throw new ErrorDominio(
+                        "lote_invalido",
+                        $"El lote {idLoteDelCliente} no es el del item del ticket original que cubre estas unidades del artículo {idArticulo}.",
+                        400);
+                }
+
                 var idLotePedido = idLoteDelCliente ?? (tipo.Signo < 0 ? item.IdLote : null);
 
                 // El lote de donde salió la unidad pudo darse de baja después de la venta (el filtro de EF ya no lo ve): la

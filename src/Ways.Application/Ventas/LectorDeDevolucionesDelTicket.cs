@@ -34,14 +34,15 @@ public static class LectorDeDevolucionesDelTicket
                     && c.Estado == EstadoComprobante.Emitido
                     && i.IdArticulo != null
                     && i.Cantidad < 0m
-                select new { IdArticulo = i.IdArticulo!.Value, i.PorImporte, i.PrecioUnitario, i.Cantidad })
+                select new { IdArticulo = i.IdArticulo!.Value, i.PorImporte, i.PrecioUnitario, i.Cantidad, i.Total })
             .ToListAsync(ct);
 
         return
         [
             .. filas
                 .GroupBy(f => (f.IdArticulo, f.PorImporte, Precio: f.PorImporte ? f.PrecioUnitario : 0m))
-                .Select(g => new UnidadesYaDevueltas(g.Key.IdArticulo, g.Key.PorImporte, g.Key.Precio, -g.Sum(f => f.Cantidad)))
+                .Select(g => new UnidadesYaDevueltas(
+                    g.Key.IdArticulo, g.Key.PorImporte, g.Key.Precio, -g.Sum(f => f.Cantidad), Credito: -g.Sum(f => f.Total)))
         ];
     }
 }

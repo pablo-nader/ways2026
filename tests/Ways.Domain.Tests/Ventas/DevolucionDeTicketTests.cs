@@ -252,6 +252,35 @@ public class DevolucionDeTicketTests
     }
 
     [Fact]
+    public void AnularUnaNotaIntermediaNoHaceQueLoAcreditadoSuperePorUnPesoElTotalDelItem()
+    {
+        // T=100, C=3: se devuelve 1 (33), 1 (34) y se anula la primera. Sobrevive la nota que acreditó 34 por una unidad; reconstruirla
+        // repartiendo desde cero daría 33 y la última devolución de 2 acreditaría 67 (total 101).
+        var vendidos = new[] { Item(1, 1, Pancho, 3m, 40m, 100m) };
+        var sobrevivientes = new[] { new UnidadesYaDevueltas(Pancho, false, 0m, 1m, Credito: 34m) };
+
+        var ultima = Assert.Single(Assert.Single(DevolucionDeTicket.Repartir(
+            vendidos, sobrevivientes, [new LineaDevuelta(Pancho, 2m)])));
+
+        Assert.Equal(66m, ultima.Credito);
+        Assert.Equal(100m, 34m + ultima.Credito);
+    }
+
+    [Fact]
+    public void LoAcreditadoPorLasNotasSobrevivientesSeCargaAlUltimoItemTocado()
+    {
+        // Dos items del mismo artículo (2 u por 100 y 2 u por 100). Las notas sobrevivientes devolvieron 3 u y acreditaron 151 en total
+        // (la repetición daría 150): la unidad pendiente del segundo item acredita lo que falta para su Total.
+        var vendidos = new[] { Item(1, 1, Pancho, 2m, 50m, 100m), Item(2, 2, Pancho, 2m, 50m, 100m) };
+        var sobrevivientes = new[] { new UnidadesYaDevueltas(Pancho, false, 0m, 3m, Credito: 151m) };
+
+        var ultima = Assert.Single(Assert.Single(DevolucionDeTicket.Repartir(
+            vendidos, sobrevivientes, [new LineaDevuelta(Pancho, 1m)])));
+
+        Assert.Equal(49m, ultima.Credito);
+    }
+
+    [Fact]
     public void LoYaDevueltoDeUnArticuloNoTocaElTopeDeOtro()
     {
         var vendidos = new[] { Item(1, 1, Pancho, 1m, 100m, 100m), Item(2, 2, Coca, 1m, 50m, 50m) };

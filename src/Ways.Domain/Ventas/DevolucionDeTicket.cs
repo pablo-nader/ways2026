@@ -10,8 +10,11 @@ public readonly record struct ItemVendido(
     int? IdCombo, int? IdOferta, int IdListaPrecio, int IdAlicuotaIva, decimal PorcentajeIva, int? IdLote);
 
 /// <summary>Lo que ya devolvieron las notas de crédito emitidas de la misma venta, de un artículo (o, en un artículo por
-/// importe, de un importe): <see cref="Cantidad"/> positiva.</summary>
-public readonly record struct UnidadesYaDevueltas(int IdArticulo, bool PorImporte, decimal PrecioUnitario, decimal Cantidad);
+/// importe, de un importe): <see cref="Cantidad"/> positiva. <see cref="Credito"/> es lo que esas notas acreditaron de verdad
+/// (positivo, suma de sus items guardados); sin él se reconstruye repartiendo las unidades, que difiere por un peso cuando se anuló una
+/// nota intermedia.</summary>
+public readonly record struct UnidadesYaDevueltas(
+    int IdArticulo, bool PorImporte, decimal PrecioUnitario, decimal Cantidad, decimal? Credito = null);
 
 /// <summary>Una línea que la nota de crédito devuelve: el artículo y las unidades (positivas). <see cref="Importe"/> solo
 /// lo lleva la línea de un artículo por importe: el precio con que se vendió.</summary>
@@ -165,6 +168,8 @@ public static class DevolucionDeTicket
             {
                 var clave = new ClaveDeConjunto(devueltas.IdArticulo, devueltas.PorImporte ? devueltas.PrecioUnitario : null);
                 var faltan = devueltas.Cantidad;
+                var repetido = 0m;
+                ItemVendido? ultimoTocado = null;
 
                 foreach (var item in ItemsDe(clave))
                 {
@@ -176,9 +181,18 @@ public static class DevolucionDeTicket
                     var unidades = Math.Min(faltan, Restantes[item.IdItem]);
                     if (unidades > 0m)
                     {
-                        Tomar(item, unidades);
+                        repetido += Tomar(item, unidades);
+                        ultimoTocado = item;
                         faltan -= unidades;
                     }
+                }
+
+                // Lo guardado manda sobre la repetición: tras anular una nota intermedia las que sobreviven acreditaron por
+                // unidades acumuladas distintas, y la diferencia se carga al último item tocado para que la suma de lo acreditado
+                // nunca supere su Total.
+                if (devueltas.Credito is { } acreditado && ultimoTocado is { } ultimo)
+                {
+                    _acreditado[ultimo.IdItem] += acreditado - repetido;
                 }
             }
         }

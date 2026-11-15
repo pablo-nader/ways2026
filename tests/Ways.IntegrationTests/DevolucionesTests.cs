@@ -342,6 +342,27 @@ public class DevolucionesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     }
 
     [Fact]
+    public async Task AnularUnaDevolucionIntermediaNoHaceQueLoAcreditadoSuperePorUnPesoElTotalDelItem()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnaDevolucionIntermediaNoHaceQueLoAcreditadoSuperePorUnPesoElTotalDelItem));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-intermedia", 33.34m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Intermedia");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 3m, null));
+
+        var primera = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        var segunda = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        Assert.Equal([-33m, -34m], [primera.Total, segunda.Total]);
+
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{primera.Id}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        var ultima = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 2m, null));
+
+        Assert.Equal(-66m, ultima.Total);
+        Assert.Equal(-100m, segunda.Total + ultima.Total);
+    }
+
+    [Fact]
     public async Task UnaLineaDeDevolucionNoAdmiteAjusteManual()
     {
         var ctx = await PrepararAsync(nameof(UnaLineaDeDevolucionNoAdmiteAjusteManual));
