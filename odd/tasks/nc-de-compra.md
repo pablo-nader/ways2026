@@ -36,7 +36,7 @@ their own NC document (one sign per voucher), never as negative lines.
 
 ## Tasks
 
-- [x] T1 Backend: NC types, sign in stock/balance/VAT book, cost guard, association, tests. Route: delegated (writer, 2+ non-trivial files). Evidence: commits feat(compras): notas de crédito de compra + fix(compras): pagos y cuenta corriente respetan notas de crédito. Domain 2647/2647, Application 1707/1707, Integration (Compra|LibroIva|NotaDeCredito|Proveedor|Pago|CuentaCorriente|ConectorMcp|FiscalSchema|SuperficieDeAutorizacion|AislamientoDeTenant) 2503/2503 after fixing CuentaCorrienteEtapa7BackstopTests (19 tipos). Mutation evidence: cost guard, association (draft-time and confirm-time), pagos guard (BloquearCompraAsync) each turn their test red.
+- [x] T1 Backend: NC types, sign in stock/balance/VAT book, cost guard, association, tests. Route: delegated (writer, 2+ non-trivial files). Evidence: commits feat(compras): notas de crédito de compra + fix(compras): pagos y cuenta corriente respetan notas de crédito. Domain 2647/2647, Application 1707/1707, Integration (Compra|LibroIva|NotaDeCredito|Proveedor|Pago|CuentaCorriente|ConectorMcp|FiscalSchema|SuperficieDeAutorizacion|AislamientoDeTenant) 2502/2503; the one failure (CuentaCorrienteEtapa7BackstopTests catalog count) was fixed to 19 tipos and that class rerun 3/3, the broad filter was not rerun. Mutation evidence: cost guard, association (draft-time and confirm-time), pagos guard (BloquearCompraAsync) each turn their test red.
 - [ ] T2 Web: NC types in the purchase editor, associated invoice selector, tests. Route: delegated.
 
 ## Acceptance criteria
