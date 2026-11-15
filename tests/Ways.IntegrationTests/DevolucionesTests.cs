@@ -453,6 +453,50 @@ public class DevolucionesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(0, await ContarNcxAsync(ctx, venta.Id));
     }
 
+    /// <summary>El espejo de la factura se arma después con TODOS los items del ticket (<c>CrearEspejoAsync</c>): un ticket con la
+    /// decisión de facturar todavía debida (marca en NULL) o en <c>pendiente</c> sin espejo no admite devolución, porque lo devuelto
+    /// quedaría facturado.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnTicketConLaDecisionDeFacturarDebidaOPendienteNoSePuedeDevolver(bool conFilaPendiente)
+    {
+        var ctx = await PrepararAsync($"{nameof(UnTicketConLaDecisionDeFacturarDebidaOPendienteNoSePuedeDevolver)}{conFilaPendiente}");
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-decision", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Decision");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 1m, null));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            if (conFilaPendiente)
+            {
+                db.FacturacionesDeVenta.Add(new FacturacionDeVenta
+                {
+                    IdTenant = ctx.IdTenant,
+                    IdEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).SingleAsync(),
+                    IdComprobanteVenta = venta.Id, Motivo = MotivoDeFacturacion.Forzada, Aportes = "[]",
+                    Periodo = new DateOnly(2026, 11, 1), CreatedAt = ahora, UpdatedAt = ahora
+                });
+            }
+            else
+            {
+                (await db.ComprobantesVenta.SingleAsync(c => c.Id == venta.Id)).FacturacionDecididaEn = null;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        await AfirmarErrorAsync(
+            await DevolverAsync(ctx.Admin, ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null)),
+            HttpStatusCode.Conflict, "devolucion_requiere_nota_de_credito_fiscal");
+        Assert.Equal(0, await ContarNcxAsync(ctx, venta.Id));
+
+        var lectura = await LeerDevolviblesAsync(await ctx.Admin.GetAsync($"/api/ventas/{venta.Id}/devolvibles"));
+        Assert.False(lectura.Devolvible);
+        Assert.Equal("con_factura_fiscal", lectura.Motivo);
+    }
+
     [Fact]
     public async Task UnTicketConLaFacturaRechazadaSiSePuedeDevolver()
     {

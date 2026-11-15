@@ -227,9 +227,10 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
             [new PagoDeVenta(ctx.IdMedioEfectivo, cantidad * 100m, null, 0m)],
             null, null);
 
-    private static SolicitudDeVenta SolicitudNcx(Contexto ctx, int idArticulo, decimal cantidad, int? idLote) =>
+    private static SolicitudDeVenta SolicitudNcx(
+        Contexto ctx, int idArticulo, decimal cantidad, int? idLote, int idComprobanteAsociado) =>
         new(
-            ctx.IdPuntoVentaOrigen, ctx.IdCliente, "NCX", null,
+            ctx.IdPuntoVentaOrigen, ctx.IdCliente, "NCX", idComprobanteAsociado,
             [new LineaDeVenta(idArticulo, cantidad, null, idLote)],
             [],
             null, null);
@@ -403,13 +404,13 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
         await AssertInvarianteStockAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen);
 
         // 5. NCX (devolución): +5 — mismo motivo Venta que la TX, sign flip por tipo comprobante.
-        await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 5m, idLote: null));
+        var ncx = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 5m, idLote: null, tx.Id));
         Assert.Equal(125m, await LeerStockAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen));
         await AssertInvarianteStockAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen);
 
         // 6. Anulación: reversa exacta de la TX del paso 3, +20.
-        await AnularVentaAsync(ctx, tx.Id);
-        Assert.Equal(145m, await LeerStockAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen));
+        await AnularVentaAsync(ctx, ncx.Id);
+        Assert.Equal(120m, await LeerStockAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen));
         await AssertInvarianteStockAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen);
 
         // 7. Conteo (Inventario): 145 → 150, +5.
@@ -474,14 +475,14 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal(10m, await LeerStockLoteAsync(ctx, idArticulo, ctx.IdPuntoVentaDestino, idLote.Value));
         await AssertInvarianteStockLoteAsync(ctx, idArticulo, ctx.IdPuntoVentaDestino, idLote.Value);
 
-        // 4. NCX (devolución): +3 al lote L, explícito (NCX exige idLote — nunca default FEFO).
-        await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 3m, idLote));
+        // 4. NCX (devolución de la TX del paso 2): +3 al lote L, explícito y de los que la TX vendió.
+        var ncx = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 3m, idLote, tx.Id));
         Assert.Equal(18m, await LeerStockLoteAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen, idLote.Value));
         await AssertInvarianteStockLoteAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen, idLote.Value);
 
         // 5. Anulación: reversa exacta de la TX del paso 2, +5.
-        await AnularVentaAsync(ctx, tx.Id);
-        Assert.Equal(23m, await LeerStockLoteAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen, idLote.Value));
+        await AnularVentaAsync(ctx, ncx.Id);
+        Assert.Equal(15m, await LeerStockLoteAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen, idLote.Value));
         await AssertInvarianteStockLoteAsync(ctx, idArticulo, ctx.IdPuntoVentaOrigen, idLote.Value);
 
         // 6. Conteo por lote: 23 → 30, +7.

@@ -464,10 +464,18 @@ public class ServicioDeVentas(
                 // vuelven al lote del que salieron (el del item del ticket de origen que cubre ese tramo) o, si el cliente manda un
                 // idLote (validado arriba contra los que vendió el ticket), a ese. Si el ticket vendió la unidad sin lote, vuelve al
                 // lote sin identificar.
-                var idLotePedido = lineas[lineaDeItem[indice]].IdLote ?? (tipo.Signo < 0 ? item.IdLote : null);
+                var idLoteDelCliente = lineas[lineaDeItem[indice]].IdLote;
+                var idLotePedido = idLoteDelCliente ?? (tipo.Signo < 0 ? item.IdLote : null);
+
+                // El lote de donde salió la unidad pudo darse de baja después de la venta (el filtro de EF ya no lo ve): la
+                // devolución no queda bloqueada para siempre, vuelve al lote sin identificar. Solo vale para el lote que sale
+                // del ticket: uno que manda el cliente y no existe sigue siendo 400 lote_invalido.
+                var loteDeOrigenDadoDeBaja = idLoteDelCliente is null
+                    && idLotePedido is { } deOrigen
+                    && !saldosDelArticulo.Any(s => s.IdLote == deOrigen);
 
                 SaldoDeLote loteResuelto;
-                if (idLotePedido is { } idLote)
+                if (idLotePedido is { } idLote && !loteDeOrigenDadoDeBaja)
                 {
                     // Un idLote provisto se valida contra `saldos` (existe, es del artículo, no
                     // borrado — el filtro global de EF sobre Lotes ya excluye soft-deleted, así
@@ -491,7 +499,7 @@ public class ServicioDeVentas(
                 else
                 {
                     // Ningún lote con saldo positivo (design decisión 7), o una devolución de una unidad que el ticket
-                    // vendió sin lote — get-or-create perezoso del lote sin identificar, statement crudo, invisible al
+                    // vendió sin lote o de un lote dado de baja — get-or-create perezoso del lote sin identificar, statement crudo, invisible al
                     // contador de presupuesto (misma familia que EscritorDeStock).
                     var conexionParaLotes = await ObtenerConexionAbiertaAsync(ct);
                     var idSinIdentificar = await ServicioDeLotes.ResolverSinIdentificarAsync(
@@ -1676,12 +1684,13 @@ public class ServicioDeVentas(
     {
         EstadoComprobante estado;
         ResultadoFiscal? resultadoDelTicket;
+        bool decisionDebida;
 
         await using (var comando = conexion.CreateCommand())
         {
             comando.Transaction = transaccion;
             comando.CommandText =
-                "SELECT estado::text, resultado_fiscal::text FROM comprobantes_venta " +
+                "SELECT estado::text, resultado_fiscal::text, facturacion_decidida_en IS NULL FROM comprobantes_venta " +
                 "WHERE id_comprobante_venta = $1 AND id_tenant = $2 FOR UPDATE";
             ParametrosDeComando.Agregar(comando, devolucion.IdTicket);
             ParametrosDeComando.Agregar(comando, idTenant);
@@ -1694,10 +1703,12 @@ public class ServicioDeVentas(
 
             estado = lector.GetString(0) == "emitido" ? EstadoComprobante.Emitido : EstadoComprobante.Anulado;
             resultadoDelTicket = lector.IsDBNull(1) ? null : ResultadoFiscalDeTexto(lector.GetString(1));
+            decisionDebida = lector.GetBoolean(2);
         }
 
         var resultadoDeLaFactura = await LeerResultadoDeLaFacturaAsync(conexion, transaccion, devolucion.IdTicket, ct);
-        ReglaDeDevoluciones.ExigirDevolvible(estado, [resultadoDelTicket, resultadoDeLaFactura]);
+        var decisionPendiente = decisionDebida || await HayDecisionDeFacturacionPendienteAsync(conexion, transaccion, devolucion.IdTicket, ct);
+        ReglaDeDevoluciones.ExigirDevolvible(estado, [resultadoDelTicket, resultadoDeLaFactura], decisionPendiente);
 
         var yaDevueltas = await LectorDeDevolucionesDelTicket.LeerYaDevueltasAsync(db, devolucion.IdTicket, ct);
         var tramos = DevolucionDeTicket.Repartir(devolucion.Vendidos, yaDevueltas, devolucion.Lineas);
@@ -1709,6 +1720,23 @@ public class ServicioDeVentas(
                 "Otra devolución del mismo ticket cambió lo que queda por devolver mientras se emitía esta: volvé a intentarla.",
                 409);
         }
+    }
+
+    /// <summary>¿Hay una decisión de facturar el ticket en <c>pendiente</c> (la de la factura, no la de una nota de crédito)? El espejo
+    /// de esa factura se arma después con TODOS los items del ticket (<c>ServicioDeFacturacionDeVentas.CrearEspejoAsync</c>, que toma
+    /// el lock de la venta y exige que siga emitida), así que lo ya devuelto quedaría facturado. Una decisión debida (marca en
+    /// <c>NULL</c>) la cubre la columna del propio ticket.</summary>
+    private static async Task<bool> HayDecisionDeFacturacionPendienteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idVenta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT EXISTS (SELECT 1 FROM facturaciones_de_venta WHERE id_comprobante_venta = $1 " +
+            "AND id_facturacion_origen IS NULL AND estado = 'pendiente'::estado_facturacion_venta)";
+        ParametrosDeComando.Agregar(comando, idVenta);
+
+        return await comando.ExecuteScalarAsync(ct) is true;
     }
 
     private static ResultadoFiscal ResultadoFiscalDeTexto(string valor) => valor switch

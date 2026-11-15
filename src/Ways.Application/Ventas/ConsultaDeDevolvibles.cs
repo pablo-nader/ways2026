@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Common;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Ventas;
@@ -39,7 +40,7 @@ public static class ConsultaDeDevolvibles
                 where c.Id == id
                 select new
                 {
-                    c.Id, c.Numero, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total, c.Estado, c.ResultadoFiscal,
+                    c.Id, c.Numero, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total, c.Estado, c.ResultadoFiscal, c.FacturacionDecididaEn,
                     CodigoTipo = t.Codigo
                 })
             .FirstOrDefaultAsync(ct)
@@ -57,6 +58,11 @@ public static class ConsultaDeDevolvibles
             .Where(c => c.IdVentaOrigen == id && c.IdComprobanteAsociado == null)
             .Select(c => c.ResultadoFiscal)
             .FirstOrDefaultAsync(ct);
+
+        // La decisión de facturar el ticket sigue debida o pendiente: la factura que nazca después se arma con todos sus items.
+        var decisionPendiente = cabecera.FacturacionDecididaEn is null
+            || await db.FacturacionesDeVenta.AnyAsync(
+                f => f.IdComprobanteVenta == id && f.IdFacturacionOrigen == null && f.Estado == EstadoFacturacionDeVenta.Pendiente, ct);
 
         var items = await db.ItemsComprobanteVenta
             .Where(i => i.IdComprobanteVenta == id && i.Cantidad > 0m && i.IdArticulo != null)
@@ -80,7 +86,7 @@ public static class ConsultaDeDevolvibles
             })
             .ToList();
 
-        var motivo = ReglaDeDevoluciones.Evaluar(cabecera.CodigoTipo, cabecera.Estado, [cabecera.ResultadoFiscal, resultadoDeLaFactura])
+        var motivo = ReglaDeDevoluciones.Evaluar(cabecera.CodigoTipo, cabecera.Estado, [cabecera.ResultadoFiscal, resultadoDeLaFactura], decisionPendiente)
             ?? (lineas.All(l => l.CantidadDevolvible <= 0m) ? MotivoDeNoDevolvible.SinUnidadesPorDevolver : null);
 
         return new TicketDevolvible(

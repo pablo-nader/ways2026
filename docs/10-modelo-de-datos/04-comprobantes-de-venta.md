@@ -314,11 +314,11 @@ cambios de esquema: usa `id_comprobante_asociado`, `items_comprobante_venta.id_l
   del ticket ya está en `T`.
 - **Lote.** Las unidades vuelven al lote del item del ticket que las cubre (`id_lote` del snapshot), sin que el cliente mande
   `idLote`. Si lo manda, tiene que ser uno de los lotes que el ticket vendió de ese artículo (`400 lote_invalido`) y se usa para
-  todos los tramos de la línea. Si el item vendido no tenía lote y el artículo hoy lo controla, vuelven al lote sin identificar.
+  todos los tramos de la línea. Si el item vendido no tenía lote y el artículo hoy lo controla, o si el lote del que salió se dio de baja después de la venta, vuelven al lote sin identificar (un `idLote` del cliente dado de baja sigue siendo `400 lote_invalido`).
   Una NCX nunca usa FEFO.
 - **Factura fiscal.** Si el ticket tiene una factura espejo aprobada (con o sin observaciones) o en trámite, `409
   devolucion_requiere_nota_de_credito_fiscal`: devolverlo exige una nota de crédito fiscal que todavía no existe. Una factura
-  rechazada no bloquea (ARCA la libera). Un ticket anulado bajo el lock es `409 comprobante_asociado_invalido`.
+  rechazada no bloquea (ARCA la libera). Tampoco se devuelve un ticket cuya decisión de facturar sigue debida (`facturacion_decidida_en IS NULL`) o en `pendiente` sin espejo todavía: el espejo se arma después con TODOS los items del ticket (`ServicioDeFacturacionDeVentas.CrearEspejoAsync`, que toma el lock de la venta y exige que siga emitida), así que lo ya devuelto quedaría facturado; es el mismo `409 devolucion_requiere_nota_de_credito_fiscal` y vuelve a poder devolverse cuando la decisión se resuelve sin factura. Un ticket anulado bajo el lock es `409 comprobante_asociado_invalido`.
 - **Anulación.** Anular un ticket con NCX emitidas asociadas es `409 venta_con_devoluciones`; anular la NCX misma sigue
   permitido y libera sus unidades para el tope. El espejo de una nota de crédito fiscal se asocia a la factura, no al ticket, y
   no cuenta.
@@ -341,8 +341,7 @@ cambios de esquema: usa `id_comprobante_asociado`, `items_comprobante_venta.id_l
   cuando el ticket no es devolvible. Es una lectura sin lock: la emisión re-juzga. Un id que es una factura espejo, un número
   sin ticket o un comprobante de otro tenant es `404`.
 - **Fuera de este tramo.** El dinero de la devolución (`ValidadorDePagos`, regla 0c: una NCX no lleva pagos) y la pantalla del POS
-  son de tareas siguientes. Seguimiento abierto: un ticket con la decisión de facturar pendiente y sin espejo todavía se puede
-  devolver, y no se verificó qué arma el espejo que nazca después.
+  son de tareas siguientes.
 
 ### Fiscal ARCA (Etapa 19a)
 

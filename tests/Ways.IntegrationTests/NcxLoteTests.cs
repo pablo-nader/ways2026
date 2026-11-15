@@ -303,6 +303,36 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
         Assert.Equal(idLoteVendido, Assert.Single(conElLoteVendido.Items).IdLote);
     }
 
+    /// <summary>Si el lote de donde salió la unidad se dio de baja después de la venta, la devolución no queda bloqueada: vuelve al lote
+    /// sin identificar. Un idLote que manda el cliente y está dado de baja sigue siendo 400 <c>lote_invalido</c>.</summary>
+    [Fact]
+    public async Task UnaDevolucionDeUnaUnidadDeUnLoteDadoDeBajaVuelveAlLoteSinIdentificar()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDevolucionDeUnaUnidadDeUnLoteDadoDeBajaVuelveAlLoteSinIdentificar));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-lote-baja", 100m, controlaLote: true);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-BAJA", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 5m);
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 2m, idLote: idLote));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            (await db.Lotes.IgnoreQueryFilters().SingleAsync(l => l.Id == idLote)).DeletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var (status, cuerpo) = await EmitirCrudoAsync(
+            ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: idLote, idComprobanteAsociado: original.Id));
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Equal("lote_invalido", cuerpo.GetProperty("codigo").GetString());
+
+        var devolucion = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: null, idComprobanteAsociado: original.Id));
+
+        var item = Assert.Single(devolucion.Items);
+        Assert.NotEqual(idLote, item.IdLote);
+        Assert.Equal(ReglaDeLotes.CodigoSinIdentificar, item.CodigoLote);
+        Assert.Equal(1m, await LeerStockLoteAsync(ctx, idArticulo, item.IdLote!.Value));
+    }
+
     /// <summary>Si el ticket vendió la unidad sin lote (el artículo todavía no controlaba lote) y hoy sí, las unidades vuelven al lote sin
     /// identificar: nunca se rechaza la devolución por no poder nombrar un lote que el ticket no tiene.</summary>
     [Fact]

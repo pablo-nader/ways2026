@@ -657,10 +657,13 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
             "forzar_factura_no_admitido",
             (await rechazada.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString());
 
+        var origen = await VenderAsync(e, Venta(e, EnEfectivo(e)));
+        var acumuladosTrasElOrigen = await LeerAcumuladosAsync(e.IdTenant);
         var emitido = await VenderAsync(
-            e, new SolicitudDeVenta(e.IdPuntoVenta, null, "NCX", null, lineas, [], null, null));
+            e, new SolicitudDeVenta(e.IdPuntoVenta, null, "NCX", origen.Id, lineas, [], null, null));
         Assert.Equal(EstadosFiscalesDeVenta.NoCorresponde, emitido.Fiscal!.Estado);
-        Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
+        // La devolución no mueve los acumulados que dejó el ticket de origen.
+        Assert.Equivalent(acumuladosTrasElOrigen, await LeerAcumuladosAsync(e.IdTenant));
         // La devolución no se decide pero la decisión la examinó: queda marcada para que no figure como debida.
         Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, emitido.Id));
     }
