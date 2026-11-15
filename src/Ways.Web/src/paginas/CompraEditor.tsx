@@ -866,7 +866,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   function cambiarPuntoVenta(valor: string) {
     if (ocupado) return
     setEncabezado((prev) =>
-      conSugerenciasDePercepcion({ ...prev, idPuntoVenta: valor === '' ? '' : Number(valor) }, referenciaDePercepciones),
+      conSugerenciasDePercepcion(
+        // La factura asociada tiene que ser de la empresa del punto de venta: cambiarlo la descarta.
+        { ...prev, idPuntoVenta: valor === '' ? '' : Number(valor), idComprobanteCompraAsociado: null },
+        referenciaDePercepciones,
+      ),
     )
   }
 
@@ -1511,7 +1515,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                 </div>
               )}
               <div className="col-md-3">
-                <div className="small text-muted">Total</div>
+                <div className="small text-muted">{esNota ? 'Total a favor (crédito)' : 'Total'}</div>
                 <div className="fs-6">{formatearMoneda(totales.total)}</div>
               </div>
             </div>
