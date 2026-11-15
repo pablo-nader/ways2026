@@ -6,6 +6,7 @@ import {
   calcularTotalesDeCompra,
   clienteDeCompras,
   discriminaIvaEfectivo,
+  esNotaDeCredito,
   esBorradorCargadoPorElAsistente,
   etiquetaDeEstadoCompra,
   itemAFormulario,
@@ -72,6 +73,7 @@ import { AvisoDeNumeroDuplicado } from './compras/AvisoDeNumeroDuplicado'
 import { AVISO_DE_EDICION_DE_COMPRA, mensajeDeErrorDeEdicion } from './compras/errorDeEdicionDeCompra'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
 import { useDuplicadosDeCompra } from './compras/useDuplicadosDeCompra'
+import { SelectorDeFacturaAsociada } from './compras/SelectorDeFacturaAsociada'
 import { GrillaDeItemsDeCompra } from './compras/GrillaDeItemsDeCompra'
 import { ModalDeAnulacionDeCompra } from './compras/ModalDeAnulacionDeCompra'
 import {
@@ -112,6 +114,7 @@ function encabezadoVacio(): EncabezadoDeCompraFormulario {
     fechaComprobante: '',
     observaciones: '',
     idOrdenCompra: null,
+    idComprobanteCompraAsociado: null,
     discriminaIva: null,
     ivaImpreso: {},
     preciosIncluyenIva: false,
@@ -129,6 +132,7 @@ function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario 
     fechaComprobante: c.fechaComprobante ?? '',
     observaciones: c.observaciones ?? '',
     idOrdenCompra: c.idOrdenCompra,
+    idComprobanteCompraAsociado: c.idComprobanteCompraAsociado ?? null,
     discriminaIva: c.discriminaIva,
     ivaImpreso: ivaImpresoDesdeDetalle(c),
     preciosIncluyenIva: c.preciosIncluyenIva,
@@ -553,6 +557,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   }, [compra])
 
   const tipoSeleccionado = (tipos ?? []).find((t) => t.id === encabezado.idTipoComprobante) ?? null
+  const esNota = esNotaDeCredito(tipoSeleccionado)
   const discriminaIva = discriminaIvaEfectivo(tipoSeleccionado, encabezado.discriminaIva)
   const registraLibroIva = tipoSeleccionado?.registraLibroIva ?? false
   const referenciaDePercepciones = useMemo<ReferenciaDePercepciones>(
@@ -820,6 +825,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
         {
           ...prev,
           idTipoComprobante: idTipo,
+          // La asociación es de una nota de crédito concreta: cambiar el tipo la descarta.
+          idComprobanteCompraAsociado: null,
           discriminaIva: conservaEleccion ? prev.discriminaIva : null,
           ivaImpreso: {},
         },
@@ -848,7 +855,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   function aplicarProveedor(valor: string) {
     const hayCostoTipeado = lineas.some((l) => !l.resueltaPorCodigo && l.importe !== null)
     setEncabezado((prev) =>
-      alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones, hayCostoTipeado),
+      ({
+        ...alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones, hayCostoTipeado),
+        idComprobanteCompraAsociado: null,
+      }),
     )
     setCambiosDeProveedor((n) => n + 1)
   }
@@ -856,7 +866,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   function cambiarPuntoVenta(valor: string) {
     if (ocupado) return
     setEncabezado((prev) =>
-      conSugerenciasDePercepcion({ ...prev, idPuntoVenta: valor === '' ? '' : Number(valor) }, referenciaDePercepciones),
+      conSugerenciasDePercepcion(
+        // La factura asociada tiene que ser de la empresa del punto de venta: cambiarlo la descarta.
+        { ...prev, idPuntoVenta: valor === '' ? '' : Number(valor), idComprobanteCompraAsociado: null },
+        referenciaDePercepciones,
+      ),
     )
   }
 
@@ -989,7 +1003,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
 
     let guardada: CompraDetalle
     try {
-      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva, esNota)
       guardada = esNuevo || idCompra === null ? await clienteDeCompras.crear(solicitud) : await clienteDeCompras.actualizar(idCompra, solicitud)
     } catch (e) {
       liberar()
@@ -1121,7 +1135,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     generacionRef.current += 1
 
     try {
-      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva, esNota)
       const guardada = await clienteDeCompras.actualizar(idCompra, solicitud)
       // La respuesta es el detalle ya recalculado (pagado y saldo incluidos): es el refresco, no hace falta pedirlo de nuevo.
       setCompra(guardada)
@@ -1263,7 +1277,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
         )}
         {errorOrdenParaPrecargar && <div className="alert alert-warning py-1 px-2 small">{errorOrdenParaPrecargar}</div>}
         {errorPagoOrigen && <div className="alert alert-warning py-1 px-2 small">{errorPagoOrigen}</div>}
-        {encabezado.idOrdenCompra !== null && (
+        {!esNota && encabezado.idOrdenCompra !== null && (
           <div className="alert alert-info py-1 px-2 small">
             Vinculada a la orden de compra{' '}
             <Link to={`/ordenes-compra/${encabezado.idOrdenCompra}`}>#{encabezado.idOrdenCompra}</Link>.
@@ -1343,6 +1357,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                 </option>
               ))}
             </select>
+            {esNota && <div className="badge text-bg-warning mt-1">Nota de crédito</div>}
             {tipoSeleccionado !== null && !tipoSeleccionado.registraLibroIva && (
               <div className="form-check mt-1">
                 <input
@@ -1416,6 +1431,18 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               onChange={(valor) => setEncabezado((prev) => ({ ...prev, fechaComprobante: valor }))}
             />
           </div>
+          {esNota && (
+            <div className="col-md-4">
+              <SelectorDeFacturaAsociada
+                idProveedor={encabezado.idProveedor}
+                idEmpresa={(puntosVenta ?? []).find((pv) => pv.id === encabezado.idPuntoVenta)?.idEmpresa ?? null}
+                tipos={tipos ?? []}
+                valor={encabezado.idComprobanteCompraAsociado ?? null}
+                disabled={!esEditable || ocupado || !puedeEscribir}
+                onChange={(id) => setEncabezado((prev) => ({ ...prev, idComprobanteCompraAsociado: id }))}
+              />
+            </div>
+          )}
           {duplicados.length > 0 && (
             <div className="col-12">
               <AvisoDeNumeroDuplicado duplicados={duplicados} />
@@ -1488,7 +1515,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                 </div>
               )}
               <div className="col-md-3">
-                <div className="small text-muted">Total</div>
+                <div className="small text-muted">{esNota ? 'Total a favor (crédito)' : 'Total'}</div>
                 <div className="fs-6">{formatearMoneda(totales.total)}</div>
               </div>
             </div>
@@ -1652,12 +1679,19 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                   </div>
                 )}
                 <div className="col-md-3">
-                  <div className="small text-muted">Total</div>
+                  <div className="small text-muted">{esNota ? 'Total a favor (crédito)' : 'Total'}</div>
                   <div className="fs-6">{formatearMoneda(compra.total)}</div>
                 </div>
               </div>
 
-              {esConfirmada && (
+              {esNota && compra.idComprobanteCompraAsociado != null && (
+                <div className="small text-muted mb-3">
+                  Corrige la factura{' '}
+                  <Link to={`/compras/${compra.idComprobanteCompraAsociado}`}>#{compra.idComprobanteCompraAsociado}</Link>.
+                </div>
+              )}
+
+              {esConfirmada && !esNota && (
                 <div className="row g-3 mb-3">
                   <div className="col-md-3">
                     <div className="small text-muted">Pagado</div>
@@ -1695,15 +1729,17 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               {esConfirmada && puedeEscribir && (
                 <>
                   <div className="d-flex gap-2 mb-3">
-                    <button
-                      type="button"
-                      className="btn btn-outline-primary"
-                      disabled={ocupado || pagoAbierto || panelAnularAbierto}
-                      onClick={iniciarEdicion}
-                    >
-                      Editar compra
-                    </button>
-                    {sePuedePagarLaCompra(compra) && (
+                    {!esNota && (
+                      <button
+                        type="button"
+                        className="btn btn-outline-primary"
+                        disabled={ocupado || pagoAbierto || panelAnularAbierto}
+                        onClick={iniciarEdicion}
+                      >
+                        Editar compra
+                      </button>
+                    )}
+                    {!esNota && sePuedePagarLaCompra(compra) && (
                       <button type="button" className="btn btn-primary" disabled={ocupado} onClick={() => setPagoAbierto(true)}>
                         Pagar
                       </button>

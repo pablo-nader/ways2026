@@ -276,6 +276,19 @@ export type EncabezadoDeCompraFormulario = {
   /** Tipos que el operador quitó a mano: la sugerencia automática no los vuelve a agregar hasta que
    * cambie el proveedor. */
   percepcionesDescartadas: TipoDePercepcion[]
+  /** Factura a la que corrige una nota de crédito (opcional). Solo vale con un tipo de signo negativo: el editor
+   * la limpia al cambiar de proveedor o de tipo. */
+  idComprobanteCompraAsociado?: number | null
+}
+
+/** Una nota de crédito de compra es un tipo de signo negativo: se carga con cantidades e importes positivos. */
+export function esNotaDeCredito(tipo: Pick<TipoComprobanteListado, 'signo'> | null): boolean {
+  return tipo !== null && tipo.signo < 0
+}
+
+/** Lo que una nota de crédito puede corregir: una factura (signo positivo que registra libro IVA), no un remito ni otra nota. */
+export function esFacturaAsociable(tipo: Pick<TipoComprobanteListado, 'signo' | 'registraLibroIva'> | null): boolean {
+  return tipo !== null && tipo.signo > 0 && tipo.registraLibroIva
 }
 
 /** Si el comprobante discrimina IVA: lo fija el tipo en una factura y lo elige quien carga un
@@ -309,6 +322,7 @@ export function aSolicitudDeCompra(
   lineas: LineaDeCompraFormulario[],
   discriminaEfectivo = false,
   registraLibroIva = false,
+  esNota = false,
 ): SolicitudDeCompra {
   const completas = lineas.filter(lineaCompletaParaEnvio)
   const modo = { discriminaIva: discriminaEfectivo, preciosIncluyenIva: discriminaEfectivo && encabezado.preciosIncluyenIva }
@@ -326,12 +340,16 @@ export function aSolicitudDeCompra(
     numeroExterno: encabezado.numeroExterno.trim() === '' ? null : encabezado.numeroExterno.trim(),
     fechaComprobante: encabezado.fechaComprobante === '' ? null : encabezado.fechaComprobante,
     observaciones: encabezado.observaciones.trim() === '' ? null : encabezado.observaciones.trim(),
-    items: completas.map((l) => aLineaSolicitada(l, impuestoInternoDeLinea(l, modo))),
-    idOrdenCompra: encabezado.idOrdenCompra,
+    items: completas.map((l) => {
+      const linea = aLineaSolicitada(l, impuestoInternoDeLinea(l, modo))
+      return esNota ? { ...linea, actualizaCosto: false } : linea
+    }),
+    idOrdenCompra: esNota ? null : encabezado.idOrdenCompra,
     discriminaIva: encabezado.discriminaIva,
     ivaImpreso: ivaImpreso.length === 0 ? null : ivaImpreso,
     preciosIncluyenIva: discriminaEfectivo && encabezado.preciosIncluyenIva,
     percepciones: aPercepcionesSolicitadas(encabezado.percepciones, registraLibroIva, discriminaEfectivo),
+    ...(esNota ? { idComprobanteCompraAsociado: encabezado.idComprobanteCompraAsociado ?? null } : {}),
   }
 }
 
