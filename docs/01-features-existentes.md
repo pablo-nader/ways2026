@@ -130,10 +130,12 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 | 5 | `c_corriente > 0 && vuelto > 0` | no se da vuelto si pagó con cuenta corriente |
 | 6 | `c_corriente + saldo_cliente > acuerdo_cliente` (y `acuerdo != -1`) | excede el crédito. `acuerdo = -1` = crédito ilimitado |
 
-> **Regla nueva (nota de crédito sin pagos):** en el legacy una devolución pura (`total <= 0`) deja los campos de pago en solo
-> lectura. La app nueva lo hace cumplir en el servidor: un comprobante de total negativo (NCX) con algún pago de importe o vuelto
-> positivo se rechaza con 400 `pago_en_comprobante_negativo` (`ValidadorDePagos`, regla 0c, después de los importes negativos y
-> antes de la fila 1). Las filas en cero no se rechazan; sin pagos se acepta.
+> **Regla nueva (reintegro de una nota de crédito):** en el legacy una devolución pura (`total <= 0`) deja los campos de pago en
+> solo lectura y el dinero no se registra. La app nueva lo registra: un comprobante de total negativo (NCX) lleva en `pagos` el
+> reintegro, siempre en efectivo de la caja del turno (decisión del dueño, 2026-11-15), y baja el esperado del arqueo. La regla 0c de
+> `ValidadorDePagos` (después de los importes negativos y antes de la fila 1) exige efectivo (400 `devolucion_solo_en_efectivo`), sin
+> vuelto (400 `devolucion_con_vuelto`) y por exactamente el total (400 `devolucion_reintegro_invalido`, que también rechaza una nota
+> sin pagos y trae `datos.reintegro`). El POS consulta cuánto vale con `POST /api/ventas/devoluciones/previsualizacion`.
 >
 > **Regla nueva (devoluciones contra el ticket de origen, 2026-11-15):** en el legacy una devolución es una venta con cantidades
 > negativas, sin ticket de origen y a precio de hoy. La app nueva exige el ticket (`TX`) que se devuelve, topa cada artículo contra

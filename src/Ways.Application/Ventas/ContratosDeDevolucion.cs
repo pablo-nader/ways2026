@@ -34,3 +34,15 @@ public sealed record LineaDevolvible(
     decimal CantidadDevolvible,
     decimal ImporteUnitario,
     decimal ImporteDeLoRestante);
+
+/// <summary>Lo que el POS manda para saber cuánto vale una devolución antes de emitirla: el punto de venta, el ticket de origen y las líneas
+/// que emitiría la nota de crédito (mismo contenido que <see cref="SolicitudDeVenta.Lineas"/>).</summary>
+public sealed record SolicitudDePrevisualizacionDeDevolucion(
+    int IdPuntoVenta, int IdComprobanteAsociado, IReadOnlyList<LineaDeVenta>? Lineas);
+
+/// <summary>El crédito de una línea de la devolución (positivo), en el orden en que se mandó.</summary>
+public sealed record LineaPrevisualizadaDeDevolucion(int IdArticulo, decimal Cantidad, decimal Credito);
+
+/// <summary>Lo que acreditaría la devolución: <see cref="Reintegro"/> es el efectivo que la nota de crédito tiene que llevar como pago
+/// (exactamente su total). Es una lectura sin lock: la emisión lo re-juzga y puede responder distinto si otra devolución se coló en medio.</summary>
+public sealed record PrevisualizacionDeDevolucion(IReadOnlyList<LineaPrevisualizadaDeDevolucion> Lineas, decimal Reintegro);

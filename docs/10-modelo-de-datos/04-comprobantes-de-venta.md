@@ -356,7 +356,13 @@ cambios de esquema: usa `id_comprobante_asociado`, `items_comprobante_venta.id_l
   `signo` del tipo (`importe − vuelto` por `signo`) y el esperado del arqueo, el total negativo del comprobante. Ver §7 (esperado del arqueo).
   La anulación de una NCX no necesita código propio: el esperado excluye los cobros de comprobantes anulados, así que anularla vuelve a
   sumar el efectivo (y anular exige turno abierto, igual que para un TX).
-- **Fuera de este tramo.** La pantalla del POS (T3) y el cálculo del reintegro en el cliente antes de enviar.
+- **Vista previa del reintegro.** `POST /api/ventas/devoluciones/previsualizacion` (`OperacionDePos`, lectura pura por POST) recibe
+  `idPuntoVenta`, `idComprobanteAsociado` y `lineas` (las de la NCX) y responde `lineas` (`idArticulo`, `cantidad`, `credito`) y
+  `reintegro`, el efectivo que la NCX tiene que llevar. Usa el mismo reparto (`DevolucionDeTicket`) y los mismos rechazos que la
+  emisión (líneas, ticket de otro punto de venta, `409 devolucion_excede_lo_vendido`, factura fiscal); un ticket o punto de venta
+  inexistente o de otro tenant es `404`. No escribe ni toma locks: la emisión re-juzga bajo el lock y puede discrepar si otra
+  devolución se coló en medio.
+- **Fuera de este tramo.** La pantalla del POS (T3).
 
 ### Fiscal ARCA (Etapa 19a)
 

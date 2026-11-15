@@ -91,8 +91,11 @@ The backend already accepts NCX through `POST /api/ventas`, but:
   - Test churn: NCX emissions in existing integration tests now carry the efectivo refund (new `ApoyoDeDevoluciones.PostearAsync`
     reads `datos.reintegro` from the rejection); `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo` became
     `UnaNotaDeCreditoReintegraEnEfectivoYNoTocaLaCuentaDeTesoreria`.
-  - Open: docs/01 (parity contract, outside this unit's surfaces) still describes the old "NCX without pagos" rule at lines 133-136; the
-    Web mirror `src/Ways.Web/src/api/pagos.ts` (rule 0c) and its test still encode it (T3).
+  - Follow-up (approved): docs/01 updated; `POST /api/ventas/devoluciones/previsualizacion` (OperacionDePos, read-only) returns per-line
+    credit and `reintegro` through the same `ResolverDevolucionDelTicketAsync`/`DevolucionDeTicket` path and the same rejections as
+    emission; allow-listed in `SuperficieDeAutorizacionTests` and `LectoresDeComprobantesVentaEstructuralesTests`. Integration:
+    DevolucionesTests + SuperficieDeAutorizacion + AislamientoDeTenant + RutasDeLaSpa 155 passed; Application.Tests 1706 passed.
+  - Open: the Web mirror `src/Ways.Web/src/api/pagos.ts` (rule 0c) and its test still encode it (T3).
 - [ ] T3 Web POS: devolución mode (pick ticket, pick lines/qty up to remaining, confirm, print).
   Route: delegated.
 - [ ] T4 POS release (pos-v* tag): needs the owner's OK.

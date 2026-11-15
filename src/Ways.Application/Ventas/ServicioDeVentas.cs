@@ -770,6 +770,45 @@ public class ServicioDeVentas(
         });
     }
 
+    /// <summary>Cuánto vale una devolución, por el mismo camino que la emisión (<see cref="ResolverDevolucionDelTicketAsync"/> y
+    /// <see cref="DevolucionDeTicket"/>) y con los mismos rechazos (líneas, ticket de otro punto de venta, tope, factura fiscal). Solo lee y no
+    /// toma locks: la emisión vuelve a juzgar todo bajo el lock del ticket. Un ticket o punto de venta inexistente o de otro tenant es 404.</summary>
+    public async Task<PrevisualizacionDeDevolucion> PrevisualizarDevolucionAsync(
+        SolicitudDePrevisualizacionDeDevolucion solicitud, CancellationToken ct = default)
+    {
+        var lineas = ExigirLineasValidas(solicitud.Lineas, numeroPreasignado: null);
+        ExigirLineasDeDevolucionSinAjuste(lineas);
+
+        var tipo = await ResolverTipoComprobanteAsync(ReglaDeComprobantes.CodigoDeNotaDeCreditoDeVenta, ct);
+        var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        var asociado = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == solicitud.IdComprobanteAsociado, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el comprobante {solicitud.IdComprobanteAsociado}.");
+        var codigoTipoDelAsociado = await db.TiposComprobante
+            .Where(t => t.Id == asociado.IdTipoComprobante).Select(t => t.Codigo).FirstOrDefaultAsync(ct);
+
+        ReglaDeComprobantes.ValidarComprobanteAsociado(
+            tipo.Signo, asociado.Id, asociado, codigoTipoDelAsociado, puntoVenta.Id, asociado.IdCliente);
+
+        var resultadoDeLaFactura = await db.ComprobantesVenta
+            .Where(c => c.IdVentaOrigen == asociado.Id && c.IdComprobanteAsociado == null)
+            .Select(c => c.ResultadoFiscal)
+            .FirstOrDefaultAsync(ct);
+        var decisionPendiente = asociado.FacturacionDecididaEn is null
+            || await db.FacturacionesDeVenta.AnyAsync(
+                f => f.IdComprobanteVenta == asociado.Id && f.IdFacturacionOrigen == null
+                    && f.Estado == EstadoFacturacionDeVenta.Pendiente, ct);
+        ReglaDeDevoluciones.ExigirDevolvible(asociado.Estado, [asociado.ResultadoFiscal, resultadoDeLaFactura], decisionPendiente);
+
+        var devolucion = await ResolverDevolucionDelTicketAsync(asociado.Id, lineas, ct);
+        var previsualizadas = lineas
+            .Select((linea, indice) => new LineaPrevisualizadaDeDevolucion(
+                linea.IdArticulo, linea.Cantidad, devolucion.Tramos[indice].Sum(t => t.Credito)))
+            .ToList();
+
+        return new PrevisualizacionDeDevolucion(previsualizadas, previsualizadas.Sum(l => l.Credito));
+    }
+
     private static readonly IReadOnlyDictionary<int, ComboEnLinea> SinCombos = new Dictionary<int, ComboEnLinea>();
 
     private static readonly IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> SinTramosDeDevolucion =
