@@ -143,7 +143,12 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
 
         var compras = await db.ComprobantesCompra
             .Where(c => idsCompras.Contains(c.Id))
-            .Select(c => new { c.Id, c.Estado, c.Total })
+            .Select(c => new
+            {
+                c.Id, c.Estado, c.Total,
+                EsNotaDeCredito = db.TiposComprobante.IgnoreQueryFilters(new[] { "BajaLogica" })
+                    .Any(t => t.Id == c.IdTipoComprobante && t.Signo < 0)
+            })
             .ToListAsync(ct);
 
         var pagadoPorCompra = await LectorDePagadoPorCompra.LeerAsync(
@@ -151,7 +156,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
 
         return compras.ToDictionary(
             c => c.Id,
-            c => ReglaDePagoDeCompra.SaldoPendiente(c.Estado, c.Total, pagadoPorCompra.GetValueOrDefault(c.Id, 0m)));
+            c => ReglaDePagoDeCompra.SaldoPendiente(c.Estado, c.EsNotaDeCredito, c.Total, pagadoPorCompra.GetValueOrDefault(c.Id, 0m)));
     }
 
     /// <summary>

@@ -114,7 +114,10 @@ public static class ComprasEndpoints
             return Results.Created($"/api/compras/{creada.Id}", creada);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Crea un borrador de compra (header + items opcionales).");
+        .WithSummary(
+            "Crea un borrador de compra (header + items opcionales). Una nota de crédito (tipo de signo negativo) se carga " +
+            "con importes positivos y puede indicar en idComprobanteCompraAsociado la factura confirmada del mismo " +
+            "proveedor y empresa a la que corrige; no admite actualizaCosto verdadero ni orden de compra.");
 
         grupo.MapPut("/{id:int}", async (ServicioDeCompras servicio, int id, SolicitudDeCompra solicitud, CancellationToken ct) =>
         {
@@ -128,7 +131,7 @@ public static class ComprasEndpoints
             "409 compra_edicion_stock_negativo si el stock no alcanza). Si el total baja por debajo de lo aplicado se " +
             "recortan las aplicaciones, la más nueva primero, y si cambia el proveedor o el punto de venta se liberan " +
             "todas y se cortan los vínculos de los pagos; el redondeo de la compra se revierte. Una anulada responde " +
-            "409 compra_no_editable.");
+            "409 compra_no_editable. Una nota de crédito confirmada no se edita (409 nota_de_credito_no_editable).");
 
         grupo.MapDelete("/{id:int}", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {
@@ -148,7 +151,8 @@ public static class ComprasEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
             "Confirma un borrador: entra el stock, se actualiza costo_nominal (en todos los miembros vivos de la "
-                + "familia del artículo, si la tiene), se congela precio_sugerido.");
+                + "familia del artículo, si la tiene), se congela precio_sugerido. Una nota de crédito saca el stock "
+                + "(409 nota_de_credito_stock_negativo si no alcanza) y baja el saldo del proveedor; nunca toca costos.");
 
         grupo.MapPost("/{id:int}/anular", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {
@@ -156,7 +160,9 @@ public static class ComprasEndpoints
             return Results.Ok(resultado);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Anula una compra confirmada: contramovimientos de stock, nunca revierte costo_nominal.");
+        .WithSummary(
+            "Anula una compra confirmada: contramovimientos de stock, nunca revierte costo_nominal. Una factura con " +
+            "notas de crédito confirmadas responde 409 compra_con_notas_de_credito.");
 
         grupo.MapPost("/{id:int}/ajuste-de-redondeo", (ServicioDePagos servicio, int id, CancellationToken ct) =>
             servicio.AjustarRedondeoDeCompraAsync(id, ct))
@@ -185,7 +191,8 @@ public static class ComprasEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
             "Aplica precio_sugerido por item vía ServicioDePrecios, per-line results. De las líneas de una misma "
-                + "familia solo se intenta la de mayor orden, a toda la familia si su artículo es miembro.");
+                + "familia solo se intenta la de mayor orden, a toda la familia si su artículo es miembro. Una nota de "
+                + "crédito responde 400 nota_de_credito_no_aplica_precios.");
 
         return app;
     }

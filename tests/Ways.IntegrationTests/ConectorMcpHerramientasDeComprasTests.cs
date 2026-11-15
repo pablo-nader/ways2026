@@ -64,6 +64,7 @@ public class ConectorMcpHerramientasDeComprasTests(WaysApiFixture fixture) : ICl
         Assert.Contains(lineas, l => l.EndsWith("| C-FA | Factura A de compra | sí | sí", StringComparison.Ordinal));
         Assert.Contains(lineas, l => l.EndsWith("| C-FB | Factura B de compra | sí | no", StringComparison.Ordinal));
         Assert.Contains(lineas, l => l.EndsWith("| C-RM | Remito / comprobante no fiscal | no | no", StringComparison.Ordinal));
+        Assert.DoesNotContain(lineas, l => l.Contains("| C-NC", StringComparison.Ordinal));
         Assert.Contains(lineas, l => l.EndsWith("| 21% | 21 %", StringComparison.Ordinal));
         Assert.DoesNotContain(lineas, l => l.Contains("| TX | Ticket X", StringComparison.Ordinal));
         Assert.DoesNotContain("Local ajeno", resultado.Texto);

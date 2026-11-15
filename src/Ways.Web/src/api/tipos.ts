@@ -2731,6 +2731,9 @@ export type SolicitudDeCompra = {
   preciosIncluyenIva: boolean
   /** Reemplaza el conjunto completo de percepciones; `null` = ninguna. */
   percepciones: PercepcionSolicitada[] | null
+  /** Factura confirmada del mismo proveedor a la que corrige una nota de crédito. Solo viaja con un
+   * tipo de signo negativo (en otro el servidor responde 400); ausente = sin asociación. */
+  idComprobanteCompraAsociado?: number | null
 }
 
 export type TipoDePercepcion = 'iibb' | 'iva'
@@ -2822,6 +2825,8 @@ export type CompraDetalle = {
    * encabezado, los ve también el vendedor. */
   pagado: number
   saldoPendiente: number
+  /** Factura a la que corrige una nota de crédito; ausente o `null` en cualquier otro comprobante. */
+  idComprobanteCompraAsociado?: number | null
 }
 
 /** Fila de `GET /api/compras` — shape reducido (espejo de `CompraListada`). `saldoPendiente` es lo

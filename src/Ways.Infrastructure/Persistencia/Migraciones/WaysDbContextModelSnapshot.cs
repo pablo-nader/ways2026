@@ -2415,6 +2415,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_recepcion");
 
+                    b.Property<int?>("IdComprobanteCompraAsociado")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_compra_asociado");
+
                     b.Property<int>("IdEmpleado")
                         .HasColumnType("integer")
                         .HasColumnName("id_empleado");
@@ -2495,6 +2499,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdTipoComprobante")
                         .HasDatabaseName("ix_comprobantes_compra_tipo_comprobante");
+
+                    b.HasIndex("IdComprobanteCompraAsociado", "IdTenant")
+                        .HasDatabaseName("ix_comprobantes_compra_comprobante_asociado");
 
                     b.HasIndex("IdOrdenCompra", "IdTenant")
                         .HasDatabaseName("ix_comprobantes_compra_orden_compra");
@@ -8117,6 +8124,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_comprobantes_compra_tipo_comprobante");
+
+                    b.HasOne("Ways.Domain.Compras.ComprobanteCompra", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteCompraAsociado", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_comprobantes_compra_comprobante_asociado");
 
                     b.HasOne("Ways.Domain.Compras.OrdenCompra", null)
                         .WithMany()

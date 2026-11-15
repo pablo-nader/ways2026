@@ -44,7 +44,7 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
 
         var tipos = await db.TiposComprobante.IgnoreQueryFilters([FiltroDeBaja])
             .Where(t => t.Clase == ClaseComprobante.Compra && t.RegistraLibroIva)
-            .ToDictionaryAsync(t => t.Id, t => t.Codigo, ct);
+            .ToDictionaryAsync(t => t.Id, t => (t.Codigo, t.Signo), ct);
         var idsTipo = tipos.Keys.ToList();
 
         var consulta = db.ComprobantesCompra
@@ -94,7 +94,7 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
 
                 return new CompraParaLibro(
                     c.FechaComprobante!.Value,
-                    tipos[c.IdTipoComprobante],
+                    tipos[c.IdTipoComprobante].Codigo,
                     c.NumeroExterno!,
                     proveedor?.RazonSocial ?? ContraparteNoDisponible,
                     proveedor?.Cuit,
@@ -107,7 +107,8 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
                         .ToList(),
                     percibidas.Where(p => p.Tipo == TiposDePercepcion.Iva).Sum(p => p.Importe),
                     percibidas.Where(p => p.Tipo == TiposDePercepcion.Iibb).Sum(p => p.Importe),
-                    c.ImpuestosInternos);
+                    c.ImpuestosInternos,
+                    tipos[c.IdTipoComprobante].Signo);
             })
             .ToList();
 

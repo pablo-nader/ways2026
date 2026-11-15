@@ -389,6 +389,28 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
     }
 
     [Fact]
+    public async Task UnaNotaDeCreditoNoSeCargaConElAsistenteYNoCreaNada()
+    {
+        await using var e = await PrepararAsync("mcp-borrador-nota-de-credito");
+        var gaseosa = (await _compras.SembrarArticuloAsync(e.Usuario.IdTenant, "Gaseosa Cola 2,25 l")).Id;
+
+        var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, new
+        {
+            idProveedor = e.IdProveedor,
+            idTipoComprobante = await _borrador.IdTipoAsync("C-NCA"),
+            idPuntoVenta = e.IdPuntoVenta,
+            fechaComprobante = "2026-10-15",
+            puntoVentaFactura = 3,
+            numeroFactura = 12345,
+            lineas = new object[] { new { idArticulo = gaseosa, unidades = 1, costoUnitario = 100m, idAlicuotaIva = e.IdIva21 } }
+        });
+
+        Assert.True(resultado.EsError, resultado.Texto);
+        Assert.Contains("notas de crédito se cargan a mano", resultado.Texto);
+        Assert.Empty(await _borrador.ComprasDelProveedorAsync(e.IdProveedor));
+    }
+
+    [Fact]
     public async Task UnImpuestoInternoNegativoOSinDiscriminarIvaEsUnErrorYNoCreaNada()
     {
         await using var e = await PrepararAsync("mcp-borrador-impuesto-interno-malo");

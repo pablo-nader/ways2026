@@ -198,7 +198,7 @@ empresas del tenant), cada uno con su `/export` XLSX; el período máximo es el 
 reportes (366 días) y el tope de filas el de las exportaciones.
 
 - *Compras:* comprobantes `confirmada` de tipos con `registra_libro_iva`, por
-  `fecha_comprobante` (inclusive en ambos extremos); borrador, anulada y `C-RM` quedan afuera. El
+  `fecha_comprobante` (inclusive en ambos extremos); borrador, anulada y `C-RM` quedan afuera; una nota de crédito entra con importes negativos. El
   desglose sale de `alicuotas_comprobante_compra`: cada alícuota gravada aporta neto e IVA a su
   porcentaje, Exento va a la columna *exento* y No gravado a *no gravado* (por nombre, nunca por
   porcentaje 0: el 0% real tiene `codigo_afip` y es una alícuota más). Una factura sin
@@ -778,3 +778,39 @@ trap, resuelta por encima de `ClasificarUnicidad`; `ux_items_orden_compra_orden`
 (`ProyectorDeEstadoDeOrden`, `Ways.Domain.Compras`) y el motor de escritura
 (`EscriturasDeOrdenDeCompra`) son slice 3; `ServicioDeOrdenesDeCompra` (draft CRUD, `enviar`,
 `cerrar`, `anular`, lectura) es slices 2-5.
+
+
+#### Notas de crédito de compra
+
+Los tipos `C-NCA`, `C-NCB` y `C-NCC` (signo −1, registran libro IVA; su `discrimina_iva` sigue la
+misma tabla que la factura de su letra) comparten tabla, borrador y confirmación con la factura.
+Las cantidades, costos, alícuotas y percepciones se cargan positivos; el signo lo aplica cada
+consumidor:
+
+| Consumidor | Efecto de una nota de crédito confirmada |
+|---|---|
+| Stock | un asiento `motivo = compra` por línea de artículo con cantidad negativa; 409 `nota_de_credito_stock_negativo` si el agregado o el lote quedarían bajo cero. Los conceptos no mueven stock |
+| Cuenta del proveedor | `proveedores.saldo` baja por el total; el movimiento `compra` lleva `importe` negativo |
+| Costos y precios | nunca los toca: `actualizaCosto` verdadero es 400 `nota_de_credito_no_actualiza_costo`, no guarda `precio_sugerido` y `POST /precios` es 400 `nota_de_credito_no_aplica_precios` |
+| Libro IVA de compras | fila con neto, IVA, percepciones, impuestos internos y total negativos |
+| Compras por proveedor | el total de la nota resta |
+| Listado y saldo del proveedor | saldo pendiente 0 y sin estado de pago; no figura en la lista de compras con estado de pago |
+| Ficha del artículo | sus líneas no aparecen en las últimas compras |
+| Pagos | una nota es un crédito, no se paga |
+
+Anular una nota revierte el stock y el saldo con los mismos contramovimientos que cualquier
+compra. Una nota confirmada no se edita (409 `nota_de_credito_no_editable`) y una compra
+confirmada no pasa a ser nota (409 `compra_confirmada_no_puede_ser_nota_de_credito`). No se liga a
+una orden de compra y el asistente (MCP) no la carga (400 `nota_de_credito_solo_manual`).
+
+**`id_comprobante_compra_asociado integer NULL`** (solo en una nota): la factura que corrige.
+Informativa: no aplica la nota contra la factura ni toca su saldo. FK compuesta
+`fk_comprobantes_compra_comprobante_asociado` `(id_comprobante_compra_asociado, id_tenant)` →
+`comprobantes_compra`, RESTRICT, MATCH SIMPLE, con índice `ix_comprobantes_compra_comprobante_asociado`;
+su `23503` cae en el mapeo genérico `referencia_invalida`. El servicio exige una factura (tipo de
+signo positivo que registra libro IVA: ni remito ni otra nota), confirmada, del mismo proveedor y de
+la misma empresa, con 400 `compra_asociada_no_es_factura`, `compra_asociada_no_confirmada`,
+`compra_asociada_de_otro_proveedor` o `compra_asociada_de_otra_empresa`; en un comprobante que no es
+nota, 400 `asociacion_solo_en_nota_de_credito`. Se valida al guardar el borrador y se relee
+`FOR SHARE` al confirmar, antes de lotes y stock. Una factura con notas confirmadas no se anula
+(409 `compra_con_notas_de_credito`) ni cambia de proveedor, empresa o tipo.

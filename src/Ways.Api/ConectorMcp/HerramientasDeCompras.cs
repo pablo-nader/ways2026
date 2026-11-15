@@ -75,7 +75,7 @@ public sealed class HerramientasDeCompras
             lineas.Add(string.Empty);
             lineas.Add("Tipos de comprobante de compra (id | código | nombre | registra libro IVA | discrimina IVA):");
             lineas.AddRange(tipos
-                .Where(t => t.Clase == ClaseComprobante.Compra)
+                .Where(t => t.Clase == ClaseComprobante.Compra && t.Signo > 0)
                 .Select(t => $"- {t.Id} | {t.Codigo} | {t.Nombre} | {SiNo(t.RegistraLibroIva)} | {SiNo(t.DiscriminaIva)}"));
 
             lineas.Add(string.Empty);

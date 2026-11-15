@@ -47,6 +47,16 @@ public partial class ServicioDeCompras
             .Select(c => (EstadoCompra?)c.Estado)
             .FirstOrDefaultAsync(ct);
 
+        // Una nota de crédito confirmada no se edita: su stock, su cuenta y su asociación se corrigen anulándola y
+        // cargando otra. El tipo de una nota confirmada no cambia nunca, así que esta lectura previa al lock no puede
+        // quedar vieja.
+        if (estado == EstadoCompra.Confirmada && await EsNotaDeCreditoAsync(await TipoDeLaCompraAsync(id, ct), ct))
+        {
+            throw new ErrorDominio(
+                "nota_de_credito_no_editable",
+                "Una nota de crédito confirmada no puede editarse: anulala y cargá otra.", 409);
+        }
+
         return estado switch
         {
             null => throw ErrorDominio.NoEncontrado($"No existe la compra {id}."),
@@ -55,6 +65,9 @@ public partial class ServicioDeCompras
             _ => throw new ErrorDominio("compra_no_editable", "Una compra anulada no puede editarse.", 409)
         };
     }
+
+    private async Task<int> TipoDeLaCompraAsync(int id, CancellationToken ct) =>
+        await db.ComprobantesCompra.AsNoTracking().Where(c => c.Id == id).Select(c => c.IdTipoComprobante).FirstAsync(ct);
 
     /// <summary>Edición de una compra confirmada. Forma (b) de <c>ef-retry-safe-writes</c>: una sola transacción sin
     /// reintento, porque repetir la edición tras un commit ambiguo asentaría dos veces la diferencia de stock y de cuenta;
@@ -69,6 +82,17 @@ public partial class ServicioDeCompras
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
         var (tipo, _, puntoVenta, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        // Una compra confirmada no pasa a ser nota de crédito (ya movió stock y cuenta como compra) ni lleva factura
+        // asociada: la asociación solo existe en una nota.
+        if (ReglaDeNotaDeCredito.EsNotaDeCredito(tipo.Signo))
+        {
+            throw new ErrorDominio(
+                "compra_confirmada_no_puede_ser_nota_de_credito",
+                "Una compra confirmada no puede pasar a nota de crédito: anulala y cargá la nota.", 409);
+        }
+
+        ReglaDeNotaDeCredito.ExigirCoherenciaConElTipo(tipo.Signo, solicitud.IdComprobanteCompraAsociado, null, []);
+
         var numeroExterno = NormalizarNumeroExterno(tipo, solicitud.NumeroExterno);
 
         // Una confirmada no puede quedar incompleta (ck_comprobantes_compra_confirmada_completa) ni sin líneas: se
@@ -187,6 +211,16 @@ public partial class ServicioDeCompras
             .Select(p => p.IdEmpresa)
             .Distinct()
             .CountAsync(ct) > 1;
+        // Una factura con notas de crédito confirmadas conserva proveedor, empresa y tipo: la nota se asoció a una
+        // factura de ese proveedor y empresa, y un remito no es asociable. Bajo el lock exclusivo del header.
+        var cambiaDeTipo = comprobante.IdTipoComprobante != solicitud.IdTipoComprobante;
+        if ((cambiaProveedor || cambiaEmpresa || cambiaDeTipo) && await ContarNotasDeCreditoConfirmadasAsync(id, ct) > 0)
+        {
+            throw new ErrorDominio(
+                "compra_con_notas_de_credito",
+                "La factura tiene notas de crédito confirmadas: no puede cambiar de proveedor, de empresa ni de tipo.", 409);
+        }
+
         var plan = await PlanearElTratamientoDePagosAsync(
             id, comprobante.Total, calculada.Total, cambiaProveedor || cambiaEmpresa, ct);
 

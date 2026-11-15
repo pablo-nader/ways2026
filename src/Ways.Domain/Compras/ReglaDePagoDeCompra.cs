@@ -22,6 +22,14 @@ public static class ReglaDePagoDeCompra
             ? null
             : SaldoPendiente(estado, total, pagado) <= 0m ? EstadoDePagoDeCompra.Pagada : EstadoDePagoDeCompra.Pendiente;
 
+    /// <summary>Una nota de crédito de compra es un crédito: no se paga, así que nunca tiene saldo pendiente.</summary>
+    public static decimal SaldoPendiente(EstadoCompra estado, bool esNotaDeCredito, decimal total, decimal pagado) =>
+        esNotaDeCredito ? 0m : SaldoPendiente(estado, total, pagado);
+
+    /// <summary>Una nota de crédito no tiene estado de pago: no es ni pagada ni pendiente.</summary>
+    public static EstadoDePagoDeCompra? EstadoDePago(EstadoCompra estado, bool esNotaDeCredito, decimal total, decimal pagado) =>
+        esNotaDeCredito ? null : EstadoDePago(estado, total, pagado);
+
     /// <summary>Concepto del pago cuando el pedido no trae uno: <c>Pago &lt;tipo&gt; &lt;número&gt;</c>,
     /// con el id de la compra si no tiene número externo.</summary>
     public static string ConceptoPorDefecto(string? nombreDelTipo, string? numeroExterno, int idComprobanteCompra)
