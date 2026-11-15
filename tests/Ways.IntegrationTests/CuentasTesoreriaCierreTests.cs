@@ -454,10 +454,19 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         var turno = await AbrirTurnoAsync(ctx);
         await SembrarPagoAsync(ctx, turno, medio, 200m);
 
+        // El ticket que se devuelve se cobra en efectivo: no toca la cuenta ni el arqueo del medio digital.
+        var origen = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas",
+            new SolicitudDeVenta(
+                ctx.IdPuntoVenta, ctx.IdCliente, "TX", null, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)], null, null));
+        Assert.Equal(HttpStatusCode.Created, origen.StatusCode);
+        var idOrigen = (await origen.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+
         var conPagos = await ctx.Admin.PostAsJsonAsync(
             "/api/ventas",
             new SolicitudDeVenta(
-                ctx.IdPuntoVenta, ctx.IdCliente, "NCX", null, [new LineaDeVenta(idArticulo, 1m, null)],
+                ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idOrigen, [new LineaDeVenta(idArticulo, 1m, null)],
                 [new PagoDeVenta(medio, 100m, null, 0m)], null, null));
         Assert.Equal(HttpStatusCode.BadRequest, conPagos.StatusCode);
         Assert.Equal("pago_en_comprobante_negativo", await CodigoAsync(conPagos));
@@ -465,7 +474,7 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         var sinPagos = await ctx.Admin.PostAsJsonAsync(
             "/api/ventas",
             new SolicitudDeVenta(
-                ctx.IdPuntoVenta, ctx.IdCliente, "NCX", null, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
+                ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idOrigen, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
         Assert.Equal(HttpStatusCode.Created, sinPagos.StatusCode);
 
         await CerrarOkAsync(ctx, turno);

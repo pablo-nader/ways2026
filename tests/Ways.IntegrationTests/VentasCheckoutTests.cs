@@ -519,9 +519,14 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var ctx = await PrepararAsync(nameof(UnaDevolucionDeUnArticuloPorUnidadNoExigeCantidadEntera));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx-fraccion", 100m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente NCX Fracción");
+        var original = await ctx.Admin.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null, [new LineaDeVenta(idArticulo, 2m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 200m, null, 0m)], null, null));
+        Assert.Equal(HttpStatusCode.Created, original.StatusCode);
+        var idOriginal = (await original.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!.Id;
 
         var solicitud = new SolicitudDeVenta(
-            ctx.IdPuntoVenta, idCliente, "NCX", null,
+            ctx.IdPuntoVenta, idCliente, "NCX", idOriginal,
             [new LineaDeVenta(idArticulo, 1.5m, null)],
             [],
             null, null);
@@ -601,9 +606,9 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     // ---- task 4.15: devoluciones como NCX -------------------------------------------------------
 
     [Fact]
-    public async Task DevolucionStandaloneSePersisteComoNcxSinAsociado()
+    public async Task UnaDevolucionSinTicketDeOrigenSeRechazaYNoMueveElStock()
     {
-        var ctx = await PrepararAsync(nameof(DevolucionStandaloneSePersisteComoNcxSinAsociado));
+        var ctx = await PrepararAsync(nameof(UnaDevolucionSinTicketDeOrigenSeRechazaYNoMueveElStock));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx", 100m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente NCX");
 
@@ -614,15 +619,12 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             null, null);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
-        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
-
-        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
-        Assert.Null(emitido.IdComprobanteAsociado);
-        Assert.Equal(-100m, emitido.Total);
-        Assert.Equal(-1m, emitido.Items[0].Cantidad);
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("comprobante_asociado_requerido", problema.GetProperty("codigo").GetString());
 
         var (cantidad, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
-        Assert.Equal(1m, cantidad);
+        Assert.Equal(0m, cantidad);
     }
 
     [Fact]
@@ -654,10 +656,10 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Theory]
-    [InlineData(false)]
     [InlineData(true)]
     public async Task UnaDevolucionConPagosSeRechazaConPagoEnComprobanteNegativoYNoPersisteNada(bool conAsociado)
     {
+        // Sin asociado la devolución ya se rechaza antes (comprobante_asociado_requerido), así que solo se prueba con él.
         var ctx = await PrepararAsync(
             $"{nameof(UnaDevolucionConPagosSeRechazaConPagoEnComprobanteNegativoYNoPersisteNada)}{conAsociado}");
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx-pagos", 100m);
@@ -686,15 +688,11 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
-    public async Task UnaDevolucionReResuelveElPrecioVigenteEnVezDePinearElDeLaVentaOriginal()
+    public async Task UnaDevolucionAcreditaElPrecioDeLaVentaOriginalAunqueElVigenteHayaCambiado()
     {
-        // Paridad legacy (alsina): una devolución NO es un "deshacer" contable de la venta
-        // original — vuelve a pasar por el mismo camino de resolución de precios que cualquier
-        // línea nueva, así que si el precio cambió entre la venta y la devolución, la devolución
-        // usa el vigente AL MOMENTO DE LA DEVOLUCIÓN, nunca el snapshoteado en la venta original
-        // (a diferencia del reimpreso de la MISMA venta, que sí es un snapshot inmutable —
-        // ReimprimirDespuesDeUnCambioDeCatalogoDevuelveElItemSinCambios).
-        var ctx = await PrepararAsync(nameof(UnaDevolucionReResuelveElPrecioVigenteEnVezDePinearElDeLaVentaOriginal));
+        // Desviación deliberada del legacy (alsina), decisión del dueño 2026-11-09: una devolución acredita lo que se cobró
+        // en el ticket de origen, no el precio vigente al momento de devolver.
+        var ctx = await PrepararAsync(nameof(UnaDevolucionAcreditaElPrecioDeLaVentaOriginalAunqueElVigenteHayaCambiado));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx-precio-vigente", 100m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente NCX Precio Vigente");
 
@@ -724,8 +722,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Created, respuestaDevolucion.StatusCode);
 
         var emitidoDevolucion = (await respuestaDevolucion.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
-        Assert.Equal(150m, emitidoDevolucion.Items[0].PrecioUnitario);
-        Assert.Equal(-150m, emitidoDevolucion.Total);
+        Assert.Equal(100m, emitidoDevolucion.Items[0].PrecioUnitario);
+        Assert.Equal(-100m, emitidoDevolucion.Total);
     }
 
     [Fact]

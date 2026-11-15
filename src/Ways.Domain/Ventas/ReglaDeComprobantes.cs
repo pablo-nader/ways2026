@@ -112,20 +112,29 @@ public static class ReglaDeComprobantes
             _ => throw new ArgumentOutOfRangeException(nameof(resultadoDeLaFactura), resultadoDeLaFactura, null)
         };
 
-    /// <summary><c>id_comprobante_asociado</c> (spec: Devoluciones As NCX Comprobantes) —
-    /// siempre opcional; cuando está poblado, exige NCX (nunca un TX asociado a otro) y que el
-    /// comprobante referenciado esté <see cref="EstadoComprobante.Emitido"/>, del mismo punto de
-    /// venta y del mismo cliente (design: Protection Rules). Un espejo fiscal no es una venta: se rechaza como
-    /// asociado para no devolver dos veces la misma venta (ticket y factura).</summary>
+    /// <summary><c>id_comprobante_asociado</c>: una nota de crédito exige la venta (<c>TX</c>) que devuelve (400
+    /// <c>comprobante_asociado_requerido</c>) y un TX nunca lleva una. La venta tiene que estar
+    /// <see cref="EstadoComprobante.Emitido"/>, del mismo punto de venta y del mismo cliente (design: Protection Rules). Un
+    /// espejo fiscal o cualquier otro tipo de comprobante no es una venta: se rechaza como asociado para no devolver dos
+    /// veces la misma venta (ticket y factura).</summary>
     public static void ValidarComprobanteAsociado(
         short signoTipoComprobante,
         int? idComprobanteAsociado,
         ComprobanteVenta? asociado,
+        string? codigoTipoDelAsociado,
         int idPuntoVenta,
         int idCliente)
     {
         if (idComprobanteAsociado is null)
         {
+            if (signoTipoComprobante < 0)
+            {
+                throw new ErrorDominio(
+                    "comprobante_asociado_requerido",
+                    "Una devolución se asocia al ticket de venta que devuelve: indicá cuál es.",
+                    400);
+            }
+
             return;
         }
 
@@ -148,6 +157,12 @@ public static class ReglaDeComprobantes
                 400);
         }
 
+        if (codigoTipoDelAsociado != CodigoDeVenta)
+        {
+            throw new ErrorDominio(
+                "comprobante_asociado_invalido", "El comprobante asociado tiene que ser un ticket de venta.", 400);
+        }
+
         if (asociado.Estado != EstadoComprobante.Emitido)
         {
             throw new ErrorDominio(
@@ -162,6 +177,9 @@ public static class ReglaDeComprobantes
                 400);
         }
     }
+
+    /// <summary><c>tipos_comprobante.codigo</c> del ticket de venta, el único comprobante que una devolución puede devolver.</summary>
+    public const string CodigoDeVenta = "TX";
 }
 
 /// <summary>Lo que la anulación de una venta hace además con su facturación: ver

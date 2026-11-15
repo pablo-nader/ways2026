@@ -228,8 +228,9 @@ public partial class FacturacionDeVentasEmisionTests
     }
 
     private static SolicitudDeVenta VentaDeCobro(
-        Cobro t, bool forzar = true, long? numero = null, string tipo = "TX", decimal efectivo = 100m) =>
-        new(t.C.IdPuntoVenta, null, tipo, null,
+        Cobro t, bool forzar = true, long? numero = null, string tipo = "TX", decimal efectivo = 100m,
+        int? idAsociado = null) =>
+        new(t.C.IdPuntoVenta, null, tipo, idAsociado,
             [new LineaDeVenta(t.IdArticulo, 1m, null, PrecioUnitario: numero is null ? null : 100m)],
             efectivo > 0m ? [new PagoDeVenta(t.C.IdEfectivo, efectivo, null, 0m)] : [],
             null, null, NumeroPreasignado: numero, ForzarFactura: forzar && tipo == "TX");
@@ -550,7 +551,9 @@ public partial class FacturacionDeVentasEmisionTests
     {
         var t = await PrepararCobroAsync("cobrosincert");
 
-        var devolucion = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, tipo: "NCX", efectivo: 0m));
+        var origen = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, forzar: false));
+        var devolucion = await VenderEnLineaAsync(
+            t.Cajero, VentaDeCobro(t, tipo: "NCX", efectivo: 0m, idAsociado: origen.Id));
         Assert.Equal(EstadosFiscalesDeVenta.NoCorresponde, devolucion.Fiscal!.Estado);
 
         await EjecutarComoOwnerAsync("UPDATE certificados_fiscales SET activo = false WHERE id_empresa = $1", t.C.IdEmpresa);

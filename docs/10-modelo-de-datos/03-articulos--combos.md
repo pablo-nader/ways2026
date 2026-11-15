@@ -107,52 +107,34 @@ línea ya descontado) y anulación siguen funcionando por artículo.
 
 ##### Nota de crédito de una venta con combo
 
-Una nota de crédito (NCX) nunca DETECTA combos, pero la que está asociada (`id_comprobante_asociado`) a una venta cuyos
-items consumieron un combo devuelve lo que se cobró por esas unidades y no lo que cuestan hoy (decisión del dueño,
-2026-10-11): devolver un pancho y una coca de un combo de 5.000 acredita 5.000, no 5.500. Se decide en la fase de decisión
-de `EmitirAsync` (`DevolucionDeCombos`, pura); nada ocurre dentro de la lambda reintentable.
+Una nota de crédito (NCX) nunca DETECTA combos y siempre devuelve lo que se cobró en el ticket de origen, no lo que cuestan hoy
+(decisión del dueño, 2026-10-11 para combos; extendida a toda devolución el 2026-11-09): devolver un pancho y una coca de un
+combo de 5.000 acredita 5.000, no 5.500. Desde `devoluciones-pos` esto ya no es una regla propia de los combos sino la de toda
+devolución, y la decide `DevolucionDeTicket` (pura, antes `DevolucionDeCombos`) en la fase de decisión de `EmitirAsync`, sin
+nada dentro de la lambda reintentable. La fórmula, el tope por artículo, el lote, el bloqueo por factura fiscal y los locks están
+en `04-comprobantes-de-venta.md`, sección "Devoluciones (NCX contra el ticket de origen)". Lo específico de un ticket con combo:
 
-- **Compuerta.** La NCX es online (sin `NumeroPreasignado`), tiene comprobante asociado y ese comprobante tiene items con
-  `id_combo` y cantidad positiva de alguno de los artículos devueltos. Si no, la NCX se precia como siempre, con el
-  mismo plan y las mismas filas: la devolución de una venta sin combos sigue usando la lista y las ofertas de HOY y no lo
-  cobrado (decisión aparte, no tomada). Una línea cuyo artículo no figura en un item de combo de la venta asociada
-  también se precia como siempre. Un asociado que es a su vez una NCX no aporta items (sus cantidades son negativas).
-- **Importe.** Para las unidades que toma de un item de combo, el crédito es lo cobrado por ese item en proporción a las
-  unidades: devolver TODAS las unidades del item acredita exactamente su `total`; una devolución parcial acredita
-  `round(total × devueltas / cantidad, 2)` (`AwayFromZero`). El `total` del item ya incluye la parte del combo, la oferta
-  de las unidades que no entraron al combo y el ajuste manual de esa línea, así que el crédito devuelve el total
-  cobrado, ajuste incluido. El consumo se acumula entre las líneas del mismo documento y el crédito de cada toma es
-  `round(total × unidades acumuladas / cantidad, 2)` menos lo ya acreditado de ese item: como el redondeo es monótono,
-  ninguna toma resulta negativa y repartir el item en varias líneas no pierde ni suma centavos del crédito del item (la
-  suma de las tomas es exactamente su `total`). Esto vale para el crédito del item; el `ajuste_manual_porcentaje` que
-  traiga la línea de la NCX se redondea aparte, por tramo (ver más abajo).
-- **Ajuste manual positivo (recargo) en la línea original.** Si la línea vendida llevaba un recargo, su `total` supera al
-  bruto y el crédito también: se devuelve lo que se pagó. El `descuento` persistido del item de la NCX tiene entonces el
-  signo opuesto al de un descuento normal de NCX (positivo), porque `bruto − descuento = −crédito` con crédito mayor que
-  el bruto (coca de 2.500 con +20 % sobre su parte del combo: total 2.727,28, `descuento` +227,28).
-- **Línea resultante.** Cada tramo es un item de la NCX con el `precio_unitario` del item original, el `id_combo`, la
-  `id_lista_precio` y el `id_oferta` del original, y la alícuota (`id_alicuota_iva` y `porcentaje_iva`) del original:
-  el artículo pudo cambiar de alícuota desde la venta y el IVA de lo devuelto es el de lo cobrado. La diferencia entre
-  el bruto (`−unidades × precio`) y el crédito es el `descuento` de la línea, con el signo de la cantidad (negativo,
-  como todo descuento de una NCX): `bruto − descuento = −crédito`. Es el mismo mecanismo de importe de línea que la
-  parte del combo de una venta (`UnidadesConsumidasPorCombo` y `AhorroDeCombo` de `LineaParaCalcular`). Una línea
-  devuelta que cruza varios items de combo da un item de la NCX por tramo; stock y lote se reponen por item.
-- **Un `ajuste_manual_porcentaje` en la línea de la NCX** sigue siendo válido y se aplica ENCIMA del neto devuelto, por
-  tramo, con la misma fórmula de siempre (`−10 %` sobre un neto de −2.272,73 resta 227,27 de lo devuelto). No es lo
-  mismo que el ajuste de la línea original, que ya está dentro del `total` que se devuelve.
-- **Orden cuando el artículo está en varios items.** Las unidades de una línea devuelta se toman SOLO de items de combo,
-  en orden creciente de `orden` del item (empate por menor `id_item`), y las líneas del mismo documento consumen en el
-  orden en que vienen. Los items del mismo artículo fuera de un combo no se toman: si se devuelven más unidades que las
-  vendidas en combo, el excedente se precia como siempre (lista y ofertas de hoy, sin detectar combos). Así una NCX nunca
-  acredita por una unidad de combo más que su `total` y, mientras el precio de hoy no supere lo cobrado, tampoco más que
-  el total de la venta.
-- **Tope por documento, no por venta.** El sistema no lleva cuenta de lo devuelto por NCX anteriores asociadas a la misma
-  venta ni valida las cantidades contra las de la venta: una segunda NCX de la misma venta vuelve a partir de los items
-  originales. El tope es el de un solo documento (nunca acredita más unidades de combo que las del item). Queda como
-  decisión de producto abierta.
-- **Costo de consultas.** UNA consulta más (los items de combo de la venta asociada, de los artículos devueltos), solo en la
-  NCX asociada: una sin comprobante asociado no la paga, y una asociada a una venta sin combos la paga y recibe el
-  resultado vacío. La nota de crédito no tiene un techo de consultas fijado en `VentasCheckoutTests`.
+- **Asociado obligatorio.** Una NCX sin `id_comprobante_asociado` se rechaza (400 `comprobante_asociado_requerido`): no hay devolución a
+  lista de hoy ni "sin combos" aparte.
+- **Importe.** Los items del ticket que consumieron un combo se reparten como cualquier otro: el crédito de una toma es
+  `round(total × (tomadas + unidades) / cantidad)` al peso entero menos lo ya acreditado de ese item; devolver todas las unidades
+  del item acredita exactamente su `total`, que ya incluye la parte del combo, la oferta de las unidades que no entraron al combo
+  y el ajuste manual de esa línea. El crédito acumula entre las líneas del documento y entre las NCX del mismo ticket, y como el
+  redondeo es monótono ninguna toma resulta negativa ni la suma supera el `total`.
+- **Línea resultante.** Cada tramo es un item de la NCX con el `precio_unitario`, el `id_combo`, la `id_lista_precio`, el
+  `id_oferta`, la alícuota (`id_alicuota_iva` y `porcentaje_iva`) y el `id_lote` del item original: el artículo pudo cambiar de
+  alícuota desde la venta y el IVA de lo devuelto es el de lo cobrado. La diferencia entre el bruto (`−unidades × precio`) y el
+  crédito es el `descuento` de la línea, con el signo de la cantidad: `bruto − descuento = −crédito`, el mismo mecanismo de
+  importe de línea que la parte del combo de una venta (`UnidadesConsumidasPorCombo` y `AhorroDeCombo` de `LineaParaCalcular`). Si la
+  línea vendida llevaba un recargo, su `total` supera al bruto, el crédito también y el `descuento` queda positivo. Una línea
+  devuelta que cruza varios items da un item de la NCX por tramo; stock y lote se reponen por item.
+- **Sin ajuste manual en la línea de la NCX.** Un `ajuste_manual_porcentaje` se rechaza (400
+  `ajuste_manual_no_admitido_en_devolucion`): el del item original ya está dentro del `total` que se devuelve.
+- **Orden cuando el artículo está en varios items.** Las unidades se toman de todos los items del mismo artículo (combo o no),
+  en orden creciente de `orden` (empate por menor `id_item`); lo ya devuelto por otras NCX emitidas consume primero esos mismos
+  items. Pedir más de lo que queda es 409 `devolucion_excede_lo_vendido`: ya no hay excedente a precio de hoy.
+- **Costo de consultas.** Dos lecturas más (items del ticket y lo ya devuelto) y la del tipo del asociado, solo en una NCX; la NCX
+  ya no consulta precios ni ofertas.
 
 ##### Vista previa del carrito (`POST /api/ofertas/resolver-con-combos`)
 

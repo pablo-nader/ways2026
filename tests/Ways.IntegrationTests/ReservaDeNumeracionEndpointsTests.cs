@@ -896,53 +896,6 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("numero_preasignado_con_otro_contenido", problema.GetProperty("codigo").GetString());
     }
 
-    /// <summary>judgment-day (WARNING, ronda 2 — mutation-proof-tests): aísla el disyunto
-    /// idComprobanteAsociado de <see cref="ServicioDeVentas.ExigirMismoContenido"/>. Dos
-    /// devoluciones NCX con el mismo artículo, mismo cliente (Consumidor Final) y mismos pagos
-    /// (ninguno, como toda devolución) bajo el mismo número pre-asignado — construidas con
-    /// <c>with</c> a partir de la MISMA solicitud base, así que la ÚNICA diferencia entre ambas
-    /// es a qué comprobante original se asocian (evidencia de mutación: borrar solo el disyunto
-    /// de idComprobanteAsociado la pone en rojo; revertido, vuelve a verde).</summary>
-    [Fact]
-    public async Task ReenviarConOtroComprobanteAsociadoBajoElMismoNumeroPreasignadoEs409()
-    {
-        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
-            nameof(ReenviarConOtroComprobanteAsociadoBajoElMismoNumeroPreasignadoEs409));
-        await AbrirTurnoAsync(idTenant, idPuntoVenta);
-        var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
-
-        var (cajero, _) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "replay-asociado");
-        using var _cajero = cajero;
-        admin.Dispose();
-
-        var original1 = await cajero.PostAsJsonAsync(
-            "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m));
-        Assert.Equal(HttpStatusCode.Created, original1.StatusCode);
-        var emitidoOriginal1 = (await original1.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
-
-        var original2 = await cajero.PostAsJsonAsync(
-            "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m));
-        Assert.Equal(HttpStatusCode.Created, original2.StatusCode);
-        var emitidoOriginal2 = (await original2.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
-
-        await cajero.PostAsJsonAsync(
-            "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "NCX", 5));
-
-        var devolucion = new SolicitudDeVenta(
-            idPuntoVenta, null, "NCX", emitidoOriginal1.Id,
-            [new LineaDeVenta(idArticulo, 1m, null)], [], null, null,
-            IdPresupuestoOrigen: null, NumeroPreasignado: 1);
-        var primera = await cajero.PostAsJsonAsync("/api/ventas", devolucion);
-        Assert.Equal(HttpStatusCode.Created, primera.StatusCode);
-
-        var devolucionOtroAsociado = devolucion with { IdComprobanteAsociado = emitidoOriginal2.Id };
-        var segunda = await cajero.PostAsJsonAsync("/api/ventas", devolucionOtroAsociado);
-
-        Assert.Equal(HttpStatusCode.Conflict, segunda.StatusCode);
-        var problema = await segunda.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("numero_preasignado_con_otro_contenido", problema.GetProperty("codigo").GetString());
-    }
-
     /// <summary>judgment-day (WARNING, ronda 2 — mutation-proof-tests): aísla el disyunto de
     /// pagos de <see cref="ServicioDeVentas.ExigirMismoContenido"/>. Mismo artículo, mismo
     /// cliente (Consumidor Final) y mismo comprobante asociado (null) en las dos solicitudes —

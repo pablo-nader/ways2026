@@ -135,6 +135,12 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 > positivo se rechaza con 400 `pago_en_comprobante_negativo` (`ValidadorDePagos`, regla 0c, después de los importes negativos y
 > antes de la fila 1). Las filas en cero no se rechazan; sin pagos se acepta.
 >
+> **Regla nueva (devoluciones contra el ticket de origen, 2026-11-15):** en el legacy una devolución es una venta con cantidades
+> negativas, sin ticket de origen y a precio de hoy. La app nueva exige el ticket (`TX`) que se devuelve, topa cada artículo contra
+> lo que ese ticket vendió menos lo ya devuelto (409 `devolucion_excede_lo_vendido`), acredita cada unidad por lo que se cobró en
+> el ticket (no por la lista de hoy) y devuelve la mercadería al lote del que salió. Detalle en `docs/10-modelo-de-datos/04-comprobantes-de-venta.md`
+> ("Devoluciones (NCX contra el ticket de origen)").
+>
 > **Desviación deliberada (decisión del dueño, 2026-09-16; histórica, reemplazada el 2026-11-02):** la fila 3 de arriba (`vuelto
 > máximo`, $20 en el legacy, `vuelto_maximo` parametrizado en la app nueva hasta esta fecha)
 > impedía ventas legítimas — p. ej. un ticket de $5.500 pagado con un billete de $10.000 requiere

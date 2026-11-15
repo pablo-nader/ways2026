@@ -197,8 +197,17 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "&& await db.ComprobantesVenta.AnyAsync(")] =
                 (1, PorClaveUnica),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
+                "\"SELECT estado::text, resultado_fiscal::text, facturacion_decidida_en IS NULL FROM comprobantes_venta \" +")] =
+                (1, "Bloquea (FOR UPDATE) el ticket de origen de una devolución, por id: ya se juzgó que no es un espejo."),
+            [("Ways.Application/Ventas/LectorDeDevolucionesDelTicket.cs",
                 "var vendidos = await db.ItemsComprobanteVenta")] =
-                (2, PorId),
+                (1, PorId),
+            [("Ways.Application/Ventas/ConsultaDeDevolvibles.cs",
+                "var resultadoDeLaFactura = await db.ComprobantesVenta")] =
+                (1, "Busca el espejo de UNA venta por id_venta_origen: tiene que verlo para saber si el ticket tiene factura."),
+            [("Ways.Application/Ventas/ConsultaDeDevolvibles.cs",
+                "var items = await db.ItemsComprobanteVenta")] =
+                (1, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var comprobante = await db.ComprobantesVenta.FirstOrDefaultAsync(")] =
                 (1, PorClaveUnica),

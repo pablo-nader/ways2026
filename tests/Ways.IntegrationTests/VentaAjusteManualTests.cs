@@ -461,39 +461,45 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(0, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
-    /// <summary>Una devolución (NCX, cantidad negativa) sigue la convención de signo de
-    /// <c>descuento_total</c>: un -10 % sobre -100 acerca el total a cero (+10) y se cuenta como
-    /// DESCUENTO manual con signo negativo (-10); un +10 % lo aleja (-10) y se cuenta como RECARGO
-    /// manual negativo. Clasificar por el signo del monto invertiría los dos.</summary>
+    /// <summary>Una devolución (NCX) acredita lo que cobró el ticket de origen, que ya incluye el ajuste manual de su línea (un −10 %
+    /// sobre 100 cobró 90; un +10 % cobró 110): la nota no vuelve a aplicar ni clasifica ningún ajuste (sus totales manuales son
+    /// cero) y su línea no admite el porcentaje (400 <c>ajuste_manual_no_admitido_en_devolucion</c>).</summary>
     [Fact]
-    public async Task UnaNcxClasificaDescuentoYRecargoManualPorElSignoDelPorcentaje()
+    public async Task UnaNcxAcreditaElNetoConAjusteDelTicketSinClasificarNiAdmitirAjusteManual()
     {
-        var ctx = await PrepararOnlineAsync(nameof(UnaNcxClasificaDescuentoYRecargoManualPorElSignoDelPorcentaje));
+        var ctx = await PrepararOnlineAsync(nameof(UnaNcxAcreditaElNetoConAjusteDelTicketSinClasificarNiAdmitirAjusteManual));
         var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 100m);
 
         var conDescuento = await EmitirOkAsync(
-            ctx.Cliente,
-            new SolicitudDeVenta(
-                ctx.IdPuntoVenta, null, "NCX", null,
-                [new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -10m)], [], null, null));
-        Assert.Equal(-100m, conDescuento.Subtotal);
-        Assert.Equal(-10m, conDescuento.DescuentoManualTotal);
-        Assert.Equal(0m, conDescuento.RecargoManualTotal);
-        Assert.Equal(-90m, conDescuento.Total);
-        Assert.Equal(-10m, conDescuento.Items[0].AjusteManualPorcentaje);
-        Assert.Equal(10m, conDescuento.Items[0].AjusteManual);
-        Assert.Equal(-90m, conDescuento.Items[0].Total);
-
+            ctx.Cliente, VentaOnline(ctx, 90m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -10m)));
         var conRecargo = await EmitirOkAsync(
+            ctx.Cliente, VentaOnline(ctx, 110m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: 10m)));
+
+        var devolucionDelDescuento = await EmitirOkAsync(
             ctx.Cliente,
             new SolicitudDeVenta(
-                ctx.IdPuntoVenta, null, "NCX", null,
-                [new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: 10m)], [], null, null));
-        Assert.Equal(0m, conRecargo.DescuentoManualTotal);
-        Assert.Equal(-10m, conRecargo.RecargoManualTotal);
-        Assert.Equal(-110m, conRecargo.Total);
-        Assert.Equal(-10m, conRecargo.Items[0].AjusteManual);
+                ctx.IdPuntoVenta, null, "NCX", conDescuento.Id, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
+        Assert.Equal(-90m, devolucionDelDescuento.Total);
+        Assert.Equal(0m, devolucionDelDescuento.DescuentoManualTotal);
+        Assert.Equal(0m, devolucionDelDescuento.RecargoManualTotal);
+        Assert.Null(devolucionDelDescuento.Items[0].AjusteManualPorcentaje);
+
+        var devolucionDelRecargo = await EmitirOkAsync(
+            ctx.Cliente,
+            new SolicitudDeVenta(
+                ctx.IdPuntoVenta, null, "NCX", conRecargo.Id, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
+        Assert.Equal(-110m, devolucionDelRecargo.Total);
+        Assert.Equal(0m, devolucionDelRecargo.RecargoManualTotal);
+
+        Assert.Equal(
+            "ajuste_manual_no_admitido_en_devolucion",
+            await CodigoDeRechazoAsync(
+                ctx.Cliente,
+                new SolicitudDeVenta(
+                    ctx.IdPuntoVenta, null, "NCX", conDescuento.Id,
+                    [new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -10m)], [], null, null)));
     }
+
 
     /// <summary>Tres ventas con totales manuales distintos entre sí (descuento, recargo, ninguno) para
     /// que el listado y las ventas del turno asignen cada valor a su fila y a su columna.</summary>

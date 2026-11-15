@@ -11,7 +11,7 @@ comprobantes_venta (          -- [operativa]
     fecha               timestamptz NOT NULL,
     id_punto_venta, id_turno_caja integer NULL,
     id_empleado, id_cliente,
-    id_comprobante_asociado integer NULL,    -- NC/ND → el comprobante que corrigen
+    id_comprobante_asociado integer NULL,    -- NC/ND → el comprobante que corrigen (NCX: el ticket TX que devuelve, obligatorio)
     -- totales (redundantes con items, verificados por dominio)
     subtotal, descuento_total,
     descuento_manual_total numeric(14,2) NOT NULL DEFAULT 0,  -- Σ de los descuentos manuales de línea
@@ -262,12 +262,10 @@ servidor:
 >   tipeado. Online, `importe` + `precioUnitario` sigue siendo `400 importe_con_precio_no_admitido`. El "todas o ninguna" del
 >   precio offline se mide solo sobre las líneas de lista, así que una venta solo de importes y una mixta se aceptan. Una línea que el dispositivo ya cobró con precio de lista para un artículo que hoy es por
 >   importe se honra (no se le exige `importe`).
-> - **Devolución (NCX).** Cada línea por importe lleva el importe devuelto; con comprobante asociado tiene que existir en él
->   una línea por importe (`por_importe`, cantidad positiva) de ese artículo con ese precio unitario y ese mismo
->   `ajuste_manual_porcentaje` (`400 importe_devolucion_inexistente`): el neto reembolsado no puede superar el cobrado por la
->   línea vendida. No se lleva
->   la cuenta de lo ya devuelto, igual que las cantidades de una devolución común. Una devolución offline (con número
->   pre-asignado) no se compara.
+> - **Devolución (NCX).** Cada línea por importe lleva el importe devuelto, que tiene que ser el precio unitario de una línea
+>   por importe (`por_importe`, cantidad positiva) de ese artículo en el ticket de origen (`400 importe_devolucion_inexistente`).
+>   Cada importe es su propio conjunto de unidades para el tope y se acredita lo cobrado por esa línea, con su ajuste manual
+>   (ver "Devoluciones (NCX contra el ticket de origen)"). Una devolución no admite número pre-asignado.
 > - **Escaneo.** `GET /api/articulos/escaneo?entrada=150*500` sobre un artículo por importe responde `cantidad` 1 e
 >   `importe` 150; con el código solo, sin `importe` (la clave se omite) y el cliente lo pide. El prefijo de un artículo por
 >   importe se lee estricto (solo dígitos y punto decimal): uno vacío, cero, negativo, ilegible, con coma, con más de 2
@@ -282,6 +280,68 @@ servidor:
 > - **Presupuestos y remitos** rechazan un artículo por importe (`400 articulo_por_importe_no_admitido`). **Tienda online:**
 >   no se puede ofrecer (encender `disponible_online` da `400 articulo_por_importe_no_publicable`; apagarla, o cambiar solo
 >   `disponible_venta` con la bandera ya encendida, sigue siendo válido) y el catálogo público no lo lista.
+
+### Devoluciones (NCX contra el ticket de origen)
+
+**Estado: backend implementado (feature `devoluciones-pos`, T1).** Una devolución es siempre una nota de crédito `NCX` propia
+(un cambio es una venta nueva aparte; no hay tickets mixtos) y se juzga contra el ticket de venta (`TX`) que devuelve. Sin
+cambios de esquema: usa `id_comprobante_asociado`, `items_comprobante_venta.id_lote` y `por_importe`, con el índice
+`ix_comprobantes_venta_asociado` que ya existía.
+
+- **Asociado obligatorio.** Una NCX sin `idComprobanteAsociado` es `400 comprobante_asociado_requerido`. El asociado tiene que
+  ser un ticket `TX` emitido, del mismo punto de venta y del mismo cliente (`400 comprobante_asociado_invalido`; una factura
+  espejo es `400 comprobante_asociado_es_espejo_fiscal`). Una devolución solo se emite con conexión: con `numeroPreasignado`
+  es `400 devolucion_sin_conexion` (la cola offline no devuelve).
+- **Tope por artículo.** Lo devuelto de un artículo no puede superar lo que el ticket vendió menos lo que ya devolvieron las
+  NCX **emitidas** asociadas al mismo ticket (una NCX anulada libera sus unidades), sumando también las líneas del mismo
+  documento: si no, `409 devolucion_excede_lo_vendido` (también para un artículo que el ticket no vendió). Es un 409 y no un 400
+  porque depende del estado del ticket, que otra devolución puede cambiar. El conjunto de unidades es el artículo; en un
+  artículo por importe, el artículo y su importe (150 y 200 son conjuntos distintos). `DevolucionDeTicket` lo decide, pura y sin
+  base de datos.
+- **Importe: lo que se cobró.** La línea de la NCX no lleva precio: cada unidad se acredita por lo cobrado en el ticket, y la lista
+  de hoy no interviene (la NCX no consulta precios ni ofertas). Para cada línea, en el orden en que vienen, se toman unidades de
+  los items del ticket del mismo conjunto en orden de `orden` (y de `id_item` si empatan); lo ya devuelto por otras NCX consume
+  primero esos mismos items en ese orden. El crédito de una toma de `u` unidades de un item de `cantidad` Q y `total` T es
+
+  `credito = round(T × (tomadas + u) / Q) − acreditado`, al peso entero (`AwayFromZero`),
+
+  con `tomadas` y `acreditado` lo ya tomado y acreditado de ese item (por NCX anteriores y por líneas anteriores del mismo
+  documento). `T` es el total del item vendido: ya descuenta descuentos de línea, ofertas, la parte del combo y el ajuste manual
+  de esa línea. Devolver todas las unidades de un item acredita exactamente `T`, y como el redondeo es monótono ninguna toma es
+  negativa ni la suma supera `T`, sea cual sea la partición en líneas o en notas. Cada tramo graba un item con el precio
+  unitario, la alícuota, la lista, la oferta, el combo y el lote del item vendido, y como descuento la diferencia entre su bruto
+  y lo acreditado. Las líneas de una NCX no admiten `ajusteManualPorcentaje` (`400 ajuste_manual_no_admitido_en_devolucion`): el
+  del ticket ya está en `T`.
+- **Lote.** Las unidades vuelven al lote del item del ticket que las cubre (`id_lote` del snapshot), sin que el cliente mande
+  `idLote`. Si lo manda, tiene que ser uno de los lotes que el ticket vendió de ese artículo (`400 lote_invalido`) y se usa para
+  todos los tramos de la línea. Si el item vendido no tenía lote y el artículo hoy lo controla, o si el lote del que salió se dio de baja después de la venta, vuelven al lote sin identificar (un `idLote` del cliente dado de baja sigue siendo `400 lote_invalido`).
+  Una NCX nunca usa FEFO.
+- **Factura fiscal.** Si el ticket tiene una factura espejo aprobada (con o sin observaciones) o en trámite, `409
+  devolucion_requiere_nota_de_credito_fiscal`: devolverlo exige una nota de crédito fiscal que todavía no existe. Una factura
+  rechazada no bloquea (ARCA la libera). Tampoco se devuelve un ticket cuya decisión de facturar sigue debida (`facturacion_decidida_en IS NULL`) o en `pendiente` sin espejo todavía: el espejo se arma después con TODOS los items del ticket (`ServicioDeFacturacionDeVentas.CrearEspejoAsync`, que toma el lock de la venta y exige que siga emitida), así que lo ya devuelto quedaría facturado; es el mismo `409 devolucion_requiere_nota_de_credito_fiscal` y vuelve a poder devolverse cuando la decisión se resuelve sin factura. Un ticket anulado bajo el lock es `409 comprobante_asociado_invalido`.
+- **Anulación.** Anular un ticket con NCX emitidas asociadas es `409 venta_con_devoluciones`; anular la NCX misma sigue
+  permitido y libera sus unidades para el tope. El espejo de una nota de crédito fiscal se asocia a la factura, no al ticket, y
+  no cuenta.
+- **Concurrencia y orden de locks.** La transacción toma `turnos_caja FOR SHARE` y, después, el ticket de origen `FOR UPDATE`
+  (segundo lock, antes de cualquier fila de la propia NCX): es el orden de la anulación (turno y después comprobante) y
+  serializa las devoluciones del mismo ticket entre sí y con su anulación y su facturación (crear el espejo bloquea la venta).
+  Bajo ese lock se re-juzga todo con lecturas posteriores al lock: que el ticket siga emitido y sin factura, y lo ya devuelto;
+  se repite el reparto y, si excede, `409 devolucion_excede_lo_vendido`; si el reparto cambió (otra NCX movió el consumo de los
+  items y los importes del plan ya no son los correctos), `409 devolucion_desactualizada` y el cajero reintenta. El plan lleva
+  lo leído antes de la transacción (items vendidos, líneas, tramos) y la transacción no rastrea el ticket en EF: no hay entidad
+  que mutar bajo el lock.
+- **Lectura para el POS.** `GET /api/ventas/devolvibles?idPuntoVenta=&numero=` (por el número que imprime el ticket) y
+  `GET /api/ventas/{id}/devolvibles` (para un ticket ya elegido de un listado), con la política `OperacionDePos` y el alcance
+  de tenant de las demás lecturas de ventas. Responden el encabezado del ticket (`numeroVisible`, `fecha`, `idCliente`,
+  `nombreCliente`, `total`), `devolvible` y, si es falso, `motivo` (`anulado`, `con_factura_fiscal`,
+  `sin_unidades_por_devolver`, `no_es_un_ticket_de_venta`), y `lineas`: una por artículo (o por artículo e importe) con
+  `idArticulo`, `descripcion`, `codigoBarra`, `importe` (solo en un artículo por importe: el que la NCX debe mandar),
+  `cantidadVendida`, `cantidadDevuelta`, `cantidadDevolvible`, `importeUnitario` (informativo: el del primer item con unidades
+  pendientes) e `importeDeLoRestante` (lo que se acredita por todas las unidades pendientes). Las líneas se informan también
+  cuando el ticket no es devolvible. Es una lectura sin lock: la emisión re-juzga. Un id que es una factura espejo, un número
+  sin ticket o un comprobante de otro tenant es `404`.
+- **Fuera de este tramo.** El dinero de la devolución (`ValidadorDePagos`, regla 0c: una NCX no lleva pagos) y la pantalla del POS
+  son de tareas siguientes.
 
 ### Fiscal ARCA (Etapa 19a)
 

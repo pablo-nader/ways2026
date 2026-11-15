@@ -24,8 +24,8 @@ namespace Ways.IntegrationTests;
 /// stage-12-lotes-vencimientos, Slice 9 (tasks 9.4-9.9): reglas de lote en NCX punta a punta
 /// contra Postgres real, mismo <c>ServicioDeVentas.EmitirAsync</c> que <see cref="PlanDeVentaFefoTests"/>
 /// (Slice 7) y <see cref="VentaEscrituraLoteTests"/> (Slice 8), acá ejercitado con
-/// <c>tipo.Signo &lt; 0</c> (design: "NCX", decisión 8 del proposal): idLote explícito
-/// obligatorio (sin default FEFO — task 9.1), sugerencia del picker desde el snapshot del
+/// <c>tipo.Signo &lt; 0</c> (design: "NCX", decisión 8 del proposal): sin default FEFO,
+/// las unidades vuelven al lote del ticket de origen (feature devoluciones-pos; antes, idLote explícito obligatorio), sugerencia del picker desde el snapshot del
 /// comprobante asociado (task 9.2), el lote sin-identificar como válvula de escape, y el retorno
 /// a un lote vencido permitido con warning (task 9.3/9.7 — la MISMA aserción de "warning nunca
 /// bloquea" que Slice 7 ya prueba del lado TX en
@@ -251,34 +251,110 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
     }
 
     // ---- task 9.4/9.1 — NCX exige idLote explícito, nunca un default FEFO -------------------------
+    // ---- Devolución: el lote sale del ticket de origen, nunca de FEFO ----------------------------------------
 
-    /// <summary>Mutation target (task 9.1; skill mutation-proof-tests, pedido explícito del
-    /// orquestador para este slice): la cláusula bajo prueba es
-    /// <c>if (idLotePedido is null &amp;&amp; tipo.Signo &lt; 0)</c> en
-    /// <c>ServicioDeVentas.EmitirAsync</c>. Borrarla no solo hace desaparecer el <c>400
-    /// lote_requerido</c> — también deja pasar la línea al default FEFO (<c>ElegirFefo</c>), que
-    /// con un solo lote con saldo positivo resolvería igual y devolvería <c>201 Created</c>: la
-    /// MISMA aserción de status cachea las dos mitades de la regla (spec comprobantes-venta: "An
-    /// NCX line for a lot-effective articulo requires idLote").
-    ///
-    /// <para>Evidencia de mutación registrada (apply-run, slice 9): se reemplazó la condición por
-    /// <c>if (false)</c> en <c>ServicioDeVentas.cs</c>; build; filtro
-    /// <c>FullyQualifiedName~UnaLineaNcxDeArticuloLoteEfectivoSinIdLoteEsRechazadaConLoteRequerido</c>
-    /// → RED (<c>Assert.Equal() Failure: Expected: BadRequest / Actual: Created</c>, la línea
-    /// resolvió vía FEFO al único lote con saldo). Revertido; mismo filtro → GREEN; suite completa
-    /// de esta clase → GREEN.</para></summary>
+    /// <summary>La cláusula bajo prueba es la que toma el lote del item del ticket de origen en una devolución
+    /// (<c>idLotePedido = ... ?? (tipo.Signo &lt; 0 ? item.IdLote : null)</c> en <c>ServicioDeVentas.EmitirAsync</c>). El ticket vendió del lote
+    /// de vencimiento más LEJANO aunque el CERCANO sea el que elegiría FEFO: si la devolución cayera en FEFO o en el lote sin
+    /// identificar, las unidades volverían al lote equivocado.</summary>
     [Fact]
-    public async Task UnaLineaNcxDeArticuloLoteEfectivoSinIdLoteEsRechazadaConLoteRequerido()
+    public async Task UnaLineaNcxSinIdLoteVuelveAlLoteDelQueSalioNoAlDeFefo()
     {
-        var ctx = await PrepararAsync(nameof(UnaLineaNcxDeArticuloLoteEfectivoSinIdLoteEsRechazadaConLoteRequerido));
-        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-sin-lote", 100m, controlaLote: true);
-        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L1", VencimientoLejanoFuturo);
-        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 10m);
+        var ctx = await PrepararAsync(nameof(UnaLineaNcxSinIdLoteVuelveAlLoteDelQueSalioNoAlDeFefo));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-origen", 100m, controlaLote: true);
+        var idLoteCercano = await SembrarLoteAsync(ctx, idArticulo, "L-CERCANO", VencimientoLejanoFuturoAlterno);
+        var idLoteLejano = await SembrarLoteAsync(ctx, idArticulo, "L-LEJANO", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteCercano, 10m);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteLejano, 10m);
 
-        var (status, cuerpo) = await EmitirCrudoAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: null));
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 2m, idLote: idLoteLejano));
+        Assert.Equal(8m, await LeerStockLoteAsync(ctx, idArticulo, idLoteLejano));
+
+        var devolucion = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: null, idComprobanteAsociado: original.Id));
+
+        var item = Assert.Single(devolucion.Items);
+        Assert.Equal(idLoteLejano, item.IdLote);
+        Assert.Equal("L-LEJANO", item.CodigoLote);
+        Assert.Equal(9m, await LeerStockLoteAsync(ctx, idArticulo, idLoteLejano));
+        Assert.Equal(10m, await LeerStockLoteAsync(ctx, idArticulo, idLoteCercano));
+    }
+
+    /// <summary>Un idLote explícito sigue valiendo, pero solo si es uno de los que el ticket vendió de ese artículo: las unidades no
+    /// vuelven a un lote que el ticket nunca tocó (aunque sea del mismo artículo y tenga saldo).</summary>
+    [Fact]
+    public async Task UnIdLoteQueElTicketNoVendioSeRechazaEnLaDevolucion()
+    {
+        var ctx = await PrepararAsync(nameof(UnIdLoteQueElTicketNoVendioSeRechazaEnLaDevolucion));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-lote-ajeno", 100m, controlaLote: true);
+        var idLoteVendido = await SembrarLoteAsync(ctx, idArticulo, "L-VENDIDO", VencimientoLejanoFuturo);
+        var idLoteAjeno = await SembrarLoteAsync(ctx, idArticulo, "L-AJENO", VencimientoLejanoFuturoAlterno);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteVendido, 10m);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteAjeno, 10m);
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 1m, idLote: idLoteVendido));
+
+        var (status, cuerpo) = await EmitirCrudoAsync(
+            ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: idLoteAjeno, idComprobanteAsociado: original.Id));
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("lote_requerido", cuerpo.GetProperty("codigo").GetString());
+        Assert.Equal("lote_invalido", cuerpo.GetProperty("codigo").GetString());
+
+        var conElLoteVendido = await EmitirAsync(
+            ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: idLoteVendido, idComprobanteAsociado: original.Id));
+        Assert.Equal(idLoteVendido, Assert.Single(conElLoteVendido.Items).IdLote);
+    }
+
+    /// <summary>Si el lote de donde salió la unidad se dio de baja después de la venta, la devolución no queda bloqueada: vuelve al lote
+    /// sin identificar. Un idLote que manda el cliente y está dado de baja sigue siendo 400 <c>lote_invalido</c>.</summary>
+    [Fact]
+    public async Task UnaDevolucionDeUnaUnidadDeUnLoteDadoDeBajaVuelveAlLoteSinIdentificar()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDevolucionDeUnaUnidadDeUnLoteDadoDeBajaVuelveAlLoteSinIdentificar));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-lote-baja", 100m, controlaLote: true);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-BAJA", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 5m);
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 2m, idLote: idLote));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            (await db.Lotes.IgnoreQueryFilters().SingleAsync(l => l.Id == idLote)).DeletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var (status, cuerpo) = await EmitirCrudoAsync(
+            ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: idLote, idComprobanteAsociado: original.Id));
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Equal("lote_invalido", cuerpo.GetProperty("codigo").GetString());
+
+        var devolucion = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: null, idComprobanteAsociado: original.Id));
+
+        var item = Assert.Single(devolucion.Items);
+        Assert.NotEqual(idLote, item.IdLote);
+        Assert.Equal(ReglaDeLotes.CodigoSinIdentificar, item.CodigoLote);
+        Assert.Equal(1m, await LeerStockLoteAsync(ctx, idArticulo, item.IdLote!.Value));
+    }
+
+    /// <summary>Si el ticket vendió la unidad sin lote (el artículo todavía no controlaba lote) y hoy sí, las unidades vuelven al lote sin
+    /// identificar: nunca se rechaza la devolución por no poder nombrar un lote que el ticket no tiene.</summary>
+    [Fact]
+    public async Task UnaDevolucionDeUnaVentaSinLoteVuelveAlLoteSinIdentificar()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDevolucionDeUnaVentaSinLoteVuelveAlLoteSinIdentificar));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-sin-lote-origen", 100m, controlaLote: false);
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 1m, idLote: null));
+        Assert.Null(Assert.Single(original.Items).IdLote);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            (await db.Articulos.FirstAsync(a => a.Id == idArticulo)).ControlaLote = true;
+            await db.SaveChangesAsync();
+        }
+
+        var devolucion = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: null, idComprobanteAsociado: original.Id));
+
+        var item = Assert.Single(devolucion.Items);
+        Assert.NotNull(item.IdLote);
+        Assert.Equal(ReglaDeLotes.CodigoSinIdentificar, item.CodigoLote);
+        Assert.Equal(1m, await LeerStockLoteAsync(ctx, idArticulo, item.IdLote!.Value));
     }
 
     // ---- task 9.2 — el picker sugiere desde el snapshot del comprobante asociado, no FEFO ---------
@@ -379,26 +455,23 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
         Assert.False(loteOtroListado.Sugerido);
     }
 
-    // ---- task 9.6 — el lote sin identificar es una elección explícita válida en una devolución ----
+    // ---- task 9.6 — el lote sin identificar: vendido de él, vuelve a él --------------------------------------
 
-    /// <summary>spec comprobantes-venta: "idLote is required even without an associated
-    /// comprobante" — una devolución standalone (sin id_comprobante_asociado) sobre un artículo
-    /// lote-efectivo cuando el operador no puede identificar el lote físico. El lote sin
-    /// identificar ya existe (sembrado directo, mismo criterio que la reconciliación de Slice 4)
-    /// — el operador lo elige EXPLÍCITAMENTE como <c>idLote</c>, nunca es un fallback silencioso
-    /// del servidor (eso es exclusivo del camino TX, decisión 7, y NCX lo tiene cerrado por task
-    /// 9.1).</summary>
+    /// <summary>Un ticket que vendió explícitamente del lote sin identificar (la válvula de escape cuando no se puede identificar el
+    /// paquete) lo devuelve al mismo lote, sin que el cliente mande <c>idLote</c>.</summary>
     [Fact]
-    public async Task UnaDevolucionStandaloneAceptaElLoteSinIdentificarComoValvulaDeEscape()
+    public async Task UnaDevolucionDeUnaUnidadVendidaDelLoteSinIdentificarVuelveAEseLote()
     {
-        var ctx = await PrepararAsync(nameof(UnaDevolucionStandaloneAceptaElLoteSinIdentificarComoValvulaDeEscape));
+        var ctx = await PrepararAsync(nameof(UnaDevolucionDeUnaUnidadVendidaDelLoteSinIdentificarVuelveAEseLote));
         var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-sin-identificar", 100m, controlaLote: true);
         var idSinIdentificar = await SembrarLoteAsync(
             ctx, idArticulo, ReglaDeLotes.CodigoSinIdentificar, null, esSinIdentificar: true);
+        await SembrarStockLoteAsync(ctx, idArticulo, idSinIdentificar, 1m);
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 1m, idLote: idSinIdentificar));
 
-        var emitido = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: idSinIdentificar));
+        var emitido = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: null, idComprobanteAsociado: original.Id));
 
-        Assert.Null(emitido.IdComprobanteAsociado);
+        Assert.Equal(original.Id, emitido.IdComprobanteAsociado);
         var item = Assert.Single(emitido.Items);
         Assert.Equal(idSinIdentificar, item.IdLote);
         Assert.Equal(ReglaDeLotes.CodigoSinIdentificar, item.CodigoLote);
@@ -422,14 +495,17 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
         var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-vencido", 100m, controlaLote: true);
         var idVencido = await SembrarLoteAsync(ctx, idArticulo, "L-DEVUELTO-VENCIDO", VencimientoLejanoPasado);
 
-        var emitido = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: idVencido));
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 1m, idLote: idVencido));
+        Assert.Equal(-1m, await LeerStockLoteAsync(ctx, idArticulo, idVencido));
+
+        var emitido = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: null, idComprobanteAsociado: original.Id));
 
         var item = Assert.Single(emitido.Items);
         Assert.Equal(idVencido, item.IdLote);
         Assert.Equal("L-DEVUELTO-VENCIDO", item.CodigoLote);
         Assert.True(item.LoteVencido);
 
-        Assert.Equal(1m, await LeerStockLoteAsync(ctx, idArticulo, idVencido));
+        Assert.Equal(0m, await LeerStockLoteAsync(ctx, idArticulo, idVencido));
     }
 
     // ---- task 9.4 — un idLote inválido (de otro artículo) sigue rechazado en NCX -------------------
@@ -447,7 +523,10 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
         var idLoteDeB = await SembrarLoteAsync(ctx, idArticuloB, "L-B", VencimientoLejanoFuturo);
         await SembrarStockLoteAsync(ctx, idArticuloB, idLoteDeB, 10m);
 
-        var (status, cuerpo) = await EmitirCrudoAsync(ctx, SolicitudNcx(ctx, idArticuloA, 1m, idLote: idLoteDeB));
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticuloA, 1m, idLote: null));
+
+        var (status, cuerpo) = await EmitirCrudoAsync(
+            ctx, SolicitudNcx(ctx, idArticuloA, 1m, idLote: idLoteDeB, idComprobanteAsociado: original.Id));
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Equal("lote_invalido", cuerpo.GetProperty("codigo").GetString());
@@ -489,13 +568,17 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
         await SembrarStockAgregadoAsync(ctx, idArticulo, 5m);
         await SembrarStockLoteAsync(ctx, idArticulo, idLote, 5m);
 
-        var emitido = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 3m, idLote: idLote));
+        // La venta de origen saca 3 de las 5 unidades (quedan 2); la devolución las suma (5) y su anulación las revierte (2).
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 3m, idLote: idLote));
+        Assert.Equal(2m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
+
+        var emitido = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 3m, idLote: idLote, idComprobanteAsociado: original.Id));
         var item = Assert.Single(emitido.Items);
         Assert.Equal(idLote, item.IdLote);
         Assert.Equal(-3m, item.Cantidad);
 
-        Assert.Equal(8m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
-        Assert.Equal(8m, await LeerStockAgregadoAsync(ctx, idArticulo));
+        Assert.Equal(5m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
+        Assert.Equal(5m, await LeerStockAgregadoAsync(ctx, idArticulo));
 
         var anulado = await AnularAsync(ctx, emitido.Id);
         Assert.Equal(EstadoComprobante.Anulado, anulado.Estado);
@@ -508,7 +591,7 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
             Assert.Equal(-3m, movimientoAnulacion.Cantidad);
         }
 
-        Assert.Equal(5m, await LeerStockAgregadoAsync(ctx, idArticulo));
-        Assert.Equal(5m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
+        Assert.Equal(2m, await LeerStockAgregadoAsync(ctx, idArticulo));
+        Assert.Equal(2m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
     }
 }

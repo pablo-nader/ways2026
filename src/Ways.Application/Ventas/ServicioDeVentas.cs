@@ -163,6 +163,19 @@ public class ServicioDeVentas(
                 400);
         }
 
+        // Una devolución se juzga contra el ticket de origen, que cambia con cada nota de crédito emitida: solo se emite con
+        // conexión. Una nota con número pre-asignado ya se cobró en la caja y no hay forma de contar lo que devolvió.
+        if (tipo.Signo < 0 && solicitud.NumeroPreasignado is not null)
+        {
+            throw new ErrorDominio(
+                "devolucion_sin_conexion", "Una devolución solo se emite con conexión; no admite número pre-asignado.", 400);
+        }
+
+        if (tipo.Signo < 0)
+        {
+            ExigirLineasDeDevolucionSinAjuste(lineas);
+        }
+
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
         // design decisión 11 (Slice 5): turno SIEMPRE resuelto server-side, inmediatamente
@@ -237,8 +250,20 @@ public class ServicioDeVentas(
             ? await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == idAsociado, ct)
             : null;
 
+        var codigoTipoDelAsociado = asociado is null
+            ? null
+            : await db.TiposComprobante.Where(t => t.Id == asociado.IdTipoComprobante).Select(t => t.Codigo).FirstOrDefaultAsync(ct);
+
         ReglaDeComprobantes.ValidarComprobanteAsociado(
-            tipo.Signo, solicitud.IdComprobanteAsociado, asociado, puntoVenta.Id, cliente.Id);
+            tipo.Signo, solicitud.IdComprobanteAsociado, asociado, codigoTipoDelAsociado, puntoVenta.Id, cliente.Id);
+
+        // Devolución: lo que se devuelve y por cuánto lo decide el ticket de origen (qué vendió, a qué importe y qué ya devolvieron las
+        // otras notas de crédito), nunca la lista de hoy. Se resuelve ANTES que los artículos y los precios: un artículo que el ticket
+        // no vendió se rechaza acá con 409, y la lista de precios no interviene. El plan lleva lo leído para re-juzgarlo bajo el lock del
+        // ticket, dentro de la transacción (ExigirDevolucionVigenteBajoLockAsync).
+        var devolucion = asociado is not null
+            ? await ResolverDevolucionDelTicketAsync(asociado.Id, lineas, ct)
+            : null;
 
         // 7 consultas (ServicioDeOfertas.ResolverAsync, design: Technical Approach) — la
         // autoridad de precio ÚNICA, nunca lo que mostró el carrito (design decisión 3). Con
@@ -254,11 +279,14 @@ public class ServicioDeVentas(
         var aplicarListaAlImporte = tipo.Signo > 0
             && (solicitud.NumeroPreasignado is null
                 || lineas.Any(l => l.Importe is not null && l.PrecioUnitario is not null));
-        var resolucion = presupuestoOrigen is null
-            ? aplicarListaAlImporte
-                ? await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
-                : await servicioDeOfertas.ResolverDocumentoConImporteCobradoAsync(lineasDeResolucion, momento, ct)
-            : null;
+        // Una devolución no consulta precios ni ofertas: cada unidad se acredita por lo que cobró el ticket de origen.
+        var resolucion = presupuestoOrigen is not null
+            ? null
+            : devolucion is not null
+                ? lineas.Select(l => new ResultadoDeResolucion(l.IdArticulo, cliente.IdListaPrecio, null, null, 0m, [])).ToList()
+                : aplicarListaAlImporte
+                    ? await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
+                    : await servicioDeOfertas.ResolverDocumentoConImporteCobradoAsync(lineasDeResolucion, momento, ct);
 
         // 2 consultas: snapshot de articulos + alicuotas (design: The Sale Transaction). Sin
         // segunda validación de existencia de articulo — ResolverAsync ya la hizo (400
@@ -317,20 +345,8 @@ public class ServicioDeVentas(
         // venta conserva su id.
         var combosOfflineExistentes = await ResolverCombosOfflineExistentesAsync(lineas, ct);
 
-        // Devolución de una venta con combo: la nota de crédito asociada a una venta cuyos items consumieron un
-        // combo devuelve lo que se cobró por esas unidades, no lo que cuestan hoy (feature combos, decisión del
-        // dueño 2026-10-11). ValidarComprobanteAsociado ya garantizó que un asociado solo existe con signo negativo.
-        // Queda fuera la devolución offline con NumeroPreasignado (precios del dispositivo). Se decide acá, no en la
-        // lambda reintentable.
-        var devolucionesDeCombo = asociado is not null && solicitud.NumeroPreasignado is null
-            ? await ResolverDevolucionesDeComboAsync(asociado.Id, lineas, ct)
-            : SinDevolucionesDeCombo;
-
-        // Una devolución offline (con número pre-asignado) ya se cobró en la caja: no se rechaza por esta comparación.
-        if (asociado is not null && solicitud.NumeroPreasignado is null)
-        {
-            await ExigirImportesDeLaVentaAsociadaAsync(asociado.Id, lineas, ct);
-        }
+        // Los tramos de la devolución por línea: de qué item del ticket sale cada unidad y cuánto se acredita por ella.
+        var tramosDeDevolucion = devolucion?.TramosPorLinea ?? SinTramosDeDevolucion;
 
         // 1 consulta batcheada (stage-12, design decisión 2): tolerancia_pago + lotes_habilitado + importe_envio,
         // resueltas directo (sin el pre-chequeo de pertenencia de
@@ -357,7 +373,7 @@ public class ServicioDeVentas(
         var (items, totales, lineaDeItem) = presupuestoOrigen is null
             ? MaterializarItems(
                 tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio,
-                combosDetectados, combosOfflineExistentes, devolucionesDeCombo, solicitud.NumeroPreasignado is not null,
+                combosDetectados, combosOfflineExistentes, tramosDeDevolucion, solicitud.NumeroPreasignado is not null,
                 lineaDeEnvio)
             : ConLineaDeOrigenIdentidad(MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId));
 
@@ -401,13 +417,29 @@ public class ServicioDeVentas(
             }
         }
 
+        // Un idLote explícito en una devolución tiene que ser uno de los que el ticket de origen vendió de ese artículo: las unidades
+        // vuelven a un lote de donde salieron, nunca a uno que el ticket no tocó.
+        if (devolucion is not null)
+        {
+            foreach (var linea in lineas.Where(l => l.IdLote is not null))
+            {
+                if (!devolucion.Vendidos.Any(v => v.IdArticulo == linea.IdArticulo && v.IdLote == linea.IdLote))
+                {
+                    throw new ErrorDominio(
+                        "lote_invalido",
+                        $"El lote {linea.IdLote} no es uno de los que vendió el ticket original del artículo {linea.IdArticulo}.",
+                        400);
+                }
+            }
+        }
+
         if (lineasConLote.Count > 0)   // ← la ÚNICA query nueva del camino caliente: 16 → 17 (spec
                                        // lotes-y-vencimientos: "Module on with a lot-controlled
                                        // articulo nets zero round-trip change")
         {
             var idsArticuloConLote = lineasConLote.Select(x => x.Item.IdArticulo!.Value).Distinct().ToList();
             var idsLotePedidos = lineasConLote
-                .Select(x => lineas[lineaDeItem[x.Indice]].IdLote)
+                .Select(x => lineas[lineaDeItem[x.Indice]].IdLote ?? (tipo.Signo < 0 ? x.Item.IdLote : null))
                 .Where(idLote => idLote is not null)
                 .Select(idLote => idLote!.Value)
                 .Distinct()
@@ -428,25 +460,22 @@ public class ServicioDeVentas(
                 // Solo una línea de producto llega acá: la de concepto libre (envío) no tiene lote efectivo.
                 var idArticulo = item.IdArticulo!.Value;
                 var saldosDelArticulo = saldosPorArticulo[idArticulo].ToList();
-                var idLotePedido = lineas[lineaDeItem[indice]].IdLote;
+                // Una devolución no usa FEFO: "el más viejo primero" no significa nada para mercadería que VUELVE. Las unidades
+                // vuelven al lote del que salieron (el del item del ticket de origen que cubre ese tramo) o, si el cliente manda un
+                // idLote (validado arriba contra los que vendió el ticket), a ese. Si el ticket vendió la unidad sin lote, vuelve al
+                // lote sin identificar.
+                var idLoteDelCliente = lineas[lineaDeItem[indice]].IdLote;
+                var idLotePedido = idLoteDelCliente ?? (tipo.Signo < 0 ? item.IdLote : null);
 
-                // stage-12 slice 9 (design: "NCX", decisión 8 del proposal): el default FEFO se
-                // RECHAZA en una línea de nota de crédito (tipo.Signo < 0) — "el más viejo
-                // primero" no significa nada para mercadería que VUELVE; el paquete físico
-                // devuelto tiene su propia fecha impresa. La sugerencia del picker (task 9.2) le
-                // da al operador un idLote candidato, pero el request tiene que traerlo explícito
-                // — el lote sin-identificar sigue siendo una elección explícita válida (la válvula
-                // de escape cuando no se puede identificar el paquete físico).
-                if (idLotePedido is null && tipo.Signo < 0)
-                {
-                    throw new ErrorDominio(
-                        "lote_requerido",
-                        $"La línea de devolución del artículo {item.IdArticulo} requiere un idLote explícito.",
-                        400);
-                }
+                // El lote de donde salió la unidad pudo darse de baja después de la venta (el filtro de EF ya no lo ve): la
+                // devolución no queda bloqueada para siempre, vuelve al lote sin identificar. Solo vale para el lote que sale
+                // del ticket: uno que manda el cliente y no existe sigue siendo 400 lote_invalido.
+                var loteDeOrigenDadoDeBaja = idLoteDelCliente is null
+                    && idLotePedido is { } deOrigen
+                    && !saldosDelArticulo.Any(s => s.IdLote == deOrigen);
 
                 SaldoDeLote loteResuelto;
-                if (idLotePedido is { } idLote)
+                if (idLotePedido is { } idLote && !loteDeOrigenDadoDeBaja)
                 {
                     // Un idLote provisto se valida contra `saldos` (existe, es del artículo, no
                     // borrado — el filtro global de EF sobre Lotes ya excluye soft-deleted, así
@@ -463,15 +492,15 @@ public class ServicioDeVentas(
 
                     loteResuelto = saldosDelArticulo[posicion];
                 }
-                else if (ReglaDeLotes.ElegirFefo(saldosDelArticulo, hoy) is { } elegido)
+                else if (tipo.Signo > 0 && ReglaDeLotes.ElegirFefo(saldosDelArticulo, hoy) is { } elegido)
                 {
                     loteResuelto = elegido;
                 }
                 else
                 {
-                    // Ningún lote con saldo positivo (design decisión 7) — get-or-create perezoso
-                    // del lote sin identificar, statement crudo, invisible al contador de
-                    // presupuesto (misma familia que EscritorDeStock).
+                    // Ningún lote con saldo positivo (design decisión 7), o una devolución de una unidad que el ticket
+                    // vendió sin lote o de un lote dado de baja — get-or-create perezoso del lote sin identificar, statement crudo, invisible al
+                    // contador de presupuesto (misma familia que EscritorDeStock).
                     var conexionParaLotes = await ObtenerConexionAbiertaAsync(ct);
                     var idSinIdentificar = await ServicioDeLotes.ResolverSinIdentificarAsync(
                         conexionParaLotes, transaccion: null, idTenant, idArticulo, momento, ct);
@@ -603,7 +632,8 @@ public class ServicioDeVentas(
             totales.DescuentoManualTotal, totales.RecargoManualTotal, totales.Total,
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
             DireccionDeEntrega(solicitud, cliente), NormalizarOpcional(solicitud.Observaciones),
-            presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta, solicitud.LimiteDeCreditoNoValidado, solicitud.ForzarFactura);
+            presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta, solicitud.LimiteDeCreditoNoValidado, solicitud.ForzarFactura,
+            Devolucion: devolucion);
 
         // Corrección de esta slice al decisión 2 original (ver el doc-comment de
         // VentasAtomicidadYConcurrenciaTests): la numeración se reserva y COMITEA en su PROPIA
@@ -720,48 +750,35 @@ public class ServicioDeVentas(
 
     private static readonly IReadOnlyDictionary<int, ComboEnLinea> SinCombos = new Dictionary<int, ComboEnLinea>();
 
-    private static readonly IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> SinDevolucionesDeCombo =
+    private static readonly IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> SinTramosDeDevolucion =
         new Dictionary<int, IReadOnlyList<TramoDeDevolucion>>();
 
-    /// <summary>Reparte las líneas de una nota de crédito entre los items de la venta asociada que consumieron un
-    /// combo (<see cref="DevolucionDeCombos"/>). Cuesta UNA consulta, solo en una nota de crédito asociada a una
-    /// venta: trae los items de esa venta con <c>id_combo</c> y cantidad positiva de los artículos devueltos. Una
-    /// venta sin items de combo (o sin esos artículos en un combo) devuelve el diccionario vacío y la nota de crédito
-    /// se precia como siempre. La clave es el índice de la línea devuelta; solo figuran las líneas con algún tramo.</summary>
-    private async Task<IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>>> ResolverDevolucionesDeComboAsync(
-        int idComprobanteAsociado, IReadOnlyList<LineaDeVenta> lineas, CancellationToken ct)
+    /// <summary>Lo que decide una devolución contra su ticket de origen (<see cref="DevolucionDeTicket"/>): los items que vendió, lo que
+    /// pidió cada línea y de qué item sale cada unidad con su crédito. Viaja en el plan para re-juzgarlo bajo el lock del ticket.</summary>
+    private sealed record DevolucionDelTicket(
+        int IdTicket,
+        IReadOnlyList<ItemVendido> Vendidos,
+        IReadOnlyList<LineaDevuelta> Lineas,
+        IReadOnlyList<IReadOnlyList<TramoDeDevolucion>> Tramos)
     {
-        var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
+        /// <summary>Los tramos por índice de línea del pedido.</summary>
+        public IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> TramosPorLinea =>
+            Tramos.Select((tramos, indice) => (tramos, indice)).ToDictionary(x => x.indice, x => x.tramos);
+    }
 
-        var vendidos = await db.ItemsComprobanteVenta
-            .Where(i => i.IdComprobanteVenta == idComprobanteAsociado
-                && i.IdCombo != null
-                && i.Cantidad > 0m
-                && i.IdArticulo != null
-                && idsArticulo.Contains(i.IdArticulo.Value))
-            .Select(i => new ItemVendidoConCombo(
-                i.Id, i.Orden, i.IdArticulo!.Value, i.Cantidad, i.PrecioUnitario, i.Total, i.IdCombo!.Value,
-                i.IdOferta, i.IdListaPrecio, i.IdAlicuotaIva, i.PorcentajeIva))
-            .ToListAsync(ct);
+    /// <summary>Reparte las líneas de una nota de crédito entre los items del ticket de origen y las topa contra lo que ya devolvieron las
+    /// otras notas emitidas (409 <c>devolucion_excede_lo_vendido</c>). Cuesta DOS consultas, solo en una nota de crédito. Es una
+    /// lectura sin lock: la verdad la fija <see cref="ExigirDevolucionVigenteBajoLockAsync"/> dentro de la transacción.</summary>
+    private async Task<DevolucionDelTicket> ResolverDevolucionDelTicketAsync(
+        int idTicket, IReadOnlyList<LineaDeVenta> lineas, CancellationToken ct)
+    {
+        var vendidos = await LectorDeDevolucionesDelTicket.LeerVendidosAsync(db, idTicket, ct);
+        ExigirImportesDeLaVentaAsociada(lineas, vendidos);
 
-        if (vendidos.Count == 0)
-        {
-            return SinDevolucionesDeCombo;
-        }
+        var yaDevueltas = await LectorDeDevolucionesDelTicket.LeerYaDevueltasAsync(db, idTicket, ct);
+        var devueltas = lineas.Select(l => new LineaDevuelta(l.IdArticulo, l.Cantidad, l.Importe)).ToList();
 
-        var tramosPorLinea = DevolucionDeCombos.Repartir(
-            vendidos, [.. lineas.Select(l => new LineaDevuelta(l.IdArticulo, l.Cantidad))]);
-
-        var resultado = new Dictionary<int, IReadOnlyList<TramoDeDevolucion>>();
-        for (var i = 0; i < tramosPorLinea.Count; i++)
-        {
-            if (tramosPorLinea[i].Count > 0)
-            {
-                resultado[i] = tramosPorLinea[i];
-            }
-        }
-
-        return resultado;
+        return new DevolucionDelTicket(idTicket, vendidos, devueltas, DevolucionDeTicket.Repartir(vendidos, yaDevueltas, devueltas));
     }
 
     private static (IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales, IReadOnlyList<int> LineaDeItem)
@@ -1449,6 +1466,16 @@ public class ServicioDeVentas(
 
         var (idPuntoVentaAnulacion, codigoTipoAnulado) = resultadoAnulacion.Value;
 
+        // Una venta con devoluciones emitidas no se anula: la anulación revertiría el stock y la cuenta corriente de lo que la
+        // devolución ya devolvió. Se juzga ACÁ, con la fila de la venta ya bloqueada por el UPDATE de arriba: una devolución que
+        // la esté tomando como origen (FOR UPDATE, ExigirDevolucionVigenteBajoLockAsync) o ya comiteó y esta lectura la ve, o
+        // todavía no tomó el lock y, al tomarlo, ve la venta anulada y se rechaza. El throw revierte la transición. Anular
+        // la nota de crédito misma sí se puede (libera lo que había devuelto).
+        if (codigoTipoAnulado == ReglaDeComprobantes.CodigoDeVenta)
+        {
+            await ExigirSinDevolucionesEmitidasAsync(conexion, transaccionCruda, idTenant, id, ct);
+        }
+
         // La facturación de la venta se resuelve ACÁ, con la fila de la venta ya bloqueada por el UPDATE de arriba, y no en la
         // pre-lectura. Ese lock garantiza una sola cosa: no puede nacer un espejo nuevo, porque crearlo bloquea la venta y exige
         // que siga emitida. La resolución de un espejo que ya existe NO toma el lock de la venta (bloquea la serie, el espejo y la
@@ -1620,6 +1647,106 @@ public class ServicioDeVentas(
 
         return await ObtenerAsync(id, ct);
     }
+
+    /// <summary>409 <c>venta_con_devoluciones</c> si alguna nota de crédito EMITIDA tiene a la venta como origen. El espejo de una nota de
+    /// crédito fiscal (<c>id_venta_origen</c>) se asocia a la factura, no a la venta, y no cuenta.</summary>
+    private static async Task ExigirSinDevolucionesEmitidasAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idVenta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta " +
+            "WHERE id_comprobante_asociado = $1 AND id_tenant = $2 AND estado = $3 AND id_venta_origen IS NULL)";
+        ParametrosDeComando.Agregar(comando, idVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, EstadoComprobante.Emitido);
+
+        if (await comando.ExecuteScalarAsync(ct) is true)
+        {
+            throw new ErrorDominio(
+                "venta_con_devoluciones",
+                "La venta tiene devoluciones emitidas: anulá primero las notas de crédito asociadas para poder anularla.",
+                409);
+        }
+    }
+
+    /// <summary>Toma el <c>FOR UPDATE</c> del ticket de origen de una devolución y juzga, ya bajo ese lock, lo que pudo cambiar desde
+    /// que se armó el plan: que el ticket siga emitido y sin factura fiscal aprobada o en trámite (el espejo de una factura nace
+    /// con el lock de la venta, así que no puede aparecer mientras esta transacción lo tiene), y lo que las demás notas de crédito
+    /// ya devolvieron. Lo ya devuelto se relee DESPUÉS del lock y se repite el reparto: si el pedido excede lo que queda, 409
+    /// <c>devolucion_excede_lo_vendido</c>; si el reparto cambió (otra nota movió el consumo de los items), 409
+    /// <c>devolucion_desactualizada</c> porque los importes del plan ya no son los que corresponden. Dos devoluciones del mismo ticket
+    /// se serializan acá: la segunda ve lo que comiteó la primera. El ticket no se rastrea en EF (sin entidad que mutar): la
+    /// lectura del estado y la del consumo son por proyección y ocurren después del lock.</summary>
+    private async Task ExigirDevolucionVigenteBajoLockAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, DevolucionDelTicket devolucion, CancellationToken ct)
+    {
+        EstadoComprobante estado;
+        ResultadoFiscal? resultadoDelTicket;
+        bool decisionDebida;
+
+        await using (var comando = conexion.CreateCommand())
+        {
+            comando.Transaction = transaccion;
+            comando.CommandText =
+                "SELECT estado::text, resultado_fiscal::text, facturacion_decidida_en IS NULL FROM comprobantes_venta " +
+                "WHERE id_comprobante_venta = $1 AND id_tenant = $2 FOR UPDATE";
+            ParametrosDeComando.Agregar(comando, devolucion.IdTicket);
+            ParametrosDeComando.Agregar(comando, idTenant);
+
+            await using var lector = await comando.ExecuteReaderAsync(ct);
+            if (!await lector.ReadAsync(ct))
+            {
+                throw new ErrorDominio("comprobante_asociado_invalido", "El comprobante asociado no existe.", 404);
+            }
+
+            estado = lector.GetString(0) == "emitido" ? EstadoComprobante.Emitido : EstadoComprobante.Anulado;
+            resultadoDelTicket = lector.IsDBNull(1) ? null : ResultadoFiscalDeTexto(lector.GetString(1));
+            decisionDebida = lector.GetBoolean(2);
+        }
+
+        var resultadoDeLaFactura = await LeerResultadoDeLaFacturaAsync(conexion, transaccion, devolucion.IdTicket, ct);
+        var decisionPendiente = decisionDebida || await HayDecisionDeFacturacionPendienteAsync(conexion, transaccion, devolucion.IdTicket, ct);
+        ReglaDeDevoluciones.ExigirDevolvible(estado, [resultadoDelTicket, resultadoDeLaFactura], decisionPendiente);
+
+        var yaDevueltas = await LectorDeDevolucionesDelTicket.LeerYaDevueltasAsync(db, devolucion.IdTicket, ct);
+        var tramos = DevolucionDeTicket.Repartir(devolucion.Vendidos, yaDevueltas, devolucion.Lineas);
+
+        if (!tramos.SelectMany(t => t).SequenceEqual(devolucion.Tramos.SelectMany(t => t)))
+        {
+            throw new ErrorDominio(
+                "devolucion_desactualizada",
+                "Otra devolución del mismo ticket cambió lo que queda por devolver mientras se emitía esta: volvé a intentarla.",
+                409);
+        }
+    }
+
+    /// <summary>¿Hay una decisión de facturar el ticket en <c>pendiente</c> (la de la factura, no la de una nota de crédito)? El espejo
+    /// de esa factura se arma después con TODOS los items del ticket (<c>ServicioDeFacturacionDeVentas.CrearEspejoAsync</c>, que toma
+    /// el lock de la venta y exige que siga emitida), así que lo ya devuelto quedaría facturado. Una decisión debida (marca en
+    /// <c>NULL</c>) la cubre la columna del propio ticket.</summary>
+    private static async Task<bool> HayDecisionDeFacturacionPendienteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idVenta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT EXISTS (SELECT 1 FROM facturaciones_de_venta WHERE id_comprobante_venta = $1 " +
+            "AND id_facturacion_origen IS NULL AND estado = 'pendiente'::estado_facturacion_venta)";
+        ParametrosDeComando.Agregar(comando, idVenta);
+
+        return await comando.ExecuteScalarAsync(ct) is true;
+    }
+
+    private static ResultadoFiscal ResultadoFiscalDeTexto(string valor) => valor switch
+    {
+        "pendiente" => ResultadoFiscal.Pendiente,
+        "aprobado" => ResultadoFiscal.Aprobado,
+        "aprobado_con_observaciones" => ResultadoFiscal.AprobadoConObservaciones,
+        "rechazado" => ResultadoFiscal.Rechazado,
+        _ => throw new InvalidOperationException($"Resultado fiscal desconocido: {valor}.")
+    };
 
     /// <summary>Bloquea y valida los cobros de Mercado Pago que nombran los pagos del plan (<see cref="EscriturasDeCobroMercadoPago"/>).
     /// Vacío, sin tocar la base, si ningún pago trae cobro. Un pago con cobro solo existe en una venta con número preasignado
@@ -1888,6 +2015,15 @@ public class ServicioDeVentas(
         // redeclararlas.
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // 0.5. Devolución (solo en una nota de crédito): FOR UPDATE del ticket de origen, SEGUNDO lock de la transacción —
+        // después del turno, antes que cualquier fila de la propia nota—. Es el mismo orden que la anulación (turno y después
+        // el comprobante), y serializa a las devoluciones del mismo ticket entre sí y con su anulación y su facturación. Bajo
+        // ese lock se re-juzga el ticket (que siga emitido y sin factura fiscal) y lo ya devuelto por las demás notas.
+        if (plan.Devolucion is { } devolucionDelPlan)
+        {
+            await ExigirDevolucionVigenteBajoLockAsync(conexion, transaccionCruda, plan.IdTenant, devolucionDelPlan, ct);
+        }
 
         // 1.5. Conversión de presupuesto (design decisión 6) — POSICIÓN 1.5, entre el turno (paso
         // 0) y el INSERT del comprobante (paso 2). Honestidad documental (judgment-day slice-3,
@@ -2563,11 +2699,11 @@ public class ServicioDeVentas(
     /// uniforme para ambos signos").
     ///
     /// <para>Una línea devuelta puede dar más de un item del plan: cada tramo que
-    /// <paramref name="devolucionesDeCombo"/> toma de un item de combo de la venta asociada es un item con el precio
-    /// unitario, la alícuota, la lista, la oferta y el combo de ese item original, y como descuento la diferencia entre
-    /// su bruto y lo que se cobró por esas unidades; las unidades que ningún tramo cubre se precian como siempre.
-    /// <c>LineaDeItem</c> dice de qué línea de <paramref name="lineas"/> sale cada item. Sin devoluciones de combo hay
-    /// un item por línea y el resultado es el de siempre.</para></summary>
+    /// <paramref name="tramosDeDevolucion"/> toma de un item del ticket de origen es un item con el precio unitario, la
+    /// alícuota, la lista, la oferta, el combo y el lote de ese item original, y como descuento la diferencia entre su bruto y
+    /// lo que se cobró por esas unidades. Toda unidad de una devolución cae en algún tramo (el tope lo fija
+    /// <see cref="DevolucionDeTicket"/>), así que la lista de hoy no interviene. <c>LineaDeItem</c> dice de qué línea de
+    /// <paramref name="lineas"/> sale cada item. En una venta hay un item por línea.</para></summary>
     private static (IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales, IReadOnlyList<int> LineaDeItem)
         MaterializarItems(
             short signoTipoComprobante,
@@ -2578,14 +2714,14 @@ public class ServicioDeVentas(
             int idListaPrecio,
             IReadOnlyDictionary<int, ComboEnLinea> combosDetectados,
             IReadOnlySet<int> combosOfflineExistentes,
-            IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo,
+            IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> tramosDeDevolucion,
             bool ventaOffline,
             LineaDeEnvio? envio)
     {
         var lineasParaCalcular = new List<LineaParaCalcular>(lineas.Count);
         var origenes = new List<(int Linea, TramoDeDevolucion? Tramo)>(lineas.Count);
         var descuentosSoloMultiplos = DescuentosSoloMultiplosDeLaVenta(
-            lineas, resolucion, combosDetectados, devolucionesDeCombo, ventaOffline);
+            lineas, resolucion, combosDetectados, tramosDeDevolucion, ventaOffline);
 
         for (var i = 0; i < lineas.Count; i++)
         {
@@ -2622,12 +2758,12 @@ public class ServicioDeVentas(
                 continue;
             }
 
-            // Devolución de combo: cada tramo se cobra por lo que se pagó. El bruto sale del precio unitario del
-            // item original y el descuento es la diferencia contra el importe devuelto, con el signo de la
-            // cantidad (negativa), así que bruto − descuento = −crédito. El ajuste manual que traiga la línea
-            // se aplica sobre ese neto, como en cualquier línea.
+            // Devolución: cada tramo se cobra por lo que se pagó por esas unidades en el ticket de origen. El bruto sale del
+            // precio unitario del item original y el descuento es la diferencia contra el importe devuelto, con el signo de la
+            // cantidad (negativa), así que bruto − descuento = −crédito. El crédito ya incluye el ajuste manual que tuvo el
+            // item vendido, así que no se aplica otro: la línea de una devolución no lleva ajuste.
             var cantidadDeTramos = 0m;
-            if (devolucionesDeCombo.TryGetValue(i, out var tramos))
+            if (tramosDeDevolucion.TryGetValue(i, out var tramos))
             {
                 foreach (var tramo in tramos)
                 {
@@ -2635,7 +2771,7 @@ public class ServicioDeVentas(
                     var bruto = cantidadDelTramo * tramo.Origen.PrecioUnitario;
 
                     lineasParaCalcular.Add(new LineaParaCalcular(
-                        cantidadDelTramo, tramo.Origen.PrecioUnitario, 0m, linea.AjusteManualPorcentaje,
+                        cantidadDelTramo, tramo.Origen.PrecioUnitario, 0m, null,
                         cantidadDelTramo, bruto + tramo.Credito));
                     origenes.Add((i, tramo));
                     cantidadDeTramos += tramo.Cantidad;
@@ -2707,16 +2843,17 @@ public class ServicioDeVentas(
 
             if (tramoDeDevolucion is { } tramoDevuelto)
             {
-                // La alícuota, la lista, la oferta y el combo son las del item vendido: el artículo pudo cambiar de
-                // alícuota desde entonces, y el IVA de lo que se devuelve es el de lo que se cobró.
+                // La alícuota, la lista, la oferta, el combo y el lote son los del item vendido: el artículo pudo cambiar de
+                // alícuota desde entonces, y el IVA de lo que se devuelve es el de lo que se cobró; las unidades vuelven al lote
+                // de donde salieron.
                 items.Add(new LineaDelPlan(
                     articulo.Id, articulo.Nombre, linea.CodigoBarra, articulo.IdArea, tramoDevuelto.Origen.IdListaPrecio,
                     tramoDevuelto.Origen.IdOferta, tramoDevuelto.Origen.IdAlicuotaIva, tramoDevuelto.Origen.PorcentajeIva,
                     calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
                     articulo.EsProducto, articulo.CostoNominal,
-                    AjusteManualPorcentaje: linea.AjusteManualPorcentaje,
-                    AjusteManual: calculado.AjusteManual,
-                    IdCombo: tramoDevuelto.Origen.IdCombo));
+                    IdLote: tramoDevuelto.Origen.IdLote,
+                    IdCombo: tramoDevuelto.Origen.IdCombo,
+                    PorImporte: tramoDevuelto.Origen.PorImporte));
                 continue;
             }
 
@@ -2814,7 +2951,7 @@ public class ServicioDeVentas(
         IReadOnlyList<LineaDeVenta> lineas,
         IReadOnlyList<ResultadoDeResolucion> resolucion,
         IReadOnlyDictionary<int, ComboEnLinea> combosDetectados,
-        IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo,
+        IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> tramosDeDevolucion,
         bool ventaOffline)
     {
         var unidades = new decimal[lineas.Count];
@@ -2826,7 +2963,7 @@ public class ServicioDeVentas(
                 continue;
             }
 
-            var devueltasPorTramos = devolucionesDeCombo.TryGetValue(i, out var tramos) ? tramos.Sum(t => t.Cantidad) : 0m;
+            var devueltasPorTramos = tramosDeDevolucion.TryGetValue(i, out var tramos) ? tramos.Sum(t => t.Cantidad) : 0m;
             var consumidasPorCombo = combosDetectados.GetValueOrDefault(i).UnidadesConsumidas;
             unidades[i] = Math.Max(linea.Cantidad - devueltasPorTramos - consumidasPorCombo, 0m);
         }
@@ -2937,43 +3074,46 @@ public class ServicioDeVentas(
         }
     }
 
-    /// <summary>Una nota de crédito asociada devuelve una línea por importe por el monto con que se vendió: la venta
-    /// asociada tiene que tener una línea por importe de ese artículo (cantidad positiva) con ese precio unitario Y ese
-    /// porcentaje de ajuste manual, si no 400 <c>importe_devolucion_inexistente</c>. El ajuste entra porque el neto que se
-    /// reembolsa es el importe con el ajuste aplicado: devolver 150 sin el −50 % que la venta aplicó devolvería más de lo
-    /// cobrado. Cuesta UNA consulta y solo si alguna línea trae importe. No lleva la cuenta de lo ya devuelto: igual que las
-    /// cantidades de una devolución común, no se compara contra devoluciones anteriores.</summary>
-    private async Task ExigirImportesDeLaVentaAsociadaAsync(
-        int idComprobanteAsociado, IReadOnlyList<LineaDeVenta> lineas, CancellationToken ct)
+    /// <summary>Una nota de crédito asociada devuelve una línea por importe por el monto con que se vendió: el ticket de origen tiene
+    /// que tener una línea por importe de ese artículo (cantidad positiva) con ese precio unitario, si no 400
+    /// <c>importe_devolucion_inexistente</c>. Lo que se acredita es el total de esa línea del ticket (con su ajuste manual, si lo
+    /// tuvo), así que el ajuste no se compara: lo trae el item vendido.</summary>
+    private static void ExigirImportesDeLaVentaAsociada(IReadOnlyList<LineaDeVenta> lineas, IReadOnlyList<ItemVendido> vendidos)
     {
-        var devueltas = lineas.Where(l => l.Importe is not null).ToList();
-        if (devueltas.Count == 0)
+        foreach (var linea in lineas.Where(l => l.Importe is null))
         {
-            return;
+            var delArticulo = vendidos.Where(v => v.IdArticulo == linea.IdArticulo).ToList();
+            if (delArticulo.Count > 0 && delArticulo.All(v => v.PorImporte))
+            {
+                throw new ErrorDominio(
+                    "importe_requerido",
+                    $"El artículo {linea.IdArticulo} se vendió por importe: hay que indicar el importe que se devuelve.",
+                    400);
+            }
         }
 
-        var idsArticulo = devueltas.Select(l => l.IdArticulo).Distinct().ToList();
-        var vendidos = await db.ItemsComprobanteVenta
-            .Where(i => i.IdComprobanteVenta == idComprobanteAsociado
-                && i.Cantidad > 0m
-                && i.PorImporte
-                && i.IdArticulo != null
-                && idsArticulo.Contains(i.IdArticulo.Value))
-            .Select(i => new { IdArticulo = i.IdArticulo!.Value, i.PrecioUnitario, i.AjusteManualPorcentaje })
-            .ToListAsync(ct);
-
-        foreach (var linea in devueltas)
+        foreach (var linea in lineas.Where(l => l.Importe is not null))
         {
-            if (!vendidos.Any(v => v.IdArticulo == linea.IdArticulo
-                && v.PrecioUnitario == linea.Importe
-                && v.AjusteManualPorcentaje == linea.AjusteManualPorcentaje))
+            if (!vendidos.Any(v => v.PorImporte && v.IdArticulo == linea.IdArticulo && v.PrecioUnitario == linea.Importe))
             {
                 throw new ErrorDominio(
                     "importe_devolucion_inexistente",
-                    $"El comprobante asociado no tiene una línea del artículo {linea.IdArticulo} vendida por {linea.Importe} " +
-                    $"con el mismo ajuste manual ({linea.AjusteManualPorcentaje?.ToString() ?? "ninguno"}).",
+                    $"El comprobante asociado no tiene una línea del artículo {linea.IdArticulo} vendida por {linea.Importe}.",
                     400);
             }
+        }
+    }
+
+    /// <summary>El ajuste manual no tiene destino en una devolución (dto-contract-honesty): cada unidad se acredita por lo que cobró el
+    /// ticket de origen, que ya incluye el ajuste que tuvo. Se rechaza en vez de aceptarlo y perderlo.</summary>
+    private static void ExigirLineasDeDevolucionSinAjuste(IReadOnlyList<LineaDeVenta> lineas)
+    {
+        if (lineas.Any(l => l.AjusteManualPorcentaje is not null))
+        {
+            throw new ErrorDominio(
+                "ajuste_manual_no_admitido_en_devolucion",
+                "Una devolución no admite ajuste manual: cada unidad se devuelve por lo que se cobró en el ticket original.",
+                400);
         }
     }
 
@@ -3323,7 +3463,8 @@ public class ServicioDeVentas(
         DateOnly? HoyDelPuntoVenta = null,
         bool LimiteDeCreditoNoValidado = false,
         bool ForzarFactura = false,
-        PagoACuentaDelPlan? PagoACuenta = null);
+        PagoACuentaDelPlan? PagoACuenta = null,
+        DevolucionDelTicket? Devolucion = null);
 
     /// <summary>El recibo (RC) que se lleva el excedente de la venta, con su número ya reservado.</summary>
     private sealed record PagoACuentaDelPlan(
