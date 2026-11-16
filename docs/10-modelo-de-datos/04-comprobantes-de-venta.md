@@ -60,12 +60,19 @@ items_comprobante_venta (
     id_lista_precio integer,                 -- con qué lista se vendió
     id_oferta       integer NULL,            -- si una oferta tocó esta línea
     id_combo        integer NULL,            -- combo que consumió unidades de la línea (FK compuesta, Restrict)
+    id_item_comprobante_venta_origen integer NULL,   -- solo en un item de NCX asociada: el item del ticket cuyas unidades devuelve
+                                                     -- (FK compuesta (id, id_tenant) autorreferenciada, Restrict; NULL en las NCX anteriores)
     descuento       numeric(14,2) NOT NULL DEFAULT 0,   -- importe descontado en la línea (oferta + parte del combo)
     ajuste_manual_porcentaje numeric(5,2) NULL,         -- con signo: negativo = descuento, positivo = recargo
     ajuste_manual   numeric(14,2) NOT NULL DEFAULT 0,   -- monto con signo del ajuste, sobre el neto de la línea
     id_alicuota_iva integer, porcentaje_iva numeric(5,2),  -- snapshot
     total           numeric(14,2)            -- cantidad × precio − descuento + ajuste_manual
 );
+-- UNIQUE (id_item, id_tenant)                                       ak_items_comprobante_venta_id_item_id_tenant  ⇒ soporte de la FK de origen
+-- INDEX  (id_item_comprobante_venta_origen, id_tenant)               ix_items_comprobante_venta_item_origen
+-- FK (id_item_comprobante_venta_origen, id_tenant) → items_comprobante_venta (id_item, id_tenant) ON DELETE RESTRICT
+--      ⇒ el origen lo escribe el servidor (del ticket que ya lockeó la devolución), nunca el cliente: no hay 23503 alcanzable por
+--        una entrada; el 23503 genérico de ManejadorDeErrores queda de red de seguridad
 
 cobros (                              -- antes pagos_comprobante (E7-S1)
     id_cobro, id_comprobante_venta,
@@ -301,16 +308,19 @@ cambios de esquema: usa `id_comprobante_asociado`, `items_comprobante_venta.id_l
   base de datos.
 - **Importe: lo que se cobró.** La línea de la NCX no lleva precio: cada unidad se acredita por lo cobrado en el ticket, y la lista
   de hoy no interviene (la NCX no consulta precios ni ofertas). Para cada línea, en el orden en que vienen, se toman unidades de
-  los items del ticket del mismo conjunto en orden de `orden` (y de `id_item` si empatan); lo ya devuelto por otras NCX consume
-  primero esos mismos items en ese orden. El crédito de una toma de `u` unidades de un item de `cantidad` Q y `total` T es
+  los items del ticket del mismo conjunto en orden de `orden` (y de `id_item` si empatan); lo ya devuelto por otras NCX se
+  descuenta item por item: cada item de una NCX emitida guarda en `id_item_comprobante_venta_origen` el item del ticket del que salió, y
+  las unidades tomadas y el crédito acreditado de cada item del ticket son la suma de `cantidad` y `total` de esos items guardados (las NCX
+  anuladas no cuentan), no una repetición del reparto. Anular una NCX intermedia libera exactamente sus unidades y su crédito. Las NCX
+  anteriores a la columna (`NULL`, sin backfill) no dicen de qué item salieron: solo cuentan sus unidades, que consumen en orden los
+  items del mismo conjunto que quedaron libres, y su crédito se reconstruye repartiendo. El crédito de una toma de `u` unidades de un item de `cantidad` Q y `total` T es
 
   `credito = round(T × (tomadas + u) / Q) − acreditado`, al peso entero (`AwayFromZero`),
 
   con `tomadas` y `acreditado` lo ya tomado y acreditado de ese item (por NCX anteriores y por líneas anteriores del mismo
-  documento; lo "ya acreditado" de las NCX emitidas es lo que sus items guardaron de verdad, sumado por conjunto y cargado al último item
-  que esas notas tocaron, no una repetición del reparto: al anular una NCX intermedia las que sobreviven pudieron acreditar un peso distinto
-  y repetir el reparto haría que lo acreditado superara `T`). `T` es el total del item vendido: ya descuenta descuentos de línea, ofertas, la parte del combo y el ajuste manual
-  de esa línea. Devolver todas las unidades de un item acredita exactamente `T`, y como el redondeo es monótono ninguna toma es
+  documento), acotado a `[0, T − acreditado]`: tras anular notas intermedias lo acreditado por las que sobreviven puede superar al
+  acumulado de las unidades tomadas, y la cota evita un crédito negativo y que el item acredite más que `T`. `T` es el total del item vendido: ya descuenta descuentos de línea, ofertas, la parte del combo y el ajuste manual
+  de esa línea. Devolver todas las unidades de un item sin notas previas acredita exactamente `T`, y como el redondeo es monótono ninguna toma es
   negativa ni la suma supera `T`, sea cual sea la partición en líneas o en notas. Cada tramo graba un item con el precio
   unitario, la alícuota, la lista, la oferta, el combo y el lote del item vendido, y como descuento la diferencia entre su bruto
   y lo acreditado. Las líneas de una NCX no admiten `ajusteManualPorcentaje` (`400 ajuste_manual_no_admitido_en_devolucion`): el

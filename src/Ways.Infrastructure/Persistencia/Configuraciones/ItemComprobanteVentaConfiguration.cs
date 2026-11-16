@@ -46,6 +46,10 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
 
         builder.HasKey(i => i.Id).HasName("pk_items_comprobante_venta");
 
+        // Habilita la FK compuesta autorreferenciada de fk_items_comprobante_venta_item_origen.
+        builder.HasAlternateKey(i => new { i.Id, i.IdTenant })
+            .HasName("ak_items_comprobante_venta_id_item_id_tenant");
+
         builder.Property(i => i.Id)
             .HasColumnName("id_item")
             .UseIdentityByDefaultColumn();
@@ -111,6 +115,9 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
             .HasDefaultValue(false)
             .IsRequired();
 
+        // Solo en el item de una devolución asociada: el item del ticket de origen cuyas unidades devuelve.
+        builder.Property(i => i.IdItemComprobanteVentaOrigen).HasColumnName("id_item_comprobante_venta_origen");
+
         builder.Property(i => i.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(i => i.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(i => i.DeletedAt).HasColumnName("deleted_at");
@@ -129,6 +136,9 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
         builder.HasIndex(i => new { i.IdOferta, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_oferta");
         builder.HasIndex(i => new { i.IdCombo, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_combo");
         builder.HasIndex(i => i.IdAlicuotaIva).HasDatabaseName("ix_items_comprobante_venta_alicuota_iva");
+
+        // Lo devuelto por item del ticket: soporte de fk_items_comprobante_venta_item_origen y de la lectura de lo ya devuelto.
+        builder.HasIndex(i => new { i.IdItemComprobanteVentaOrigen, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_item_origen");
 
         // Etapa 12 (proposal decisión 8, gate §F): soporte de fk_items_comprobante_venta_lote.
         builder.HasIndex(i => new { i.IdLote, i.IdArticulo, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_lote");
@@ -179,6 +189,14 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
             .HasForeignKey(i => new { i.IdCombo, i.IdTenant })
             .HasPrincipalKey(c => new { c.Id, c.IdTenant })
             .HasConstraintName("fk_items_comprobante_venta_combo")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // MATCH SIMPLE: con id_item_comprobante_venta_origen NULL (todo lo que no es una devolución asociada) la FK no se evalúa.
+        builder.HasOne<ItemComprobanteVenta>()
+            .WithMany()
+            .HasForeignKey(i => new { i.IdItemComprobanteVentaOrigen, i.IdTenant })
+            .HasPrincipalKey(i => new { i.Id, i.IdTenant })
+            .HasConstraintName("fk_items_comprobante_venta_item_origen")
             .OnDelete(DeleteBehavior.Restrict);
 
         // alicuotas_iva es global (ADR-11) — FK simple, sin id_tenant.

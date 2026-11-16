@@ -2199,6 +2199,7 @@ public class ServicioDeVentas(
                 // endpoint de edición.
                 IdLote = i.IdLote,
                 PorImporte = i.PorImporte,
+                IdItemComprobanteVentaOrigen = i.IdItemDeOrigen,
                 CreatedAt = plan.Momento,
                 UpdatedAt = plan.Momento
             })
@@ -2914,7 +2915,8 @@ public class ServicioDeVentas(
                     articulo.EsProducto, articulo.CostoNominal,
                     IdLote: tramoDevuelto.Origen.IdLote,
                     IdCombo: tramoDevuelto.Origen.IdCombo,
-                    PorImporte: tramoDevuelto.Origen.PorImporte));
+                    PorImporte: tramoDevuelto.Origen.PorImporte,
+                    IdItemDeOrigen: tramoDevuelto.Origen.IdItem));
                 continue;
             }
 
@@ -3466,7 +3468,7 @@ public class ServicioDeVentas(
         bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null,
         decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null,
         ComboDeAuditoria? ComboDelDispositivo = null, ComboDeAuditoria? ComboEsperado = null,
-        bool PorImporte = false);
+        bool PorImporte = false, int? IdItemDeOrigen = null);
 
     /// <summary>La línea de concepto libre "Envío" ya resuelta: el importe del parámetro <c>importe_envio</c> y la alícuota
     /// del 21 % a snapshotear. Existe solo cuando la venta es con envío y el importe es mayor a cero.</summary>

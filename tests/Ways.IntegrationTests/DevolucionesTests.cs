@@ -387,6 +387,44 @@ public class DevolucionesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     }
 
     [Fact]
+    public async Task AnularLaDevolucionDelPrimerItemDelMismoArticuloVuelveAAcreditarEseItemYNoElOtro()
+    {
+        var ctx = await PrepararAsync(nameof(AnularLaDevolucionDelPrimerItemDelMismoArticuloVuelveAAcreditarEseItemYNoElOtro));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-dos-precios", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Dos Precios");
+
+        // El mismo artículo en dos items: el primero con 50 % de descuento manual (50) y el segundo a lista (100).
+        var venta = await VenderAsync(
+            ctx, idCliente, 150m,
+            new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -50m),
+            new LineaDeVenta(idArticulo, 1m, null));
+
+        var primera = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        var segunda = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        Assert.Equal([-50m, -100m], [primera.Total, segunda.Total]);
+
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{primera.Id}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        var tercera = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+
+        Assert.Equal(-50m, tercera.Total);
+        Assert.Equal(-150m, segunda.Total + tercera.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var itemsDeOrigen = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == venta.Id)
+            .OrderBy(i => i.Orden)
+            .Select(i => i.Id)
+            .ToListAsync();
+        var origenDeLaTercera = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == tercera.Id)
+            .Select(i => i.IdItemComprobanteVentaOrigen)
+            .SingleAsync();
+        Assert.Equal(itemsDeOrigen[0], origenDeLaTercera);
+    }
+
+    [Fact]
     public async Task UnaLineaDeDevolucionNoAdmiteAjusteManual()
     {
         var ctx = await PrepararAsync(nameof(UnaLineaDeDevolucionNoAdmiteAjusteManual));

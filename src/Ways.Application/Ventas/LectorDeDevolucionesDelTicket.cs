@@ -22,8 +22,9 @@ public static class LectorDeDevolucionesDelTicket
         return vendidos;
     }
 
-    /// <summary>Las unidades que devolvieron las notas de crédito EMITIDAS asociadas al ticket, por artículo (o por importe): una nota
-    /// anulada libera lo que había devuelto. Un espejo fiscal no es una devolución: su asociado es la factura, no la venta.</summary>
+    /// <summary>Lo que devolvieron las notas de crédito EMITIDAS asociadas al ticket: por item del ticket de origen (unidades y crédito
+    /// guardados), y, para las notas anteriores a esa columna, por artículo (o por importe) solo en unidades. Una nota anulada libera lo
+    /// que había devuelto. Un espejo fiscal no es una devolución: su asociado es la factura, no la venta.</summary>
     public static async Task<IReadOnlyList<UnidadesYaDevueltas>> LeerYaDevueltasAsync(
         IWaysDbContext db, int idVenta, CancellationToken ct)
     {
@@ -34,15 +35,25 @@ public static class LectorDeDevolucionesDelTicket
                     && c.Estado == EstadoComprobante.Emitido
                     && i.IdArticulo != null
                     && i.Cantidad < 0m
-                select new { IdArticulo = i.IdArticulo!.Value, i.PorImporte, i.PrecioUnitario, i.Cantidad, i.Total })
+                select new
+                {
+                    IdArticulo = i.IdArticulo!.Value, i.PorImporte, i.PrecioUnitario, i.Cantidad, i.Total,
+                    i.IdItemComprobanteVentaOrigen
+                })
             .ToListAsync(ct);
 
-        return
-        [
-            .. filas
-                .GroupBy(f => (f.IdArticulo, f.PorImporte, Precio: f.PorImporte ? f.PrecioUnitario : 0m))
-                .Select(g => new UnidadesYaDevueltas(
-                    g.Key.IdArticulo, g.Key.PorImporte, g.Key.Precio, -g.Sum(f => f.Cantidad), Credito: -g.Sum(f => f.Total)))
-        ];
+        var deItemConocido = filas
+            .Where(f => f.IdItemComprobanteVentaOrigen is not null)
+            .GroupBy(f => f.IdItemComprobanteVentaOrigen!.Value)
+            .Select(g => new UnidadesYaDevueltas(
+                g.First().IdArticulo, g.First().PorImporte, g.First().PorImporte ? g.First().PrecioUnitario : 0m,
+                -g.Sum(f => f.Cantidad), Credito: -g.Sum(f => f.Total), IdItemOrigen: g.Key));
+
+        var deNotasAnteriores = filas
+            .Where(f => f.IdItemComprobanteVentaOrigen is null)
+            .GroupBy(f => (f.IdArticulo, f.PorImporte, Precio: f.PorImporte ? f.PrecioUnitario : 0m))
+            .Select(g => new UnidadesYaDevueltas(g.Key.IdArticulo, g.Key.PorImporte, g.Key.Precio, -g.Sum(f => f.Cantidad)));
+
+        return [.. deItemConocido, .. deNotasAnteriores];
     }
 }
