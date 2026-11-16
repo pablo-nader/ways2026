@@ -710,6 +710,34 @@ describe('ModalCuentaCorrientePos — detalle del comprobante de un movimiento',
     expect(dialogo().queryByRole('button', { name: /Ver el comprobante de Ajuste manual/ })).not.toBeInTheDocument()
   })
 
+  it('un pago abre su recibo, que muestra los medios con los que se pagó', async () => {
+    obtenerEstadoMock.mockResolvedValue(estado(200, [movimiento({ id: 3, tipo: 'Pago', importe: -300, saldoResultante: 200, idComprobanteVenta: 900 })]))
+    obtenerVentaMock.mockResolvedValue(comprobanteDePago())
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await dialogo().findByRole('button', { name: /Ver el comprobante de Pago del/ }))
+
+    const detalle = within(await screen.findByRole('dialog', { name: 'Detalle de la venta 0007-00000900' }))
+    expect(obtenerVentaMock).toHaveBeenCalledWith(900)
+    const pago = (await detalle.findByText('Efectivo')).closest('tr') as HTMLElement
+    expect(within(pago).getByText('$ 300,00')).toBeInTheDocument()
+  })
+
+  it('Escape cierra solo el detalle y deja abierta la cuenta corriente', async () => {
+    obtenerVentaMock.mockResolvedValue(ticketDeConsumo())
+    const usuario = userEvent.setup()
+    const { onCerrar } = montar()
+
+    await usuario.click(await dialogo().findByRole('button', { name: BOTON_DEL_CONSUMO }))
+    await within(await screen.findByRole('dialog', { name: 'Detalle de la venta 0007-00000030' })).findByText('Yerba 1 kg')
+    await usuario.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Detalle de la venta/ })).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: 'Cuenta corriente' })).toBeInTheDocument()
+    expect(onCerrar).not.toHaveBeenCalled()
+  })
+
   it('si el comprobante no se puede leer, el detalle lo dice', async () => {
     obtenerVentaMock.mockRejectedValue(new Error('sin red'))
     const usuario = userEvent.setup()
