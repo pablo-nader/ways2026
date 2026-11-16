@@ -59,6 +59,9 @@ function mensajeDeErrorAnulacion(e: unknown): string {
   if (e instanceof ErrorApi) {
     if (e.estado === 403) return 'No tenés permiso para anular esta venta.'
     if (e.estado === 409 && e.codigo === 'venta_con_factura_en_tramite') return 'La factura está en trámite en ARCA; probá de nuevo en unos minutos.'
+    if (e.estado === 409 && e.codigo === 'venta_con_devoluciones') {
+      return 'Esta venta tiene devoluciones registradas: anulá primero las notas de crédito de esas devoluciones para poder anularla.'
+    }
     return e.message
   }
   return 'No se pudo anular la venta.'
