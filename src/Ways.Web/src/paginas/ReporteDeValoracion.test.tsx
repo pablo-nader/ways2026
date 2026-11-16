@@ -44,7 +44,7 @@ const empresaDos = { id: 2, idTenant: 1, razonSocial: 'Empresa Dos SA', nombreFa
 
 function punto(sobrescribir: Partial<PuntoDeValoracion> = {}): PuntoDeValoracion {
   return {
-    fecha: '2026-01-31T23:59:59-03:00',
+    fecha: '2026-02-01T02:59:59.999999Z',
     mercaderiaCosto: 1000,
     mercaderiaVenta: 1500,
     efectivo: 200,
@@ -70,7 +70,7 @@ function respuestaFixture(sobrescribir: Partial<ValoracionDeInventario> = {}): V
     puntos: [
       punto(),
       punto({
-        fecha: '2026-11-15T10:00:00-03:00',
+        fecha: '2026-11-15T13:00:00.000Z',
         mercaderiaCosto: 800,
         mercaderiaVenta: 1300,
         efectivo: 500,
@@ -144,7 +144,7 @@ describe('ReporteDeValoracion', () => {
     expect(parametros.get('granularidad')).toBe('Mes')
   })
 
-  it('muestra las tarjetas con el último valor y la variación contra el inicio, y la frase', async () => {
+  it('muestra las tarjetas con el último valor y la variación contra el cierre del primer período, y la frase', async () => {
     mockearRutasBase()
     renderReporte()
 
@@ -153,7 +153,7 @@ describe('ReporteDeValoracion', () => {
     const total = screen.getByTestId('valoracion-tarjeta-totalACosto')
     expect(total).toHaveTextContent('Total a costo')
     expect(total).toHaveTextContent('$ 2.000,00')
-    expect(total).toHaveTextContent('+$ 500,00 (+33,3 %)')
+    expect(total).toHaveTextContent('+$ 500,00 (+33,3 %) desde el cierre de 01/2026')
 
     const mercaderia = screen.getByTestId('valoracion-tarjeta-mercaderiaCosto')
     expect(mercaderia).toHaveTextContent('$ 800,00')

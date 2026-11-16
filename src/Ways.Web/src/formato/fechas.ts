@@ -85,6 +85,22 @@ export function fechaHoraATexto(valor: string | Date): string {
   return new Date(valor).toLocaleString('es-AR', { hourCycle: 'h23' })
 }
 
+/** Año, mes y día calendario de un instante en la zona horaria dada. Una zona que el navegador no reconoce cae a la
+ * zona local en vez de romper. */
+export function diaEnZona(valor: string, zonaHoraria: string): { anio: string; mes: string; dia: string } {
+  const fecha = new Date(valor)
+  const partes = (timeZone?: string) => {
+    const formato = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone })
+    const porTipo = Object.fromEntries(formato.formatToParts(fecha).map((p) => [p.type, p.value]))
+    return { anio: porTipo.year, mes: porTipo.month, dia: porTipo.day }
+  }
+  try {
+    return partes(zonaHoraria)
+  } catch {
+    return partes(undefined)
+  }
+}
+
 /** Fecha y hora `DD/MM/AAAA, HH:mm:ss` en la zona horaria de la empresa, que es la que usó el reporte para armar el
  * período. Una zona que el navegador no reconoce cae a la hora local en vez de romper la tabla. */
 export function fechaHoraEnZonaATexto(valor: string, zonaHoraria: string): string {

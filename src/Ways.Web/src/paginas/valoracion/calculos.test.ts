@@ -5,6 +5,7 @@ import {
   armarTarjetas,
   aPuntosDeGrafico,
   avisosDeCobertura,
+  descripcionDelCierreInicial,
   etiquetaDePunto,
   fraseDeValoracion,
   mensajeDeErrorDeValoracion,
@@ -12,9 +13,11 @@ import {
   variacion,
 } from './calculos'
 
+const ZONA = 'America/Argentina/Buenos_Aires'
+
 function punto(sobrescribir: Partial<PuntoDeValoracion> = {}): PuntoDeValoracion {
   return {
-    fecha: '2026-01-31T23:59:59-03:00',
+    fecha: '2026-02-01T02:59:59.999999Z',
     mercaderiaCosto: 1000,
     mercaderiaVenta: 1500,
     efectivo: 200,
@@ -119,16 +122,24 @@ describe('fraseDeValoracion', () => {
 })
 
 describe('etiquetaDePunto', () => {
-  it('mes: MM/aaaa; día y semana: dd/MM, con la fecha local del servidor', () => {
-    expect(etiquetaDePunto('2026-10-31T23:59:59-03:00', 'Mes')).toBe('10/2026')
-    expect(etiquetaDePunto('2026-10-31T23:59:59-03:00', 'Dia')).toBe('31/10')
-    expect(etiquetaDePunto('2026-10-25T00:00:00-03:00', 'Semana')).toBe('25/10')
+  it('mes: MM/aaaa; día y semana: dd/MM, con el día de la zona de la empresa y no el del instante UTC', () => {
+    expect(etiquetaDePunto('2026-11-01T02:59:59.999999Z', 'Mes', ZONA)).toBe('10/2026')
+    expect(etiquetaDePunto('2026-11-01T02:59:59.999999Z', 'Dia', ZONA)).toBe('31/10')
+    expect(etiquetaDePunto('2026-10-25T03:00:00Z', 'Semana', ZONA)).toBe('25/10')
+  })
+})
+
+describe('descripcionDelCierreInicial', () => {
+  it('nombra el cierre del primer período con su etiqueta local', () => {
+    expect(descripcionDelCierreInicial([punto()], 'Mes', ZONA)).toBe('cierre de 01/2026')
+    expect(descripcionDelCierreInicial([punto()], 'Dia', ZONA)).toBe('cierre del 31/01')
+    expect(descripcionDelCierreInicial([], 'Mes', ZONA)).toBe('')
   })
 })
 
 describe('aPuntosDeGrafico', () => {
   it('mapea cada punto a sus series con la etiqueta de la granularidad', () => {
-    const [primero] = aPuntosDeGrafico([punto()], 'Mes')
+    const [primero] = aPuntosDeGrafico([punto()], 'Mes', ZONA)
 
     expect(primero).toEqual({
       etiqueta: '01/2026',
@@ -144,11 +155,11 @@ describe('aPuntosDeGrafico', () => {
 
 describe('avisosDeCobertura', () => {
   it('sin faltantes ni estimados no avisa', () => {
-    expect(avisosDeCobertura([punto(), punto()])).toEqual([])
+    expect(avisosDeCobertura([punto(), punto()], 'Mes', ZONA)).toEqual([])
   })
 
   it('avisa sin costo y sin precio del último punto, con singular y plural', () => {
-    const avisos = avisosDeCobertura([punto(), punto({ articulosSinCosto: 1, articulosSinPrecio: 3 })])
+    const avisos = avisosDeCobertura([punto(), punto({ articulosSinCosto: 1, articulosSinPrecio: 3 })], 'Mes', ZONA)
 
     expect(avisos.map((a) => a.clave)).toEqual(['sin-costo', 'sin-precio'])
     expect(avisos[0].texto).toContain('1 artículo con stock no tiene costo cargado')
@@ -156,15 +167,16 @@ describe('avisosDeCobertura', () => {
   })
 
   it('el estimado del primer punto avisa que la variación es aproximada, con su valor', () => {
-    const avisos = avisosDeCobertura([punto({ articulosConCostoEstimado: 2, valorCostoEstimado: 250 }), punto()])
+    const avisos = avisosDeCobertura([punto({ articulosConCostoEstimado: 2, valorCostoEstimado: 250 }), punto()], 'Mes', ZONA)
 
     expect(avisos).toHaveLength(1)
     expect(avisos[0].clave).toBe('estimado-primero')
+    expect(avisos[0].texto).toContain('En el primer punto (cierre de 01/2026), 2 artículos')
     expect(avisos[0].importe).toBe(250)
   })
 
   it('un único punto con estimado cuenta una sola vez', () => {
-    const avisos = avisosDeCobertura([punto({ articulosConCostoEstimado: 2, valorCostoEstimado: 250 })])
+    const avisos = avisosDeCobertura([punto({ articulosConCostoEstimado: 2, valorCostoEstimado: 250 })], 'Mes', ZONA)
 
     expect(avisos.map((a) => a.clave)).toEqual(['estimado-ultimo'])
   })

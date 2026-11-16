@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dentroDeRango, esFechaReal, expandirAnio, fechaHoraATexto, formatearTipeo, formatearTipeoOPegado, isoATexto, textoAIso } from './fechas'
+import { dentroDeRango, diaEnZona, esFechaReal, expandirAnio, fechaHoraATexto, formatearTipeo, formatearTipeoOPegado, isoATexto, textoAIso } from './fechas'
 
 describe('esFechaReal', () => {
   it('rechaza días inexistentes y acepta el 29/02 solo en bisiestos', () => {
@@ -122,6 +122,13 @@ describe('dentroDeRango', () => {
     expect(dentroDeRango('2026-08-05', '2026-08-05', '2026-08-05')).toBe(true)
     expect(dentroDeRango('2026-08-04', '2026-08-05')).toBe(false)
     expect(dentroDeRango('2026-08-06', undefined, '2026-08-05')).toBe(false)
+  })
+})
+
+describe('diaEnZona', () => {
+  it('pasa un instante UTC al día calendario de la zona', () => {
+    expect(diaEnZona('2026-11-01T02:59:59.999999Z', 'America/Argentina/Buenos_Aires')).toEqual({ anio: '2026', mes: '10', dia: '31' })
+    expect(diaEnZona('2026-11-01T02:59:59.999999Z', 'UTC')).toEqual({ anio: '2026', mes: '11', dia: '01' })
   })
 })
 

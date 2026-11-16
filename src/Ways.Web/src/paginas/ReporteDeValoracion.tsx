@@ -13,6 +13,7 @@ import {
   armarTarjetas,
   aPuntosDeGrafico,
   avisosDeCobertura,
+  descripcionDelCierreInicial,
   fraseDeValoracion,
   mensajeDeErrorDeValoracion,
   sentidoDe,
@@ -42,7 +43,7 @@ function textoDePorcentaje(porcentaje: number | null): string {
   return `${redondeado > 0 ? '+' : redondeado < 0 ? '-' : ''}${texto} %`
 }
 
-function Tarjeta({ tarjeta }: { tarjeta: TarjetaDeValoracion }) {
+function Tarjeta({ tarjeta, desde }: { tarjeta: TarjetaDeValoracion; desde: string }) {
   const { variacion } = tarjeta
   const sentido = sentidoDe(variacion.monto)
   return (
@@ -52,8 +53,8 @@ function Tarjeta({ tarjeta }: { tarjeta: TarjetaDeValoracion }) {
         <div className="fs-5 fw-semibold">{moneda(tarjeta.valor)}</div>
         <div className="small text-muted">
           {sentido === 'igual'
-            ? 'Sin variación desde el inicio del rango'
-            : `${formatearImporteConSigno(variacion.monto, { simbolo: true })} (${textoDePorcentaje(variacion.porcentaje)}) desde el inicio del rango`}
+            ? `Sin variación desde el ${desde}`
+            : `${formatearImporteConSigno(variacion.monto, { simbolo: true })} (${textoDePorcentaje(variacion.porcentaje)}) desde el ${desde}`}
         </div>
       </div>
     </div>
@@ -63,8 +64,12 @@ function Tarjeta({ tarjeta }: { tarjeta: TarjetaDeValoracion }) {
 function Resultado({ datos, granularidad }: { datos: ValoracionDeInventario; granularidad: Granularidad }) {
   const tarjetas = useMemo(() => armarTarjetas(datos.puntos), [datos])
   const frase = useMemo(() => fraseDeValoracion(datos.puntos), [datos])
-  const avisos = useMemo(() => avisosDeCobertura(datos.puntos), [datos])
-  const serie = useMemo(() => aPuntosDeGrafico(datos.puntos, granularidad), [datos, granularidad])
+  const avisos = useMemo(() => avisosDeCobertura(datos.puntos, granularidad, datos.zonaHoraria), [datos, granularidad])
+  const serie = useMemo(() => aPuntosDeGrafico(datos.puntos, granularidad, datos.zonaHoraria), [datos, granularidad])
+  const desde = useMemo(
+    () => descripcionDelCierreInicial(datos.puntos, granularidad, datos.zonaHoraria),
+    [datos, granularidad],
+  )
 
   if (datos.puntos.length === 0) {
     return <p className="text-muted text-center py-4">No hay puntos de valoración en el rango elegido.</p>
@@ -84,7 +89,7 @@ function Resultado({ datos, granularidad }: { datos: ValoracionDeInventario; gra
 
       <div className="row g-2 mb-3">
         {tarjetas.map((t) => (
-          <Tarjeta key={t.clave} tarjeta={t} />
+          <Tarjeta key={t.clave} tarjeta={t} desde={desde} />
         ))}
       </div>
 

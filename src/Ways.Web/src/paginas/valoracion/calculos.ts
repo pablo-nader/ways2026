@@ -1,4 +1,5 @@
 import { ErrorApi } from '../../api/cliente'
+import { diaEnZona } from '../../formato/fechas'
 import type { Granularidad, PuntoDeValoracion } from '../../api/tipos'
 import type { PuntoDeGraficoMultiple, SerieDeGrafico } from '../../componentes/graficos/series'
 
@@ -81,10 +82,24 @@ export function fraseDeValoracion(puntos: readonly PuntoDeValoracion[]): string 
   return 'Bajaron tanto el dinero como la mercadería.'
 }
 
-/** Etiqueta del eje x: día y semana muestran "dd/MM", mes muestra "MM/aaaa". Toma la fecha local tal como la manda el servidor. */
-export function etiquetaDePunto(fecha: string, granularidad: Granularidad): string {
-  const [anio, mes, dia] = fecha.slice(0, 10).split('-')
+/**
+ * Etiqueta del eje x: día y semana muestran "dd/MM", mes muestra "MM/aaaa". El servidor manda cada punto como instante
+ * UTC, así que el día se toma en la zona horaria de la empresa: el corte del 31/10 a las 23:59 locales llega ya en noviembre.
+ */
+export function etiquetaDePunto(fecha: string, granularidad: Granularidad, zonaHoraria: string): string {
+  const { anio, mes, dia } = diaEnZona(fecha, zonaHoraria)
   return granularidad === 'Mes' ? `${mes}/${anio}` : `${dia}/${mes}`
+}
+
+/** Nombre del cierre del primer período, que es la base de las variaciones: "cierre de 01/2026" o "cierre del 31/01". */
+export function descripcionDelCierreInicial(
+  puntos: readonly PuntoDeValoracion[],
+  granularidad: Granularidad,
+  zonaHoraria: string,
+): string {
+  if (puntos.length === 0) return ''
+  const etiqueta = etiquetaDePunto(puntos[0].fecha, granularidad, zonaHoraria)
+  return granularidad === 'Mes' ? `cierre de ${etiqueta}` : `cierre del ${etiqueta}`
 }
 
 export const SERIES_DE_EVOLUCION: SerieDeGrafico[] = [
@@ -103,9 +118,10 @@ export const SERIES_DE_COMPOSICION: SerieDeGrafico[] = [
 export function aPuntosDeGrafico(
   puntos: readonly PuntoDeValoracion[],
   granularidad: Granularidad,
+  zonaHoraria: string,
 ): PuntoDeGraficoMultiple[] {
   return puntos.map((p) => ({
-    etiqueta: etiquetaDePunto(p.fecha, granularidad),
+    etiqueta: etiquetaDePunto(p.fecha, granularidad, zonaHoraria),
     mercaderiaCosto: p.mercaderiaCosto,
     mercaderiaVenta: p.mercaderiaVenta,
     efectivo: p.efectivo,
@@ -125,7 +141,11 @@ function plural(cantidad: number, singular: string, pluralTexto: string): string
  * Avisos de cobertura del último punto (costo o precio faltantes, costo estimado) y del primero (costo estimado), que es
  * la base de las variaciones. Un artículo sin costo o sin precio no se valora en cero: queda fuera del valor.
  */
-export function avisosDeCobertura(puntos: readonly PuntoDeValoracion[]): AvisoDeCobertura[] {
+export function avisosDeCobertura(
+  puntos: readonly PuntoDeValoracion[],
+  granularidad: Granularidad,
+  zonaHoraria: string,
+): AvisoDeCobertura[] {
   if (puntos.length === 0) return []
   const primero = puntos[0]
   const ultimo = puntos[puntos.length - 1]
@@ -157,7 +177,7 @@ export function avisosDeCobertura(puntos: readonly PuntoDeValoracion[]): AvisoDe
     const n = primero.articulosConCostoEstimado
     avisos.push({
       clave: 'estimado-primero',
-      texto: `En el primer punto del rango, ${n} ${plural(n, 'artículo está valorado', 'artículos están valorados')} con el costo actual por no tener una compra anterior a esa fecha, así que la variación del costo es aproximada. Valor estimado:`,
+      texto: `En el primer punto (${descripcionDelCierreInicial(puntos, granularidad, zonaHoraria)}), ${n} ${plural(n, 'artículo está valorado', 'artículos están valorados')} con el costo actual por no tener una compra anterior a esa fecha, así que la variación del costo es aproximada. Valor estimado:`,
       importe: primero.valorCostoEstimado,
     })
   }
