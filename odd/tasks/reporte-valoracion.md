@@ -45,7 +45,7 @@ existencias shows quantities, nothing values stock or tracks the mix over time.
 
 - [x] T1 — Backend: domain aggregation (pure, unit tested), service, endpoint, integration tests.
   Route: delegated (writer trigger, 2+ non-trivial files). Branch `pnader/reporte-valoracion-backend`.
-- [ ] T2 — Web page, API client, route, nav link, Vitest tests. Route: delegated (writer trigger).
+- [x] T2 — Web page, API client, route, nav link, Vitest tests. Route: delegated (writer trigger).
   Branch `pnader/reporte-valoracion-web`, stacked on T1.
 
 ## Acceptance criteria
@@ -86,3 +86,7 @@ Each slice passes judgment-day before its PR.
     discount/IVA/impuesto interno). The purchase flow writes `CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(total, cantidad, %iva,
     comprobante.DiscriminaIva, PreciosIncluyenIva, impuesto_interno)` for lines passing `ActualizaElCosto`, per family. The report
     reproduces exactly that, from lines of confirmed non-NC comprobantes with `FechaRecepcion <= corte`.
+- 2026-11-15 T2 (writer, delegated): web page written; checkbox NOT ticked (pending judgment-day). Files: `ReporteDeValoracion.tsx`, `paginas/valoracion/calculos.ts`, `GraficoDeLineasMultiples`/`GraficoDeBarrasApiladas` wrappers (the existing ones had a single `valor` series), client + types, route `/reportes/valoracion` (Supervisor+Admin), nav link. Evidence:
+  - Tests written with the code (pure helpers, wrappers, page): `npx vitest run` on the new files: all passing after fixing one ambiguous query in my own test.
+  - `npm run test -- --run` (src/Ways.Web): 336 files, 10384 tests passed. `npm run build` (tsc -b + vite): built OK. `npm run lint`: exit 0, only pre-existing warnings in other files.
+  - Not done: mutation evidence for the insight quadrants; no browser check of the page.

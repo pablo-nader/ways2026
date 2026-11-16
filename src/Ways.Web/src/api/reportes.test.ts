@@ -31,6 +31,8 @@ const {
   construirQueryDeTicketsDeArticulo,
   construirQueryDeVentasPorArticulo,
   construirQueryDeVentasPorHora,
+  construirQueryDeValoracion,
+  rangoDeLosUltimosDoceMeses,
   rangoDeLasUltimasCuatroSemanas,
   filtrosDeHistoricoDeCajasVacios,
   filtrosDeReporteDeArticulosVacios,
@@ -643,5 +645,37 @@ describe('ticketsDeArticulo', () => {
     )
 
     expect(Object.fromEntries(deTickets)).toEqual(Object.fromEntries(delReporte))
+  })
+})
+
+describe('construirQueryDeValoracion', () => {
+  it('manda empresa, rango y granularidad, sin punto de venta', () => {
+    const query = construirQueryDeValoracion({ idEmpresa: 3, desde: '2025-12-01', hasta: '2026-11-15', granularidad: 'Mes' })
+
+    expect(Object.fromEntries(new URLSearchParams(query))).toEqual({
+      idEmpresa: '3',
+      desde: '2025-12-01',
+      hasta: '2026-11-15',
+      granularidad: 'Mes',
+    })
+  })
+
+  it('el cliente pide la ruta de valoración con ese query', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.valoracion({ idEmpresa: 1, desde: '2026-01-01', hasta: '2026-02-01', granularidad: 'Semana' })
+
+    expect(apiGetMock).toHaveBeenCalledWith(
+      '/reportes/valoracion?idEmpresa=1&desde=2026-01-01&hasta=2026-02-01&granularidad=Semana',
+    )
+  })
+})
+
+describe('rangoDeLosUltimosDoceMeses', () => {
+  it('empieza el primer día del mes de hace 11 meses y termina hoy', () => {
+    expect(rangoDeLosUltimosDoceMeses(new Date(2026, 10, 15))).toEqual({ desde: '2025-12-01', hasta: '2026-11-15' })
+  })
+
+  it('cruza el año hacia atrás desde enero', () => {
+    expect(rangoDeLosUltimosDoceMeses(new Date(2026, 0, 31))).toEqual({ desde: '2025-02-01', hasta: '2026-01-31' })
   })
 })

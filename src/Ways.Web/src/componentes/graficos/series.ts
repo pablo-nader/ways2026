@@ -16,6 +16,12 @@ export type PuntoDeGrafico = {
   valor: number
 }
 
+/** Punto de un gráfico de varias series: `etiqueta` más un valor numérico por cada clave de serie. */
+export type PuntoDeGraficoMultiple = { etiqueta: string } & Record<string, number | string>
+
+/** Una serie de un gráfico múltiple: `clave` es la propiedad de cada punto de la que toma su valor. */
+export type SerieDeGrafico = { clave: string; nombre: string; color: string; punteada?: boolean }
+
 /**
  * Convierte los buckets de un reporte a la forma que consumen los wrappers de
  * gráfico. Un `valor` `null` (p. ej. ticket promedio sin ventas en el bucket)

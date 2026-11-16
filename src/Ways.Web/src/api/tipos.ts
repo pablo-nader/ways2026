@@ -4196,3 +4196,51 @@ export type PaginaDeRetiros = PaginaDe<FilaDeRetiro>
 
 /** Cuerpo de `PUT /api/caja/retiros/{id}`. */
 export type SolicitudDeEdicionDeRetiro = { importe: number; motivo: string }
+
+// ---- Reporte de valoración (`GET /api/reportes/valoracion`): espejo de `ContratosDeValoracion.cs`. ----
+
+/** Un punto de la evolución. `fecha` es el instante de corte (ISO con offset); el último punto es el ahora si el rango
+ * llega a hoy. La mercadería suma solo stock positivo; un artículo sin costo o sin precio no se valora en cero, se cuenta
+ * en `articulosSinCosto`/`articulosSinPrecio`. `efectivo` es la caja general: no incluye el cajón de un turno abierto. */
+export type PuntoDeValoracion = {
+  fecha: string
+  mercaderiaCosto: number
+  mercaderiaVenta: number
+  efectivo: number
+  cuentas: number
+  dinero: number
+  totalACosto: number
+  totalAVenta: number
+  articulosSinCosto: number
+  articulosSinPrecio: number
+  articulosConCostoEstimado: number
+  valorCostoEstimado: number
+}
+
+export type CuentaDeValoracion = { idCuenta: number; nombre: string; saldo: number }
+
+/** `idArea` es `null` para "Sin área" (artículos sin área o con el área dada de baja). */
+export type AreaDeValoracion = {
+  idArea: number | null
+  nombre: string
+  mercaderiaCosto: number
+  mercaderiaVenta: number
+}
+
+export type DetalleActualDeValoracion = {
+  porCuenta: CuentaDeValoracion[]
+  porArea: AreaDeValoracion[]
+  idListaPrecio: number | null
+  nombreListaPrecio: string | null
+}
+
+export type ValoracionDeInventario = {
+  idEmpresa: number
+  desde: string
+  hasta: string
+  granularidad: Granularidad
+  zonaHoraria: string
+  puntos: PuntoDeValoracion[]
+  actual: DetalleActualDeValoracion
+}
+
