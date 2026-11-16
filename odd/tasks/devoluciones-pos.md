@@ -65,7 +65,7 @@ The backend already accepts NCX through `POST /api/ventas`, but:
     explicit `idLote` that is not the tranche's lot is `400 lote_invalido` (test
     `UnaDevolucionQueCubreItemsDeLotesDistintos...`; mutant `idLoteDelCliente != item.IdLote` -> `false` made it red, reverted);
     B-2 already-credited amount is the persisted sum of the emitted NCX items' totals per set, charged to the last item they touched
-    (domain tests `AnularUnaNotaIntermedia...` and `LoAcreditadoPorLasNotasSobrevivientes...`, integration test
+    (superseded by F1 below; domain tests `AnularUnaNotaIntermedia...` and `LoAcreditadoPorLasNotasSobrevivientes...`, integration test
     `AnularUnaDevolucionIntermedia...`; mutant removing the reconciliation made 2 domain tests red, reverted).
   - Model: no schema change. The NCX carries its refund as `cobros` rows (positive importe, `ck_cobros_importe_no_negativo` stays) and
     the sign comes from the comprobante. `ValidadorDePagos` rule 0c now requires, for a total < 0: only `efectivo` medios
@@ -95,6 +95,19 @@ The backend already accepts NCX through `POST /api/ventas`, but:
     credit and `reintegro` through the same `ResolverDevolucionDelTicketAsync`/`DevolucionDeTicket` path and the same rejections as
     emission; allow-listed in `SuperficieDeAutorizacionTests` and `LectoresDeComprobantesVentaEstructuralesTests`. Integration:
     DevolucionesTests + SuperficieDeAutorizacion + AislamientoDeTenant + RutasDeLaSpa 155 passed; Application.Tests 1706 passed.
+  - Judgment-day round 1 (2026-11-15), commits 2e2cbac6 and 840b8a92:
+    - F1 (replaces the B-2 "last touched item" attribution): migration `DevolucionPorItemDeOrigen` adds nullable
+      `items_comprobante_venta.id_item_comprobante_venta_origen` (composite self-FK with tenant, index, alternate key
+      `ak_items_comprobante_venta_id_item_id_tenant`; DDL only, no backfill; the origin is server-written so no 23503/23505 backstop is
+      reachable from client input). Taken units and credit per origin item come from the emitted NCX items; NCX rows with a NULL origin
+      (older notes) fall back to the per-article unit replay and their credit is rebuilt. `Tomar` is clamped to `[0, Total - acreditado]`.
+      Domain tests for both scenarios (same article at two prices, alternating units) plus integration
+      `AnularLaDevolucionDelPrimerItemDelMismoArticuloVuelveAAcreditarEseItemYNoElOtro` (refund 50). Mutant "attribute to first item with
+      units left" -> 1 domain + 1 integration test red, reverted.
+    - F2: `LeerVentasDelTurnoAsync` signs the medio importe by the comprobante total (negative = refund), so the per-medio total of
+      "Ventas del turno" and of the closed-turno detail equals the arqueo esperado. Web unchanged except a comment and a vitest case.
+      Integration `ElTotalPorMedioDeVentasDelTurnoDescuentaLaDevolucionYCoincideConElEsperado`; mutant dropping the sign -> red
+      (-100 expected, 100 actual), reverted.
   - Open: the Web mirror `src/Ways.Web/src/api/pagos.ts` (rule 0c) and its test still encode it (T3).
 - [ ] T3 Web POS: devolución mode (pick ticket, pick lines/qty up to remaining, confirm, print).
   Route: delegated.
