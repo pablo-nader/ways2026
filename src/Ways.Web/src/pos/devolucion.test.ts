@@ -8,6 +8,7 @@ import {
   MOTIVO_DEVOLUCION_SIN_CONEXION,
   MOTIVO_DEVOLUCION_SIN_TURNO,
   errorDeEmisionDeDevolucion,
+  errorDeVistaPreviaDeDevolucion,
   errorDeLecturaDeTicket,
   evaluarCantidad,
   firmaDeLaSeleccion,
@@ -246,16 +247,30 @@ describe('errorDeEmisionDeDevolucion', () => {
     expect(errorDeEmisionDeDevolucion(new ErrorApi(400, 'otro', 'Algo pasó.')).mensaje).toBe('Algo pasó.')
   })
 
-  it('una falla de red y un 503 resultado_incierto son resultado incierto y piden releer', () => {
+  it('una falla de red y un 503 resultado_incierto son resultado incierto y no piden releer', () => {
     const red = errorDeEmisionDeDevolucion(new ErrorDeRed(new TypeError('Failed to fetch')))
-    expect(red).toMatchObject({ incierto: true, releer: true })
+    expect(red).toMatchObject({ incierto: true, releer: false })
     expect(red.mensaje).toMatch(/Ventas del turno/)
     const incierto = errorDeEmisionDeDevolucion(new ErrorApi(503, 'resultado_incierto', 'x'))
-    expect(incierto).toMatchObject({ incierto: true, releer: true })
+    expect(incierto).toMatchObject({ incierto: true, releer: false })
   })
 
   it('un error que no es de la API no se queda sin mensaje', () => {
     expect(errorDeEmisionDeDevolucion(new Error('boom')).mensaje).toBe('No se pudo registrar la devolución.')
+  })
+})
+
+describe('errorDeVistaPreviaDeDevolucion', () => {
+  it('una falla de red o un 503 resultado_incierto no son un resultado incierto: solo no se pudo calcular', () => {
+    for (const e of [new ErrorDeRed(new TypeError('Failed to fetch')), new ErrorApi(503, 'resultado_incierto', 'x')]) {
+      const resultado = errorDeVistaPreviaDeDevolucion(e)
+      expect(resultado).toEqual({ mensaje: 'No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.', releer: false, incierto: false })
+    }
+  })
+
+  it('los códigos del servidor conservan su copia y su relectura', () => {
+    expect(errorDeVistaPreviaDeDevolucion(new ErrorApi(409, 'devolucion_desactualizada', 'x'))).toMatchObject({ releer: true, incierto: false })
+    expect(errorDeVistaPreviaDeDevolucion(new ErrorApi(409, 'devolucion_requiere_nota_de_credito_fiscal', 'x')).mensaje).toMatch(/nota de crédito fiscal/)
   })
 })
 

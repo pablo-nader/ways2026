@@ -12,6 +12,7 @@ import {
   copiaDelMotivo,
   errorDeEmisionDeDevolucion,
   errorDeLecturaDeTicket,
+  errorDeVistaPreviaDeDevolucion,
   firmaDeLaSeleccion,
   lineaPorCodigoDeBarra,
   lineasDeLaDevolucion,
@@ -46,7 +47,7 @@ type Props = {
 
 type Previa = { firma: string; estado: 'cargando' } | { firma: string; estado: 'error'; mensaje: string } | ({ firma: string; estado: 'ok' } & PrevisualizacionDeDevolucion)
 
-type Resultado = { comprobante: ComprobanteEmitido; reintegro: number }
+type Resultado = { comprobante: ComprobanteEmitido; reintegro: number; impresionFallida: boolean }
 
 const MENSAJE_DE_RELECTURA_FALLIDA = 'No se pudo volver a leer el ticket. Cerrá y volvé a abrir la devolución antes de confirmar.'
 
@@ -57,6 +58,7 @@ const MENSAJE_DE_RELECTURA_FALLIDA = 'No se pudo volver a leer el ticket. Cerrá
  * Concurrencia (`react-async-state`): cada lectura lleva su generación y solo la última pedida se aplica; la vista previa solo vale
  * para la selección que la pidió, y confirmar queda bloqueado hasta que coincide. La emisión toma la guarda de reentrancia por ref
  * antes de su primer `await` y deja todo inerte hasta que responde; no hay otra acción que pueda reemplazar lo que escribe su respuesta.
+ * Si la emisión termina con resultado incierto, el modal queda inerte y solo se puede cerrar: volver a abrirlo relee lo que quedó registrado.
  */
 export function ModalDeDevolucion({ idPuntoVenta, puntosVenta, idTurno, idMedioEfectivo, impresion, alCerrar }: Props) {
   const idFormulario = useId()
@@ -83,6 +85,8 @@ export function ModalDeDevolucion({ idPuntoVenta, puntosVenta, idTurno, idMedioE
   const [avisoDeRelectura, setAvisoDeRelectura] = useState('')
   const [errorDeRelectura, setErrorDeRelectura] = useState('')
   const [errorDeEmision, setErrorDeEmision] = useState('')
+  /** La emisión no se sabe si quedó registrada: sin clave de idempotencia, otra emisión podría reintegrar dos veces. Estado terminal. */
+  const [resultadoIncierto, setResultadoIncierto] = useState(false)
   const [emitiendo, setEmitiendo] = useState(false)
   const emitiendoRef = useRef(false)
   const [resultado, setResultado] = useState<Resultado | null>(null)
@@ -141,7 +145,7 @@ export function ModalDeDevolucion({ idPuntoVenta, puntosVenta, idTurno, idMedioE
         })
         .catch((e) => {
           if (generacionDePrevia.current !== generacion) return
-          const rechazo = errorDeEmisionDeDevolucion(e)
+          const rechazo = errorDeVistaPreviaDeDevolucion(e)
           setPrevia({ firma, estado: 'error', mensaje: rechazo.mensaje })
           if (rechazo.releer && firmaReleida.current !== firma) {
             firmaReleida.current = firma
@@ -235,41 +239,51 @@ export function ModalDeDevolucion({ idPuntoVenta, puntosVenta, idTurno, idMedioE
     const elegido = seleccion
     const aprobada = previa
     try {
-      const comprobante = await clienteDeVentas.emitir(
-        solicitudDeDevolucion({ ticket: origen, lineas: elegido.lineas, reintegro: aprobada.reintegro, idMedioEfectivo }),
-      )
-      // La devolución ya quedó registrada: el ticket y el cajón salen aunque la pantalla se haya ido.
-      impresion?.encolar(
-        'el ticket de devolución',
-        ticketDeDevolucion(
-          {
-            numeroVisible: comprobante.numeroVisible,
-            fecha: comprobante.fecha,
-            ticketAsociado: origen.numeroVisible,
-            lineas: elegido.posiciones.map((posicion, i) => ({
-              descripcion: origen.lineas[posicion].descripcion,
-              cantidad: elegido.lineas[i].cantidad,
-              credito: aprobada.lineas[i]?.credito ?? 0,
-            })),
-            reintegro: aprobada.reintegro,
-          },
-          impresion.contexto,
-        ),
-      )
+      let comprobante: ComprobanteEmitido
+      try {
+        comprobante = await clienteDeVentas.emitir(
+          solicitudDeDevolucion({ ticket: origen, lineas: elegido.lineas, reintegro: aprobada.reintegro, idMedioEfectivo }),
+        )
+      } catch (e) {
+        if (!montado.current) return
+        const rechazo = errorDeEmisionDeDevolucion(e)
+        setErrorDeEmision(rechazo.mensaje)
+        if (rechazo.incierto) setResultadoIncierto(true)
+        else if (rechazo.releer) void releerTicket(origen.id, '')
+        return
+      }
+      // La devolución ya quedó registrada: el ticket y el cajón salen aunque la pantalla se haya ido, y una falla al imprimir no la desdice.
+      let impresionFallida = false
+      try {
+        impresion?.encolar(
+          'el ticket de devolución',
+          ticketDeDevolucion(
+            {
+              numeroVisible: comprobante.numeroVisible,
+              fecha: comprobante.fecha,
+              ticketAsociado: origen.numeroVisible,
+              lineas: elegido.posiciones.map((posicion, i) => ({
+                descripcion: origen.lineas[posicion].descripcion,
+                cantidad: elegido.lineas[i].cantidad,
+                credito: aprobada.lineas[i]?.credito ?? 0,
+              })),
+              reintegro: aprobada.reintegro,
+            },
+            impresion.contexto,
+          ),
+        )
+      } catch {
+        impresionFallida = true
+      }
       if (!montado.current) return
-      setResultado({ comprobante, reintegro: aprobada.reintegro })
-    } catch (e) {
-      if (!montado.current) return
-      const rechazo = errorDeEmisionDeDevolucion(e)
-      setErrorDeEmision(rechazo.mensaje)
-      if (rechazo.releer) void releerTicket(origen.id, '')
+      setResultado({ comprobante, reintegro: aprobada.reintegro, impresionFallida })
     } finally {
       emitiendoRef.current = false
       if (montado.current) setEmitiendo(false)
     }
   }
 
-  const bloqueado = emitiendo || leyendoTicket
+  const bloqueado = emitiendo || leyendoTicket || resultadoIncierto
   const creditos: Record<number, number> = {}
   if (previa?.estado === 'ok' && previa.firma === firma && seleccion !== null) {
     seleccion.posiciones.forEach((posicion, i) => {
@@ -296,6 +310,11 @@ export function ModalDeDevolucion({ idPuntoVenta, puntosVenta, idTurno, idMedioE
         <div className="alert alert-success mb-2" role="status">
           Devolución {resultado.comprobante.numeroVisible} registrada. Reintegrá {formatearImporte(resultado.reintegro, { simbolo: true })} en efectivo.
         </div>
+        {resultado.impresionFallida && (
+          <div className="alert alert-warning mb-2" role="alert">
+            No se pudo imprimir el ticket de la devolución. La devolución ya está registrada: no la repitas.
+          </div>
+        )}
         {impresion === undefined && <p className="text-muted mb-0">Esta caja no imprime tickets.</p>}
       </Modal>
     )
@@ -312,7 +331,7 @@ export function ModalDeDevolucion({ idPuntoVenta, puntosVenta, idTurno, idMedioE
       pie={
         <>
           <button type="button" className="btn btn-outline-secondary" disabled={emitiendo} onClick={alCerrar}>
-            Cancelar
+            {resultadoIncierto ? 'Cerrar' : 'Cancelar'}
           </button>
           {ticket !== null && ticket.devolvible && (
             <button type="button" className="btn btn-primary" disabled={!puedeConfirmar} onClick={() => void confirmar()}>

@@ -152,12 +152,14 @@ const ERRORES_POR_CODIGO: Record<string, { mensaje: string; releer?: boolean }> 
 }
 
 const MENSAJE_DE_RESULTADO_INCIERTO =
-  'No se pudo confirmar si la devolución se registró. Antes de reintentar, revisá Ventas del turno para ver si quedó emitida.'
+  'No se pudo confirmar si la devolución se registró. Revisá Ventas del turno para ver si quedó emitida antes de volver a intentarla. Desde esta pantalla ya no se puede confirmar de nuevo: cerrala.'
+
+const MENSAJE_DE_VISTA_PREVIA_SIN_RESPUESTA = 'No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.'
 
 /** Lo que el cajero ve cuando `POST /api/ventas` rechaza o no responde. */
 export function errorDeEmisionDeDevolucion(e: unknown): ErrorDeDevolucion {
   if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado === 503 && e.codigo === CODIGO_RESULTADO_INCIERTO)) {
-    return { mensaje: MENSAJE_DE_RESULTADO_INCIERTO, releer: true, incierto: true }
+    return { mensaje: MENSAJE_DE_RESULTADO_INCIERTO, releer: false, incierto: true }
   }
   if (e instanceof ErrorApi) {
     const conocido = ERRORES_POR_CODIGO[e.codigo]
@@ -165,6 +167,14 @@ export function errorDeEmisionDeDevolucion(e: unknown): ErrorDeDevolucion {
     return { mensaje: e.message, releer: false, incierto: false }
   }
   return { mensaje: 'No se pudo registrar la devolución.', releer: false, incierto: false }
+}
+
+/** Lo que el cajero ve cuando la vista previa (solo lectura) no responde: no hay nada que se haya registrado, así que no es incierto. */
+export function errorDeVistaPreviaDeDevolucion(e: unknown): ErrorDeDevolucion {
+  if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado === 503 && e.codigo === CODIGO_RESULTADO_INCIERTO)) {
+    return { mensaje: MENSAJE_DE_VISTA_PREVIA_SIN_RESPUESTA, releer: false, incierto: false }
+  }
+  return errorDeEmisionDeDevolucion(e)
 }
 
 /** Lo que el cajero ve cuando no se pudo leer un ticket (por número o de la lista). */

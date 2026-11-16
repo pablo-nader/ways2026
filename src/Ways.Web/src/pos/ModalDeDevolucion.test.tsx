@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ErrorApi } from '../api/cliente'
+import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { LineaDevolvible, PrevisualizacionDeDevolucion, TicketDevolvible } from '../api/devoluciones'
 import type { ComprobanteEmitido, VentaDeTurnoListado } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
@@ -364,14 +364,31 @@ describe('ModalDeDevolucion — confirmar', () => {
     expect(obtenerMock).not.toHaveBeenCalled()
   })
 
-  it('un resultado incierto pide verificar Ventas del turno y vuelve a leer el ticket', async () => {
-    emitirMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'x'))
+  it.each([
+    ['un 503 resultado_incierto', () => new ErrorApi(503, 'resultado_incierto', 'x')],
+    ['una falla de red', () => new ErrorDeRed(new TypeError('Failed to fetch'))],
+  ])('%s deja el modal en resultado incierto: confirmar inerte, solo cerrar, sin segunda emisión ni relectura', async (_nombre, error) => {
+    emitirMock.mockRejectedValue(error())
     const usuario = userEvent.setup()
-    montar()
+    const { alCerrar } = montar()
     await dejarLista(usuario)
     await usuario.click(screen.getByRole('button', { name: 'Confirmar devolución' }))
-    expect(await screen.findByText(/revisá Ventas del turno/)).toBeInTheDocument()
-    await waitFor(() => expect(obtenerMock).toHaveBeenCalledWith(77))
+    expect(await screen.findByText(/Revisá Ventas del turno/)).toBeInTheDocument()
+
+    const confirmar = screen.getByRole('button', { name: 'Confirmar devolución' })
+    expect(confirmar).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Cantidad a devolver de Yerba 1 kg')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Elegir otro ticket' })).toBeDisabled()
+
+    await usuario.click(confirmar)
+    act(() => confirmar.click())
+    await new Promise((resolver) => setTimeout(resolver, 400))
+    expect(emitirMock).toHaveBeenCalledTimes(1)
+    expect(obtenerMock).not.toHaveBeenCalled()
+
+    await usuario.click(screen.getByText('Cerrar', { selector: 'button' }))
+    expect(alCerrar).toHaveBeenCalledTimes(1)
   })
 
   it('el rechazo anterior desaparece al cambiar la selección', async () => {
@@ -403,5 +420,43 @@ describe('ModalDeDevolucion — confirmar', () => {
     await usuario.type(screen.getByLabelText('Cantidad a devolver de Yerba 1 kg'), '2')
     expect(await screen.findByText(/necesita una nota de crédito fiscal/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Confirmar devolución' })).toBeDisabled()
+  })
+
+  it('un fallo de red en la vista previa dice que no se pudo calcular, sin hablar de un resultado incierto ni releer el ticket', async () => {
+    previsualizarMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+    const usuario = userEvent.setup()
+    montar()
+    await abrirTicket(usuario)
+    await usuario.type(screen.getByLabelText('Cantidad a devolver de Yerba 1 kg'), '2')
+    expect(await screen.findByText('No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.')).toBeInTheDocument()
+    expect(screen.queryByText(/Ventas del turno/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirmar devolución' })).toBeDisabled()
+    await new Promise((resolver) => setTimeout(resolver, 50))
+    expect(obtenerMock).not.toHaveBeenCalled()
+  })
+
+  it('un 503 resultado_incierto en la vista previa tampoco es un resultado incierto de emisión', async () => {
+    previsualizarMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'x'))
+    const usuario = userEvent.setup()
+    montar()
+    await abrirTicket(usuario)
+    await usuario.type(screen.getByLabelText('Cantidad a devolver de Yerba 1 kg'), '2')
+    expect(await screen.findByText('No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.')).toBeInTheDocument()
+    expect(obtenerMock).not.toHaveBeenCalled()
+  })
+
+  it('si falla la impresión la devolución sigue registrada, se avisa aparte y no se puede confirmar de nuevo', async () => {
+    const usuario = userEvent.setup()
+    const { encolar } = montar()
+    encolar.mockImplementation(() => {
+      throw new Error('impresora caída')
+    })
+    await dejarLista(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar devolución' }))
+    expect(await screen.findByText(/Devolución 0003-00000045 registrada/)).toBeInTheDocument()
+    expect(screen.getByText(/No se pudo imprimir el ticket de la devolución/)).toBeInTheDocument()
+    expect(screen.queryByText('No se pudo registrar la devolución.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirmar devolución' })).not.toBeInTheDocument()
+    expect(emitirMock).toHaveBeenCalledTimes(1)
   })
 })
