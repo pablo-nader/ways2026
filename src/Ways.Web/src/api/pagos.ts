@@ -275,8 +275,23 @@ export function validarPagosLocal(params: {
     }
   }
 
-  if (total < 0 && pagos.some((pago) => pago.importe > 0 || pago.vuelto > 0)) {
-    return { codigo: 'pago_en_comprobante_negativo', mensaje: 'Una nota de crédito no lleva pagos: la devolución no cobra.' }
+  // Regla 0c (espejo del dominio): una devolución (total negativo) reintegra solo en efectivo, sin vuelto y por exactamente su
+  // total; las demás reglas no aplican. Una fila sin importe ni vuelto no mueve dinero y no cuenta.
+  if (total < 0) {
+    const conDinero = pagos.filter((pago) => pago.importe > 0 || pago.vuelto > 0)
+    if (conDinero.some((pago) => pago.comportamiento !== 'Efectivo')) {
+      return { codigo: 'devolucion_solo_en_efectivo', mensaje: 'Una devolución se reintegra solo en efectivo.' }
+    }
+    if (conDinero.some((pago) => pago.vuelto > 0)) {
+      return { codigo: 'devolucion_con_vuelto', mensaje: 'Una devolución no admite vuelto.' }
+    }
+    if (sumarImportes(conDinero) !== redondear(-total)) {
+      return {
+        codigo: 'devolucion_reintegro_invalido',
+        mensaje: `El efectivo a reintegrar tiene que ser exactamente ${redondear(-total)}, el total de la devolución.`,
+      }
+    }
+    return null
   }
 
   const sumaImportes = sumarImportes(pagos)
@@ -328,8 +343,7 @@ export function validarPagosLocal(params: {
 
   if (!exigirCobroSinExcedente) return null
 
-  // Una nota de crédito no cobra (regla 0c): el tope parte de cero, no de su total negativo.
-  const topeDelCobro = redondear(Math.max(0, total) + toleranciaPago)
+  const topeDelCobro = redondear(total + toleranciaPago)
   for (const pago of pagos) {
     if (!pago.admiteVuelto && pago.importe > topeDelCobro) {
       return {

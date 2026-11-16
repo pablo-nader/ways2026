@@ -256,17 +256,45 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
     expect(validarPagosLocal({ ...base, pagos })?.codigo).toBe('vuelto_negativo')
   })
 
-  it('regla 0c: un comprobante de total negativo con un pago o un vuelto positivo se rechaza', () => {
-    const conPago = calcularPagosConVuelto([pagoFixture({ importe: 100 })], 100)
-    expect(validarPagosLocal({ ...base, total: -100, pagos: conPago })?.codigo).toBe('pago_en_comprobante_negativo')
-    const conVuelto = [{ ...pagoFixture({ importe: 0 }), vuelto: 5 }]
-    expect(validarPagosLocal({ ...base, total: -100, pagos: conVuelto })?.codigo).toBe('pago_en_comprobante_negativo')
+  it('regla 0c: una devolución se reintegra solo en efectivo', () => {
+    const electronico = calcularPagosConVuelto([pagoFixture({ comportamiento: 'Electronico', admiteVuelto: false, importe: 100 })], 100)
+    expect(validarPagosLocal({ ...base, total: -100, pagos: electronico })?.codigo).toBe('devolucion_solo_en_efectivo')
   })
 
-  it('regla 0c: con total negativo, sin pagos o con filas en cero se acepta', () => {
-    expect(validarPagosLocal({ ...base, total: -100, pagos: [] })).toBeNull()
+  it('regla 0c: una devolución no admite vuelto', () => {
+    const conVuelto = [{ ...pagoFixture({ comportamiento: 'Efectivo', importe: 100 }), vuelto: 5 }]
+    expect(validarPagosLocal({ ...base, total: -100, pagos: conVuelto })?.codigo).toBe('devolucion_con_vuelto')
+  })
+
+  it('regla 0c: el reintegro tiene que ser exactamente el total de la devolución', () => {
+    const corto = calcularPagosConVuelto([pagoFixture({ comportamiento: 'Efectivo', importe: 90 })], 90)
+    expect(validarPagosLocal({ ...base, total: -100, pagos: corto })?.codigo).toBe('devolucion_reintegro_invalido')
+    const largo = calcularPagosConVuelto([pagoFixture({ comportamiento: 'Efectivo', importe: 110 })], 110)
+    expect(validarPagosLocal({ ...base, total: -100, pagos: largo })?.codigo).toBe('devolucion_reintegro_invalido')
+  })
+
+  it('regla 0c: una devolución sin pagos no devuelve nada y se rechaza', () => {
+    expect(validarPagosLocal({ ...base, total: -100, pagos: [] })?.codigo).toBe('devolucion_reintegro_invalido')
     const enCero = [{ ...pagoFixture({ importe: 0 }), vuelto: 0 }]
-    expect(validarPagosLocal({ ...base, total: -100, pagos: enCero })).toBeNull()
+    expect(validarPagosLocal({ ...base, total: -100, pagos: enCero })?.codigo).toBe('devolucion_reintegro_invalido')
+  })
+
+  it('regla 0c: el reintegro en efectivo por exactamente el total se acepta y corta las demás reglas', () => {
+    const exacto = calcularPagosConVuelto([pagoFixture({ comportamiento: 'Efectivo', importe: 100 })], 100)
+    expect(validarPagosLocal({ ...base, total: -100, pagos: exacto })).toBeNull()
+    const partido = calcularPagosConVuelto(
+      [pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 60 }), pagoFixture({ idFila: 2, comportamiento: 'Efectivo', importe: 40 })],
+      100,
+    )
+    expect(validarPagosLocal({ ...base, total: -100, pagos: partido })).toBeNull()
+  })
+
+  it('regla 0c: una fila en cero de otro medio no mueve dinero y no cuenta', () => {
+    const pagos = [
+      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 100 }), vuelto: 0 },
+      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', admiteVuelto: false, importe: 0 }), vuelto: 0 },
+    ]
+    expect(validarPagosLocal({ ...base, total: -100, pagos })).toBeNull()
   })
 
   it('regla 1: ningún pago ingresado con total > 0', () => {

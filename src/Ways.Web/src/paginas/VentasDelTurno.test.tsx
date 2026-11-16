@@ -1761,6 +1761,17 @@ describe('VentasDelTurno — nota de crédito (T8c)', () => {
     expect(imprimir).not.toHaveBeenCalled()
   })
 
+  it('el 409 venta_con_devoluciones explica que hay que anular primero las notas de crédito de las devoluciones', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    const imprimir = await anularLaFila(new ErrorApi(409, 'venta_con_devoluciones', 'texto del servidor'))
+
+    expect(
+      await screen.findByText('Esta venta tiene devoluciones registradas: anulá primero las notas de crédito de esas devoluciones para poder anularla.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('texto del servidor')).not.toBeInTheDocument()
+    expect(imprimir).not.toHaveBeenCalled()
+  })
+
   it('cada fila anulada muestra la marca de su NC: emitida, pendiente, rechazada, y ninguna sin NC', async () => {
     mockearRutas({
       turno: turnoFixture(),

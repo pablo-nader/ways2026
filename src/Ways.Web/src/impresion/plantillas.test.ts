@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, lineasDeTicketDeVenta, notaDeCreditoDeVenta, pulsoDeCajon, qrDeCobroMercadoPago, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, lineasDeTicketDeVenta, notaDeCreditoDeVenta, pulsoDeCajon, qrDeCobroMercadoPago, reporteZ, ticketDeDevolucion, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -1549,5 +1549,41 @@ describe('ticketDeVenta — pago de Mercado Pago sin verificar (E5)', () => {
     })
 
     expect(textoPlano(ticketDeVenta(comprobante, CONTEXTO, MEDIOS, { reimpresion: true }))).toContain('Pago Mercado Pago sin verificar')
+  })
+})
+
+describe('ticketDeDevolucion', () => {
+  const datos = {
+    numeroVisible: '0001-00000045',
+    fecha: '2026-11-15T10:00:00Z',
+    ticketAsociado: '0001-00000012',
+    lineas: [
+      { descripcion: 'Yerba 1 kg', cantidad: 2, credito: 3000 },
+      { descripcion: 'Fideos', cantidad: 1, credito: 800 },
+    ],
+    reintegro: 3800,
+  }
+
+  it('dice DEVOLUCION, el comprobante, el ticket asociado, cada línea con su crédito y el total reintegrado', () => {
+    const texto = textoPlano(ticketDeDevolucion(datos, CONTEXTO))
+    expect(texto).toContain('DEVOLUCION')
+    expect(texto).toContain('Comprobante: 0001-00000045')
+    expect(texto).toContain('Ticket asociado: 0001-00000012')
+    expect(texto).toContain('2 x Yerba 1 kg')
+    expect(texto).toContain('3.000,00')
+    expect(texto).toContain('1 x Fideos')
+    expect(texto).toContain('REINTEGRO')
+    expect(texto).toContain('3.800,00')
+    expect(texto).toContain('jperez')
+  })
+
+  /**
+   * Cláusula bajo prueba: la devolución pulsa el cajón en el mismo trabajo (el reintegro sale en efectivo de la caja).
+   * Evidencia de mutación: quitando temporalmente `ticket.abrirCajon()` de `ticketDeDevolucion`, este test pasó a FALLAR.
+   */
+  it('pulsa el cajón en el mismo trabajo y termina con el corte parcial', () => {
+    const bytes = ticketDeDevolucion(datos, CONTEXTO)
+    expect(contieneComandoDeCajon(bytes)).toBe(true)
+    expect(Array.from(bytes.slice(-4))).toEqual([0x1d, 0x56, 0x42, 0x00])
   })
 })
