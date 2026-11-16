@@ -107,14 +107,14 @@ public class ComprasNotaDeCreditoTests(WaysApiFixture fixture) : IClassFixture<W
         Contexto ctx, string numero = "0001-00000001", decimal unidades = 10m, decimal costo = 100m, int? idProveedor = null,
         int? idTipo = null) =>
         new(
-            idProveedor ?? ctx.IdProveedor, idTipo ?? ctx.IdTipoFA, ctx.IdPuntoVenta, numero, DateOnly.FromDateTime(DateTime.UtcNow), null,
+            idProveedor ?? ctx.IdProveedor, idTipo ?? ctx.IdTipoFA, ctx.IdPuntoVenta, numero, DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item", unidades, null, null, costo, 0m, ctx.IdAlicuotaIva21, true)]);
 
     private static SolicitudDeCompra Nota(
         Contexto ctx, int? asociada, string numero = "0001-00000050", decimal unidades = 4m, decimal costo = 150m,
         int? idProveedor = null, bool? actualizaCosto = null) =>
         new(
-            idProveedor ?? ctx.IdProveedor, ctx.IdTipoNCA, ctx.IdPuntoVenta, numero, DateOnly.FromDateTime(DateTime.UtcNow), null,
+            idProveedor ?? ctx.IdProveedor, ctx.IdTipoNCA, ctx.IdPuntoVenta, numero, DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Devolución", unidades, null, null, costo, 0m, ctx.IdAlicuotaIva21, actualizaCosto)],
             IdComprobanteCompraAsociado: asociada);
 
@@ -422,7 +422,7 @@ public class ComprasNotaDeCreditoTests(WaysApiFixture fixture) : IClassFixture<W
         var factura = await FacturaConfirmadaAsync(ctx);
         var nota = await ConfirmarAsync(ctx, (await CrearBorradorAsync(ctx, Nota(ctx, factura.Id))).Id);
 
-        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
         var respuesta = await ctx.Admin.GetAsync(
             $"/api/reportes/libro-iva-compras?desde={hoy:yyyy-MM-dd}&hasta={hoy:yyyy-MM-dd}&idEmpresa={ctx.IdEmpresa}");
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -468,7 +468,7 @@ public class ComprasNotaDeCreditoTests(WaysApiFixture fixture) : IClassFixture<W
         var factura = await FacturaConfirmadaAsync(ctx);
         var nota = await ConfirmarAsync(ctx, (await CrearBorradorAsync(ctx, Nota(ctx, factura.Id))).Id);
 
-        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
         var respuesta = await ctx.Admin.GetAsync(
             $"/api/reportes/compras/por-proveedor?idEmpresa={ctx.IdEmpresa}&desde={hoy.AddDays(-1):yyyy-MM-dd}&hasta={hoy.AddDays(1):yyyy-MM-dd}");
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -504,7 +504,7 @@ public class ComprasNotaDeCreditoTests(WaysApiFixture fixture) : IClassFixture<W
         var (ctx, nota, medio) = await NotaConfirmadaAsync(nameof(PagarUnaNotaDeCreditoEsRechazadoYNoCreaNingunPago));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/compras/{nota.Id}/pagos", new SolicitudDePagoDeCompra(DateOnly.FromDateTime(DateTime.UtcNow), 100m, medio, null));
+            $"/api/compras/{nota.Id}/pagos", new SolicitudDePagoDeCompra(DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), 100m, medio, null));
 
         Assert.Equal("compra_es_nota_de_credito", await CodigoDeRechazoAsync(respuesta, HttpStatusCode.BadRequest));
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
@@ -517,7 +517,7 @@ public class ComprasNotaDeCreditoTests(WaysApiFixture fixture) : IClassFixture<W
         var (ctx, nota, medio) = await NotaConfirmadaAsync(nameof(UnPagoNoSeVinculaNiSeAplicaNiSeAltaContraUnaNotaDeCredito));
 
         SolicitudDePagoDeAdministracionConLineas Alta(int? idCompra) => PagoDeUnMedio.Administracion(
-            DateOnly.FromDateTime(DateTime.UtcNow), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null,
+            DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null,
             "Pago de prueba", null, medio, null, 100m, idCompra);
 
         var altaLigada = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", Alta(nota.Id));
