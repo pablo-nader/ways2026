@@ -1,6 +1,7 @@
 """Reparte la suite de integración en fragmentos y verifica que se hayan ejecutado completos."""
 
 import argparse
+import json
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -36,8 +37,31 @@ def clases_de(lista: list[str]) -> list[str]:
     return sorted({clase_de(nombre) for nombre in lista})
 
 
-def clases_del_fragmento(clases: list[str], fragmento: int, total: int) -> list[str]:
-    return [clase for indice, clase in enumerate(clases) if indice % total == fragmento - 1]
+def pesos_por_clase(clases: list[str], lista: list[str], pesos: dict[str, float]) -> dict[str, float]:
+    medidos = [pesos[c] for c in clases if c in pesos]
+    metodos_medidos = sum(1 for n in lista if clase_de(n) in pesos)
+    por_metodo = sum(medidos) / metodos_medidos if metodos_medidos else 1.0
+    metodos = {c: 0 for c in clases}
+    for nombre in lista:
+        metodos[clase_de(nombre)] += 1
+    return {c: pesos[c] if c in pesos else max(metodos[c], 1) * por_metodo for c in clases}
+
+
+def clases_del_fragmento(
+    clases: list[str],
+    fragmento: int,
+    total: int,
+    pesos: dict[str, float] | None = None,
+) -> list[str]:
+    if pesos is None:
+        return [clase for indice, clase in enumerate(clases) if indice % total == fragmento - 1]
+    cargas = [0.0] * total
+    asignadas: list[list[str]] = [[] for _ in range(total)]
+    for clase in sorted(clases, key=lambda c: (-pesos[c], c)):
+        destino = min(range(total), key=lambda i: (cargas[i], i))
+        cargas[destino] += pesos[clase]
+        asignadas[destino].append(clase)
+    return sorted(asignadas[fragmento - 1])
 
 
 def escapar_filtro(texto: str) -> str:
@@ -51,7 +75,9 @@ def construir_filtro(clases: list[str]) -> str:
     return "|".join(f"FullyQualifiedName~{escapar_filtro(clase)}." for clase in clases)
 
 
-def planificar(lista: list[str], fragmento: int, total: int) -> Plan:
+def planificar(
+    lista: list[str], fragmento: int, total: int, pesos: dict[str, float] | None = None
+) -> Plan:
     lista = [nombre.strip() for nombre in lista if nombre.strip()]
     if not lista:
         raise ErrorDeFragmentacion("La lista de tests está vacía: no hay nada que repartir.")
@@ -62,7 +88,8 @@ def planificar(lista: list[str], fragmento: int, total: int) -> Plan:
             f"El fragmento {fragmento} está fuera del rango 1..{total}."
         )
     clases = clases_de(lista)
-    propias = clases_del_fragmento(clases, fragmento, total)
+    ponderados = pesos_por_clase(clases, lista, pesos) if pesos else None
+    propias = clases_del_fragmento(clases, fragmento, total, ponderados)
     if not propias:
         raise ErrorDeFragmentacion(
             f"El fragmento {fragmento} de {total} queda sin clases "
@@ -142,9 +169,42 @@ def verificar(carpetas: list[Path]) -> tuple[list[str], str]:
     return errores, resumen
 
 
+def leer_pesos(ruta: str | None) -> dict[str, float] | None:
+    if not ruta:
+        return None
+    return {clase: float(segundos) for clase, segundos in json.loads(Path(ruta).read_text(encoding="utf-8")).items()}
+
+
+def duracion_en_segundos(texto: str) -> float:
+    horas, minutos, segundos = texto.split(":")
+    return int(horas) * 3600 + int(minutos) * 60 + float(segundos)
+
+
+def medir(carpetas: list[Path]) -> dict[str, float]:
+    pesos: dict[str, float] = {}
+    for carpeta in carpetas:
+        for trx in sorted(carpeta.rglob("*.trx")):
+            raiz = ET.parse(trx).getroot()
+            clase_por_test = {
+                prueba.get("id"): prueba.find(f"{ESPACIO_TRX}TestMethod").get("className")
+                for prueba in raiz.iter(f"{ESPACIO_TRX}UnitTest")
+            }
+            for resultado in raiz.iter(f"{ESPACIO_TRX}UnitTestResult"):
+                clase = clase_por_test[resultado.get("testId")]
+                pesos[clase] = pesos.get(clase, 0.0) + duracion_en_segundos(resultado.get("duration"))
+    return {clase: round(segundos, 1) for clase, segundos in sorted(pesos.items())}
+
+
+def comando_medir(args: argparse.Namespace) -> int:
+    pesos = medir([Path(d) for d in args.directorios])
+    Path(args.salida).write_text(json.dumps(pesos, indent=1) + "\n", encoding="utf-8", newline="")
+    print(f"{len(pesos)} clases medidas, {sum(pesos.values()) / 60:.1f} min de tests en total.")
+    return 0
+
+
 def comando_plan(args: argparse.Namespace) -> int:
     lista = leer_lineas(Path(args.lista).read_text(encoding="utf-8"))
-    plan = planificar(lista, args.fragmento, args.total)
+    plan = planificar(lista, args.fragmento, args.total, leer_pesos(args.pesos))
     Path(args.salida).write_text(plan.filtro, encoding="utf-8", newline="")
     print(
         f"Fragmento {args.fragmento}/{args.total}: {plan.clases_fragmento} de "
@@ -173,7 +233,13 @@ def crear_parser() -> argparse.ArgumentParser:
     plan.add_argument("--fragmento", type=int, required=True)
     plan.add_argument("--total", type=int, required=True)
     plan.add_argument("--salida", required=True)
+    plan.add_argument("--pesos", help="JSON clase -> segundos medidos; sin él se reparte por orden.")
     plan.set_defaults(ejecutar=comando_plan)
+
+    medida = subcomandos.add_parser("medir", help="Genera el JSON de pesos desde los trx de una corrida.")
+    medida.add_argument("directorios", nargs="+")
+    medida.add_argument("--salida", required=True)
+    medida.set_defaults(ejecutar=comando_medir)
 
     comprobar = subcomandos.add_parser("verificar", help="Comprueba que los fragmentos cubran la suite.")
     comprobar.add_argument("directorios", nargs="+")
