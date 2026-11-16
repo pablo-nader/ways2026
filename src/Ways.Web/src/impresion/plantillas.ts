@@ -620,6 +620,52 @@ export function ticketRetiroDeEfectivo(datos: DatosTicketRetiro, contexto: Conte
   return ticket.bytes()
 }
 
+/** Lo que el POS ya resolvió de una devolución emitida: el comprobante de la nota de crédito, el ticket de origen y el crédito de cada línea. */
+export type DatosDeTicketDeDevolucion = {
+  numeroVisible: string
+  fecha: string
+  ticketAsociado: string
+  lineas: { descripcion: string; cantidad: number; credito: number }[]
+  reintegro: number
+}
+
+/**
+ * Ticket "DEVOLUCION": la nota de crédito de una devolución del POS, con el ticket de origen, cada línea devuelta con su crédito y el
+ * efectivo reintegrado. A diferencia de una anulación, una devolución SÍ pulsa el cajón: el reintegro sale en efectivo de la caja del
+ * turno. El pulso va en el MISMO trabajo, antes del corte, para que el cajón ya esté abierto cuando termina de imprimirse.
+ */
+export function ticketDeDevolucion(datos: DatosDeTicketDeDevolucion, contexto: ContextoDeImpresion): Uint8Array {
+  const ticket = new ConstructorDeTicket()
+  encabezado(ticket, contexto)
+
+  ticket
+    .alinear('centro')
+    .negrita(true)
+    .linea('DEVOLUCION')
+    .negrita(false)
+    .alinear('izquierda')
+    .linea(`Comprobante: ${datos.numeroVisible}`)
+    .linea(`Ticket asociado: ${datos.ticketAsociado}`)
+    .linea(`Fecha: ${formatearFechaHora(datos.fecha)}`)
+    .linea(`Cajero: ${contexto.cajero}`)
+    .lineaDeGuiones()
+
+  for (const linea of datos.lineas) {
+    ticket.lineaDeColumnas(`${linea.cantidad} x ${linea.descripcion}`, formatearMoneda(linea.credito))
+  }
+
+  ticket.lineaDeGuiones()
+  ticket.tamanioDoble(true).negrita(true)
+  ticket.lineaDeColumnas('REINTEGRO', formatearMoneda(datos.reintegro))
+  ticket.tamanioDoble(false).negrita(false)
+  ticket.linea('Reintegrado en efectivo')
+
+  ticket.abrirCajon()
+  ticket.avanzar(2).cortar()
+
+  return ticket.bytes()
+}
+
 /**
  * Ticket "CIERRE DE TURNO" (stage-pos-retiros-y-cierre-por-retiro, etapa 5, cierre por retiro): el
  * comprobante que el cajero se lleva al cerrar el turno retirando el efectivo contado — todo el
