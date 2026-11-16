@@ -55,6 +55,7 @@ import { Remitos } from './paginas/Remitos'
 import { ReporteDeArticulos } from './paginas/ReporteDeArticulos'
 import { ReporteDeVentasPorArticulo } from './paginas/ReporteDeVentasPorArticulo'
 import { ReporteDeVentasPorHora } from './paginas/ReporteDeVentasPorHora'
+import { ReporteDeValoracion } from './paginas/ReporteDeValoracion'
 import { Reposicion } from './paginas/Reposicion'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tablero } from './paginas/Tablero'
@@ -268,6 +269,15 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <ReporteDeVentasPorHora />
+                </RutaProtegida>
+              }
+            />
+            {/* Valoración: mismo gate que el resto de los reportes (Politicas.LecturaDeReportes). */}
+            <Route
+              path="/reportes/valoracion"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <ReporteDeValoracion />
                 </RutaProtegida>
               }
             />

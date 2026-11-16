@@ -168,6 +168,14 @@ public static class ReportesEndpoints
             "Comprobantes de venta en los que se vendió un artículo en el período, del más reciente al " +
             "más antiguo, con las mismas reglas de inclusión que /ventas/por-articulo. Sin costo ni margen.");
 
+        grupo.MapGet("/valoracion", (
+            ServicioDeReportesDeValoracion servicio, int idEmpresa, DateOnly desde, DateOnly hasta,
+            Granularidad granularidad, CancellationToken ct) =>
+            servicio.ObtenerAsync(idEmpresa, desde, hasta, granularidad, ct))
+        .WithSummary(
+            "Valoración de la empresa por punto del rango: mercadería a costo y a precio de venta (solo stock positivo) " +
+            "más efectivo y cuentas de tesorería, con cobertura de costo y precio. Máximo 60 puntos y 366 días.");
+
         grupo.MapGet("/ventas/por-hora", (
             ServicioDeReportesDeArticulos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
             CancellationToken ct) =>

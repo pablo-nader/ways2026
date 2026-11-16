@@ -28,6 +28,7 @@ import type {
   TicketsDeArticulo,
   VentasPorArticulo,
   VentasPorHora,
+  ValoracionDeInventario,
   VentasPorMedioPago,
   VentasPorPuntoVenta,
   VentasPorVendedor,
@@ -183,6 +184,8 @@ export const clienteDeReportes = {
     ),
   ventasPorHora: (filtros: FiltrosDeVentasPorHora) =>
     api.get<VentasPorHora>(`/reportes/ventas/por-hora${construirQueryDeVentasPorHora(filtros)}`),
+  valoracion: (filtros: FiltrosDeValoracion) =>
+    api.get<ValoracionDeInventario>(`/reportes/valoracion${construirQueryDeValoracion(filtros)}`),
   libroIvaCompras: (filtros: FiltrosDeLibroIva) =>
     api.get<LibroIva>(`/reportes/libro-iva-compras${construirQueryDeLibroIva(filtros)}`),
   libroIvaVentas: (filtros: FiltrosDeLibroIva) =>
@@ -459,6 +462,25 @@ export function construirQueryDeReporteDeArticulos(
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
+}
+
+/** Filtro de `GET /api/reportes/valoracion`: la granularidad viaja siempre (el endpoint la recibe como parámetro). */
+export type FiltrosDeValoracion = { idEmpresa: number; desde: string; hasta: string; granularidad: Granularidad }
+
+export function construirQueryDeValoracion(filtros: FiltrosDeValoracion): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
+  parametros.set('granularidad', filtros.granularidad)
+  return `?${parametros.toString()}`
+}
+
+/** Período por defecto de la valoración: del primer día del mes de hace 11 meses hasta hoy (12 meses calendario). */
+export function rangoDeLosUltimosDoceMeses(ahora: Date = new Date()): { desde: string; hasta: string } {
+  const inicio = new Date(ahora.getFullYear(), ahora.getMonth() - 11, 1)
+  const hoy = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
+  return { desde: aFechaIso(inicio), hasta: aFechaIso(hoy) }
 }
 
 function aFechaIso(fecha: Date): string {
