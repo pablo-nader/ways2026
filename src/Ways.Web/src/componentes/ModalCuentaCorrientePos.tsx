@@ -19,10 +19,12 @@ import type {
 } from '../api/tipos'
 import { fechaHoraATexto, isoATexto } from '../formato/fechas'
 import { formatearImporte } from '../formato/importes'
+import { BotonIcono } from './BotonIcono'
 import { CampoFecha } from './CampoFecha'
 import { Cargando } from './Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
 import { Modal } from './Modal'
+import { ModalDetalleDeTicket } from './ModalDetalleDeTicket'
 import { ModalPagoACuenta } from './ModalPagoACuenta'
 import { toast } from '../toasts/toasts'
 
@@ -102,6 +104,8 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
   const consultaPedidaRef = useRef<string | null>(null)
 
   const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
+  const [idTicketEnDetalle, setIdTicketEnDetalle] = useState<number | null>(null)
+  const disparadorDelDetalleRef = useRef<HTMLElement | null>(null)
 
   // react-async-state regla 2: cada consulta toma su generación; una respuesta de un cliente o un
   // rango ya abandonados nunca pisa la más reciente. `alResolver` se invoca siempre, con el saldo o
@@ -341,11 +345,29 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
                   Sin movimientos entre el {isoATexto(estadoVigente.rango.desde)} y el {isoATexto(estadoVigente.rango.hasta)}.
                 </p>
               ) : (
-                <TablaDeMovimientos movimientos={estadoVigente.datos.movimientos} />
+                <TablaDeMovimientos
+                  movimientos={estadoVigente.datos.movimientos}
+                  detalleAbierto={idTicketEnDetalle !== null}
+                  onAbrirDetalle={(idComprobante, disparador) => {
+                    disparadorDelDetalleRef.current = disparador
+                    setIdTicketEnDetalle(idComprobante)
+                  }}
+                />
               )}
             </>
           )}
         </>
+      )}
+
+      {idTicketEnDetalle !== null && clienteElegido && (
+        <ModalDetalleDeTicket
+          key={idTicketEnDetalle}
+          idTicket={idTicketEnDetalle}
+          nombreCliente={nombreCompletoDeCliente(clienteElegido)}
+          medios={medios}
+          disparador={disparadorDelDetalleRef.current}
+          onCerrar={() => setIdTicketEnDetalle(null)}
+        />
       )}
     </Modal>
   )
@@ -358,9 +380,17 @@ const COLUMNAS_DE_MOVIMIENTOS: ColumnasOrdenables<MovimientoDeCuentaCorriente> =
   saldo: { valor: (m) => m.saldoResultante },
 }
 
+type PropsTabla = {
+  movimientos: MovimientoDeCuentaCorriente[]
+  /** Con un detalle abierto, ningún otro botón de la tabla lo puede reemplazar. */
+  detalleAbierto: boolean
+  onAbrirDetalle: (idComprobante: number, disparador: HTMLElement) => void
+}
+
 /** El libro conserva el orden del servidor hasta que se elige una columna; cada fila muestra el saldo que el servidor
- * guardó, sin recalcularlo, así que ordenar por otra columna no altera ningún saldo. */
-function TablaDeMovimientos({ movimientos }: { movimientos: MovimientoDeCuentaCorriente[] }) {
+ * guardó, sin recalcularlo, así que ordenar por otra columna no altera ningún saldo. Un movimiento que nace de un
+ * comprobante abre su detalle de solo lectura. */
+function TablaDeMovimientos({ movimientos, detalleAbierto, onAbrirDetalle }: PropsTabla) {
   const { filas, orden, alternar } = useOrdenamiento(movimientos, COLUMNAS_DE_MOVIMIENTOS)
 
   return (
@@ -380,17 +410,33 @@ function TablaDeMovimientos({ movimientos }: { movimientos: MovimientoDeCuentaCo
             <EncabezadoOrdenable columna="saldo" orden={orden} onAlternar={alternar} className="text-end">
               Saldo
             </EncabezadoOrdenable>
+            <th>
+              <span className="visually-hidden">Comprobante</span>
+            </th>
           </tr>
         </thead>
         <tbody>
-          {filas.map((m) => (
-            <tr key={m.id}>
-              <td>{fechaHoraATexto(m.fecha)}</td>
-              <td>{etiquetaDeMovimiento(m)}</td>
-              <td className="text-end">{formatearMoneda(m.importe)}</td>
-              <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
-            </tr>
-          ))}
+          {filas.map((m) => {
+            const idComprobante = m.idComprobanteVenta
+            return (
+              <tr key={m.id}>
+                <td>{fechaHoraATexto(m.fecha)}</td>
+                <td>{etiquetaDeMovimiento(m)}</td>
+                <td className="text-end">{formatearMoneda(m.importe)}</td>
+                <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
+                <td>
+                  {idComprobante !== null && (
+                    <BotonIcono
+                      icono="detalle"
+                      etiqueta={`Ver el comprobante de ${etiquetaDeMovimiento(m)} del ${fechaHoraATexto(m.fecha)}`}
+                      disabled={detalleAbierto}
+                      onClick={(e) => onAbrirDetalle(idComprobante, e.currentTarget)}
+                    />
+                  )}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

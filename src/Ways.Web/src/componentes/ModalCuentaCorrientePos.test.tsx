@@ -26,6 +26,24 @@ vi.mock('../api/clientes', () => ({
   clienteDeClientes: { listar: (...args: unknown[]) => clienteListarMock(...args) },
 }))
 
+const obtenerVentaMock = vi.fn()
+vi.mock('../api/ventas', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('../api/ventas')>()
+  return { ...real, clienteDeVentas: { ...real.clienteDeVentas, obtener: (...args: unknown[]) => obtenerVentaMock(...args) } }
+})
+
+const listarCatalogoMock = vi.fn()
+vi.mock('../api/catalogos', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('../api/catalogos')>()
+  return {
+    ...real,
+    clienteDeCatalogo: (...args: unknown[]) => ({
+      ...(real.clienteDeCatalogo as (...a: unknown[]) => object)(...args),
+      listar: (...a: unknown[]) => listarCatalogoMock(...a),
+    }),
+  }
+})
+
 const CLIENTE: ClienteListado = {
   id: 2,
   numero: 2,
@@ -168,6 +186,8 @@ beforeEach(() => {
   obtenerEstadoMock.mockReset()
   registrarPagoMock.mockReset()
   clienteListarMock.mockReset()
+  obtenerVentaMock.mockReset()
+  listarCatalogoMock.mockReset()
   obtenerEstadoMock.mockResolvedValue(estado())
 })
 
@@ -595,5 +615,137 @@ describe('ModalCuentaCorrientePos — orden de los movimientos', () => {
     fireEvent.click(within(fecha).getByRole('button'))
     expect(fecha).toHaveAttribute('aria-sort', 'none')
     expect(filas().map((f) => f[3])).toEqual(['$ 5.000,00', '$ 4.980,00', '$ 5.080,00'])
+  })
+})
+
+function ticketDeConsumo(): ComprobanteEmitido {
+  return {
+    ...comprobanteDePago(),
+    id: 30,
+    numero: 30,
+    numeroVisible: '0007-00000030',
+    fecha: '2026-09-10T15:00:00Z',
+    subtotal: 500,
+    total: 500,
+    items: [
+      {
+        orden: 1,
+        idArticulo: 12,
+        descripcion: 'Yerba 1 kg',
+        codigoBarra: null,
+        idArea: 1,
+        idListaPrecio: 1,
+        idOferta: null,
+        idAlicuotaIva: 1,
+        porcentajeIva: 21,
+        cantidad: 2,
+        precioUnitario: 250,
+        descuento: 0,
+        total: 500,
+        idLote: null,
+        codigoLote: null,
+        loteVencido: false,
+        ajusteManualPorcentaje: null,
+        ajusteManual: 0,
+      },
+    ],
+    pagos: [{ idMedioPago: 2, importe: 500, referencia: null, vuelto: 0 }],
+  }
+}
+
+describe('ModalCuentaCorrientePos — detalle del comprobante de un movimiento', () => {
+  const BOTON_DEL_CONSUMO = /Ver el comprobante de Consumo del/
+
+  it('abre el ticket del movimiento con sus líneas, cantidades, importes y medios, sin reimprimir', async () => {
+    obtenerVentaMock.mockResolvedValue(ticketDeConsumo())
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await dialogo().findByRole('button', { name: BOTON_DEL_CONSUMO }))
+
+    const detalle = within(await screen.findByRole('dialog', { name: 'Detalle de la venta 0007-00000030' }))
+    expect(obtenerVentaMock).toHaveBeenCalledWith(30)
+    const linea = (await detalle.findByText('Yerba 1 kg')).closest('tr') as HTMLElement
+    expect(Array.from(linea.querySelectorAll('td')).map((c) => c.textContent)).toEqual(['Yerba 1 kg', '2', '$ 250,00', '$ 0,00', '—', '$ 500,00'])
+    expect(detalle.getByText('Tarjeta')).toBeInTheDocument()
+    expect(detalle.getByText('Juan Pérez')).toBeInTheDocument()
+    expect(detalle.queryByRole('button', { name: /Imprimir/ })).not.toBeInTheDocument()
+  })
+
+  it('nombra los medios con los del POS, sin pedir el catálogo', async () => {
+    obtenerVentaMock.mockResolvedValue(ticketDeConsumo())
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await dialogo().findByRole('button', { name: BOTON_DEL_CONSUMO }))
+    await screen.findByRole('dialog', { name: 'Detalle de la venta 0007-00000030' })
+
+    expect(listarCatalogoMock).not.toHaveBeenCalled()
+  })
+
+  it('cerrar el detalle vuelve a la cuenta corriente con el foco en el botón que lo abrió', async () => {
+    obtenerVentaMock.mockResolvedValue(ticketDeConsumo())
+    const usuario = userEvent.setup()
+    montar()
+
+    const boton = await dialogo().findByRole('button', { name: BOTON_DEL_CONSUMO })
+    await usuario.click(boton)
+    const detalle = within(await screen.findByRole('dialog', { name: 'Detalle de la venta 0007-00000030' }))
+    await detalle.findByText('Yerba 1 kg')
+    await usuario.click(detalle.getByRole('button', { name: 'Cerrar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Detalle de la venta/ })).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: 'Cuenta corriente' })).toBeInTheDocument()
+    await waitFor(() => expect(boton).toHaveFocus())
+  })
+
+  it('un movimiento sin comprobante no ofrece detalle', async () => {
+    obtenerEstadoMock.mockResolvedValue(
+      estado(500, [movimiento(), movimiento({ id: 2, tipo: 'Ajuste', idComprobanteVenta: null, etiqueta: 'Manual' })]),
+    )
+    montar()
+    await dialogo().findByRole('button', { name: BOTON_DEL_CONSUMO })
+
+    expect(dialogo().getAllByRole('button', { name: /Ver el comprobante/ })).toHaveLength(1)
+    expect(dialogo().queryByRole('button', { name: /Ver el comprobante de Ajuste manual/ })).not.toBeInTheDocument()
+  })
+
+  it('un pago abre su recibo, que muestra los medios con los que se pagó', async () => {
+    obtenerEstadoMock.mockResolvedValue(estado(200, [movimiento({ id: 3, tipo: 'Pago', importe: -300, saldoResultante: 200, idComprobanteVenta: 900 })]))
+    obtenerVentaMock.mockResolvedValue(comprobanteDePago())
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await dialogo().findByRole('button', { name: /Ver el comprobante de Pago del/ }))
+
+    const detalle = within(await screen.findByRole('dialog', { name: 'Detalle de la venta 0007-00000900' }))
+    expect(obtenerVentaMock).toHaveBeenCalledWith(900)
+    const pago = (await detalle.findByText('Efectivo')).closest('tr') as HTMLElement
+    expect(within(pago).getByText('$ 300,00')).toBeInTheDocument()
+  })
+
+  it('Escape cierra solo el detalle y deja abierta la cuenta corriente', async () => {
+    obtenerVentaMock.mockResolvedValue(ticketDeConsumo())
+    const usuario = userEvent.setup()
+    const { onCerrar } = montar()
+
+    await usuario.click(await dialogo().findByRole('button', { name: BOTON_DEL_CONSUMO }))
+    await within(await screen.findByRole('dialog', { name: 'Detalle de la venta 0007-00000030' })).findByText('Yerba 1 kg')
+    await usuario.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Detalle de la venta/ })).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: 'Cuenta corriente' })).toBeInTheDocument()
+    expect(onCerrar).not.toHaveBeenCalled()
+  })
+
+  it('si el comprobante no se puede leer, el detalle lo dice', async () => {
+    obtenerVentaMock.mockRejectedValue(new Error('sin red'))
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await dialogo().findByRole('button', { name: BOTON_DEL_CONSUMO }))
+
+    const detalle = within(await screen.findByRole('dialog', { name: 'Detalle de la venta' }))
+    expect(await detalle.findByText('No se pudo cargar el detalle de la venta.')).toBeInTheDocument()
   })
 })

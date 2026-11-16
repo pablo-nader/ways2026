@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeReportes, type FiltrosDeTicketsDeArticulo } from '../api/reportes'
-import type { ComprobanteEmitido, MedioPagoAlta, MedioPagoListado, TicketsDeArticulo } from '../api/tipos'
-import { clienteDeVentas } from '../api/ventas'
+import type { TicketsDeArticulo } from '../api/tipos'
 import { fechaHoraEnZonaATexto, isoATexto } from '../formato/fechas'
 import { formatearImporte } from '../formato/importes'
 import { BotonIcono } from './BotonIcono'
 import { Cargando } from './Cargando'
-import { ModalDetalleDeVenta } from './DetalleDeVenta'
 import { Modal } from './Modal'
-
-const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
-
-const SIN_MEDIOS: MedioPagoListado[] = []
+import { ModalDetalleDeTicket } from './ModalDetalleDeTicket'
 
 function formatearCantidad(cantidad: number): string {
   return formatearImporte(cantidad, { decimales: Number.isInteger(cantidad) ? 0 : 3 })
@@ -21,63 +15,6 @@ function formatearCantidad(cantidad: number): string {
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
-}
-
-/** Los nombres de los medios solo nombran pagos: sin catálogo el detalle sale igual con el rótulo de respaldo. */
-function cargarMedios(): Promise<MedioPagoListado[]> {
-  return clienteMediosPago.listar(false).catch(() => SIN_MEDIOS)
-}
-
-type PropsDetalle = {
-  idTicket: number
-  nombreCliente: string | undefined
-  disparador: HTMLElement | null
-  onCerrar: () => void
-}
-
-/** Detalle de solo lectura de un ticket. Se monta con `key` por ticket: cambiar de ticket descarta la respuesta del
- * anterior y nunca se ve el error o el comprobante de otro. */
-function DetalleDelTicket({ idTicket, nombreCliente, disparador, onCerrar }: PropsDetalle) {
-  const [comprobante, setComprobante] = useState<ComprobanteEmitido | null>(null)
-  const [medios, setMedios] = useState<MedioPagoListado[]>(SIN_MEDIOS)
-  const [cargando, setCargando] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let vigente = true
-    Promise.all([clienteDeVentas.obtener(idTicket), cargarMedios()])
-      .then(([venta, listaDeMedios]) => {
-        if (!vigente) return
-        setMedios(listaDeMedios)
-        setComprobante(venta)
-      })
-      .catch((e) => {
-        if (!vigente) return
-        setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar el detalle de la venta.')
-      })
-      .finally(() => {
-        if (vigente) setCargando(false)
-      })
-    return () => {
-      vigente = false
-    }
-  }, [idTicket])
-
-  return (
-    <ModalDetalleDeVenta
-      comprobante={comprobante}
-      nombreCliente={nombreCliente}
-      cargando={cargando}
-      error={error}
-      medios={medios}
-      puedeReimprimirAca={false}
-      reimprimiendo={false}
-      errorReimprimir=""
-      disparador={disparador}
-      onReimprimir={() => {}}
-      onCerrar={onCerrar}
-    />
-  )
 }
 
 type Props = {
@@ -235,7 +172,7 @@ export function ModalTicketsDeArticulo({
       </Modal>
 
       {idTicket !== null && (
-        <DetalleDelTicket
+        <ModalDetalleDeTicket
           key={idTicket}
           idTicket={idTicket}
           nombreCliente={ticketEnDetalle ? (ticketEnDetalle.cliente ?? 'Consumidor final') : undefined}
