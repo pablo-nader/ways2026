@@ -255,17 +255,28 @@ describe('errorDeEmisionDeDevolucion', () => {
     expect(incierto).toMatchObject({ incierto: true, releer: false })
   })
 
-  it('un error que no es de la API no se queda sin mensaje', () => {
-    expect(errorDeEmisionDeDevolucion(new Error('boom')).mensaje).toBe('No se pudo registrar la devolución.')
+  it.each([
+    ['un 500', new ErrorApi(500, 'error_interno', 'x')],
+    ['un 502 de un proxy', new ErrorApi(502, '', 'Bad Gateway')],
+    ['un 504 de un proxy', new ErrorApi(504, '', 'Gateway Timeout')],
+    ['una respuesta ilegible', new Error('Unexpected token < in JSON')],
+  ])('%s también es resultado incierto: pudo llegar después del commit', (_caso, e) => {
+    expect(errorDeEmisionDeDevolucion(e)).toMatchObject({ incierto: true, releer: false })
   })
 })
 
 describe('errorDeVistaPreviaDeDevolucion', () => {
-  it('una falla de red o un 503 resultado_incierto no son un resultado incierto: solo no se pudo calcular', () => {
-    for (const e of [new ErrorDeRed(new TypeError('Failed to fetch')), new ErrorApi(503, 'resultado_incierto', 'x')]) {
-      const resultado = errorDeVistaPreviaDeDevolucion(e)
-      expect(resultado).toEqual({ mensaje: 'No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.', releer: false, incierto: false })
-    }
+  it.each([
+    ['una falla de red', new ErrorDeRed(new TypeError('Failed to fetch'))],
+    ['un 503 resultado_incierto', new ErrorApi(503, 'resultado_incierto', 'x')],
+    ['un 502', new ErrorApi(502, '', 'Bad Gateway')],
+    ['una respuesta ilegible', new Error('Unexpected token < in JSON')],
+  ])('%s no es un resultado incierto: solo no se pudo calcular', (_caso, e) => {
+    expect(errorDeVistaPreviaDeDevolucion(e)).toEqual({
+      mensaje: 'No se pudo calcular el reintegro. Revisá la conexión y cambiá una cantidad o volvé a buscar el ticket para recalcularlo.',
+      releer: false,
+      incierto: false,
+    })
   })
 
   it('los códigos del servidor conservan su copia y su relectura', () => {

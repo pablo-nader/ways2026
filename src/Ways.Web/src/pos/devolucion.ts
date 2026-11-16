@@ -4,7 +4,6 @@
  */
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { MENSAJE_DE_CANTIDAD_ENTERA, DECIMALES_DE_PESO, respetaGranularidad } from '../api/cantidadPorUnidad'
-import { CODIGO_RESULTADO_INCIERTO } from '../api/bajas'
 import type { LineaDevolvible, TicketDevolvible } from '../api/devoluciones'
 import type { LineaDeVenta, SolicitudDeVenta, UnidadVenta, VentaDeTurnoListado } from '../api/tipos'
 import { formatearNumeroDecimal, parsearNumeroDecimal } from '../formato/numeros'
@@ -154,24 +153,23 @@ const ERRORES_POR_CODIGO: Record<string, { mensaje: string; releer?: boolean }> 
 const MENSAJE_DE_RESULTADO_INCIERTO =
   'No se pudo confirmar si la devolución se registró. Revisá Ventas del turno para ver si quedó emitida antes de volver a intentarla. Desde esta pantalla ya no se puede confirmar de nuevo: cerrala.'
 
-const MENSAJE_DE_VISTA_PREVIA_SIN_RESPUESTA = 'No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.'
+const MENSAJE_DE_VISTA_PREVIA_SIN_RESPUESTA =
+  'No se pudo calcular el reintegro. Revisá la conexión y cambiá una cantidad o volvé a buscar el ticket para recalcularlo.'
 
 /** Lo que el cajero ve cuando `POST /api/ventas` rechaza o no responde. */
 export function errorDeEmisionDeDevolucion(e: unknown): ErrorDeDevolucion {
-  if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado === 503 && e.codigo === CODIGO_RESULTADO_INCIERTO)) {
+  // Solo un rechazo 4xx garantiza que no se registró nada; un 5xx o una respuesta ilegible pudieron llegar después del commit.
+  if (!(e instanceof ErrorApi) || e.estado >= 500) {
     return { mensaje: MENSAJE_DE_RESULTADO_INCIERTO, releer: false, incierto: true }
   }
-  if (e instanceof ErrorApi) {
-    const conocido = ERRORES_POR_CODIGO[e.codigo]
-    if (conocido) return { mensaje: conocido.mensaje, releer: conocido.releer === true, incierto: false }
-    return { mensaje: e.message, releer: false, incierto: false }
-  }
-  return { mensaje: 'No se pudo registrar la devolución.', releer: false, incierto: false }
+  const conocido = ERRORES_POR_CODIGO[e.codigo]
+  if (conocido) return { mensaje: conocido.mensaje, releer: conocido.releer === true, incierto: false }
+  return { mensaje: e.message, releer: false, incierto: false }
 }
 
-/** Lo que el cajero ve cuando la vista previa (solo lectura) no responde: no hay nada que se haya registrado, así que no es incierto. */
+/** Lo que el cajero ve cuando la vista previa (solo lectura) falla: no se registró nada, así que nunca es incierto. */
 export function errorDeVistaPreviaDeDevolucion(e: unknown): ErrorDeDevolucion {
-  if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado === 503 && e.codigo === CODIGO_RESULTADO_INCIERTO)) {
+  if (!(e instanceof ErrorApi) || e.estado >= 500) {
     return { mensaje: MENSAJE_DE_VISTA_PREVIA_SIN_RESPUESTA, releer: false, incierto: false }
   }
   return errorDeEmisionDeDevolucion(e)

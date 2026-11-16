@@ -428,7 +428,7 @@ describe('ModalDeDevolucion — confirmar', () => {
     montar()
     await abrirTicket(usuario)
     await usuario.type(screen.getByLabelText('Cantidad a devolver de Yerba 1 kg'), '2')
-    expect(await screen.findByText('No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.')).toBeInTheDocument()
+    expect(await screen.findByText('No se pudo calcular el reintegro. Revisá la conexión y cambiá una cantidad o volvé a buscar el ticket para recalcularlo.')).toBeInTheDocument()
     expect(screen.queryByText(/Ventas del turno/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Confirmar devolución' })).toBeDisabled()
     await new Promise((resolver) => setTimeout(resolver, 50))
@@ -441,7 +441,7 @@ describe('ModalDeDevolucion — confirmar', () => {
     montar()
     await abrirTicket(usuario)
     await usuario.type(screen.getByLabelText('Cantidad a devolver de Yerba 1 kg'), '2')
-    expect(await screen.findByText('No se pudo calcular el reintegro. Revisá la conexión y volvé a intentar.')).toBeInTheDocument()
+    expect(await screen.findByText('No se pudo calcular el reintegro. Revisá la conexión y cambiá una cantidad o volvé a buscar el ticket para recalcularlo.')).toBeInTheDocument()
     expect(obtenerMock).not.toHaveBeenCalled()
   })
 
