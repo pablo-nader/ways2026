@@ -6749,6 +6749,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_comprobante_venta");
 
+                    b.Property<int?>("IdItemComprobanteVentaOrigen")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_item_comprobante_venta_origen");
+
                     b.Property<int>("IdListaPrecio")
                         .HasColumnType("integer")
                         .HasColumnName("id_lista_precio");
@@ -6794,6 +6798,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasKey("Id")
                         .HasName("pk_items_comprobante_venta");
 
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_items_comprobante_venta_id_item_id_tenant");
+
                     b.HasIndex("IdAlicuotaIva")
                         .HasDatabaseName("ix_items_comprobante_venta_alicuota_iva");
 
@@ -6815,6 +6822,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdComprobanteVenta", "Orden")
                         .IsUnique()
                         .HasDatabaseName("ux_items_comprobante_venta_orden");
+
+                    b.HasIndex("IdItemComprobanteVentaOrigen", "IdTenant")
+                        .HasDatabaseName("ix_items_comprobante_venta_item_origen");
 
                     b.HasIndex("IdListaPrecio", "IdTenant")
                         .HasDatabaseName("ix_items_comprobante_venta_lista_precio");
@@ -9571,6 +9581,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_items_comprobante_venta_comprobante");
+
+                    b.HasOne("Ways.Domain.Ventas.ItemComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdItemComprobanteVentaOrigen", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_items_comprobante_venta_item_origen");
 
                     b.HasOne("Ways.Domain.Catalogos.ListaPrecio", null)
                         .WithMany()

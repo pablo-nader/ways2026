@@ -61,6 +61,8 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // y que el propio GET "/api/ventas/{id:int}" del mismo grupo) — corrige el literal sin
         // restricción que este allowlist traía adelantado desde Slice 1.
         ("POST", "/api/ventas/{id:int}/anulacion"),
+        // Vista previa de una devolución: lectura pura por POST (el cuerpo lleva las líneas), mismo grupo y gate que el checkout.
+        ("POST", "/api/ventas/devoluciones/previsualizacion"),
         // Cambio de medios de una venta del turno abierto desde la caja: mismo criterio que la anulación (un Vendedor corrige lo
         // que cobró). Su prueba positiva por rol es CambioDeMediosDeVentaTests.UnVendedorCambiaElMedioDeUnaVentaDelTurnoAbiertoYQuedaAuditado.
         ("PUT", "/api/ventas/{id:int}/medios"),

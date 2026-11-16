@@ -660,7 +660,8 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         var origen = await VenderAsync(e, Venta(e, EnEfectivo(e)));
         var acumuladosTrasElOrigen = await LeerAcumuladosAsync(e.IdTenant);
         var emitido = await VenderAsync(
-            e, new SolicitudDeVenta(e.IdPuntoVenta, null, "NCX", origen.Id, lineas, [], null, null));
+            e, new SolicitudDeVenta(
+                e.IdPuntoVenta, null, "NCX", origen.Id, lineas, [new PagoDeVenta(e.IdEfectivo, 100m, null, 0m)], null, null));
         Assert.Equal(EstadosFiscalesDeVenta.NoCorresponde, emitido.Fiscal!.Estado);
         // La devolución no mueve los acumulados que dejó el ticket de origen.
         Assert.Equivalent(acumuladosTrasElOrigen, await LeerAcumuladosAsync(e.IdTenant));

@@ -9,9 +9,13 @@ public readonly record struct ItemVendido(
     int IdItem, int Orden, int IdArticulo, bool PorImporte, decimal Cantidad, decimal PrecioUnitario, decimal Total,
     int? IdCombo, int? IdOferta, int IdListaPrecio, int IdAlicuotaIva, decimal PorcentajeIva, int? IdLote);
 
-/// <summary>Lo que ya devolvieron las notas de crédito emitidas de la misma venta, de un artículo (o, en un artículo por
-/// importe, de un importe): <see cref="Cantidad"/> positiva.</summary>
-public readonly record struct UnidadesYaDevueltas(int IdArticulo, bool PorImporte, decimal PrecioUnitario, decimal Cantidad);
+/// <summary>Lo que ya devolvieron las notas de crédito emitidas de la misma venta. Con <see cref="IdItemOrigen"/> es lo devuelto de
+/// UN item de la venta: <see cref="Cantidad"/> positiva y <see cref="Credito"/> positivo, lo que esas notas acreditaron de verdad
+/// (suma de sus items guardados). Sin <see cref="IdItemOrigen"/> (notas anteriores a esa columna) es lo devuelto de un artículo, o de
+/// un importe en un artículo por importe, y solo cuentan las unidades: se asignan a los items del conjunto en orden y el crédito se
+/// reconstruye repartiéndolas, así que <see cref="Credito"/> se ignora.</summary>
+public readonly record struct UnidadesYaDevueltas(
+    int IdArticulo, bool PorImporte, decimal PrecioUnitario, decimal Cantidad, decimal Credito = 0m, int? IdItemOrigen = null);
 
 /// <summary>Una línea que la nota de crédito devuelve: el artículo y las unidades (positivas). <see cref="Importe"/> solo
 /// lo lleva la línea de un artículo por importe: el precio con que se vendió.</summary>
@@ -37,15 +41,18 @@ public readonly record struct SaldoDeDevolucion(
 /// <para>Cada artículo es un conjunto de unidades: los items del mismo artículo (en un artículo por importe, los del mismo
 /// precio de importe). Para cada línea devuelta, en el orden en que viene, se toman unidades de los items del conjunto en
 /// orden de <see cref="ItemVendido.Orden"/> (y de <see cref="ItemVendido.IdItem"/> si empatan) hasta agotar las de cada uno.
-/// Lo ya devuelto por las notas anteriores consume primero esos mismos items en el mismo orden, así el reparto de una
-/// devolución no depende de cuántas notas la partieron. Una línea que pide más de lo que queda no se acepta: 409
+/// Lo ya devuelto por las notas anteriores se descuenta item por item: cada item de una nota emitida guarda de qué item de la venta
+/// salió (<c>id_item_comprobante_venta_origen</c>), y las unidades y el crédito de cada item de la venta son la suma de esos items
+/// guardados, no una repetición del reparto; anular una nota intermedia libera sus unidades y su crédito sin mover los de las demás.
+/// Las notas sin esa columna (anteriores a ella) consumen en orden los items de su conjunto, como antes. Una línea que pide más de lo que queda no se acepta: 409
 /// <c>devolucion_excede_lo_vendido</c>.</para>
 ///
 /// <para>Importe: se acredita por unidades acumuladas. El crédito de una toma es
 /// <c>round(Total × (unidades ya tomadas + unidades de esta toma) / Cantidad)</c> al peso entero
 /// (<see cref="RedondeoDePeso"/>) menos lo ya acreditado de ese item. Devolver TODAS las unidades de un item acredita
 /// exactamente su <c>Total</c> y, como el redondeo es monótono, ninguna toma resulta negativa ni la suma supera el
-/// <c>Total</c>, sea cual sea el reparto en líneas o en notas de crédito. El <c>Total</c> del item es lo que se cobró por él
+/// <c>Total</c>, sea cual sea el reparto en líneas o en notas de crédito: el reparto nunca acredita menos de cero ni más de lo
+/// que le falta al item para su <c>Total</c>. El <c>Total</c> del item es lo que se cobró por él
 /// (incluidos oferta, combo y ajuste manual), así que el precio de lista de hoy no interviene.</para>
 /// </summary>
 public static class DevolucionDeTicket
@@ -161,7 +168,19 @@ public static class DevolucionDeTicket
                 _acreditado[item.IdItem] = 0m;
             }
 
-            foreach (var devueltas in yaDevueltas)
+            // Primero lo que dice de qué item salió: es la verdad guardada. Después las notas sin esa columna, que se reparten
+            // en orden sobre lo que quedó.
+            foreach (var devueltas in yaDevueltas.Where(d => d.IdItemOrigen is { } id && Restantes.ContainsKey(id)))
+            {
+                var idItem = devueltas.IdItemOrigen!.Value;
+                var unidades = Math.Min(devueltas.Cantidad, Restantes[idItem]);
+
+                Restantes[idItem] -= unidades;
+                _tomadas[idItem] += unidades;
+                _acreditado[idItem] += devueltas.Credito;
+            }
+
+            foreach (var devueltas in yaDevueltas.Where(d => d.IdItemOrigen is not { } id || !Restantes.ContainsKey(id)))
             {
                 var clave = new ClaveDeConjunto(devueltas.IdArticulo, devueltas.PorImporte ? devueltas.PrecioUnitario : null);
                 var faltan = devueltas.Cantidad;
@@ -186,11 +205,17 @@ public static class DevolucionDeTicket
         public IReadOnlyList<ItemVendido> ItemsDe(ClaveDeConjunto clave) =>
             _porConjunto.TryGetValue(clave, out var items) ? items : [];
 
-        /// <summary>Toma unidades del item y devuelve lo que se acredita por ellas (acumulado menos lo ya acreditado).</summary>
+        /// <summary>Toma unidades del item y devuelve lo que se acredita por ellas: el acumulado menos lo ya acreditado, sin bajar de cero
+        /// (lo acreditado por las notas que sobreviven a una anulación puede superar al acumulado de las unidades tomadas) ni pasar de
+        /// lo que le falta al item para su Total.</summary>
         public decimal Tomar(ItemVendido item, decimal unidades)
         {
             var tomadas = _tomadas[item.IdItem] + unidades;
-            var credito = RedondeoDePeso.APesoEntero(item.Total * tomadas / item.Cantidad) - _acreditado[item.IdItem];
+            var yaAcreditado = _acreditado[item.IdItem];
+            var credito = Math.Clamp(
+                RedondeoDePeso.APesoEntero(item.Total * tomadas / item.Cantidad) - yaAcreditado,
+                0m,
+                Math.Max(0m, item.Total - yaAcreditado));
 
             Restantes[item.IdItem] -= unidades;
             _tomadas[item.IdItem] = tomadas;

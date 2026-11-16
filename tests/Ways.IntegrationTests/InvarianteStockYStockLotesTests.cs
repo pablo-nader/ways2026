@@ -232,7 +232,7 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
         new(
             ctx.IdPuntoVentaOrigen, ctx.IdCliente, "NCX", idComprobanteAsociado,
             [new LineaDeVenta(idArticulo, cantidad, null, idLote)],
-            [],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, cantidad * 100m, null, 0m)],
             null, null);
 
     private static async Task<ComprobanteEmitido> EmitirAsync(Contexto ctx, SolicitudDeVenta solicitud)

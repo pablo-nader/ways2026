@@ -58,8 +58,57 @@ The backend already accepts NCX through `POST /api/ventas`, but:
     deterministic race test `DosDevolucionesQueSeSuperponenNoDevuelvenMasDeLoVendido` red (plus the CAE tests, which also run
     under that lock).
   - Lock order of the NCX transaction: turno FOR SHARE -> ticket de origen FOR UPDATE -> (rest of the existing order).
-- [ ] T2 Backend: cash refund on NCX (efectivo only), arqueo/turno expected cash, tesorería
-  consistency. Route: delegated.
+- [x] T2 Backend: cash refund on NCX (efectivo only), arqueo/turno expected cash, tesorería
+  consistency. Route: delegated (one writer; trigger: 2+ non-trivial files).
+  Evidence (2026-11-15, branch pnader/devoluciones-pos-efectivo, stacked on T1):
+  - Judgment-day warnings on T1 fixed first (commit 81f4626c): B-1 each tranche returns to its own original item's lot and an
+    explicit `idLote` that is not the tranche's lot is `400 lote_invalido` (test
+    `UnaDevolucionQueCubreItemsDeLotesDistintos...`; mutant `idLoteDelCliente != item.IdLote` -> `false` made it red, reverted);
+    B-2 already-credited amount is the persisted sum of the emitted NCX items' totals per set, charged to the last item they touched
+    (superseded by F1 below; domain tests `AnularUnaNotaIntermedia...` and `LoAcreditadoPorLasNotasSobrevivientes...`, integration test
+    `AnularUnaDevolucionIntermedia...`; mutant removing the reconciliation made 2 domain tests red, reverted).
+  - Model: no schema change. The NCX carries its refund as `cobros` rows (positive importe, `ck_cobros_importe_no_negativo` stays) and
+    the sign comes from the comprobante. `ValidadorDePagos` rule 0c now requires, for a total < 0: only `efectivo` medios
+    (`devolucion_solo_en_efectivo`), no vuelto (`devolucion_con_vuelto`), exactly `-total` (`devolucion_reintegro_invalido`, which carries
+    `datos.reintegro`). An NCX without pagos is no longer accepted (no product flow emits one; the POS does not return yet), a zero-total
+    NCX needs none. `LectorDeMovimientosDelTurno` sums `importe x signo` (sign = total < 0), the single derivation shared by resumen,
+    cierre, cierre por retiro, recalculo and detalle. Annulling the NCX needs no code: the esperado excludes anulado comprobantes
+    (annulling already requires an open turno). Cuentas de tesoreria only exist for electronic medios, so the refund never reaches them.
+  - Readers of `cobros` reviewed: arqueo reader (changed), reports by medio (already signed by tipo), LectorDeFacturadoPorTurno (uses
+    the ORIGINAL ticket's cobros, never the NCX's), fiscal decision/mirror reversal (NCX is `NoCorresponde`), cambio de medios (rejects
+    signo <= 0), cuentas de tesoreria acreditacion/reconstruccion (only electronic medios).
+  - Mutation evidence (each reverted): `importe * signo` -> `importe` made `ElReintegroEnEfectivoBajaElEsperadoDelTurnoYElCierreCuadra`,
+    `AnularLaDevolucionDevuelveElEfectivoAlEsperadoDelTurno` and `UnaNotaDeCreditoReintegraEnEfectivoYNoTocaLaCuentaDeTesoreria` red;
+    efectivo-only clause disabled -> 2 domain tests red; exact-total clause disabled -> 4 red; no-vuelto clause disabled -> 1 red. An
+    earlier version joined `tipos_comprobante` with `IgnoreQueryFilters(["BajaLogica"])`: that operator is query-wide and resurrected
+    soft-deleted cobros (caught by `CambioDeMediosDeVentaTests`), hence the sign from the total.
+  - `dotnet build`: 0 errors. `dotnet test tests/Ways.Domain.Tests`: 2665 passed. `dotnet test tests/Ways.Application.Tests`: 1706 passed.
+  - Integration, run in slices (one filtered run over all names reached ~10 GB in testhost without finishing and was killed):
+    NCX/ventas/anulacion/cambio de medios/CuentasTesoreria slice 587 passed; structural guards (`SuperficieDeAutorizacion`,
+    `AislamientoDeTenant`, `LectoresDeComprobantes`) plus Arqueo/Cierre/Tesoreria/HistoricoDeCajas/ListadoDeVentas slice 462 passed;
+    Caja/Turno/Pagos-de-turno/personal/MercadoPagoVenta slice 464 passed. Not run: the rest of the `Pago` name matches (MercadoPago
+    api/webhook/conciliacion/esquemas, aplicaciones de pago, migrations) and `Reportes*`/`Rentabilidad`/`ConsultasMcp`.
+  - Test churn: NCX emissions in existing integration tests now carry the efectivo refund (new `ApoyoDeDevoluciones.PostearAsync`
+    reads `datos.reintegro` from the rejection); `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo` became
+    `UnaNotaDeCreditoReintegraEnEfectivoYNoTocaLaCuentaDeTesoreria`.
+  - Follow-up (approved): docs/01 updated; `POST /api/ventas/devoluciones/previsualizacion` (OperacionDePos, read-only) returns per-line
+    credit and `reintegro` through the same `ResolverDevolucionDelTicketAsync`/`DevolucionDeTicket` path and the same rejections as
+    emission; allow-listed in `SuperficieDeAutorizacionTests` and `LectoresDeComprobantesVentaEstructuralesTests`. Integration:
+    DevolucionesTests + SuperficieDeAutorizacion + AislamientoDeTenant + RutasDeLaSpa 155 passed; Application.Tests 1706 passed.
+  - Judgment-day round 1 (2026-11-15), commits 2e2cbac6 and 840b8a92:
+    - F1 (replaces the B-2 "last touched item" attribution): migration `DevolucionPorItemDeOrigen` adds nullable
+      `items_comprobante_venta.id_item_comprobante_venta_origen` (composite self-FK with tenant, index, alternate key
+      `ak_items_comprobante_venta_id_item_id_tenant`; DDL only, no backfill; the origin is server-written so no 23503/23505 backstop is
+      reachable from client input). Taken units and credit per origin item come from the emitted NCX items; NCX rows with a NULL origin
+      (older notes) fall back to the per-article unit replay and their credit is rebuilt. `Tomar` is clamped to `[0, Total - acreditado]`.
+      Domain tests for both scenarios (same article at two prices, alternating units) plus integration
+      `AnularLaDevolucionDelPrimerItemDelMismoArticuloVuelveAAcreditarEseItemYNoElOtro` (refund 50). Mutant "attribute to first item with
+      units left" -> 1 domain + 1 integration test red, reverted.
+    - F2: `LeerVentasDelTurnoAsync` signs the medio importe by the comprobante total (negative = refund), so the per-medio total of
+      "Ventas del turno" and of the closed-turno detail equals the arqueo esperado. Web unchanged except a comment and a vitest case.
+      Integration `ElTotalPorMedioDeVentasDelTurnoDescuentaLaDevolucionYCoincideConElEsperado`; mutant dropping the sign -> red
+      (-100 expected, 100 actual), reverted.
+  - Open: the Web mirror `src/Ways.Web/src/api/pagos.ts` (rule 0c) and its test still encode it (T3).
 - [ ] T3 Web POS: devolución mode (pick ticket, pick lines/qty up to remaining, confirm, print).
   Route: delegated.
 - [ ] T4 POS release (pos-v* tag): needs the owner's OK.

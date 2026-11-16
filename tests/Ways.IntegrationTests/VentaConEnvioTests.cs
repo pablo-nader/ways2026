@@ -526,7 +526,8 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         var devolucion = await EmitirOkAsync(
             ctx.Cliente,
             new SolicitudDeVenta(
-                ctx.IdPuntoVenta, idCliente, "NCX", venta.Id, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
+                ctx.IdPuntoVenta, idCliente, "NCX", venta.Id, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)], null, null));
 
         Assert.Equal(venta.Id, devolucion.IdComprobanteAsociado);
         var itemDevuelto = Assert.Single(devolucion.Items);

@@ -134,6 +134,15 @@ describe('totalesPorMedioDeVentas — totales arriba de la tabla, uno por medio'
     expect(totalesPorMedioDeVentas(ventas)).toEqual([{ idMedioPago: 1, nombre: 'Efectivo', total: 100 }])
   })
 
+  it('el importe negativo de una devolución resta del total del medio', () => {
+    const ventas = [
+      ventaFixture({ id: 1, estado: 'Emitido', mediosDePago: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 200 }] }),
+      ventaFixture({ id: 2, estado: 'Emitido', total: -100, mediosDePago: [{ idMedioPago: 1, nombre: 'Efectivo', importe: -100 }] }),
+    ]
+
+    expect(totalesPorMedioDeVentas(ventas)).toEqual([{ idMedioPago: 1, nombre: 'Efectivo', total: 100 }])
+  })
+
   it('una lista vacía (o sin ventas vigentes) da un arreglo vacío', () => {
     expect(totalesPorMedioDeVentas([])).toEqual([])
   })

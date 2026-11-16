@@ -82,6 +82,15 @@ public static class VentasEndpoints
             "Busca un ticket de venta por número y punto de venta y devuelve sus líneas con lo vendido, lo ya devuelto, lo que queda por " +
             "devolver y el importe, más si el ticket admite una devolución (anulado, con factura fiscal y sin unidades por devolver no).");
 
+        // Cuánto vale una devolución antes de emitirla, por el mismo camino que la emisión (el POS lo muestra y lo reenvía como el efectivo de la
+        // nota de crédito). Lectura pura por POST (el cuerpo lleva las líneas): sin escritura ni locks; la emisión re-juzga todo.
+        grupo.MapPost("/devoluciones/previsualizacion", (
+            ServicioDeVentas servicio, SolicitudDePrevisualizacionDeDevolucion solicitud, CancellationToken ct) =>
+            servicio.PrevisualizarDevolucionAsync(solicitud, ct))
+        .WithSummary(
+            "Previsualiza una devolución: el crédito de cada línea y el reintegro en efectivo que la nota de crédito tiene que llevar. " +
+            "Mismos rechazos que la emisión (400/409/404); no escribe nada.");
+
         grupo.MapGet("/{id:int}/devolvibles", (IWaysDbContext db, int id, CancellationToken ct) =>
             ConsultaDeDevolvibles.ObtenerAsync(db, id, ct))
         .WithSummary("Lo mismo que GET /api/ventas/devolvibles, para un ticket que ya se eligió de un listado.");

@@ -371,7 +371,8 @@ public sealed record VentaDeTurnoListado(
 
 /// <summary>Monto neto cobrado por UN medio de pago dentro de una <see cref="VentaDeTurnoListado"/>
 /// — <c>Σ(Importe − Vuelto)</c> agrupado por <see cref="IdMedioPago"/> (nunca el importe bruto
-/// tecleado en caja: un pago en efectivo con vuelto solo suma lo que realmente quedó en la caja).
+/// tecleado en caja: un pago en efectivo con vuelto solo suma lo que realmente quedó en la caja). En un comprobante de total
+/// negativo (una devolución) el importe es negativo: es lo que sale de la caja.
 /// Reemplaza el <c>IReadOnlyList&lt;string&gt;</c> anterior de solo nombres — la pantalla necesita
 /// el monto para totalizar por medio, no solo listar los nombres usados.</summary>
 public sealed record MedioDeVentaNeto(int IdMedioPago, string Nombre, decimal Importe);

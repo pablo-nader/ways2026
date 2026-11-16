@@ -528,7 +528,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "NCX", idOriginal,
             [new LineaDeVenta(idArticulo, 1.5m, null)],
-            [],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 150m, null, 0m)],
             null, null);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
@@ -646,7 +646,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var devolucion = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "NCX", emitidoOriginal.Id,
             [new LineaDeVenta(idArticulo, 1m, null)],
-            [],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)],
             null, null);
         var respuestaDevolucion = await ctx.Admin.PostAsJsonAsync("/api/ventas", devolucion);
         Assert.Equal(HttpStatusCode.Created, respuestaDevolucion.StatusCode);
@@ -657,11 +657,11 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
     [Theory]
     [InlineData(true)]
-    public async Task UnaDevolucionConPagosSeRechazaConPagoEnComprobanteNegativoYNoPersisteNada(bool conAsociado)
+    public async Task UnaDevolucionConUnMedioQueNoEsEfectivoSeRechazaYNoPersisteNada(bool conAsociado)
     {
         // Sin asociado la devolución ya se rechaza antes (comprobante_asociado_requerido), así que solo se prueba con él.
         var ctx = await PrepararAsync(
-            $"{nameof(UnaDevolucionConPagosSeRechazaConPagoEnComprobanteNegativoYNoPersisteNada)}{conAsociado}");
+            $"{nameof(UnaDevolucionConUnMedioQueNoEsEfectivoSeRechazaYNoPersisteNada)}{conAsociado}");
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx-pagos", 100m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente NCX Pagos");
 
@@ -681,7 +681,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         Assert.Equal(HttpStatusCode.BadRequest, devolucion.StatusCode);
         var problema = await devolucion.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("pago_en_comprobante_negativo", problema.GetProperty("codigo").GetString());
+        Assert.Equal("devolucion_solo_en_efectivo", problema.GetProperty("codigo").GetString());
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.ComprobantesVenta.CountAsync(c => c.Total < 0m));
@@ -716,7 +716,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var devolucion = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "NCX", emitidoOriginal.Id,
             [new LineaDeVenta(idArticulo, 1m, null)],
-            [],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)],
             null, null);
         var respuestaDevolucion = await ctx.Admin.PostAsJsonAsync("/api/ventas", devolucion);
         Assert.Equal(HttpStatusCode.Created, respuestaDevolucion.StatusCode);

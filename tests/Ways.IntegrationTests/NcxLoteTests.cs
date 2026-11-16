@@ -225,14 +225,13 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
 
     // spec comprobantes-venta / Devoluciones As NCX Comprobantes: Cantidad siempre POSITIVA en el
     // request (design decisión 4) — el signo lo aplica ServicioDeVentas a partir de
-    // tipos_comprobante.signo. Sin pagos: una devolución no cobra, el total negativo no exige
-    // ninguna línea de pago (mismo patrón que VentasCheckoutTests.DevolucionStandaloneSePersisteComoNcxSinAsociado).
+    // tipos_comprobante.signo. La devolución reintegra en efectivo lo que vale (cantidad × 100, el precio de SolicitudTx).
     private static SolicitudDeVenta SolicitudNcx(
         Contexto ctx, int idArticulo, decimal cantidad, int? idLote, int? idComprobanteAsociado = null) =>
         new(
             ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idComprobanteAsociado,
             [new LineaDeVenta(idArticulo, cantidad, null, idLote)],
-            [],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, cantidad * 100m, null, 0m)],
             null, null);
 
     private static async Task<ComprobanteEmitido> EmitirAsync(Contexto ctx, SolicitudDeVenta solicitud)
@@ -301,6 +300,40 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
         var conElLoteVendido = await EmitirAsync(
             ctx, SolicitudNcx(ctx, idArticulo, 1m, idLote: idLoteVendido, idComprobanteAsociado: original.Id));
         Assert.Equal(idLoteVendido, Assert.Single(conElLoteVendido.Items).IdLote);
+    }
+
+    /// <summary>Una línea de devolución que cubre items de lotes distintos manda cada tramo a SU lote; un idLote explícito que no es el de
+    /// algún tramo se rechaza en vez de pisar el lote de todos (cláusula <c>idLoteDelCliente != item.IdLote</c>).</summary>
+    [Fact]
+    public async Task UnaDevolucionQueCubreItemsDeLotesDistintosVuelveCadaTramoASuLoteYRechazaUnIdLoteAjenoAAlgunTramo()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDevolucionQueCubreItemsDeLotesDistintosVuelveCadaTramoASuLoteYRechazaUnIdLoteAjenoAAlgunTramo));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-dos-lotes", 100m, controlaLote: true);
+        var idLoteA = await SembrarLoteAsync(ctx, idArticulo, "L-A", VencimientoLejanoFuturo);
+        var idLoteB = await SembrarLoteAsync(ctx, idArticulo, "L-B", VencimientoLejanoFuturoAlterno);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteA, 10m);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteB, 10m);
+
+        var original = await EmitirAsync(ctx, new SolicitudDeVenta(
+            ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null, idLoteA), new LineaDeVenta(idArticulo, 1m, null, idLoteB)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 200m, null, 0m)],
+            null, null));
+        Assert.Equal(9m, await LeerStockLoteAsync(ctx, idArticulo, idLoteA));
+        Assert.Equal(9m, await LeerStockLoteAsync(ctx, idArticulo, idLoteB));
+
+        var (status, cuerpo) = await EmitirCrudoAsync(
+            ctx, SolicitudNcx(ctx, idArticulo, 2m, idLote: idLoteA, idComprobanteAsociado: original.Id));
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Equal("lote_invalido", cuerpo.GetProperty("codigo").GetString());
+        Assert.Equal(9m, await LeerStockLoteAsync(ctx, idArticulo, idLoteA));
+
+        var devolucion = await EmitirAsync(
+            ctx, SolicitudNcx(ctx, idArticulo, 2m, idLote: null, idComprobanteAsociado: original.Id));
+
+        Assert.Equal([idLoteA, idLoteB], devolucion.Items.Select(i => i.IdLote!.Value).Order());
+        Assert.Equal(10m, await LeerStockLoteAsync(ctx, idArticulo, idLoteA));
+        Assert.Equal(10m, await LeerStockLoteAsync(ctx, idArticulo, idLoteB));
     }
 
     /// <summary>Si el lote de donde salió la unidad se dio de baja después de la venta, la devolución no queda bloqueada: vuelve al lote

@@ -236,7 +236,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
     private static async Task<ComprobanteEmitido> EmitirAsync(Contexto ctx, SolicitudDeVenta solicitud)
     {
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var respuesta = await ApoyoDeDevoluciones.PostearAsync(ctx.Admin, solicitud, ctx.IdMedioEfectivo);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 

@@ -180,6 +180,8 @@ public static class ReglaDeComprobantes
 
     /// <summary><c>tipos_comprobante.codigo</c> del ticket de venta, el único comprobante que una devolución puede devolver.</summary>
     public const string CodigoDeVenta = "TX";
+
+    public const string CodigoDeNotaDeCreditoDeVenta = "NCX";
 }
 
 /// <summary>Lo que la anulación de una venta hace además con su facturación: ver

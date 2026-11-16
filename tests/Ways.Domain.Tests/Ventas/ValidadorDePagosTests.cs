@@ -86,48 +86,64 @@ public class ValidadorDePagosTests
         Validar(100m, [Efectivo(100m, vuelto: 0m)]);
     }
 
-    // ---- 0c: pago_en_comprobante_negativo -----------------------------------------------------
+    // ---- 0c: reintegro de una devolución (total negativo) -----------------------------------------
 
     [Fact]
-    public void UnComprobanteConTotalNegativoConUnPagoPositivoSeRechaza()
+    public void UnaDevolucionConUnReintegroEnEfectivoPorSuTotalSeAcepta()
+    {
+        Validar(-100m, [Efectivo(100m)]);
+    }
+
+    [Fact]
+    public void ElReintegroPuedeRepartirseEnVariasFilasDeEfectivoYIgnoraLasFilasEnCero()
+    {
+        Validar(-100m, [Efectivo(60m), Efectivo(40m), Tarjeta(0m)]);
+    }
+
+    [Fact]
+    public void UnaDevolucionConUnMedioQueNoEsEfectivoSeRechaza()
     {
         var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Tarjeta(100m)]));
-        Assert.Equal("pago_en_comprobante_negativo", excepcion.Codigo);
+        Assert.Equal("devolucion_solo_en_efectivo", excepcion.Codigo);
         Assert.Equal(400, excepcion.EstadoHttp);
     }
 
     [Fact]
-    public void UnComprobanteConTotalNegativoConVariosPagosSeRechazaAunqueSoloUnoSeaPositivo()
+    public void UnaDevolucionConCuentaCorrienteSeRechazaAunqueElEfectivoCubraElTotal()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Efectivo(100m), CuentaCorriente(1m)]));
+        Assert.Equal("devolucion_solo_en_efectivo", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnaDevolucionConVueltoSeRechaza()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Efectivo(105m, vuelto: 5m)]));
+        Assert.Equal("devolucion_con_vuelto", excepcion.Codigo);
+    }
+
+    [Theory]
+    [InlineData(99.99)]
+    [InlineData(100.01)]
+    [InlineData(0)]
+    public void UnaDevolucionConUnReintegroDistintoDelTotalSeRechaza(double importe)
     {
         var excepcion = Assert.Throws<ErrorDominio>(() =>
-            Validar(-100m, [Efectivo(0m), Tarjeta(0m), CuentaCorriente(1m)], esConsumidorFinal: false));
-        Assert.Equal("pago_en_comprobante_negativo", excepcion.Codigo);
+            Validar(-100m, importe == 0 ? [] : [Efectivo((decimal)importe)]));
+        Assert.Equal("devolucion_reintegro_invalido", excepcion.Codigo);
     }
 
     [Fact]
-    public void UnComprobanteConTotalNegativoConUnVueltoPositivoSeRechazaAunConImporteCero()
+    public void LaToleranciaDePagoNoRelajaElReintegroExacto()
     {
-        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Efectivo(0m, vuelto: 5m)]));
-        Assert.Equal("pago_en_comprobante_negativo", excepcion.Codigo);
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Efectivo(99m)], tolerancia: 5m));
+        Assert.Equal("devolucion_reintegro_invalido", excepcion.Codigo);
     }
 
     [Fact]
-    public void UnComprobanteConTotalNegativoSoloConFilasEnCeroSeAcepta()
+    public void UnaDevolucionDeTotalCeroNoExigeReintegro()
     {
-        // Una fila en cero no mueve dinero (igual que en una venta común, donde no se rechaza por sí sola).
-        Validar(-100m, [Efectivo(0m), Tarjeta(0m)]);
-    }
-
-    [Fact]
-    public void UnComprobanteConTotalNegativoSinPagosSeAcepta()
-    {
-        Validar(-100m, []);
-    }
-
-    [Fact]
-    public void UnComprobanteConTotalExactamenteCeroNoDisparaLaReglaDeTotalNegativo()
-    {
-        Validar(0m, [Efectivo(10m, vuelto: 10m)]);
+        Validar(0m, []);
     }
 
     [Fact]

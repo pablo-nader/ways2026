@@ -642,7 +642,7 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
             [],
             null, null);
 
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var respuesta = await ApoyoDeDevoluciones.PostearAsync(ctx.Admin, solicitud, ctx.IdMedioEfectivo);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 

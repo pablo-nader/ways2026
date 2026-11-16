@@ -9,6 +9,7 @@ using Ways.Application.Caja;
 using Ways.Application.Combos;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
+using Ways.Application.Familias;
 using Ways.Application.Fiscal;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -465,6 +466,17 @@ public class ServicioDeVentas(
                 // idLote (validado arriba contra los que vendió el ticket), a ese. Si el ticket vendió la unidad sin lote, vuelve al
                 // lote sin identificar.
                 var idLoteDelCliente = lineas[lineaDeItem[indice]].IdLote;
+
+                // Cada tramo vuelve al lote de SU item original: un idLote del cliente que no es el de este tramo no se reparte
+                // sobre todos los tramos de la línea.
+                if (devolucion is not null && idLoteDelCliente is not null && idLoteDelCliente != item.IdLote)
+                {
+                    throw new ErrorDominio(
+                        "lote_invalido",
+                        $"El lote {idLoteDelCliente} no es el del item del ticket original que cubre estas unidades del artículo {idArticulo}.",
+                        400);
+                }
+
                 var idLotePedido = idLoteDelCliente ?? (tipo.Signo < 0 ? item.IdLote : null);
 
                 // El lote de donde salió la unidad pudo darse de baja después de la venta (el filtro de EF ya no lo ve): la
@@ -564,11 +576,21 @@ public class ServicioDeVentas(
         // si el contenido difiere; un comprobante nunca se borra, así que no hay inserción nueva
         // posible por este camino. Por lo mismo tampoco se le aplica la regla 9: una venta emitida antes de esa regla con un
         // excedente quedaría rechazada por su propio reenvío. La primera sincronización de una venta offline sí la cumple.
-        ValidadorDePagos.Validar(
-            totales.Total, pagosAValidar, toleranciaPago,
-            cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
-            exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida,
-            exigirCobroSinExcedente: !reenvioDeVentaYaEmitida && !solicitud.ExcedenteComoPagoACuenta);
+        try
+        {
+            ValidadorDePagos.Validar(
+                totales.Total, pagosAValidar, toleranciaPago,
+                cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
+                exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida,
+                exigirCobroSinExcedente: !reenvioDeVentaYaEmitida && !solicitud.ExcedenteComoPagoACuenta);
+        }
+        catch (ErrorDominio error) when (error.Codigo == "devolucion_reintegro_invalido")
+        {
+            // El cliente de una devolución no calcula el reparto por unidades acumuladas del ticket: el rechazo le dice cuánto
+            // es el reintegro de lo que pidió, para que lo muestre y lo reenvíe.
+            throw new ErrorDominioConDatos(
+                error.Codigo, error.Message, error.EstadoHttp, new Dictionary<string, object?> { ["reintegro"] = -totales.Total });
+        }
 
         // Con el excedente a cuenta, la venta conserva cobros por exactamente su total y lo que sobra pasa a un recibo del
         // cliente con los mismos medios: el cierre del turno cuenta los cobros del recibo como los de la venta, así que cada
@@ -746,6 +768,45 @@ public class ServicioDeVentas(
 
             return existente;
         });
+    }
+
+    /// <summary>Cuánto vale una devolución, por el mismo camino que la emisión (<see cref="ResolverDevolucionDelTicketAsync"/> y
+    /// <see cref="DevolucionDeTicket"/>) y con los mismos rechazos (líneas, ticket de otro punto de venta, tope, factura fiscal). Solo lee y no
+    /// toma locks: la emisión vuelve a juzgar todo bajo el lock del ticket. Un ticket o punto de venta inexistente o de otro tenant es 404.</summary>
+    public async Task<PrevisualizacionDeDevolucion> PrevisualizarDevolucionAsync(
+        SolicitudDePrevisualizacionDeDevolucion solicitud, CancellationToken ct = default)
+    {
+        var lineas = ExigirLineasValidas(solicitud.Lineas, numeroPreasignado: null);
+        ExigirLineasDeDevolucionSinAjuste(lineas);
+
+        var tipo = await ResolverTipoComprobanteAsync(ReglaDeComprobantes.CodigoDeNotaDeCreditoDeVenta, ct);
+        var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        var asociado = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == solicitud.IdComprobanteAsociado, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el comprobante {solicitud.IdComprobanteAsociado}.");
+        var codigoTipoDelAsociado = await db.TiposComprobante
+            .Where(t => t.Id == asociado.IdTipoComprobante).Select(t => t.Codigo).FirstOrDefaultAsync(ct);
+
+        ReglaDeComprobantes.ValidarComprobanteAsociado(
+            tipo.Signo, asociado.Id, asociado, codigoTipoDelAsociado, puntoVenta.Id, asociado.IdCliente);
+
+        var resultadoDeLaFactura = await db.ComprobantesVenta
+            .Where(c => c.IdVentaOrigen == asociado.Id && c.IdComprobanteAsociado == null)
+            .Select(c => c.ResultadoFiscal)
+            .FirstOrDefaultAsync(ct);
+        var decisionPendiente = asociado.FacturacionDecididaEn is null
+            || await db.FacturacionesDeVenta.AnyAsync(
+                f => f.IdComprobanteVenta == asociado.Id && f.IdFacturacionOrigen == null
+                    && f.Estado == EstadoFacturacionDeVenta.Pendiente, ct);
+        ReglaDeDevoluciones.ExigirDevolvible(asociado.Estado, [asociado.ResultadoFiscal, resultadoDeLaFactura], decisionPendiente);
+
+        var devolucion = await ResolverDevolucionDelTicketAsync(asociado.Id, lineas, ct);
+        var previsualizadas = lineas
+            .Select((linea, indice) => new LineaPrevisualizadaDeDevolucion(
+                linea.IdArticulo, linea.Cantidad, devolucion.Tramos[indice].Sum(t => t.Credito)))
+            .ToList();
+
+        return new PrevisualizacionDeDevolucion(previsualizadas, previsualizadas.Sum(l => l.Credito));
     }
 
     private static readonly IReadOnlyDictionary<int, ComboEnLinea> SinCombos = new Dictionary<int, ComboEnLinea>();
@@ -1345,7 +1406,10 @@ public class ServicioDeVentas(
         // en el mismo comprobante (ej. dos tramos en efectivo) se consolidan en un único monto neto,
         // en vez de aparecer como dos filas separadas o (peor) pisarse entre sí. El neto es
         // Σimporte − Σvuelto DEL GRUPO, no por pago individual — un vuelto que superase el importe
-        // de un pago puntual pero se compensa con otro pago del mismo medio sigue neteando bien.
+        // de un pago puntual pero se compensa con otro pago del mismo medio sigue neteando bien. El importe lleva el signo del
+        // comprobante (el de una nota de crédito es plata que sale del cajón: el cobro se guarda positivo), el mismo que usa
+        // LectorDeMovimientosDelTurno, así el total por medio del listado coincide con el esperado del arqueo.
+        var signoPorComprobante = crudos.ToDictionary(c => c.Id, c => c.Total < 0m ? -1m : 1m);
         var mediosPorComprobante = pagos
             .GroupBy(p => p.IdComprobanteVenta)
             .ToDictionary(
@@ -1355,7 +1419,7 @@ public class ServicioDeVentas(
                     .Select(gm => new MedioDeVentaNeto(
                         gm.Key,
                         nombrePorMedioPago.GetValueOrDefault(gm.Key, "?"),
-                        gm.Sum(p => p.Importe - p.Vuelto)))
+                        signoPorComprobante[g.Key] * gm.Sum(p => p.Importe - p.Vuelto)))
                     .ToList());
 
         return crudos
@@ -2138,6 +2202,7 @@ public class ServicioDeVentas(
                 // endpoint de edición.
                 IdLote = i.IdLote,
                 PorImporte = i.PorImporte,
+                IdItemComprobanteVentaOrigen = i.IdItemDeOrigen,
                 CreatedAt = plan.Momento,
                 UpdatedAt = plan.Momento
             })
@@ -2853,7 +2918,8 @@ public class ServicioDeVentas(
                     articulo.EsProducto, articulo.CostoNominal,
                     IdLote: tramoDevuelto.Origen.IdLote,
                     IdCombo: tramoDevuelto.Origen.IdCombo,
-                    PorImporte: tramoDevuelto.Origen.PorImporte));
+                    PorImporte: tramoDevuelto.Origen.PorImporte,
+                    IdItemDeOrigen: tramoDevuelto.Origen.IdItem));
                 continue;
             }
 
@@ -3405,7 +3471,7 @@ public class ServicioDeVentas(
         bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null,
         decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null,
         ComboDeAuditoria? ComboDelDispositivo = null, ComboDeAuditoria? ComboEsperado = null,
-        bool PorImporte = false);
+        bool PorImporte = false, int? IdItemDeOrigen = null);
 
     /// <summary>La línea de concepto libre "Envío" ya resuelta: el importe del parámetro <c>importe_envio</c> y la alícuota
     /// del 21 % a snapshotear. Existe solo cuando la venta es con envío y el importe es mayor a cero.</summary>

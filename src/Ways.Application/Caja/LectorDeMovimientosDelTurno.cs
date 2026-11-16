@@ -23,21 +23,24 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
         // Cobro no tiene navigation property a ComprobanteVenta (convención del
         // proyecto: FKs sin propiedad de navegación, ver CobroConfiguration) — join
         // explícito por id_comprobante_venta en vez de una propiedad de navegación inexistente.
+        // El reintegro en efectivo de una nota de crédito resta del esperado del medio: su cobro se guarda positivo
+        // (ck_cobros_importe_no_negativo) pero es plata que sale del cajón. El signo sale del total del comprobante (negativo solo en una
+        // NCX, y ValidadorDePagos exige que sus pagos sumen exactamente -total) y no de un join con tipos_comprobante: el filtro de baja
+        // lógica de esa tabla no puede ignorarse acá sin ignorar también el de cobros, y un tipo filtrado haría desaparecer cobros.
         var pagosDelTurno = db.Cobros
             .Join(
                 db.ComprobantesVenta,
                 p => p.IdComprobanteVenta,
                 c => c.Id,
-                (p, c) => new { p.IdMedioPago, p.Importe, p.Vuelto, c.IdTurnoCaja, c.Estado })
+                (p, c) => new { p.IdMedioPago, p.Importe, p.Vuelto, c.IdTurnoCaja, c.Estado, Signo = c.Total < 0m ? -1m : 1m })
             .Where(x => x.IdTurnoCaja == idTurnoCaja && x.Estado == EstadoComprobante.Emitido);
 
         // 1. pagos por medio — solo comprobantes emitido (spec: Anulados Are Excluded From The
-        // Derivation). Suma los importes tal cual, sin mirar el signo del tipo de comprobante: un pago nunca es negativo
-        // (ck_cobros_importe_no_negativo) y una nota de crédito no lleva pagos (ValidadorDePagos, regla 0c), así que no resta ni suma
-        // nada: este lector no necesita el signo del comprobante.
+        // Derivation: anular una NCX devuelve el efectivo al esperado). Suma importe × signo: una venta suma lo cobrado y una nota de
+        // crédito resta lo reintegrado (ValidadorDePagos, regla 0c: solo efectivo, por exactamente su total).
         var pagosPorMedio = await pagosDelTurno
             .GroupBy(x => x.IdMedioPago)
-            .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Importe) })
+            .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Importe * x.Signo) })
             .ToDictionaryAsync(x => x.IdMedioPago, x => x.Total, ct);
 
         // 2. vueltos por medio — mismo filtro; CalculadorDeArqueo suma esto sobre TODOS los

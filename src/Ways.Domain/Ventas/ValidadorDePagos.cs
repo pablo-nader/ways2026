@@ -96,14 +96,13 @@ public static class ValidadorDePagos
         }
 
         // 0c (mismo criterio que las reglas 0/0b, corta ANTES de la 1): un comprobante de total negativo (nota de crédito)
-        // no cobra, así que no lleva pagos. Sin esta regla la 1 y la 2 pasan con cualquier importe positivo y el cierre del
-        // turno suma ese dinero como cobrado (arqueo y cuenta de tesorería). Una fila en cero no mueve dinero y, como en una
-        // venta común, no se rechaza por sí sola; un vuelto positivo sí es dinero y se rechaza aunque el importe sea cero.
-        if (total < 0m && pagos.Any(p => p.Importe > 0m || p.Vuelto > 0m))
+        // no cobra: devuelve, y lo que devuelve sale SIEMPRE en efectivo de la caja del turno (decisión del dueño). Sus pagos son
+        // el reintegro: solo efectivo, sin vuelto y por exactamente el total. Las demás reglas (cuenta corriente, vuelto,
+        // excedente) no tienen sentido en una devolución, así que esta es la única validación de una nota de crédito.
+        if (total < 0m)
         {
-            throw new ErrorDominio(
-                "pago_en_comprobante_negativo",
-                "Una nota de crédito no lleva pagos: la devolución no cobra.", 400);
+            ValidarReintegroDeDevolucion(total, pagos);
+            return;
         }
 
         var sumaImportes = pagos.Sum(p => p.Importe);
@@ -193,8 +192,7 @@ public static class ValidadorDePagos
             return;
         }
 
-        // Una nota de crédito no cobra (regla 0c): su tope parte de cero, no de su total negativo.
-        var topeDelCobro = Math.Max(0m, total) + toleranciaPago;
+        var topeDelCobro = total + toleranciaPago;
         foreach (var pago in pagos)
         {
             if (!pago.AdmiteVuelto && pago.Importe > topeDelCobro)
@@ -210,6 +208,36 @@ public static class ValidadorDePagos
             throw new ErrorDominio(
                 "cobro_supera_el_total",
                 "Lo cobrado supera el total de la venta: lo que sobra del efectivo tiene que volver como vuelto.", 400);
+        }
+    }
+
+    /// <summary>El reintegro de una nota de crédito: pagos en efectivo, sin vuelto, que suman exactamente lo que devuelve (<c>-total</c>). Un
+    /// pago sin importe ni vuelto no mueve dinero y no cuenta. Una nota sin pagos no devuelve nada: se rechaza, porque el efectivo
+    /// tiene que salir del arqueo del turno.</summary>
+    private static void ValidarReintegroDeDevolucion(decimal total, IReadOnlyList<PagoAValidar> pagos)
+    {
+        var conDinero = pagos.Where(p => p.Importe > 0m || p.Vuelto > 0m).ToList();
+
+        if (conDinero.Any(p => p.Comportamiento != ComportamientoMedioPago.Efectivo))
+        {
+            throw new ErrorDominio(
+                "devolucion_solo_en_efectivo", "Una devolución se reintegra solo en efectivo.", 400);
+        }
+
+        if (conDinero.Any(p => p.Vuelto > 0m))
+        {
+            throw new ErrorDominio("devolucion_con_vuelto", "Una devolución no admite vuelto.", 400);
+        }
+
+        var reintegro = conDinero.Sum(p => p.Importe);
+        if (reintegro != -total)
+        {
+            throw new ErrorDominio(
+                "devolucion_reintegro_invalido",
+                string.Create(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    $"El efectivo a reintegrar tiene que ser exactamente {-total}, el total de la devolución."),
+                400);
         }
     }
 }

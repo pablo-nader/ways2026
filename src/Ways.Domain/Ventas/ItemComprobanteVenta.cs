@@ -108,4 +108,9 @@ public class ItemComprobanteVenta : EntidadTenant
     /// unidad después, y la reliquidación y la devolución asociada deciden por esto y no por la unidad de hoy. <c>false</c>
     /// en toda fila anterior a la columna, sin backfill (ninguna se vendió por importe).</summary>
     public bool PorImporte { get; set; }
+
+    /// <summary>Solo en un item de nota de crédito (NCX) asociada a un ticket: el item de ESE ticket cuyas unidades devuelve. Es lo que
+    /// permite saber, por item, cuántas unidades y cuánto crédito devolvieron las notas emitidas (<see cref="DevolucionDeTicket"/>),
+    /// sin repetir el reparto. <c>NULL</c> en todo item que no es de una devolución y en las notas anteriores a la columna, sin backfill.</summary>
+    public int? IdItemComprobanteVentaOrigen { get; set; }
 }

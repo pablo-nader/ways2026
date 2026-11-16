@@ -197,6 +197,12 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "&& await db.ComprobantesVenta.AnyAsync(")] =
                 (1, PorClaveUnica),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
+                "var asociado = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == solicitud.IdComprobanteAsociado, ct)")] =
+                (1, PorId + " Vista previa de una devolución: ValidarComprobanteAsociado rechaza un espejo."),
+            [("Ways.Application/Ventas/ServicioDeVentas.cs",
+                "var resultadoDeLaFactura = await db.ComprobantesVenta")] =
+                (1, "Lee el espejo de la factura de UN ticket por id_venta_origen: tiene que verlo para rechazar la devolución."),
+            [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "\"SELECT estado::text, resultado_fiscal::text, facturacion_decidida_en IS NULL FROM comprobantes_venta \" +")] =
                 (1, "Bloquea (FOR UPDATE) el ticket de origen de una devolución, por id: ya se juzgó que no es un espejo."),
             [("Ways.Application/Ventas/LectorDeDevolucionesDelTicket.cs",

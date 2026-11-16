@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
+using Ways.Application.Caja;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
@@ -137,10 +138,33 @@ public class DevolucionesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
     }
 
-    private static Task<HttpResponseMessage> DevolverAsync(
-        HttpClient cliente, Contexto ctx, int idCliente, int? idAsociado, params LineaDeVenta[] lineas) =>
+    private static Task<HttpResponseMessage> EnviarDevolucionAsync(
+        HttpClient cliente, Contexto ctx, int idCliente, int? idAsociado, decimal reintegro, LineaDeVenta[] lineas) =>
         cliente.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
-            ctx.IdPuntoVenta, idCliente, "NCX", idAsociado, lineas, [], null, null));
+            ctx.IdPuntoVenta, idCliente, "NCX", idAsociado, lineas,
+            reintegro > 0m ? [new PagoDeVenta(ctx.IdMedioEfectivo, reintegro, null, 0m)] : [], null, null));
+
+    /// <summary>Emite la devolución reintegrando en efectivo exactamente lo que el servidor dice que vale: manda el pedido sin pagos,
+    /// toma <c>datos.reintegro</c> del rechazo <c>devolucion_reintegro_invalido</c> y lo reenvía. Cualquier otro resultado (un rechazo
+    /// anterior al del reintegro, o el éxito de una nota de total cero) se devuelve tal cual.</summary>
+    private static async Task<HttpResponseMessage> DevolverAsync(
+        HttpClient cliente, Contexto ctx, int idCliente, int? idAsociado, params LineaDeVenta[] lineas)
+    {
+        var sinReintegro = await EnviarDevolucionAsync(cliente, ctx, idCliente, idAsociado, 0m, lineas);
+        if (sinReintegro.StatusCode != HttpStatusCode.BadRequest)
+        {
+            return sinReintegro;
+        }
+
+        var problema = JsonDocument.Parse(await sinReintegro.Content.ReadAsStringAsync()).RootElement;
+        if (problema.GetProperty("codigo").GetString() != "devolucion_reintegro_invalido")
+        {
+            return sinReintegro;
+        }
+
+        var reintegro = problema.GetProperty("datos").GetProperty("reintegro").GetDecimal();
+        return await EnviarDevolucionAsync(cliente, ctx, idCliente, idAsociado, reintegro, lineas);
+    }
 
     private static async Task<ComprobanteEmitido> DevolverBienAsync(
         Contexto ctx, int idCliente, int idAsociado, params LineaDeVenta[] lineas)
@@ -339,6 +363,65 @@ public class DevolucionesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         Assert.Equal([-33m, -34m, -33m], creditos);
         Assert.Equal(-100m, creditos.Sum());
+    }
+
+    [Fact]
+    public async Task AnularUnaDevolucionIntermediaNoHaceQueLoAcreditadoSuperePorUnPesoElTotalDelItem()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnaDevolucionIntermediaNoHaceQueLoAcreditadoSuperePorUnPesoElTotalDelItem));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-intermedia", 33.34m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Intermedia");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 3m, null));
+
+        var primera = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        var segunda = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        Assert.Equal([-33m, -34m], [primera.Total, segunda.Total]);
+
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{primera.Id}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        var ultima = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 2m, null));
+
+        Assert.Equal(-66m, ultima.Total);
+        Assert.Equal(-100m, segunda.Total + ultima.Total);
+    }
+
+    [Fact]
+    public async Task AnularLaDevolucionDelPrimerItemDelMismoArticuloVuelveAAcreditarEseItemYNoElOtro()
+    {
+        var ctx = await PrepararAsync(nameof(AnularLaDevolucionDelPrimerItemDelMismoArticuloVuelveAAcreditarEseItemYNoElOtro));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-dos-precios", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Dos Precios");
+
+        // El mismo artículo en dos items: el primero con 50 % de descuento manual (50) y el segundo a lista (100).
+        var venta = await VenderAsync(
+            ctx, idCliente, 150m,
+            new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -50m),
+            new LineaDeVenta(idArticulo, 1m, null));
+
+        var primera = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        var segunda = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        Assert.Equal([-50m, -100m], [primera.Total, segunda.Total]);
+
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{primera.Id}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        var tercera = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+
+        Assert.Equal(-50m, tercera.Total);
+        Assert.Equal(-150m, segunda.Total + tercera.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var itemsDeOrigen = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == venta.Id)
+            .OrderBy(i => i.Orden)
+            .Select(i => i.Id)
+            .ToListAsync();
+        var origenDeLaTercera = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == tercera.Id)
+            .Select(i => i.IdItemComprobanteVentaOrigen)
+            .SingleAsync();
+        Assert.Equal(itemsDeOrigen[0], origenDeLaTercera);
     }
 
     [Fact]
@@ -681,5 +764,243 @@ public class DevolucionesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.GetAsync("/api/ventas/devolvibles?idPuntoVenta=1&numero=1")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.GetAsync("/api/ventas/1/devolvibles")).StatusCode);
+    }
+    // ---- Reintegro en efectivo: sale del arqueo del turno -------------------------------------------
+
+    private async Task<int> IdDelTurnoAbiertoAsync(Contexto ctx)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        return await db.TurnosCaja
+            .Where(t => t.IdPuntoVenta == ctx.IdPuntoVenta && t.Estado == Ways.Domain.Caja.EstadoTurno.Abierto)
+            .Select(t => t.Id).SingleAsync();
+    }
+
+    private static async Task<decimal> EsperadoEnEfectivoAsync(Contexto ctx, int idTurno)
+    {
+        var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{idTurno}/resumen", OpcionesJson);
+        return resumen!.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo).ImporteEsperado;
+    }
+
+    /// <summary>La cláusula bajo prueba es el <c>importe * signo</c> de <c>LectorDeMovimientosDelTurno</c>: el cobro de la NCX se guarda
+    /// positivo y, sin el signo, el esperado SUBIRÍA con la devolución (200 -> 300) en vez de bajar.</summary>
+    [Fact]
+    public async Task ElReintegroEnEfectivoBajaElEsperadoDelTurnoYElCierreCuadra()
+    {
+        var ctx = await PrepararAsync(nameof(ElReintegroEnEfectivoBajaElEsperadoDelTurnoYElCierreCuadra));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-efectivo", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Efectivo");
+        var idTurno = await IdDelTurnoAbiertoAsync(ctx);
+        var venta = await VenderAsync(ctx, idCliente, 200m, new LineaDeVenta(idArticulo, 2m, null));
+        Assert.Equal(200m, await EsperadoEnEfectivoAsync(ctx, idTurno));
+
+        var devolucion = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+
+        Assert.Equal(-100m, devolucion.Total);
+        var reintegro = Assert.Single(devolucion.Pagos);
+        Assert.Equal(ctx.IdMedioEfectivo, reintegro.IdMedioPago);
+        Assert.Equal(100m, reintegro.Importe);
+        Assert.Equal(100m, await EsperadoEnEfectivoAsync(ctx, idTurno));
+
+        var cierre = await ctx.Admin.PostAsJsonAsync(
+            $"/api/caja/turnos/{idTurno}/cierre", new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 100m)], null));
+        var cuerpo = await cierre.Content.ReadAsStringAsync();
+        Assert.True(cierre.StatusCode == HttpStatusCode.OK, cuerpo);
+        var arqueo = Assert.Single(JsonSerializer.Deserialize<TurnoConArqueos>(cuerpo, OpcionesJson)!.Arqueos);
+        Assert.Equal(100m, arqueo.ImporteEsperado);
+        Assert.Equal(0m, arqueo.Diferencia);
+    }
+
+    /// <summary>La cláusula bajo prueba es el signo del importe por medio en <c>LeerVentasDelTurnoAsync</c>: el cobro de la NCX se
+    /// guarda positivo y, sin el signo, "Ventas del turno" mostraría efectivo 300 (200 + 100) contra un esperado de 100.</summary>
+    [Fact]
+    public async Task ElTotalPorMedioDeVentasDelTurnoDescuentaLaDevolucionYCoincideConElEsperado()
+    {
+        var ctx = await PrepararAsync(nameof(ElTotalPorMedioDeVentasDelTurnoDescuentaLaDevolucionYCoincideConElEsperado));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-listado", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Listado");
+        var idTurno = await IdDelTurnoAbiertoAsync(ctx);
+        var venta = await VenderAsync(ctx, idCliente, 200m, new LineaDeVenta(idArticulo, 2m, null));
+        var devolucion = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+
+        var ventas = (await ctx.Admin.GetFromJsonAsync<List<VentaDeTurnoListado>>($"/api/ventas/por-turno/{idTurno}", OpcionesJson))!;
+
+        var filaDeLaDevolucion = ventas.Single(v => v.Id == devolucion.Id);
+        Assert.Equal(-100m, filaDeLaDevolucion.Total);
+        Assert.Equal(-100m, Assert.Single(filaDeLaDevolucion.MediosDePago).Importe);
+
+        var efectivoListado = ventas
+            .Where(v => v.Estado == EstadoComprobante.Emitido)
+            .SelectMany(v => v.MediosDePago)
+            .Where(m => m.IdMedioPago == ctx.IdMedioEfectivo)
+            .Sum(m => m.Importe);
+        Assert.Equal(100m, efectivoListado);
+        Assert.Equal(await EsperadoEnEfectivoAsync(ctx, idTurno), efectivoListado);
+    }
+
+    [Fact]
+    public async Task AnularLaDevolucionDevuelveElEfectivoAlEsperadoDelTurno()
+    {
+        var ctx = await PrepararAsync(nameof(AnularLaDevolucionDevuelveElEfectivoAlEsperadoDelTurno));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-anula-efectivo", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Anula Efectivo");
+        var idTurno = await IdDelTurnoAbiertoAsync(ctx);
+        var venta = await VenderAsync(ctx, idCliente, 300m, new LineaDeVenta(idArticulo, 3m, null));
+        var primera = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+        Assert.Equal(100m, await EsperadoEnEfectivoAsync(ctx, idTurno));
+
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{primera.Id}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        Assert.Equal(200m, await EsperadoEnEfectivoAsync(ctx, idTurno));
+    }
+
+    [Fact]
+    public async Task UnaDevolucionSinReintegroOConUnReintegroDistintoDelTotalSeRechazaYNoPersisteNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDevolucionSinReintegroOConUnReintegroDistintoDelTotalSeRechazaYNoPersisteNada));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-reintegro-invalido", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Reintegro Invalido");
+        var venta = await VenderAsync(ctx, idCliente, 200m, new LineaDeVenta(idArticulo, 2m, null));
+        var lineas = new[] { new LineaDeVenta(idArticulo, 1m, null) };
+
+        var sinPagos = await EnviarDevolucionAsync(ctx.Admin, ctx, idCliente, venta.Id, 0m, lineas);
+        await AfirmarErrorAsync(sinPagos, HttpStatusCode.BadRequest, "devolucion_reintegro_invalido");
+        var datos = JsonDocument.Parse(await sinPagos.Content.ReadAsStringAsync()).RootElement.GetProperty("datos");
+        Assert.Equal(100m, datos.GetProperty("reintegro").GetDecimal());
+
+        await AfirmarErrorAsync(
+            await EnviarDevolucionAsync(ctx.Admin, ctx, idCliente, venta.Id, 99m, lineas),
+            HttpStatusCode.BadRequest, "devolucion_reintegro_invalido");
+        await AfirmarErrorAsync(
+            await EnviarDevolucionAsync(ctx.Admin, ctx, idCliente, venta.Id, 101m, lineas),
+            HttpStatusCode.BadRequest, "devolucion_reintegro_invalido");
+
+        Assert.Equal(0, await ContarNcxAsync(ctx, venta.Id));
+        Assert.Equal(-2m, await StockAsync(ctx, idArticulo));
+    }
+
+    [Fact]
+    public async Task ElReintegroSoloAdmiteEfectivoSinVuelto()
+    {
+        var ctx = await PrepararAsync(nameof(ElReintegroSoloAdmiteEfectivoSinVuelto));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-solo-efectivo", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Solo Efectivo");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 1m, null));
+        int idElectronico;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            idElectronico = await db.MediosPago
+                .Where(m => m.Comportamiento == ComportamientoMedioPago.Electronico).Select(m => m.Id).FirstAsync();
+        }
+
+        var lineas = new[] { new LineaDeVenta(idArticulo, 1m, null) };
+        var conTarjeta = await ctx.Admin.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "NCX", venta.Id, lineas, [new PagoDeVenta(idElectronico, 100m, "ref", 0m)], null, null));
+        await AfirmarErrorAsync(conTarjeta, HttpStatusCode.BadRequest, "devolucion_solo_en_efectivo");
+
+        var conVuelto = await ctx.Admin.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "NCX", venta.Id, lineas, [new PagoDeVenta(ctx.IdMedioEfectivo, 150m, null, 50m)], null, null));
+        await AfirmarErrorAsync(conVuelto, HttpStatusCode.BadRequest, "devolucion_con_vuelto");
+
+        Assert.Equal(0, await ContarNcxAsync(ctx, venta.Id));
+    }
+    // ---- Vista previa del reintegro -----------------------------------------------------------------
+
+    private static Task<HttpResponseMessage> PrevisualizarAsync(
+        HttpClient cliente, Contexto ctx, int idAsociado, params LineaDeVenta[] lineas) =>
+        cliente.PostAsJsonAsync(
+            "/api/ventas/devoluciones/previsualizacion", new SolicitudDePrevisualizacionDeDevolucion(ctx.IdPuntoVenta, idAsociado, lineas));
+
+    /// <summary>La vista previa usa el mismo reparto que la emisión: con 3 unidades por 100 el crédito es 33, 34 y 33, y lo que previsualiza es
+    /// exactamente el total y el efectivo de la nota emitida a continuación.</summary>
+    [Fact]
+    public async Task LaVistaPreviaCoincideConElTotalYElReintegroDeLaNotaEmitida()
+    {
+        var ctx = await PrepararAsync(nameof(LaVistaPreviaCoincideConElTotalYElReintegroDeLaNotaEmitida));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-previa", 33.34m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Previa");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 3m, null));
+
+        foreach (var esperado in new[] { 33m, 34m, 33m })
+        {
+            var respuesta = await PrevisualizarAsync(ctx.Admin, ctx, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+            var cuerpo = await respuesta.Content.ReadAsStringAsync();
+            Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+            var previa = JsonSerializer.Deserialize<PrevisualizacionDeDevolucion>(cuerpo, OpcionesJson)!;
+            Assert.Equal(esperado, previa.Reintegro);
+            Assert.Equal(esperado, Assert.Single(previa.Lineas).Credito);
+
+            var pedido = new SolicitudDeVenta(
+                ctx.IdPuntoVenta, idCliente, "NCX", venta.Id, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, previa.Reintegro, null, 0m)], null, null);
+            var emitida = await ctx.Admin.PostAsJsonAsync("/api/ventas", pedido);
+            var emitidaCuerpo = await emitida.Content.ReadAsStringAsync();
+            Assert.True(emitida.StatusCode == HttpStatusCode.Created, emitidaCuerpo);
+            Assert.Equal(-previa.Reintegro, JsonSerializer.Deserialize<ComprobanteEmitido>(emitidaCuerpo, OpcionesJson)!.Total);
+        }
+    }
+
+    [Fact]
+    public async Task LaVistaPreviaNoEscribeNadaYRechazaConLosMismosCodigosQueLaEmision()
+    {
+        var ctx = await PrepararAsync(nameof(LaVistaPreviaNoEscribeNadaYRechazaConLosMismosCodigosQueLaEmision));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-previa-tope", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Previa Tope");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 1m, null));
+
+        await AfirmarErrorAsync(
+            await PrevisualizarAsync(ctx.Admin, ctx, venta.Id, new LineaDeVenta(idArticulo, 2m, null)),
+            HttpStatusCode.Conflict, "devolucion_excede_lo_vendido");
+        await AfirmarErrorAsync(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/ventas/devoluciones/previsualizacion",
+                new SolicitudDePrevisualizacionDeDevolucion(ctx.IdPuntoVenta, venta.Id, [])),
+            HttpStatusCode.BadRequest, "lineas_requeridas");
+
+        Assert.Equal(0, await ContarNcxAsync(ctx, venta.Id));
+        Assert.Equal(-1m, await StockAsync(ctx, idArticulo));
+    }
+
+    [Fact]
+    public async Task LaVistaPreviaDeUnTicketConFacturaFiscalEsElMismo409QueLaEmision()
+    {
+        var ctx = await PrepararAsync(nameof(LaVistaPreviaDeUnTicketConFacturaFiscalEsElMismo409QueLaEmision));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-previa-cae", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Previa Cae");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 1m, null));
+        await SembrarEspejoAsync(ctx, venta.Id, idCliente, ResultadoFiscal.Aprobado);
+
+        await AfirmarErrorAsync(
+            await PrevisualizarAsync(ctx.Admin, ctx, venta.Id, new LineaDeVenta(idArticulo, 1m, null)),
+            HttpStatusCode.Conflict, "devolucion_requiere_nota_de_credito_fiscal");
+    }
+
+    [Fact]
+    public async Task LaVistaPreviaDeUnTicketDeOtroTenantEsNotFoundYExigeSesion()
+    {
+        var ctx = await PrepararAsync(nameof(LaVistaPreviaDeUnTicketDeOtroTenantEsNotFoundYExigeSesion));
+        var otro = await PrepararAsync(nameof(LaVistaPreviaDeUnTicketDeOtroTenantEsNotFoundYExigeSesion) + "Otro");
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-previa-404", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Previa 404");
+        var venta = await VenderAsync(ctx, idCliente, 100m, new LineaDeVenta(idArticulo, 1m, null));
+
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            (await otro.Admin.PostAsJsonAsync(
+                "/api/ventas/devoluciones/previsualizacion",
+                new SolicitudDePrevisualizacionDeDevolucion(ctx.IdPuntoVenta, venta.Id, [new LineaDeVenta(idArticulo, 1m, null)]))).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            (await ctx.Admin.PostAsJsonAsync(
+                "/api/ventas/devoluciones/previsualizacion",
+                new SolicitudDePrevisualizacionDeDevolucion(ctx.IdPuntoVenta, 987654321, [new LineaDeVenta(idArticulo, 1m, null)]))).StatusCode);
+
+        using var anonimo = fixture.CreateClient();
+        Assert.Equal(
+            HttpStatusCode.Unauthorized,
+            (await anonimo.PostAsJsonAsync(
+                "/api/ventas/devoluciones/previsualizacion",
+                new SolicitudDePrevisualizacionDeDevolucion(1, 1, [new LineaDeVenta(1, 1m, null)]))).StatusCode);
     }
 }
