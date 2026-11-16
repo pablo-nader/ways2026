@@ -140,6 +140,7 @@ jobs:
             --lista resultados/lista.txt \
             --fragmento "$FRAGMENTO" \
             --total "$TOTAL" \
+            --pesos .github/scripts/pesos_integracion.json \
             --salida resultados/filtro.txt
 
       # --blame-hang corta un test que lleve más de 10 minutos colgado, en vez de

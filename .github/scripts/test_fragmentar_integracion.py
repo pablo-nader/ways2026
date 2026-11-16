@@ -87,6 +87,56 @@ class ReparteClasesTests(unittest.TestCase):
                 self.assertEqual(1, len(ks), clase)
 
 
+class ReparteConPesosTests(unittest.TestCase):
+    PREFIJO = "Ways.IntegrationTests."
+    PESOS = {PREFIJO + "AaaTests": 100.0, PREFIJO + "BbbTests": 90.0, PREFIJO + "CccTests": 10.0, PREFIJO + "DddTests": 5.0}
+
+    def test_los_pesadas_no_caen_juntas_y_las_cargas_quedan_parejas(self):
+        clases = frag.clases_de(LISTA)
+        uno = frag.clases_del_fragmento(clases, 1, 2, self.PESOS)
+        dos = frag.clases_del_fragmento(clases, 2, 2, self.PESOS)
+        self.assertEqual([self.PREFIJO + "AaaTests", self.PREFIJO + "DddTests"], uno)
+        self.assertEqual([self.PREFIJO + "BbbTests", self.PREFIJO + "CccTests"], dos)
+
+    def test_es_disjunto_y_cubre_todas_las_clases(self):
+        clases = frag.clases_de(LISTA)
+        partes = [frag.clases_del_fragmento(clases, k, 3, self.PESOS) for k in (1, 2, 3)]
+        self.assertEqual(len(clases), sum(len(p) for p in partes))
+        self.assertEqual(set(clases), set().union(*map(set, partes)))
+
+    def test_el_orden_de_entrada_no_cambia_el_reparto(self):
+        al_reves = frag.clases_de(list(reversed(LISTA)))
+        self.assertEqual(
+            frag.clases_del_fragmento(frag.clases_de(LISTA), 2, 3, self.PESOS),
+            frag.clases_del_fragmento(al_reves, 2, 3, self.PESOS),
+        )
+
+    def test_una_clase_sin_medir_pesa_por_su_cantidad_de_metodos(self):
+        medidos = {self.PREFIJO + "AaaTests": 20.0}
+        clases = frag.clases_de(LISTA)
+        ponderados = frag.pesos_por_clase(clases, LISTA, medidos)
+        self.assertEqual(10.0, ponderados[self.PREFIJO + "BbbTests"])
+        self.assertEqual(30.0, ponderados[self.PREFIJO + "CccTests"])
+
+    def test_planificar_usa_los_pesos_y_conserva_la_cobertura(self):
+        planes = [frag.planificar(LISTA, k, 2, self.PESOS) for k in (1, 2)]
+        self.assertEqual(7, sum(p.metodos_fragmento for p in planes))
+
+    def test_medir_suma_las_duraciones_por_clase(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "r.trx").write_text(
+                '<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">'
+                '<Results><UnitTestResult testId="1" duration="00:01:00.5" />'
+                '<UnitTestResult testId="2" duration="00:00:30" /></Results>'
+                '<TestDefinitions>'
+                '<UnitTest id="1"><TestMethod className="A.B" name="X" /></UnitTest>'
+                '<UnitTest id="2"><TestMethod className="A.B" name="Y" /></UnitTest>'
+                '</TestDefinitions></TestRun>',
+                encoding="utf-8",
+            )
+            self.assertEqual({"A.B": 90.5}, frag.medir([Path(tmp)]))
+
+
 class FiltroTests(unittest.TestCase):
     def test_el_filtro_une_las_clases_con_barra_vertical_y_punto_final(self):
         self.assertEqual(
