@@ -55,6 +55,9 @@ public sealed class RangoDeReporte
     /// <see cref="Hasta"/> — <see cref="Hasta"/> es inclusivo en el rango de fechas del reporte.</summary>
     public DateTimeOffset HastaUtcExclusivo => InstanteLocal(Hasta.AddDays(1));
 
+    /// <summary>Instante UTC de la medianoche local de <paramref name="fecha"/> en <see cref="Zona"/>.</summary>
+    public DateTimeOffset MedianocheLocal(DateOnly fecha) => InstanteLocal(fecha);
+
     private DateTimeOffset InstanteLocal(DateOnly fecha)
     {
         var local = fecha.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);

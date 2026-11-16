@@ -39,7 +39,7 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     public static readonly TheoryData<string> TodasLasRutas = new()
     {
         "ventas/resumen", "compras/por-proveedor", "gastos/resumen", "articulos/top",
-        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago", "ventas/por-articulo", "ventas/por-hora",
+        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago", "ventas/por-articulo", "ventas/por-hora", "valoracion",
         "rentabilidad", "comisiones",
         "stock/reposicion/resumen", "stock/vencimientos/resumen"
     };
@@ -47,7 +47,7 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     public static readonly TheoryData<string> RutasSinLecturaDeRentabilidad = new()
     {
         "ventas/resumen", "compras/por-proveedor", "gastos/resumen", "articulos/top",
-        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago", "ventas/por-articulo", "ventas/por-hora",
+        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago", "ventas/por-articulo", "ventas/por-hora", "valoracion",
         "stock/reposicion/resumen", "stock/vencimientos/resumen"
     };
 
@@ -97,7 +97,10 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     private static string RutaCon(string ruta, int idEmpresa, int idPuntoVenta, DateOnly hoy) =>
         ruta.StartsWith("stock/", StringComparison.Ordinal)
             ? $"/api/reportes/{ruta}?idPuntoVenta={idPuntoVenta}"
-            : $"/api/reportes/{ruta}?idEmpresa={idEmpresa}&desde={hoy:yyyy-MM-dd}&hasta={hoy:yyyy-MM-dd}&granularidad=Dia";
+            : ruta == "valoracion"
+                // La valoración rechaza un rango que empieza después de ahora: ayer nunca cae en el futuro de la zona de la empresa.
+                ? $"/api/reportes/{ruta}?idEmpresa={idEmpresa}&desde={hoy.AddDays(-1):yyyy-MM-dd}&hasta={hoy.AddDays(-1):yyyy-MM-dd}&granularidad=Dia"
+                : $"/api/reportes/{ruta}?idEmpresa={idEmpresa}&desde={hoy:yyyy-MM-dd}&hasta={hoy:yyyy-MM-dd}&granularidad=Dia";
 
     [Theory]
     [MemberData(nameof(TodasLasRutas))]

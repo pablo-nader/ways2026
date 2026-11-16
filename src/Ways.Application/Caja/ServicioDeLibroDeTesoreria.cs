@@ -1,4 +1,3 @@
-using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
@@ -6,6 +5,10 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Pagos;
+
+using Acumulado = Ways.Application.Caja.AcumuladorDeSaldosDeTesoreria.Acumulado;
+using CuentaBase = Ways.Application.Caja.AcumuladorDeSaldosDeTesoreria.CuentaBase;
+using MedioBase = Ways.Application.Caja.AcumuladorDeSaldosDeTesoreria.MedioBase;
 
 namespace Ways.Application.Caja;
 
@@ -33,21 +36,15 @@ namespace Ways.Application.Caja;
 /// </summary>
 public class ServicioDeLibroDeTesoreria(IWaysDbContext db)
 {
-    private sealed record CuentaBase(int Id, string Nombre, bool Activo, decimal SaldoInicial, bool Eliminada);
-
-    private sealed record MedioBase(int Id, string Nombre, ComportamientoMedioPago Comportamiento, int? IdCuentaTesoreria);
+    private readonly AcumuladorDeSaldosDeTesoreria acumulador = new(db);
 
     private sealed record TurnoDelLibro(int Id, int IdPuntoVenta, DateTimeOffset FechaApertura, DateTimeOffset FechaCierre, int? IdMedioPagoEfectivo);
-
-    private sealed record LineaAgrupada(int IdMedioPago, int? IdMedioEfectivoDelTurno, decimal Total);
 
     private sealed record PagoBase(
         int Id, DateTimeOffset Fecha, CategoriaPago Categoria, OrigenFondosPago OrigenFondos, int? IdTurnoCaja, string Concepto,
         int? IdProveedor, string? NombreProveedor, int? IdMovimientoPersonal, string? NombrePersonal, int? IdMedioEfectivoDelTurno);
 
     private sealed record LineaDePagoLeida(int IdPago, int IdMedioPago, decimal Importe);
-
-    private sealed record Acumulado(decimal Efectivo, IReadOnlyDictionary<int, decimal> PorCuenta);
 
     public async Task<LibroDeTesoreria> ObtenerAsync(
         int idEmpresa, DateTimeOffset desde, DateTimeOffset hasta, CancellationToken ct = default)
@@ -59,43 +56,19 @@ public class ServicioDeLibroDeTesoreria(IWaysDbContext db)
 
         ReglasDeLibroDeTesoreria.ValidarRango(desde, hasta);
 
-        var cuentas = await db.CuentasTesoreria
-            .IgnoreQueryFilters(["BajaLogica"])
-            .Where(c => c.IdEmpresa == idEmpresa)
-            .Select(c => new CuentaBase(c.Id, c.Nombre, c.Activo, c.SaldoInicial, c.DeletedAt != null))
-            .ToListAsync(ct);
+        var contexto = await acumulador.CargarAsync(idEmpresa, ct);
+        var cuentas = contexto.Cuentas;
+        var medios = contexto.Medios;
+        var puntosVenta = contexto.PuntosVenta;
+        var turnosCerrados = contexto.TurnosCerrados;
+        var rutear = contexto.Rutear;
 
-        var idsDeCuentasVivas = cuentas.Where(c => !c.Eliminada).Select(c => c.Id).ToHashSet();
-
-        var medios = (await db.MediosPago
-                .Select(m => new MedioBase(m.Id, m.Nombre, m.Comportamiento, m.IdCuentaTesoreria))
-                .ToListAsync(ct))
-            .ToDictionary(m => m.Id);
-
-        var puntosVenta = await db.PuntosVenta
-            .IgnoreQueryFilters(["BajaLogica"])
-            .Where(pv => pv.IdEmpresa == idEmpresa)
-            .Select(pv => new { pv.Id, pv.Nombre, Eliminado = pv.DeletedAt != null })
-            .ToListAsync(ct);
-        var idsDePuntosVenta = puntosVenta.Select(pv => pv.Id).ToList();
-
-        var turnosCerrados = db.TurnosCaja.Where(t =>
-            t.Estado == EstadoTurno.Cerrado && t.FechaCierre != null && idsDePuntosVenta.Contains(t.IdPuntoVenta));
-
-        DestinoDeLinea Rutear(int idMedioPago, int? idMedioEfectivoDelTurno)
-        {
-            var medio = medios.GetValueOrDefault(idMedioPago);
-            var esEfectivo = ReglasDeLibroDeTesoreria.EsMedioEfectivo(medio?.Comportamiento, idMedioPago, idMedioEfectivoDelTurno);
-            var cuentaDeLaEmpresa = medio?.IdCuentaTesoreria is { } id && idsDeCuentasVivas.Contains(id) ? id : (int?)null;
-            return ReglasDeLibroDeTesoreria.RutearLineaDePago(esEfectivo, cuentaDeLaEmpresa);
-        }
-
-        var anterior = await AcumularAsync(idEmpresa, turnosCerrados, idsDeCuentasVivas, cuentas, Rutear, antesDe: desde, ct);
-        var actual = await AcumularAsync(idEmpresa, turnosCerrados, idsDeCuentasVivas, cuentas, Rutear, antesDe: null, ct);
+        var anterior = await acumulador.AcumularAsync(contexto, desde, inclusivo: false, ct);
+        var actual = await acumulador.AcumularAsync(contexto, corte: null, inclusivo: false, ct);
 
         var filas = new List<(FilaDelLibro Fila, int Orden, int Id)>();
-        filas.AddRange(await FilasDeCajaAsync(idEmpresa, turnosCerrados, desde, hasta, puntosVenta.ToDictionary(p => p.Id, p => p.Eliminado ? null : p.Nombre), medios, Rutear, ct));
-        filas.AddRange(await FilasDePagosAsync(idEmpresa, desde, hasta, Rutear, ct));
+        filas.AddRange(await FilasDeCajaAsync(idEmpresa, turnosCerrados, desde, hasta, puntosVenta.ToDictionary(p => p.Id, p => p.Eliminado ? null : p.Nombre), medios, rutear, ct));
+        filas.AddRange(await FilasDePagosAsync(idEmpresa, desde, hasta, rutear, ct));
         filas.AddRange(await FilasDeAjusteDeEfectivoAsync(idEmpresa, desde, hasta, ct));
         filas.AddRange(await FilasDeAjusteDeCuentaAsync(cuentas.Select(c => c.Id).ToList(), desde, hasta, ct));
 
@@ -122,119 +95,6 @@ public class ServicioDeLibroDeTesoreria(IWaysDbContext db)
         new(
             acumulado.Efectivo,
             cuentas.Select(c => new ImporteDeCuenta(c.Id, c.SaldoInicial + acumulado.PorCuenta.GetValueOrDefault(c.Id))).ToList());
-
-    private static readonly Expression<Func<MovimientoCuenta, bool>> EsDeCierre = m =>
-        m.Tipo == TipoMovimientoCuenta.Cobro || m.Tipo == TipoMovimientoCuenta.Comision
-        || m.Tipo == TipoMovimientoCuenta.RetencionIibb || m.Tipo == TipoMovimientoCuenta.RetencionIva
-        || m.Tipo == TipoMovimientoCuenta.RetencionGanancias;
-
-    // ---- saldos ---------------------------------------------------------------------------------
-
-    /// <summary>Todo lo anterior a <paramref name="antesDe"/> (o todo, si es <c>null</c>), agregado en SQL por fuente.</summary>
-    private async Task<Acumulado> AcumularAsync(
-        int idEmpresa, IQueryable<TurnoCaja> turnosCerrados, HashSet<int> idsDeCuentasVivas, IReadOnlyList<CuentaBase> cuentas,
-        Func<int, int?, DestinoDeLinea> rutear, DateTimeOffset? antesDe, CancellationToken ct)
-    {
-        var efectivo = 0m;
-        var porCuenta = new Dictionary<int, decimal>();
-
-        void Sumar(DestinoDeLinea destino, decimal importe)
-        {
-            switch (destino.Destino)
-            {
-                case DestinoDeLineaDePago.Efectivo:
-                    efectivo += importe;
-                    break;
-                case DestinoDeLineaDePago.Cuenta:
-                    porCuenta[destino.IdCuenta!.Value] = porCuenta.GetValueOrDefault(destino.IdCuenta.Value) + importe;
-                    break;
-            }
-        }
-
-        var turnos = antesDe is { } limite ? turnosCerrados.Where(t => t.FechaCierre < limite) : turnosCerrados;
-        var idsDeTurnos = turnos.Select(t => t.Id);
-
-        efectivo += await db.MovimientosCaja
-            .Where(m => m.Tipo == TipoMovimientoCaja.Retiro && idsDeTurnos.Contains(m.IdTurnoCaja))
-            .SumAsync(m => m.Importe, ct);
-
-        var delCajon = await (
-            from i in db.ItemsPago
-            join p in db.Pagos on i.IdPago equals p.Id
-            join t in turnos on p.IdTurnoCaja equals t.Id
-            where p.OrigenFondos == OrigenFondosPago.CajaTurno
-            group i by new { i.IdMedioPago, t.IdMedioPagoEfectivo } into g
-            select new LineaAgrupada(g.Key.IdMedioPago, g.Key.IdMedioPagoEfectivo, g.Sum(x => x.Importe)))
-            .ToListAsync(ct);
-        foreach (var linea in delCajon)
-        {
-            var destino = rutear(linea.IdMedioPago, linea.IdMedioEfectivoDelTurno);
-            if (destino.Destino == DestinoDeLineaDePago.Efectivo)
-            {
-                efectivo += linea.Total;
-            }
-        }
-
-        var acreditado = await db.MovimientosCuenta
-            .Where(EsDeCierre)
-            .Where(m => m.IdTurnoCaja != null && idsDeTurnos.Contains((int)m.IdTurnoCaja))
-            .GroupBy(m => m.IdCuentaTesoreria)
-            .Select(g => new { IdCuenta = g.Key, Neto = g.Sum(m => m.Ingreso - m.Egreso) })
-            .ToListAsync(ct);
-        foreach (var cuenta in acreditado)
-        {
-            porCuenta[cuenta.IdCuenta] = porCuenta.GetValueOrDefault(cuenta.IdCuenta) + cuenta.Neto;
-        }
-
-        var pagos = db.Pagos.Where(p => p.IdEmpresa == idEmpresa);
-        if (antesDe is { } fechaLimite)
-        {
-            pagos = pagos.Where(p => p.Fecha < fechaLimite);
-        }
-
-        var lineasDePagos = await (
-            from i in db.ItemsPago
-            join p in pagos on i.IdPago equals p.Id
-            group i by new
-            {
-                i.IdMedioPago,
-                IdMedioEfectivoDelTurno = db.TurnosCaja.Where(t => t.Id == p.IdTurnoCaja).Select(t => t.IdMedioPagoEfectivo).FirstOrDefault()
-            } into g
-            select new LineaAgrupada(g.Key.IdMedioPago, g.Key.IdMedioEfectivoDelTurno, g.Sum(x => x.Importe)))
-            .ToListAsync(ct);
-        foreach (var linea in lineasDePagos)
-        {
-            Sumar(rutear(linea.IdMedioPago, linea.IdMedioEfectivoDelTurno), -linea.Total);
-        }
-
-        var ajustesDeEfectivo = db.MovimientosTesoreria
-            .Where(m => m.IdEmpresa == idEmpresa && m.Tipo == TipoMovimientoTesoreria.AjusteManual);
-        if (antesDe is { } fechaDeAjuste)
-        {
-            ajustesDeEfectivo = ajustesDeEfectivo.Where(m => m.Fecha < fechaDeAjuste);
-        }
-
-        efectivo += await ajustesDeEfectivo.SumAsync(m => m.Ingreso - m.Egreso, ct);
-
-        var idsDeCuentas = cuentas.Select(c => c.Id).ToList();
-        var ajustesDeCuenta = db.MovimientosCuenta
-            .Where(m => m.Tipo == TipoMovimientoCuenta.Ajuste && idsDeCuentas.Contains(m.IdCuentaTesoreria));
-        if (antesDe is { } fechaDeAjusteDeCuenta)
-        {
-            ajustesDeCuenta = ajustesDeCuenta.Where(m => m.Fecha < fechaDeAjusteDeCuenta);
-        }
-
-        var ajustados = await ajustesDeCuenta
-            .GroupBy(m => m.IdCuentaTesoreria)
-            .Select(g => new { IdCuenta = g.Key, Neto = g.Sum(m => m.Ingreso - m.Egreso) })
-            .ToListAsync(ct);
-        foreach (var cuenta in ajustados)
-        {
-            porCuenta[cuenta.IdCuenta] = porCuenta.GetValueOrDefault(cuenta.IdCuenta) + cuenta.Neto;
-        }
-
-        return new Acumulado(efectivo, porCuenta);
-    }
 
     // ---- filas ----------------------------------------------------------------------------------
 
@@ -271,7 +131,7 @@ public class ServicioDeLibroDeTesoreria(IWaysDbContext db)
             .ToLookup(x => x.IdTurno);
 
         var movimientosDeCuenta = (await db.MovimientosCuenta
-                .Where(EsDeCierre)
+                .Where(AcumuladorDeSaldosDeTesoreria.MovimientoDeCierre)
                 .Where(m => m.IdTurnoCaja != null && idsEnElRango.Contains((int)m.IdTurnoCaja))
                 .GroupBy(m => new { IdTurno = (int)m.IdTurnoCaja!, m.IdCuentaTesoreria, m.IdMedioPago, m.Tipo })
                 .Select(g => new
