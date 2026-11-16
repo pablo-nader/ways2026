@@ -4,12 +4,16 @@ import type { LineaDevolvible, TicketDevolvible } from '../api/devoluciones'
 import type { VentaDeTurnoListado } from '../api/tipos'
 import {
   copiaDelMotivo,
+  devolucionDisponible,
+  MOTIVO_DEVOLUCION_SIN_CONEXION,
+  MOTIVO_DEVOLUCION_SIN_TURNO,
   errorDeEmisionDeDevolucion,
   errorDeLecturaDeTicket,
   evaluarCantidad,
   firmaDeLaSeleccion,
   lineaPorCodigoDeBarra,
   lineasDeLaDevolucion,
+  numeroDeTicketTipeado,
   solicitudDeDevolucion,
   sumarPorEscaneo,
   ticketsRecientes,
@@ -127,6 +131,17 @@ describe('sumarPorEscaneo', () => {
 
   it('una cantidad tipeada inválida se toma como cero', () => {
     expect(sumarPorEscaneo(linea(), 'abc').texto).toBe('1')
+  })
+})
+
+describe('numeroDeTicketTipeado', () => {
+  it('acepta el correlativo solo o el número visible', () => {
+    expect(numeroDeTicketTipeado('12')).toBe(12)
+    expect(numeroDeTicketTipeado(' 0001-00000012 ')).toBe(12)
+  })
+
+  it('rechaza vacío, cero, texto y números negativos o decimales', () => {
+    for (const texto of ['', '0', 'abc', '-3', '1,5', '0001-0', '-']) expect(numeroDeTicketTipeado(texto)).toBeNull()
   })
 })
 
@@ -283,5 +298,20 @@ describe('ticketsRecientes', () => {
   it('se queda con diez', () => {
     const muchas = Array.from({ length: 14 }, (_, i) => venta({ id: i + 1, fecha: `2026-11-15T${String(i + 1).padStart(2, '0')}:00:00Z` }))
     expect(ticketsRecientes(muchas)).toHaveLength(10)
+  })
+})
+
+describe('devolucionDisponible', () => {
+  it('sin conexión queda deshabilitada y dice por qué, aunque falten otros requisitos', () => {
+    expect(devolucionDisponible({ enLinea: false, turnoAbierto: false, inerte: true })).toEqual({ habilitado: false, motivo: MOTIVO_DEVOLUCION_SIN_CONEXION })
+  })
+
+  it('sin turno abierto queda deshabilitada y dice por qué', () => {
+    expect(devolucionDisponible({ enLinea: true, turnoAbierto: false, inerte: false })).toEqual({ habilitado: false, motivo: MOTIVO_DEVOLUCION_SIN_TURNO })
+  })
+
+  it('con conexión y turno abierto, la habilita salvo que la pantalla esté inerte', () => {
+    expect(devolucionDisponible({ enLinea: true, turnoAbierto: true, inerte: false }).habilitado).toBe(true)
+    expect(devolucionDisponible({ enLinea: true, turnoAbierto: true, inerte: true }).habilitado).toBe(false)
   })
 })

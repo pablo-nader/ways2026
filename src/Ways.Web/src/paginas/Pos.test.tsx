@@ -12738,3 +12738,135 @@ describe('Pos — excedente como pago a cuenta del cliente', () => {
     expect(screen.queryByRole('checkbox', { name: OPCION })).not.toBeInTheDocument()
   })
 })
+
+describe('Pos — devolución (entrada y emisión)', () => {
+  const ticketDevolvible = {
+    id: 77,
+    numero: 12,
+    numeroVisible: '0007-00000012',
+    fecha: '2026-08-04T15:30:00Z',
+    idPuntoVenta: 7,
+    idCliente: 1,
+    nombreCliente: 'Consumidor Final',
+    total: 500,
+    devolvible: true,
+    motivo: null,
+    lineas: [
+      {
+        idArticulo: 1,
+        descripcion: 'Coca Cola 1L',
+        codigoBarra: '7790001234567',
+        importe: null,
+        cantidadVendida: 5,
+        cantidadDevuelta: 0,
+        cantidadDevolvible: 5,
+        importeUnitario: 100,
+        importeDeLoRestante: 500,
+      },
+    ],
+  }
+
+  function mockearDevolucion() {
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/ventas/por-turno/')) return Promise.resolve([])
+      if (ruta === '/ventas/devolvibles?idPuntoVenta=7&numero=12') return Promise.resolve(ticketDevolvible)
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas/devoluciones/previsualizacion') {
+        return Promise.resolve({ lineas: [{ idArticulo: 1, cantidad: 2, credito: 200 }], reintegro: 200 })
+      }
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ id: 900, numeroVisible: '0007-00000045', total: -200 }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  const cajaDeEscritorio: CajaDeEscritorio = {
+    contexto: { empresa: 'Almacén Demo', puntoVenta: 'PV 7 — Local Centro', cajero: 'jperez' },
+    encolarImpresion: vi.fn(),
+  }
+
+  beforeEach(() => {
+    vi.mocked(cajaDeEscritorio.encolarImpresion).mockReset()
+  })
+
+  it('con conexión y turno abierto, "Devolución" abre el modal', async () => {
+    mockearDevolucion()
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await screen.findByText('Caja abierta')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Devolución' })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Devolución' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Devolución' })).toBeInTheDocument()
+  })
+
+  it('con la caja cerrada queda deshabilitada y dice por qué', async () => {
+    mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await screen.findByText('Caja cerrada')
+
+    const boton = screen.getByRole('button', { name: 'Devolución' })
+    expect(boton).toBeDisabled()
+    expect(boton).toHaveAttribute('title', 'Abrí la caja para registrar una devolución: el efectivo sale de la caja del turno.')
+  })
+
+  it('sin conexión queda deshabilitada y la pantalla dice que las devoluciones necesitan conexión', async () => {
+    await prepararAlmacenOffline({ instantanea: instantaneaFixture() })
+    mockearApiGet((ruta) => {
+      if (ruta === '/pos/instantanea') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+      return undefined
+    })
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
+
+    const boton = screen.getByRole('button', { name: 'Devolución' })
+    expect(boton).toBeDisabled()
+    expect(boton).toHaveAttribute('title', 'Sin conexión: las devoluciones necesitan conexión con el servidor.')
+    expect(screen.getByText('Sin conexión no se pueden registrar devoluciones: necesitan hablar con el servidor.')).toBeInTheDocument()
+  })
+
+  it('en el escritorio: busca el ticket, emite la nota de crédito con el efectivo del reintegro e imprime el ticket', async () => {
+    mockearDevolucion()
+    renderPos('/pos', { cajaDeEscritorio })
+    await esperarAlConsumidorFinal()
+    await screen.findByText('Caja abierta')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Devolución' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Devolución' }))
+
+    await userEvent.type(await screen.findByLabelText('Número de ticket'), '12')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    await userEvent.type(await screen.findByLabelText('Cantidad a devolver de Coca Cola 1L'), '2')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirmar devolución' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar devolución' }))
+
+    expect(await screen.findByText(/Devolución 0007-00000045 registrada/)).toBeInTheDocument()
+    const emision = apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')
+    expect(emision).toHaveLength(1)
+    expect(emision[0][1]).toMatchObject({
+      codigoTipoComprobante: 'NCX',
+      idComprobanteAsociado: 77,
+      lineas: [{ idArticulo: 1, cantidad: 2 }],
+      pagos: [{ idMedioPago: medioEfectivo.id, importe: 200, vuelto: 0 }],
+    })
+    expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(cajaDeEscritorio.encolarImpresion).mock.calls[0][0]).toBe('el ticket de devolución')
+  })
+
+  it('mientras el modal está abierto, F2 no abre el buscador de artículos debajo', async () => {
+    mockearDevolucion()
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await screen.findByText('Caja abierta')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Devolución' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Devolución' }))
+    await screen.findByRole('dialog', { name: 'Devolución' })
+
+    fireEvent.keyDown(document, { key: 'F2' })
+
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+  })
+})

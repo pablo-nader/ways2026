@@ -112,6 +112,8 @@ import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
 import { ModalCuentaCorrientePos } from '../componentes/ModalCuentaCorrientePos'
 import { ModalAltaRapidaDeCliente } from '../pos/ModalAltaRapidaDeCliente'
 import { altaRapidaDeClienteDisponible } from '../pos/altaRapidaDeCliente'
+import { devolucionDisponible } from '../pos/devolucion'
+import { ModalDeDevolucion } from '../pos/ModalDeDevolucion'
 import type { PagoACuentaRegistrado } from '../componentes/ModalCuentaCorrientePos'
 import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { SelectorDeMiembrosDeCombo } from '../componentes/SelectorDeMiembrosDeCombo'
@@ -899,6 +901,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // checkout en vuelo, ni con el gate de turno o el ticket ya emitido en pantalla).
   const [buscadorAbierto, setBuscadorAbierto] = useState(false)
   const [buscadorDeCombosAbierto, setBuscadorDeCombosAbierto] = useState(false)
+  // Devolución: un modal que deja la pantalla inerte mientras está abierto (se suma a `cajaDeEscritorioOcupada`).
+  const [devolucionAbierta, setDevolucionAbierta] = useState(false)
   // Combo con familias que esperan que el cajero reparta las unidades. `desdeCodigo`: vino de `C12` en el input de código,
   // que se vacía recién al agregarlo (cancelar deja el texto tipeado).
   const [comboPorElegir, setComboPorElegir] = useState<{ combo: ComboParaCargar; desdeCodigo: boolean } | null>(null)
@@ -2197,7 +2201,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // arriba tiene un modal abierto (o una escritura propia en vuelo — ninguno de los dos limpia
   // `pasoRetiro`/`pasoCierre` hasta que la operación termina), la pantalla de venta entera queda
   // tan inerte como durante el propio checkout — se suma a `pantallaCobroInerte` más abajo.
-  const cajaDeEscritorioOcupada = pasoRetiro !== null || pasoCierre !== null
+  const cajaDeEscritorioOcupada = pasoRetiro !== null || pasoCierre !== null || devolucionAbierta
 
   const ventaEnCurso =
     lineas.length > 0 || cobrando || confirmandoCobro || ventaFinalizada !== null || cajaDeEscritorioOcupada
@@ -3249,6 +3253,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const altaDeCliente = altaRapidaDeClienteDisponible({
     enLinea: sincronizacionOffline.enLinea,
     inerte: pantallaCobroInerte || bloqueadoPorTurno,
+  })
+  const devolucion = devolucionDisponible({
+    enLinea: sincronizacionOffline.enLinea,
+    turnoAbierto: turno !== null,
+    inerte: pantallaCobroInerte || verificandoCierre || puntoVentaSeleccionada === null,
   })
 
   // "Cerrar caja" y "Retirar" son excluyentes y comparten UN solo derivado, para que los dos
@@ -4475,6 +4484,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   </button>
                 )}
                 {!modoPresupuesto && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-primary flex-shrink-0 text-nowrap"
+                    title={devolucion.motivo}
+                    disabled={!devolucion.habilitado}
+                    onClick={() => setDevolucionAbierta(true)}
+                  >
+                    Devolución
+                  </button>
+                )}
+                {!modoPresupuesto && (
                   <BotonIcono
                     icono="detalle"
                     etiqueta="Ver detalle"
@@ -4523,6 +4543,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )}
             {!sincronizacionOffline.enLinea && !modoPresupuesto && (
               <div className="form-text mb-2">Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.</div>
+            )}
+            {!sincronizacionOffline.enLinea && !modoPresupuesto && (
+              <div className="form-text mb-2">Sin conexión no se pueden registrar devoluciones: necesitan hablar con el servidor.</div>
             )}
             {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger py-1 px-2 small">{errorEscaneo}</div>}
             {avisoPrecios && !modoPresupuesto && (
@@ -5147,6 +5170,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       {comboPorElegir && !modoPresupuesto && (
         <SelectorDeMiembrosDeCombo combo={comboPorElegir.combo} onConfirmar={confirmarMiembrosDeCombo} onCancelar={cancelarMiembrosDeCombo} />
+      )}
+
+      {devolucionAbierta && !modoPresupuesto && puntoVentaSeleccionada && (
+        <ModalDeDevolucion
+          idPuntoVenta={puntoVentaSeleccionada.id}
+          puntosVenta={puntosVenta}
+          idTurno={turno?.id ?? null}
+          idMedioEfectivo={idMedioEfectivo(medios)}
+          impresion={cajaDeEscritorio ? { contexto: cajaDeEscritorio.contexto, encolar: cajaDeEscritorio.encolarImpresion } : undefined}
+          alCerrar={() => {
+            setDevolucionAbierta(false)
+            pedirFocoEnElCodigo()
+          }}
+        />
       )}
 
       {altaDeClienteAbierta && !modoPresupuesto && (

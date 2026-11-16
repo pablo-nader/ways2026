@@ -58,6 +58,18 @@ export function sumarPorEscaneo(linea: LineaDevolvible, texto: string): { texto:
   return { texto: formatearNumeroDecimal(siguiente), aviso: null }
 }
 
+const NUMERO_VISIBLE = /^\d+-(\d+)$/
+const NUMERO_SOLO = /^\d+$/
+
+/** El número de ticket tipeado: el correlativo solo ("12") o el visible ("0001-00000012", donde manda lo de después del guion). */
+export function numeroDeTicketTipeado(texto: string): number | null {
+  const limpio = texto.trim()
+  const correlativo = NUMERO_VISIBLE.exec(limpio)?.[1] ?? (NUMERO_SOLO.test(limpio) ? limpio : null)
+  if (correlativo === null) return null
+  const numero = Number(correlativo)
+  return Number.isSafeInteger(numero) && numero > 0 ? numero : null
+}
+
 /** Posición de la línea cuyo código de barras es `codigo`, o -1. */
 export function lineaPorCodigoDeBarra(lineas: readonly LineaDevolvible[], codigo: string): number {
   const limpio = codigo.trim()
@@ -75,6 +87,7 @@ export function lineasDeLaDevolucion(
   const armadas: LineaDeVenta[] = []
   for (let i = 0; i < lineas.length; i += 1) {
     const { cantidad, error } = evaluarCantidad(lineas[i], textos[i] ?? '')
+    const importe = lineas[i].importe
     if (error !== null) return null
     if (cantidad === 0) continue
     posiciones.push(i)
@@ -83,7 +96,7 @@ export function lineasDeLaDevolucion(
       cantidad,
       codigoBarra: lineas[i].codigoBarra,
       idLote: null,
-      ...(lineas[i].importe !== null ? { importe: lineas[i].importe } : {}),
+      ...(importe !== null ? { importe } : {}),
     })
   }
   return armadas.length === 0 ? null : { posiciones, lineas: armadas }
@@ -170,4 +183,15 @@ export function ticketsRecientes(ventas: readonly VentaDeTurnoListado[]): VentaD
     .filter((v) => v.estado === 'Emitido' && v.total > 0)
     .sort((a, b) => b.fecha.localeCompare(a.fecha))
     .slice(0, CANTIDAD_DE_TICKETS_RECIENTES)
+}
+
+export const MOTIVO_DEVOLUCION_SIN_CONEXION = 'Sin conexión: las devoluciones necesitan conexión con el servidor.'
+export const MOTIVO_DEVOLUCION_SIN_TURNO = 'Abrí la caja para registrar una devolución: el efectivo sale de la caja del turno.'
+const MOTIVO_DEVOLUCION = 'Devolver mercadería de un ticket anterior'
+
+/** La devolución solo existe con conexión y con el turno abierto (el reintegro sale de su caja). `inerte` agrupa los demás bloqueos de la pantalla. */
+export function devolucionDisponible(estado: { enLinea: boolean; turnoAbierto: boolean; inerte: boolean }): { habilitado: boolean; motivo: string } {
+  if (!estado.enLinea) return { habilitado: false, motivo: MOTIVO_DEVOLUCION_SIN_CONEXION }
+  if (!estado.turnoAbierto) return { habilitado: false, motivo: MOTIVO_DEVOLUCION_SIN_TURNO }
+  return { habilitado: !estado.inerte, motivo: MOTIVO_DEVOLUCION }
 }
