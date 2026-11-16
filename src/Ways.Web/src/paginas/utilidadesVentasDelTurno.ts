@@ -41,7 +41,7 @@ export function totalesDeVentas(ventas: VentaDeTurnoListado[]): { cantidad: numb
 export type TotalPorMedio = { idMedioPago: number; nombre: string; total: number }
 
 /** Total neto por medio de pago EXCLUYENDO anuladas (spec: totales arriba de la tabla) — suma
- * `mediosDePago[].importe` (ya neto de vuelto, ver `MedioDeVentaNeto` del lado del servidor)
+ * `mediosDePago[].importe` (ya neto de vuelto y con el signo del comprobante: una devolución resta, ver `MedioDeVentaNeto` del lado del servidor)
  * agrupado por `idMedioPago` sobre las ventas vigentes. Orden alfabético (es) por nombre, estable
  * sin importar el orden de llegada de las filas. */
 export function totalesPorMedioDeVentas(ventas: VentaDeTurnoListado[]): TotalPorMedio[] {

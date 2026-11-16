@@ -1406,7 +1406,10 @@ public class ServicioDeVentas(
         // en el mismo comprobante (ej. dos tramos en efectivo) se consolidan en un único monto neto,
         // en vez de aparecer como dos filas separadas o (peor) pisarse entre sí. El neto es
         // Σimporte − Σvuelto DEL GRUPO, no por pago individual — un vuelto que superase el importe
-        // de un pago puntual pero se compensa con otro pago del mismo medio sigue neteando bien.
+        // de un pago puntual pero se compensa con otro pago del mismo medio sigue neteando bien. El importe lleva el signo del
+        // comprobante (el de una nota de crédito es plata que sale del cajón: el cobro se guarda positivo), el mismo que usa
+        // LectorDeMovimientosDelTurno, así el total por medio del listado coincide con el esperado del arqueo.
+        var signoPorComprobante = crudos.ToDictionary(c => c.Id, c => c.Total < 0m ? -1m : 1m);
         var mediosPorComprobante = pagos
             .GroupBy(p => p.IdComprobanteVenta)
             .ToDictionary(
@@ -1416,7 +1419,7 @@ public class ServicioDeVentas(
                     .Select(gm => new MedioDeVentaNeto(
                         gm.Key,
                         nombrePorMedioPago.GetValueOrDefault(gm.Key, "?"),
-                        gm.Sum(p => p.Importe - p.Vuelto)))
+                        signoPorComprobante[g.Key] * gm.Sum(p => p.Importe - p.Vuelto)))
                     .ToList());
 
         return crudos

@@ -810,6 +810,33 @@ public class DevolucionesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(0m, arqueo.Diferencia);
     }
 
+    /// <summary>La cláusula bajo prueba es el signo del importe por medio en <c>LeerVentasDelTurnoAsync</c>: el cobro de la NCX se
+    /// guarda positivo y, sin el signo, "Ventas del turno" mostraría efectivo 300 (200 + 100) contra un esperado de 100.</summary>
+    [Fact]
+    public async Task ElTotalPorMedioDeVentasDelTurnoDescuentaLaDevolucionYCoincideConElEsperado()
+    {
+        var ctx = await PrepararAsync(nameof(ElTotalPorMedioDeVentasDelTurnoDescuentaLaDevolucionYCoincideConElEsperado));
+        var idArticulo = await SembrarArticuloAsync(ctx, "dev-listado", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Listado");
+        var idTurno = await IdDelTurnoAbiertoAsync(ctx);
+        var venta = await VenderAsync(ctx, idCliente, 200m, new LineaDeVenta(idArticulo, 2m, null));
+        var devolucion = await DevolverBienAsync(ctx, idCliente, venta.Id, new LineaDeVenta(idArticulo, 1m, null));
+
+        var ventas = (await ctx.Admin.GetFromJsonAsync<List<VentaDeTurnoListado>>($"/api/ventas/por-turno/{idTurno}", OpcionesJson))!;
+
+        var filaDeLaDevolucion = ventas.Single(v => v.Id == devolucion.Id);
+        Assert.Equal(-100m, filaDeLaDevolucion.Total);
+        Assert.Equal(-100m, Assert.Single(filaDeLaDevolucion.MediosDePago).Importe);
+
+        var efectivoListado = ventas
+            .Where(v => v.Estado == EstadoComprobante.Emitido)
+            .SelectMany(v => v.MediosDePago)
+            .Where(m => m.IdMedioPago == ctx.IdMedioEfectivo)
+            .Sum(m => m.Importe);
+        Assert.Equal(100m, efectivoListado);
+        Assert.Equal(await EsperadoEnEfectivoAsync(ctx, idTurno), efectivoListado);
+    }
+
     [Fact]
     public async Task AnularLaDevolucionDevuelveElEfectivoAlEsperadoDelTurno()
     {
