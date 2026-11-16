@@ -140,6 +140,18 @@ The backend already accepts NCX through `POST /api/ventas`, but:
   - Open: `LineaDevolvible` has no `unidadVenta`, so the client only knows a por-importe line (integer) and treats the rest as peso (3
     decimals); a fraction of a Unidad article is rejected by the server and shown with its message. No keyboard shortcut (F1-F10 are
     taken or reserved by the legacy). No Rust/Desktop change was needed.
+  - Judgment-day round 1 (owner-approved fixes, frozen findings F1-F3):
+    - F1 (critical): an uncertain emission (network error or 503 `resultado_incierto`, the `incierto` flag) is now terminal in
+      `ModalDeDevolucion`: Confirm stays disabled, the selection and "Elegir otro ticket" are inert, the footer offers only "Cerrar", the
+      message says to check Ventas del turno, and there is no automatic re-read (`incierto` no longer asks to `releer`); reopening the flow
+      is the re-check. The server rejects `numeroPreasignado` on NCX, so no idempotency key was possible.
+    - F2: the read-only preview has its own mapping (`errorDeVistaPreviaDeDevolucion`): network error or 503 -> "No se pudo calcular el
+      reintegro. Revisá la conexión y volvé a intentar.", no re-read, not uncertain; server codes keep their copy and re-read.
+    - F3: building/enqueuing the ticket is isolated from the emission try; a print failure keeps the success screen, adds a separate
+      "No se pudo imprimir" warning and never re-enables Confirm.
+    - Tests: modal 25 (was 21; uncertain x2 via `it.each`, preview network + 503, print failure), `devolucion.test.ts` +2.
+      Mutants (each reverted): `resultadoIncierto` removed from `bloqueado` -> 2 red; preview using the emission mapping -> 2 red;
+      print failure rethrown instead of isolated -> 1 red.
 - [ ] T4 POS release (pos-v* tag): needs the owner's OK.
 
 ## Acceptance criteria
