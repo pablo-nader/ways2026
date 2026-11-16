@@ -109,8 +109,37 @@ The backend already accepts NCX through `POST /api/ventas`, but:
       Integration `ElTotalPorMedioDeVentasDelTurnoDescuentaLaDevolucionYCoincideConElEsperado`; mutant dropping the sign -> red
       (-100 expected, 100 actual), reverted.
   - Open: the Web mirror `src/Ways.Web/src/api/pagos.ts` (rule 0c) and its test still encode it (T3).
-- [ ] T3 Web POS: devolución mode (pick ticket, pick lines/qty up to remaining, confirm, print).
+- [x] T3 Web POS: devolución mode (pick ticket, pick lines/qty up to remaining, confirm, print).
   Route: delegated.
+  Evidence (2026-11-15, branch pnader/devoluciones-pos-ui, stacked on T2):
+  - Pagos mirror: `validarPagosLocal` rule 0c now mirrors the domain (total < 0: only efectivo money, no vuelto, exactly `-total`; no
+    pagos is rejected as `devolucion_reintegro_invalido`; the `Math.max(0, total)` workaround of the cobro cap is gone). RED observed first
+    (6 tests of the old rule failed), GREEN 91 passed. Mutants (each reverted): efectivo-only clause -> 1 red, no-vuelto clause -> 1 red,
+    exact-total clause -> 2 red.
+  - New: `api/devoluciones.ts` (types + client of `devolvibles`/`previsualizacion`), `pos/devolucion.ts` (pure helpers: motivo copy, quantity
+    cap and granularity, scan increment, request builder, error copy, recent tickets, availability gate), `pos/ModalDeDevolucion.tsx`
+    (container) + `TablaDeLineasDeDevolucion.tsx` / `ListaDeTicketsRecientes.tsx` (presentational), `ticketDeDevolucion` in
+    `impresion/plantillas.ts` (title DEVOLUCION, associated ticket, lines with credit, refunded total, drawer pulse in the same job),
+    "Devolución" button in the Pos cart header (`Pos.tsx`), `venta_con_devoluciones` copy in `VentasDelTurno.tsx`.
+  - Behaviour: online only and with an open turno (button disabled with its reason otherwise, plus a visible offline line); the modal makes
+    the whole screen inert (`cajaDeEscritorioOcupada`), so F2/F4/F5-F9 do nothing underneath. Preview is debounced (300 ms), generation-gated,
+    and Confirm stays disabled until the preview matches the current selection. Emission uses a synchronous re-entrancy ref and an inert modal.
+    `devolucion_desactualizada` / `devolucion_excede_lo_vendido` / `devolucion_reintegro_invalido` and an uncertain result re-read the
+    devolvibles; printing goes through the same `encolarImpresion` queue as TX (Desktop only; the web app has no printer).
+  - Tests: `pos/devolucion.test.ts` 35, `pos/ModalDeDevolucion.test.tsx` 21 (search -> select -> preview -> confirm body -> print), `Pos.test.tsx`
+    "devolución" 5 (offline/closed-turno gating, desktop flow prints, F2 inert), `VentasDelTurno` 1, `plantillas` 2, `pagos` 6.
+    Component tests were written after the component (no RED run); evidence is mutation: stale-preview gate removed -> red; re-entrancy ref
+    removed -> double click emits twice (red); print call disabled -> red; re-read on `releer` removed -> 2 red; error clearing on selection
+    change removed -> red; quantity cap clause disabled -> 3 red; pago importe `reintegro` -> `ticket.total` -> red; scan cap disabled -> red;
+    drawer pulse removed from the template -> red; `devolucionAbierta` removed from `cajaDeEscritorioOcupada` -> F2 test red; button
+    `title` removed -> 2 red; `venta_con_devoluciones` branch removed -> red. A redundant `previa.firma !== firma` guard in `confirmar`
+    survived mutation (it repeats the button's `disabled`) and was deleted.
+  - Checks: `npx tsc -b` clean; `npm run lint` no warning in the touched files (only the repo's existing warnings); full `npx vitest run`:
+    335 files / 10412 tests passed on the second run. The first full run had 2 failures plus a worker crash under load (one was
+    `ModalDeBusquedaDeArticulos` "con más de 100 artículos"; both files pass alone); not reproduced.
+  - Open: `LineaDevolvible` has no `unidadVenta`, so the client only knows a por-importe line (integer) and treats the rest as peso (3
+    decimals); a fraction of a Unidad article is rejected by the server and shown with its message. No keyboard shortcut (F1-F10 are
+    taken or reserved by the legacy). No Rust/Desktop change was needed.
 - [ ] T4 POS release (pos-v* tag): needs the owner's OK.
 
 ## Acceptance criteria
