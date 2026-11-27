@@ -115,8 +115,8 @@
   flex: none;
   padding: 0.6mm 3mm;
   border-radius: 10mm;
-  background: var(--et-acento);
-  color: var(--et-sobre-acento);
+  border: 0.5mm solid var(--et-acento);
+  color: var(--et-precio);
   font-weight: 800;
   line-height: 1.2;
   white-space: nowrap;
@@ -128,8 +128,8 @@
   right: 4%;
   padding: 0.5mm 2.2mm;
   border-radius: 10mm;
-  background: var(--et-acento);
-  color: var(--et-sobre-acento);
+  border: 0.5mm solid var(--et-acento);
+  color: var(--et-precio);
   font-size: 4.5mm;
   font-weight: 800;
   line-height: 1.2;
