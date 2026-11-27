@@ -58,7 +58,6 @@
   overflow: hidden;
   padding: 4% 5%;
   text-align: center;
-  background: var(--et-fondo);
   color: var(--et-texto);
   border: 0.4mm solid var(--et-borde);
   border-radius: 2mm;

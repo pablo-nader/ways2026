@@ -36,11 +36,11 @@ describe('HojasDeGondola', () => {
     expect(raiz.style.getPropertyValue('--et-filas')).toBe('4')
   })
 
-  it('el logo sigue el tono de la plantilla', () => {
+  it('todas las plantillas usan el logo de trazo oscuro, para papel blanco', () => {
     const { rerender } = render(<HojasDeGondola filas={filas(1)} porHoja={2} plantilla={plantillaDeGondolaPorId('naranja')} conOfertas={false} />)
     expect(screen.getByAltText('Ways')).toHaveAttribute('src', '/marca/ways-logo-claro.png')
-    rerender(<HojasDeGondola filas={filas(1)} porHoja={2} plantilla={plantillaDeGondolaPorId('noche')} conOfertas={false} />)
-    expect(screen.getByAltText('Ways')).toHaveAttribute('src', '/marca/ways-logo-oscuro.png')
+    rerender(<HojasDeGondola filas={filas(1)} porHoja={2} plantilla={plantillaDeGondolaPorId('negro')} conOfertas={false} />)
+    expect(screen.getByAltText('Ways')).toHaveAttribute('src', '/marca/ways-logo-claro.png')
   })
 
   it('sin Ofertas imprime el precio de lista y nada de oferta', () => {

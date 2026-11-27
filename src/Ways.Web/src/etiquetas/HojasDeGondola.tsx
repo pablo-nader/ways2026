@@ -3,7 +3,7 @@ import type { FilaDeEtiqueta } from '../api/tipos'
 import { presupuestoVertical } from './ajusteDeTexto'
 import { contenidoDeGondola, formatearPrecioDeGondola } from './contenidoDeGondola'
 import { dividirEnHojas, disposicionDeHoja, type DisposicionDeHoja, type EtiquetasPorHoja } from './disposicionDeHojas'
-import { rutaDelLogoDeGondola, type PlantillaDeGondola } from './plantillasDeGondola'
+import { RUTA_DEL_LOGO_DE_GONDOLA, type PlantillaDeGondola } from './plantillasDeGondola'
 import '../estilos/etiquetas-gondola.css'
 
 type PropsDeEtiqueta = {
@@ -24,7 +24,7 @@ function EtiquetaDeGondola({ fila, plantilla, disposicion, conOfertas }: PropsDe
 
   return (
     <article className={`gondola-etiqueta gondola-deco-${plantilla.decoracion}`} data-testid="gondola-etiqueta">
-      <img className="gondola-logo" src={rutaDelLogoDeGondola(plantilla.tono)} alt="Ways" style={{ height: `${medidas.logoMm}mm` }} />
+      <img className="gondola-logo" src={RUTA_DEL_LOGO_DE_GONDOLA} alt="Ways" style={{ height: `${medidas.logoMm}mm` }} />
       <h3 className="gondola-nombre" style={{ fontSize: `${medidas.nombreMm}mm` }}>
         {fila.nombre}
       </h3>
@@ -64,11 +64,9 @@ export function HojasDeGondola({ filas, porHoja, plantilla, conOfertas }: Props)
   const disposicion = disposicionDeHoja(porHoja)
   const hojas = dividirEnHojas(filas, porHoja)
   const estilo = {
-    '--et-fondo': plantilla.colores.fondo,
     '--et-texto': plantilla.colores.texto,
     '--et-precio': plantilla.colores.precio,
     '--et-acento': plantilla.colores.acento,
-    '--et-sobre-acento': plantilla.colores.textoSobreAcento,
     '--et-borde': plantilla.colores.borde,
     '--et-columnas': disposicion.columnas,
     '--et-filas': disposicion.filas,
