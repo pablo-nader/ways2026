@@ -32,3 +32,13 @@ Fix two gaps in the shelf price labels screen (`/etiquetas-gondola`, PRs #651/#6
 
 ## Progress
 - 2026-11-27: branch `pnader/etiquetas-gondola-grilla` from main (a010f334).
+- Owner added mid-flight: ink-only templates (no backgrounds), preview in a modal, quantity offer large + normal
+  price small, and 10 genuinely different designs (not recolors). All done.
+- T1 done (a5559c7e): grid reuse + server-side active-offer filter + preview modal. Backend 242/242, integration
+  597/597, web 996 passed (writer report); parent re-ran grid tests 88/88.
+- T2 done (4c0a246a…3743746d): 10 distinct ink-only models (modelosDeGondola.ts, region-based fitting with measured
+  glyph widths). Reviewed in the browser at 4 and 16 per sheet; labels+screen tests 469/469.
+- T3 judgment-day: no CRITICAL from either judge → APPROVED. Info / follow-ups: Ofertas grid rejects above 5000
+  candidates and re-resolves offers on every page (both judges); grid Precio column uses the default list; first
+  print may miss logo/fonts if never previewed; article with both unit offer and qty promo shows the discounted
+  price as the small line; no debounce on selection-driven label data requests. Print not tested on a real printer.
