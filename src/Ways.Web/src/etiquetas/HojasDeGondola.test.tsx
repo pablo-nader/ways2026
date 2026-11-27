@@ -71,6 +71,22 @@ describe('HojasDeGondola', () => {
     expect(screen.getByTestId('gondola-descuento')).toHaveTextContent('-15%')
   })
 
+  it('con promoción por cantidad la oferta va en grande y el precio normal en chico', () => {
+    render(
+      <HojasDeGondola
+        filas={filas(1, { promociones: [{ idOferta: 2, nombre: '3x', cantidad: 3, soloMultiplos: false, precioUnitarioFinal: 900 }] })}
+        porHoja={2}
+        plantilla={plantillaDeGondolaPorId('naranja')}
+        conOfertas
+      />,
+    )
+    const oferta = screen.getByTestId('gondola-promocion')
+    const normal = screen.getByTestId('gondola-precio-normal')
+    expect(oferta).toHaveClass('gondola-precio')
+    expect(normal).toHaveTextContent('$ 1.000')
+    expect(parseFloat(oferta.style.fontSize)).toBeGreaterThan(parseFloat(normal.style.fontSize))
+  })
+
   it('con Ofertas y promoción por cantidad muestra 3x total', () => {
     render(
       <HojasDeGondola

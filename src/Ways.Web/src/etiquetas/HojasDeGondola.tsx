@@ -16,7 +16,9 @@ type PropsDeEtiqueta = {
 function EtiquetaDeGondola({ fila, plantilla, disposicion, conOfertas }: PropsDeEtiqueta) {
   const celda = { anchoMm: disposicion.celdaAnchoMm, altoMm: disposicion.celdaAltoMm }
   const contenido = contenidoDeGondola(fila, conOfertas)
-  const textoDelPrecio = formatearPrecioDeGondola(contenido.precio)
+  const precioNormal = formatearPrecioDeGondola(contenido.precio)
+  // Con oferta por cantidad, la oferta va en grande y el precio normal en chico.
+  const textoDelPrecio = contenido.promocion ?? precioNormal
   const conOferta = contenido.precioTachado !== null || contenido.promocion !== null
   const medidas = presupuestoVertical(fila.nombre, textoDelPrecio, celda, conOferta)
 
@@ -32,7 +34,7 @@ function EtiquetaDeGondola({ fila, plantilla, disposicion, conOfertas }: PropsDe
             {formatearPrecioDeGondola(contenido.precioTachado)}
           </div>
         )}
-        <div className="gondola-precio" data-testid="gondola-precio" style={{ fontSize: `${medidas.precioMm}mm` }}>
+        <div className="gondola-precio" data-testid={contenido.promocion !== null ? "gondola-promocion" : "gondola-precio"} style={{ fontSize: `${medidas.precioMm}mm` }}>
           {textoDelPrecio}
         </div>
       </div>
@@ -42,8 +44,8 @@ function EtiquetaDeGondola({ fila, plantilla, disposicion, conOfertas }: PropsDe
         </span>
       )}
       {contenido.promocion !== null && (
-        <div className="gondola-promocion" data-testid="gondola-promocion" style={{ fontSize: `${medidas.promocionMm}mm` }}>
-          {contenido.promocion}
+        <div className="gondola-precio-normal" data-testid="gondola-precio-normal" style={{ fontSize: `${medidas.promocionMm}mm` }}>
+          {precioNormal}
         </div>
       )}
     </article>
