@@ -21,7 +21,7 @@ function filas(cantidad: number, sobrescribir: Partial<FilaDeEtiqueta> = {}): Fi
 
 describe('HojasDeGondola', () => {
   it('N artículos dan ceil(N / porHoja) hojas, cada artículo una vez', () => {
-    render(<HojasDeGondola filas={filas(9)} porHoja={4} plantilla={plantillaDeGondolaPorId('almacen')} conOfertas={false} />)
+    render(<HojasDeGondola filas={filas(9)} porHoja={4} plantilla={plantillaDeGondolaPorId('naranja')} conOfertas={false} />)
     const hojas = screen.getAllByTestId('gondola-hoja')
     expect(hojas).toHaveLength(3)
     expect(within(hojas[0]).getAllByTestId('gondola-etiqueta')).toHaveLength(4)
@@ -30,14 +30,14 @@ describe('HojasDeGondola', () => {
   })
 
   it('emite la grilla de la disposición como variables CSS', () => {
-    const { container } = render(<HojasDeGondola filas={filas(1)} porHoja={16} plantilla={plantillaDeGondolaPorId('almacen')} conOfertas={false} />)
+    const { container } = render(<HojasDeGondola filas={filas(1)} porHoja={16} plantilla={plantillaDeGondolaPorId('naranja')} conOfertas={false} />)
     const raiz = container.querySelector<HTMLElement>('.gondola-hojas')!
     expect(raiz.style.getPropertyValue('--et-columnas')).toBe('4')
     expect(raiz.style.getPropertyValue('--et-filas')).toBe('4')
   })
 
   it('el logo sigue el tono de la plantilla', () => {
-    const { rerender } = render(<HojasDeGondola filas={filas(1)} porHoja={2} plantilla={plantillaDeGondolaPorId('almacen')} conOfertas={false} />)
+    const { rerender } = render(<HojasDeGondola filas={filas(1)} porHoja={2} plantilla={plantillaDeGondolaPorId('naranja')} conOfertas={false} />)
     expect(screen.getByAltText('Ways')).toHaveAttribute('src', '/marca/ways-logo-claro.png')
     rerender(<HojasDeGondola filas={filas(1)} porHoja={2} plantilla={plantillaDeGondolaPorId('noche')} conOfertas={false} />)
     expect(screen.getByAltText('Ways')).toHaveAttribute('src', '/marca/ways-logo-oscuro.png')
@@ -48,7 +48,7 @@ describe('HojasDeGondola', () => {
       <HojasDeGondola
         filas={filas(1, { precioFinal: 850, ofertas: [{ idOferta: 1, nombre: '15%', descuentoUnitario: 150 }] })}
         porHoja={2}
-        plantilla={plantillaDeGondolaPorId('almacen')}
+        plantilla={plantillaDeGondolaPorId('naranja')}
         conOfertas={false}
       />,
     )
@@ -62,7 +62,7 @@ describe('HojasDeGondola', () => {
       <HojasDeGondola
         filas={filas(1, { precioFinal: 850, ofertas: [{ idOferta: 1, nombre: '15%', descuentoUnitario: 150 }] })}
         porHoja={2}
-        plantilla={plantillaDeGondolaPorId('almacen')}
+        plantilla={plantillaDeGondolaPorId('naranja')}
         conOfertas
       />,
     )
@@ -76,7 +76,7 @@ describe('HojasDeGondola', () => {
       <HojasDeGondola
         filas={filas(1, { promociones: [{ idOferta: 2, nombre: '3x', cantidad: 3, soloMultiplos: false, precioUnitarioFinal: 900 }] })}
         porHoja={2}
-        plantilla={plantillaDeGondolaPorId('almacen')}
+        plantilla={plantillaDeGondolaPorId('naranja')}
         conOfertas
       />,
     )
@@ -84,13 +84,13 @@ describe('HojasDeGondola', () => {
   })
 
   it('el nombre largo baja la fuente respecto del corto', () => {
-    const { rerender } = render(<HojasDeGondola filas={filas(1, { nombre: 'Sal' })} porHoja={8} plantilla={plantillaDeGondolaPorId('almacen')} conOfertas={false} />)
+    const { rerender } = render(<HojasDeGondola filas={filas(1, { nombre: 'Sal' })} porHoja={8} plantilla={plantillaDeGondolaPorId('naranja')} conOfertas={false} />)
     const corto = parseFloat(screen.getByRole('heading', { level: 3 }).style.fontSize)
     rerender(
       <HojasDeGondola
         filas={filas(1, { nombre: 'Aceite de girasol alto oleico Cocinero botella plástica 900 ml' })}
         porHoja={8}
-        plantilla={plantillaDeGondolaPorId('almacen')}
+        plantilla={plantillaDeGondolaPorId('naranja')}
         conOfertas={false}
       />,
     )

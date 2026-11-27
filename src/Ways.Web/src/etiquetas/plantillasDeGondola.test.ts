@@ -17,6 +17,15 @@ describe('PLANTILLAS_DE_GONDOLA', () => {
     expect(new Set(PLANTILLAS_DE_GONDOLA.map((p) => `${p.colores.fondo}|${p.colores.precio}|${p.decoracion}`)).size).toBe(10)
   })
 
+  it('solo usan la paleta de la marca Ways y neutros', () => {
+    const marca = ['#f7941d', '#e8830c', '#fdebd3', '#9a5200', '#3a2606', '#f9ab4a', '#c4c4ca']
+    const neutros = ['#ffffff', '#000000', '#f4f4f6', '#1c1c1f', '#111113', '#232326', '#2c2c31', '#3a3a40']
+    for (const plantilla of PLANTILLAS_DE_GONDOLA) {
+      for (const color of Object.values(plantilla.colores)) expect([...marca, ...neutros]).toContain(color)
+      expect(Object.values(plantilla.colores).some((color) => marca.includes(color))).toBe(true)
+    }
+  })
+
   it('todos los colores son hexadecimales', () => {
     for (const plantilla of PLANTILLAS_DE_GONDOLA) {
       for (const color of Object.values(plantilla.colores)) expect(color).toMatch(/^#[0-9a-f]{6}$/i)
@@ -26,7 +35,7 @@ describe('PLANTILLAS_DE_GONDOLA', () => {
 
 describe('plantillaDeGondolaPorId', () => {
   it('encuentra por id', () => {
-    expect(plantillaDeGondolaPorId('oceano').nombre).toBe('Océano')
+    expect(plantillaDeGondolaPorId('ambar').nombre).toBe('Ámbar')
   })
 
   it('un id desconocido cae a la plantilla por defecto', () => {
