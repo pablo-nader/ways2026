@@ -78,6 +78,11 @@ export function construirQueryDeGrillaDeArticulos(
     parametros.set('idProveedor', String(filtros.idProveedor))
   }
   if (filtros.activo !== null) parametros.set('activo', String(filtros.activo))
+  if (filtros.ofertaVigente) {
+    parametros.set('conOfertaVigente', 'true')
+    parametros.set('idPuntoVenta', String(filtros.ofertaVigente.idPuntoVenta))
+    parametros.set('idListaPrecio', String(filtros.ofertaVigente.idListaPrecio))
+  }
   if (orden !== null) {
     parametros.set('orden', orden.columna)
     parametros.set('direccion', orden.direccion)

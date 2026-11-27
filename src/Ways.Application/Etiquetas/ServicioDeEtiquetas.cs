@@ -182,10 +182,66 @@ public class ServicioDeEtiquetas(
         // Post-filtro sobre las FILAS ya resueltas, nunca sobre el candidato grueso.
         if (solicitud.Filtro is { SoloConOfertaVigente: true })
         {
-            filas = filas.Where(f => f.Ofertas.Count > 0 || f.Promociones.Count > 0).ToList();
+            filas = filas.Where(TieneOfertaVigente).ToList();
         }
 
         return new DatosDeEtiquetas(solicitud.IdListaPrecio, nombreDeLista, momento, filas, excluidos, truncado);
+    }
+
+    /// <summary>Definición única de "oferta vigente" de una fila: una oferta aplicada a una unidad o una promoción por
+    /// cantidad que hoy mejora el precio. La comparten la hoja de etiquetas y la grilla de artículos.</summary>
+    public static bool TieneOfertaVigente(FilaDeEtiqueta fila) => fila.Ofertas.Count > 0 || fila.Promociones.Count > 0;
+
+    /// <summary>De los artículos pedidos, los que hoy tienen oferta vigente para el punto de venta y la lista, con la misma
+    /// resolución que <see cref="ComponerAsync"/> (una unidad, <see cref="ServicioDeOfertas.ResolverPorLineaAsync"/>, más
+    /// <see cref="AgregarPromocionesAsync"/>) y el mismo criterio de disponibilidad en la empresa del punto de venta. Un
+    /// artículo sin precio en la lista no cuenta. Resuelve de a <see cref="ServicioDeArticulos.TamanioMaximoDePagina"/>.</summary>
+    public async Task<IReadOnlySet<int>> IdsConOfertaVigenteAsync(
+        IReadOnlyList<int> idsArticulo, int idPuntoVenta, int idListaPrecio, CancellationToken ct = default)
+    {
+        var idEmpresa = await db.PuntosVenta
+            .Where(pv => pv.Id == idPuntoVenta)
+            .Select(pv => (int?)pv.IdEmpresa)
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
+
+        if (!await db.ListasPrecio.AnyAsync(l => l.Id == idListaPrecio, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la lista de precios {idListaPrecio}.");
+        }
+
+        var momento = reloj.Ahora;
+        var conOferta = new HashSet<int>();
+
+        foreach (var lote in idsArticulo.Chunk(ServicioDeArticulos.TamanioMaximoDePagina))
+        {
+            var disponibles = await db.Articulos
+                .Where(a => lote.Contains(a.Id)
+                    && (a.DisponibleParaTodas || db.ArticulosEmpresas.Any(ae => ae.IdArticulo == a.Id && ae.IdEmpresa == idEmpresa)))
+                .Select(a => a.Id)
+                .ToListAsync(ct);
+
+            if (disponibles.Count == 0)
+            {
+                continue;
+            }
+
+            var lineas = disponibles.Select(id => new LineaDeResolucion(id, idEmpresa, idListaPrecio, Cantidad: 1m)).ToList();
+
+            // La identidad no interviene en la oferta: solo importan el id y los precios.
+            var filas = (await servicioDeOfertas.ResolverPorLineaAsync(lineas, momento, ct))
+                .Where(r => r.PrecioOriginal is not null && r.PrecioFinal is not null)
+                .Select(r => new FilaDeEtiqueta(
+                    r.IdArticulo, string.Empty, null, string.Empty, string.Empty, r.PrecioOriginal!.Value,
+                    r.DescuentoDeLinea is { } descuento ? r.PrecioOriginal.Value - descuento : r.PrecioFinal!.Value,
+                    r.Aplicadas, []))
+                .ToList();
+
+            filas = await AgregarPromocionesAsync(filas, idEmpresa, idListaPrecio, momento, ct);
+            conOferta.UnionWith(filas.Where(TieneOfertaVigente).Select(f => f.IdArticulo));
+        }
+
+        return conOferta;
     }
 
     /// <summary>Completa cada fila con las ofertas de cantidad mínima mayor a 1. Los candidatos salen de

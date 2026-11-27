@@ -13,4 +13,8 @@ public sealed class OpcionesDeGrillaDeArticulos
     public const string Seccion = "GrillaDeArticulos";
 
     public int TopeDeCandidatosPorFiltroDePrecio { get; set; } = 20_000;
+
+    /// <summary>Tope de candidatos para el filtro de oferta vigente: resolver ofertas cuesta varias consultas por cada
+    /// lote de 200 artículos, así que es menor que el del precio. Rechaza, nunca trunca.</summary>
+    public int TopeDeCandidatosPorFiltroDeOferta { get; set; } = 5_000;
 }

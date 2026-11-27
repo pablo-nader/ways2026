@@ -109,7 +109,7 @@ public class ArticulosGrillaOrdenServicioTests
         var reloj = new RelojFijo();
         var contexto = new ContextoFijo(rol);
         var servicio = new ServicioDeGrillaDeArticulos(
-            db, reloj, new ServicioDePrecios(db, reloj, contexto), contexto, Options.Create(new OpcionesDeGrillaDeArticulos()));
+            db, reloj, new ServicioDePrecios(db, reloj, contexto), contexto, Options.Create(new OpcionesDeGrillaDeArticulos()), null!);
 
         return (servicio, ids);
     }
@@ -199,7 +199,7 @@ public class ArticulosGrillaOrdenServicioTests
         var conTopeBajo = new ServicioDeGrillaDeArticulos(
             CrearContexto(nameof(OrdenarPorPrecioRechazaSiLosCandidatosExcedenElTope), new TenantActualFijo(ModoDeAcceso.Tenant, IdTenant)),
             new RelojFijo(), null!, new ContextoFijo(RolConocido.Admin),
-            Options.Create(new OpcionesDeGrillaDeArticulos { TopeDeCandidatosPorFiltroDePrecio = 3 }));
+            Options.Create(new OpcionesDeGrillaDeArticulos { TopeDeCandidatosPorFiltroDePrecio = 3 }), null!);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => conTopeBajo.ListarAsync(orden: "precio", direccion: "ascendente"));
 

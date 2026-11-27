@@ -1217,3 +1217,88 @@ describe('GrillaDeArticulos — orden en el servidor', () => {
     expect(await screen.findByText('El rol actual no puede ordenar por costo.')).toBeInTheDocument()
   })
 })
+
+describe('GrillaDeArticulos — modo selección y oferta vigente', () => {
+  const uno = filaFixture({ id: 1, nombre: 'Articulo Uno' })
+  const dos = filaFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Articulo Dos' })
+
+  function renderConSeleccion(ids: number[] = []) {
+    const onAlternar = vi.fn()
+    const onAlternarPagina = vi.fn()
+    render(
+      <MemoryRouter>
+        <GrillaDeArticulos proveedores={[proveedorAlfa]} seleccion={{ ids: new Set(ids), onAlternar, onAlternarPagina }} />
+      </MemoryRouter>,
+    )
+    return { onAlternar, onAlternarPagina }
+  }
+
+  it('agrega una columna de casillas y quita la de acciones, con las mismas columnas y filtros', async () => {
+    mockearRutas(paginaFixture([uno, dos]))
+    renderConSeleccion([2])
+    await screen.findByText('Articulo Uno')
+
+    expect(screen.getByLabelText('Seleccionar Articulo Uno')).not.toBeChecked()
+    expect(screen.getByLabelText('Seleccionar Articulo Dos')).toBeChecked()
+    expect(screen.queryByRole('columnheader', { name: 'Acciones' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /editar/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Costo' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por proveedor')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Limpiar' })).toBeInTheDocument()
+  })
+
+  it('la casilla de una fila avisa la fila; la del encabezado marca o desmarca la página visible', async () => {
+    mockearRutas(paginaFixture([uno, dos]))
+    const { onAlternar, onAlternarPagina } = renderConSeleccion()
+    await screen.findByText('Articulo Uno')
+
+    await userEvent.click(screen.getByLabelText('Seleccionar Articulo Dos'))
+    expect(onAlternar).toHaveBeenCalledWith(dos)
+
+    await userEvent.click(screen.getByLabelText('Seleccionar la página'))
+    expect(onAlternarPagina).toHaveBeenCalledWith([uno, dos], true)
+  })
+
+  it('con toda la página elegida, la casilla del encabezado está marcada y desmarca', async () => {
+    mockearRutas(paginaFixture([uno, dos]))
+    const { onAlternarPagina } = renderConSeleccion([1, 2])
+    await screen.findByText('Articulo Uno')
+
+    expect(screen.getByLabelText('Seleccionar la página')).toBeChecked()
+    await userEvent.click(screen.getByLabelText('Seleccionar la página'))
+    expect(onAlternarPagina).toHaveBeenCalledWith([uno, dos], false)
+  })
+
+  it('sin la prop de selección sigue mostrando Acciones y ninguna casilla', async () => {
+    mockearRutas(paginaFixture([uno]))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+    expect(screen.getByRole('columnheader', { name: 'Acciones' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Seleccionar la página')).not.toBeInTheDocument()
+  })
+
+  it('con ofertaVigente pide el filtro y lo conserva al limpiar filtros; al apagarlo lo quita', async () => {
+    mockearRutas(paginaFixture([uno]))
+    const props = { proveedores: [proveedorAlfa] }
+    const { rerender } = render(
+      <MemoryRouter>
+        <GrillaDeArticulos {...props} seleccion={{ ids: new Set(), onAlternar: vi.fn(), onAlternarPagina: vi.fn() }} ofertaVigente={{ idPuntoVenta: 7, idListaPrecio: 3 }} />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Articulo Uno')
+    expect(ultimaQuery()).toContain('conOfertaVigente=true&idPuntoVenta=7&idListaPrecio=3')
+
+    await userEvent.type(screen.getByLabelText('Filtrar por nombre'), 'x')
+    await waitFor(() => expect(ultimaQuery()).toContain('nombre=x'))
+    await userEvent.click(screen.getByRole('button', { name: 'Limpiar' }))
+    await waitFor(() => expect(ultimaQuery()).not.toContain('nombre='))
+    expect(ultimaQuery()).toContain('conOfertaVigente=true')
+
+    rerender(
+      <MemoryRouter>
+        <GrillaDeArticulos {...props} seleccion={{ ids: new Set(), onAlternar: vi.fn(), onAlternarPagina: vi.fn() }} ofertaVigente={null} />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(ultimaQuery()).not.toContain('conOfertaVigente'))
+  })
+})
