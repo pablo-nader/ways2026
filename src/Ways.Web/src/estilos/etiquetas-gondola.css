@@ -1,0 +1,184 @@
+/*
+ * Etiquetas de góndola: A4 apaisada, una hoja por salto de página. La página nombrada `gondola` evita
+ * tocar el `@page` global de `impresion.css` y el `@page etiquetas` de las etiquetas autoadhesivas.
+ */
+@page gondola {
+  size: A4 landscape;
+  margin: 8mm;
+}
+
+.gondola-hojas {
+  page: gondola;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.gondola-hoja {
+  display: grid;
+  grid-template-columns: repeat(var(--et-columnas), var(--et-celda-ancho));
+  grid-template-rows: repeat(var(--et-filas), var(--et-celda-alto));
+  gap: 3mm;
+  width: 280mm;
+  height: 193mm;
+  box-sizing: border-box;
+  background: #fff;
+  break-after: page;
+  page-break-after: always;
+  break-inside: avoid;
+}
+
+.gondola-hoja:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+/* Vista previa en pantalla: la hoja real mide 280 mm, se reduce solo para mostrarla. */
+@media screen {
+  .gondola-hojas {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .gondola-hoja {
+    zoom: 0.55;
+    border: 1px solid var(--bs-border-color, #ccc);
+    padding: 0;
+  }
+}
+
+.gondola-etiqueta {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  overflow: hidden;
+  padding: 4% 5%;
+  text-align: center;
+  background: var(--et-fondo);
+  color: var(--et-texto);
+  border: 0.4mm solid var(--et-borde);
+  border-radius: 2mm;
+  font-family: system-ui, 'Segoe UI', Arial, sans-serif;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.gondola-logo {
+  width: auto;
+  max-width: 45%;
+  object-fit: contain;
+  flex: none;
+}
+
+.gondola-nombre {
+  margin: 0;
+  width: 100%;
+  font-weight: 800;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  flex: none;
+}
+
+.gondola-bloque-precio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+}
+
+.gondola-precio {
+  color: var(--et-precio);
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.gondola-precio-tachado {
+  line-height: 1;
+  opacity: 0.75;
+  text-decoration: line-through;
+  white-space: nowrap;
+}
+
+.gondola-promocion {
+  flex: none;
+  padding: 0.6mm 3mm;
+  border-radius: 10mm;
+  background: var(--et-acento);
+  color: var(--et-sobre-acento);
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.gondola-descuento {
+  position: absolute;
+  top: 3%;
+  right: 4%;
+  padding: 0.5mm 2.2mm;
+  border-radius: 10mm;
+  background: var(--et-acento);
+  color: var(--et-sobre-acento);
+  font-size: 4.5mm;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+/* Decoraciones: cambian solo el marco, el contenido es el mismo en todas. */
+.gondola-deco-franja {
+  border-top: 3mm solid var(--et-acento);
+}
+
+.gondola-deco-marco {
+  border-width: 1.2mm;
+}
+
+.gondola-deco-esquina {
+  border-left: 3mm solid var(--et-acento);
+}
+
+.gondola-deco-liso {
+  border-color: transparent;
+}
+
+/* Impresión: las hojas salen de un portal colgado de body; todo lo demás se oculta para que el shell no desplace las páginas. */
+.gondola-impresion {
+  display: none;
+}
+
+@media print {
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  body > *:not(.gondola-impresion) {
+    display: none !important;
+  }
+
+  .gondola-impresion {
+    display: block;
+  }
+
+  .gondola-impresion .gondola-hojas {
+    display: block;
+  }
+
+  .gondola-impresion .gondola-hoja {
+    zoom: 1;
+    border: 0;
+  }
+}

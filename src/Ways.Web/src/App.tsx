@@ -28,6 +28,7 @@ import { Familias } from './paginas/Familias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
+import { EtiquetasGondola } from './paginas/EtiquetasGondola'
 import { Ofertas } from './paginas/Ofertas'
 import { Combos } from './paginas/Combos'
 import { OrdenDeCompra } from './paginas/OrdenDeCompra'
@@ -628,6 +629,16 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Ofertas />
+                </RutaProtegida>
+              }
+            />
+
+            {/* El servidor lee con Politicas.OperacionDePos; la pantalla es de back office: Supervisor y Admin. */}
+            <Route
+              path="/etiquetas-gondola"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <EtiquetasGondola />
                 </RutaProtegida>
               }
             />

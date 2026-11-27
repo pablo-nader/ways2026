@@ -34,6 +34,7 @@ public static class RutasDeLaSpa
         "compras",
         "consulta-precios",
         "descargar",
+        "etiquetas-gondola",
         "familias",
         "gastos",
         "listas-precio",

@@ -118,6 +118,8 @@ const MODELO: EntradaDelModelo[] = [
           ),
           enlace(puedeGestionarCatalogos, 'Listas de precio', '/listas-precio'),
           enlace(puedeGestionarCatalogos, 'Ofertas', '/ofertas'),
+          // Imprime carteles con los precios que ya ve el Supervisor en Reportes: misma puerta que ellos, no la del ABM.
+          enlace(puedeVerReportes, 'Etiquetas de góndola', '/etiquetas-gondola'),
           enlace(puedeGestionarCatalogos, 'Combos', '/combos'),
           enlace(puedeGestionarCatalogos, 'Catálogos fiscales', '/catalogos-fiscales'),
         ],

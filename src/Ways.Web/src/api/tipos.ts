@@ -4244,3 +4244,55 @@ export type ValoracionDeInventario = {
   actual: DetalleActualDeValoracion
 }
 
+// --- Etiquetas de góndola (POST /api/etiquetas/datos) ---
+
+/** Espejo de `Ways.Application.Etiquetas.PromocionDeEtiqueta`: una oferta por cantidad mínima (3x) con el precio unitario que
+ * rige a esa cantidad. */
+export type PromocionDeEtiqueta = {
+  idOferta: number
+  nombre: string
+  cantidad: number
+  soloMultiplos: boolean
+  precioUnitarioFinal: number
+}
+
+/** Espejo de `FilaDeEtiqueta`: ningún campo de costo, el contrato no los transporta. */
+export type FilaDeEtiqueta = {
+  idArticulo: number
+  codigoInterno: string
+  codigoBarra: string | null
+  nombre: string
+  unidadVenta: string
+  precioOriginal: number
+  precioFinal: number
+  ofertas: OfertaAplicada[]
+  promociones: PromocionDeEtiqueta[]
+}
+
+export type ArticuloExcluidoDeEtiquetas = { idArticulo: number; codigoInterno: string; nombre: string; motivo: string }
+
+export type DatosDeEtiquetas = {
+  idListaPrecio: number
+  nombreDeLista: string
+  momento: string
+  filas: FilaDeEtiqueta[]
+  excluidos: ArticuloExcluidoDeEtiquetas[]
+  truncado: boolean
+}
+
+export type FiltroDeEtiquetas = {
+  busqueda?: string | null
+  idArea?: number | null
+  idCategoria?: number | null
+  idMarca?: number | null
+  soloConOfertaVigente?: boolean
+}
+
+/** `idsArticulo` XOR `filtro`: los dos juntos son 400 `seleccion_ambigua`, ninguno `seleccion_requerida`. */
+export type SolicitudDeEtiquetas = {
+  idPuntoVenta: number
+  idListaPrecio: number
+  idsArticulo?: number[]
+  filtro?: FiltroDeEtiquetas
+}
+

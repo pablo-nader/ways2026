@@ -164,6 +164,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
         ['Medios de pago', '/catalogos/medios-pago'],
         ['Listas de precio', '/listas-precio'],
         ['Ofertas', '/ofertas'],
+        ['Etiquetas de góndola', '/etiquetas-gondola'],
         ['Combos', '/combos'],
         ['Catálogos fiscales', '/catalogos-fiscales'],
       ],
@@ -204,10 +205,13 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
     },
   ],
 }
-// Personal es de lectura para Supervisor: es lo único de Administración que ve.
+// Personal y las etiquetas de góndola son de lectura para Supervisor: es lo único de Administración que ve.
 const ADMINISTRACION_DE_SUPERVISOR: Resumen = {
   grupo: 'Administración',
-  secciones: [{ titulo: 'Terceros', enlaces: [['Personal', '/personal'], ['Carga semanal de horas', '/personal/horas']] }],
+  secciones: [
+    { titulo: 'Catálogo', enlaces: [['Etiquetas de góndola', '/etiquetas-gondola']] },
+    { titulo: 'Terceros', enlaces: [['Personal', '/personal'], ['Carga semanal de horas', '/personal/horas']] },
+  ],
 }
 const ADMINISTRACION_DE_ROOT: Resumen = {
   grupo: 'Administración',
