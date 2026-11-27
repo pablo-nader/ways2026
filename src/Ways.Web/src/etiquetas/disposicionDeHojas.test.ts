@@ -27,8 +27,11 @@ describe('disposicionDeHoja', () => {
       const d = disposicionDeHoja(porHoja)
       const ancho = d.columnas * d.celdaAnchoMm + (d.columnas - 1) * SEPARACION_DE_CELDAS_MM
       const alto = d.filas * d.celdaAltoMm + (d.filas - 1) * SEPARACION_DE_CELDAS_MM
-      expect(ancho).toBeCloseTo(HOJA_APAISADA_MM.ancho - 2 * MARGEN_DE_HOJA_MM, 6)
-      expect(alto).toBeCloseTo(HOJA_APAISADA_MM.alto - 2 * MARGEN_DE_HOJA_MM, 6)
+      // 280x193 mm: el tamaño de .gondola-hoja en etiquetas-gondola.css.
+      expect(ancho).toBeCloseTo(280, 6)
+      expect(alto).toBeCloseTo(193, 6)
+      expect(ancho).toBeLessThan(HOJA_APAISADA_MM.ancho - 2 * MARGEN_DE_HOJA_MM)
+      expect(alto).toBeLessThan(HOJA_APAISADA_MM.alto - 2 * MARGEN_DE_HOJA_MM)
     }
   })
 

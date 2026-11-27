@@ -44,3 +44,10 @@ Strategy `ask-on-risk` → owner pre-authorized everything; chain `stacked-to-ma
 
 ## Progress
 - Exploration done (2026-11-27). Route per task: T1/T2 delegated (2+ non-trivial files).
+- T1 done: commit 84b09c6c. Application Etiquetas tests 25/25; integration Etiquetas+SuperficieDeAutorizacion 30/30.
+  Judgment-day: no CRITICAL → APPROVED. Info left open: promo also reported when equal to the qty-1 offer price;
+  one resolver call per distinct quantity (could be one batched call); missing tests for SoloMultiplos/guard.
+- T2 done: commits d62d2a79 + bca058d8 + layout slack. Judgment-day round 1: both judges confirmed CRITICAL print
+  layout (sheets inside app shell) + 16/sheet offer clipping → fixed (portal to body, vertical budget, 1 mm slack);
+  scoped re-judgment: all FIXED → APPROVED. Label tests 109/109, build OK. Print not verified on a real printer.
+- T3 blocked: push denied — active gh account is not the repo owner.
