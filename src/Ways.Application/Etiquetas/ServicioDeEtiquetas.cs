@@ -172,18 +172,82 @@ public class ServicioDeEtiquetas(
                 codigoBarraPorArticulo.TryGetValue(datos.Id, out var codigoBarra) ? codigoBarra : null,
                 datos.Nombre, datos.UnidadVenta.ToString(), precioOriginal,
                 resultado.DescuentoDeLinea is { } descuentoDeLaUnidad ? precioOriginal - descuentoDeLaUnidad : precioFinal,
-                resultado.Aplicadas));
+                resultado.Aplicadas, []));
         }
+
+        filas = await AgregarPromocionesAsync(filas, idEmpresa, solicitud.IdListaPrecio, momento, ct);
 
         // Decisión 6 (design.md:57, mutation targets 13/14): soloConOfertaVigente delega POR
         // COMPLETO en Aplicadas.Count > 0 — nunca un segundo matching (p.ej. comparar precios).
         // Post-filtro sobre las FILAS ya resueltas, nunca sobre el candidato grueso.
         if (solicitud.Filtro is { SoloConOfertaVigente: true })
         {
-            filas = filas.Where(f => f.Ofertas.Count > 0).ToList();
+            filas = filas.Where(f => f.Ofertas.Count > 0 || f.Promociones.Count > 0).ToList();
         }
 
         return new DatosDeEtiquetas(solicitud.IdListaPrecio, nombreDeLista, momento, filas, excluidos, truncado);
+    }
+
+    /// <summary>Completa cada fila con las ofertas de cantidad mínima mayor a 1. Los candidatos salen de
+    /// <see cref="ServicioDeOfertas.ListarVigentesAsync"/> (4 consultas fijas) y el precio de cada cantidad distinta se
+    /// resuelve con <see cref="ServicioDeOfertas.ResolverPorLineaAsync"/> (una llamada por cantidad, con todos los
+    /// artículos que la tienen). Solo se informa la oferta que la resolución aplicó y que baja el precio original.</summary>
+    private async Task<List<FilaDeEtiqueta>> AgregarPromocionesAsync(
+        List<FilaDeEtiqueta> filas, int idEmpresa, int idListaPrecio, DateTimeOffset momento, CancellationToken ct)
+    {
+        if (filas.Count == 0)
+        {
+            return filas;
+        }
+
+        var vigentes = await servicioDeOfertas.ListarVigentesAsync(
+            new SolicitudDeVigentes(filas.Select(f => f.IdArticulo).Distinct().ToList(), idEmpresa, idListaPrecio, momento), ct);
+
+        var candidatas = vigentes.ToDictionary(
+            v => v.IdArticulo,
+            v => v.Ofertas.Where(o => o.CantidadMinima > 1m).ToList());
+
+        var cantidades = candidatas.Values.SelectMany(o => o).Select(o => o.CantidadMinima!.Value).Distinct().ToList();
+        var precioPorCantidad = new Dictionary<(int IdArticulo, decimal Cantidad), ResultadoDeResolucion>();
+
+        foreach (var cantidad in cantidades)
+        {
+            var idsConCantidad = candidatas
+                .Where(c => c.Value.Any(o => o.CantidadMinima == cantidad))
+                .Select(c => c.Key);
+            var lineas = idsConCantidad
+                .Select(id => new LineaDeResolucion(id, idEmpresa, idListaPrecio, cantidad))
+                .ToList();
+
+            foreach (var resultado in await servicioDeOfertas.ResolverPorLineaAsync(lineas, momento, ct))
+            {
+                precioPorCantidad[(resultado.IdArticulo, cantidad)] = resultado;
+            }
+        }
+
+        return filas.Select(fila =>
+        {
+            if (!candidatas.TryGetValue(fila.IdArticulo, out var ofertas))
+            {
+                return fila;
+            }
+
+            var promociones = new List<PromocionPorCantidad>();
+            foreach (var oferta in ofertas)
+            {
+                var cantidad = oferta.CantidadMinima!.Value;
+                if (precioPorCantidad.TryGetValue((fila.IdArticulo, cantidad), out var resuelto)
+                    && resuelto.PrecioFinal is { } precioFinal
+                    && precioFinal < fila.PrecioOriginal
+                    && resuelto.Aplicadas.Any(a => a.IdOferta == oferta.IdOferta))
+                {
+                    promociones.Add(new PromocionPorCantidad(
+                        oferta.IdOferta, oferta.Nombre, cantidad, oferta.SoloMultiplos, precioFinal));
+                }
+            }
+
+            return fila with { Promociones = promociones };
+        }).ToList();
     }
 
     /// <summary>Decisión 7 (design.md:58, mutation target 19): reusa

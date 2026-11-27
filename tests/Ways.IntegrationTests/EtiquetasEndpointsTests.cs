@@ -578,7 +578,13 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         var datos = await respuesta.Content.ReadFromJsonAsync<DatosDeEtiquetas>();
         var idsDevueltos = datos!.Filas.Select(f => f.IdArticulo).ToHashSet();
 
-        Assert.Equal(new HashSet<int> { idArticuloScoped, idCategoriaScoped, idOfertaSinDescuento }, idsDevueltos);
+        // La oferta de cantidad mínima 3 también cuenta: sale como promoción por cantidad, no como oferta a cantidad 1.
+        Assert.Equal(new HashSet<int> { idArticuloScoped, idCategoriaScoped, idOfertaSinDescuento, idCantidadMinima }, idsDevueltos);
+        var filaPorCantidad = Assert.Single(datos.Filas, f => f.IdArticulo == idCantidadMinima);
+        Assert.Empty(filaPorCantidad.Ofertas);
+        var promocion = Assert.Single(filaPorCantidad.Promociones);
+        Assert.Equal(3m, promocion.Cantidad);
+        Assert.Equal(90m, promocion.PrecioUnitarioFinal);
         Assert.True(idEmpresaA > 0);
 
         // judgment-day Slice 2, ronda 1 (juez B, MAJOR 2): el sin-precio-con-oferta nunca es una
@@ -968,9 +974,11 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         // — nunca el mismo assert relajado para ambos. El número medido con el interceptor tras el
         // FIX del CRITICAL (disponibilidad plegada en la MISMA consulta de identidad, sin roundtrip
         // extra) es 10, no el ≤ 9 que el design proponía antes de medir — design.md enmendado con
-        // este mismo número (registro honesto, tasks.md judgment-day Slice 2 ronda 2).
+        // este mismo número (registro honesto, tasks.md judgment-day Slice 2 ronda 2). Las promociones por
+        // cantidad suman las 4 consultas fijas de ListarVigentesAsync (más una resolución por cantidad distinta
+        // solo cuando hay ofertas con cantidad mínima, que este fixture no tiene): tope 14, sin medir en Docker.
         Assert.True(
-            contadorUno.Consultas <= 10,
-            $"Se esperaban a lo sumo 10 consultas en el camino de ids explícitos (design: Testing Strategy), se emitieron {contadorUno.Consultas}.");
+            contadorUno.Consultas <= 14,
+            $"Se esperaban a lo sumo 14 consultas en el camino de ids explícitos (design: Testing Strategy), se emitieron {contadorUno.Consultas}.");
     }
 }

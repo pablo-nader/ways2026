@@ -32,7 +32,14 @@ public sealed record SolicitudDeEtiquetas(
 /// DescuentoUnitario</c> contiene legítimamente la palabra "descuento").</para></summary>
 public sealed record FilaDeEtiqueta(
     int IdArticulo, string CodigoInterno, string? CodigoBarra, string Nombre, string UnidadVenta,
-    decimal PrecioOriginal, decimal PrecioFinal, IReadOnlyList<OfertaAplicadaDto> Ofertas);
+    decimal PrecioOriginal, decimal PrecioFinal, IReadOnlyList<OfertaAplicadaDto> Ofertas,
+    IReadOnlyList<PromocionPorCantidad> Promociones);
+
+/// <summary>Una oferta con cantidad mínima mayor a 1 que hoy mejora el precio del artículo en la lista pedida.
+/// <see cref="Cantidad"/> es la cantidad mínima de la oferta y <see cref="PrecioUnitarioFinal"/> el precio de una unidad
+/// al comprar esa cantidad, resuelto por <see cref="ServicioDeOfertas"/> en el mismo momento que la hoja.</summary>
+public sealed record PromocionPorCantidad(
+    int IdOferta, string Nombre, decimal Cantidad, bool SoloMultiplos, decimal PrecioUnitarioFinal);
 
 /// <summary>stage-18-etiquetas-y-consulta, Slice 2 (task 2.12; design.md:197, Reconciliación T3 de
 /// tasks.md). Un artículo sin precio vigente en la lista elegida NUNCA emite una
