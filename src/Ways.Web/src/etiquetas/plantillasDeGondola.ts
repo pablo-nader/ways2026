@@ -1,10 +1,11 @@
-export type DecoracionDePlantilla = 'franja' | 'marco' | 'esquina' | 'liso'
+import type { IdDeModelo } from './modelosDeGondola'
 
 export type PlantillaDeGondola = {
   readonly id: string
   readonly nombre: string
-  readonly decoracion: DecoracionDePlantilla
-  /** Colores de tinta: nombre, precio, acento (franja, esquina, marca de oferta) y borde. Nunca hay fondo: se imprime sobre papel blanco. */
+  /** Diseño de la etiqueta: disposición, tipografía y trazos (ver `modelosDeGondola`). */
+  readonly modelo: IdDeModelo
+  /** Colores de tinta: nombre, precio, acento (trazos y marca de oferta) y borde. Nunca hay fondo: se imprime sobre papel blanco. */
   readonly colores: {
     readonly texto: string
     readonly precio: string
@@ -13,68 +14,18 @@ export type PlantillaDeGondola = {
   }
 }
 
-// Paleta de la marca Ways (tema.css): naranja #f7941d y sus variantes #e8830c, #9a5200, #3a2606, gris #c4c4ca, más neutros oscuros.
+// Paleta de la marca Ways (tema.css): naranja #f7941d, naranja tinta #e8830c, tostado #9a5200, café #3a2606, gris #c4c4ca, más negros.
 export const PLANTILLAS_DE_GONDOLA: readonly PlantillaDeGondola[] = [
-  {
-    id: 'naranja',
-    nombre: 'Naranja Ways',
-    decoracion: 'franja',
-    colores: { texto: '#1c1c1f', precio: '#e8830c', acento: '#f7941d', borde: '#c4c4ca' },
-  },
-  {
-    id: 'marco-naranja',
-    nombre: 'Marco naranja',
-    decoracion: 'marco',
-    colores: { texto: '#1c1c1f', precio: '#e8830c', acento: '#9a5200', borde: '#f7941d' },
-  },
-  {
-    id: 'esquina-naranja',
-    nombre: 'Esquina naranja',
-    decoracion: 'esquina',
-    colores: { texto: '#1c1c1f', precio: '#1c1c1f', acento: '#f7941d', borde: '#c4c4ca' },
-  },
-  {
-    id: 'liso',
-    nombre: 'Liso',
-    decoracion: 'liso',
-    colores: { texto: '#1c1c1f', precio: '#1c1c1f', acento: '#f7941d', borde: '#c4c4ca' },
-  },
-  {
-    id: 'marco-gris',
-    nombre: 'Marco gris',
-    decoracion: 'marco',
-    colores: { texto: '#1c1c1f', precio: '#9a5200', acento: '#f7941d', borde: '#c4c4ca' },
-  },
-  {
-    id: 'negro',
-    nombre: 'Negro',
-    decoracion: 'franja',
-    colores: { texto: '#111113', precio: '#111113', acento: '#111113', borde: '#c4c4ca' },
-  },
-  {
-    id: 'esquina-negra',
-    nombre: 'Esquina negra',
-    decoracion: 'esquina',
-    colores: { texto: '#1c1c1f', precio: '#e8830c', acento: '#111113', borde: '#c4c4ca' },
-  },
-  {
-    id: 'marco-ambar',
-    nombre: 'Marco ámbar',
-    decoracion: 'marco',
-    colores: { texto: '#1c1c1f', precio: '#3a2606', acento: '#9a5200', borde: '#9a5200' },
-  },
-  {
-    id: 'grafito',
-    nombre: 'Grafito',
-    decoracion: 'liso',
-    colores: { texto: '#2c2c31', precio: '#f7941d', acento: '#f7941d', borde: '#c4c4ca' },
-  },
-  {
-    id: 'marco-negro',
-    nombre: 'Marco negro',
-    decoracion: 'marco',
-    colores: { texto: '#000000', precio: '#000000', acento: '#f7941d', borde: '#111113' },
-  },
+  { id: 'pizarra', nombre: 'Pizarra', modelo: 'pizarra', colores: { texto: '#1c1c1f', precio: '#1c1c1f', acento: '#f7941d', borde: '#f7941d' } },
+  { id: 'ticket', nombre: 'Ticket', modelo: 'ticket', colores: { texto: '#1c1c1f', precio: '#1c1c1f', acento: '#e8830c', borde: '#1c1c1f' } },
+  { id: 'columna', nombre: 'Columna', modelo: 'columna', colores: { texto: '#1c1c1f', precio: '#3a2606', acento: '#f7941d', borde: '#c4c4ca' } },
+  { id: 'subrayado', nombre: 'Subrayado', modelo: 'subrayado', colores: { texto: '#1c1c1f', precio: '#1c1c1f', acento: '#f7941d', borde: '#c4c4ca' } },
+  { id: 'colgante', nombre: 'Colgante', modelo: 'colgante', colores: { texto: '#3a2606', precio: '#e8830c', acento: '#f7941d', borde: '#9a5200' } },
+  { id: 'sello', nombre: 'Sello', modelo: 'sello', colores: { texto: '#1c1c1f', precio: '#9a5200', acento: '#f7941d', borde: '#c4c4ca' } },
+  { id: 'corchetes', nombre: 'Corchetes', modelo: 'corchetes', colores: { texto: '#1c1c1f', precio: '#1c1c1f', acento: '#f7941d', borde: '#c4c4ca' } },
+  { id: 'doble', nombre: 'Doble línea', modelo: 'doble', colores: { texto: '#1c1c1f', precio: '#000000', acento: '#e8830c', borde: '#000000' } },
+  { id: 'centavos', nombre: 'Centavos arriba', modelo: 'centavos', colores: { texto: '#1c1c1f', precio: '#e8830c', acento: '#f7941d', borde: '#c4c4ca' } },
+  { id: 'banderin', nombre: 'Banderín', modelo: 'banderin', colores: { texto: '#1c1c1f', precio: '#1c1c1f', acento: '#f7941d', borde: '#c4c4ca' } },
 ]
 
 export const PLANTILLA_POR_DEFECTO_DE_GONDOLA = PLANTILLAS_DE_GONDOLA[0]

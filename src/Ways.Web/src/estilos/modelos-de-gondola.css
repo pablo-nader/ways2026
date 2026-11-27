@@ -1,0 +1,234 @@
+/*
+ * Modelos de etiqueta de góndola. Las cajas (posición y tamaño en mm) y los trazos SVG salen de
+ * `modelosDeGondola.ts`; acá solo van la tipografía y la alineación dentro de cada caja.
+ * Regla de impresión: nada de fondos ni rellenos, solo texto y trazos.
+ */
+.gondola-etiqueta.gondola-modelo {
+  --g-fuente-precio: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', system-ui, 'Segoe UI', Arial, sans-serif;
+  --g-fuente-nombre: 'Instrument Sans Variable', 'Instrument Sans', system-ui, 'Segoe UI', Arial, sans-serif;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  overflow: hidden;
+  font-family: var(--g-fuente-nombre);
+}
+
+.gondola-modelo .gondola-trazos {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.gondola-modelo .gondola-logo {
+  position: absolute;
+  max-width: none;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.gondola-modelo .gondola-caja-nombre {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.gondola-modelo .gondola-nombre {
+  width: 100%;
+  font-family: var(--g-fuente-nombre);
+  font-weight: 600;
+  line-height: 1.12;
+  text-align: left;
+}
+
+.gondola-modelo .gondola-bloque-precio {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+/*
+ * El tamaño óptico queda fijo en el corte de titulares: con `auto` los glifos chicos se ensanchan
+ * y el ancho deja de coincidir con el que mide `ajusteDeTexto.ts`.
+ */
+.gondola-modelo .gondola-precio,
+.gondola-modelo .gondola-linea-chica {
+  font-optical-sizing: none;
+  font-variation-settings: 'opsz' 96;
+}
+
+.gondola-modelo .gondola-precio {
+  font-family: var(--g-fuente-precio);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.gondola-modelo .gondola-linea-chica {
+  display: flex;
+  align-items: center;
+  font-family: var(--g-fuente-precio);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.gondola-modelo .gondola-precio-tachado {
+  opacity: 1;
+  color: var(--et-texto);
+}
+
+.gondola-modelo .gondola-descuento {
+  position: static;
+  margin-left: 0.35em;
+  padding: 0 0.25em;
+  border: 0.3mm solid var(--et-acento);
+  border-radius: 0.3em;
+  color: var(--et-acento);
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.gondola-modelo .gondola-precio-normal {
+  color: var(--et-texto);
+}
+
+.gondola-ancho-precio-condensado .gondola-precio {
+  font-stretch: 75%;
+}
+
+.gondola-ancho-nombre-condensado .gondola-nombre {
+  font-stretch: 75%;
+  font-weight: 700;
+}
+
+.gondola-ancho-nombre-ancho .gondola-nombre {
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Alineaciones centradas: pizarra, colgante y corchetes. */
+.gondola-modelo-pizarra .gondola-caja-nombre,
+.gondola-modelo-colgante .gondola-caja-nombre,
+.gondola-modelo-corchetes .gondola-caja-nombre {
+  align-items: center;
+}
+
+.gondola-modelo-pizarra .gondola-nombre,
+.gondola-modelo-colgante .gondola-nombre,
+.gondola-modelo-corchetes .gondola-nombre {
+  text-align: center;
+}
+
+.gondola-modelo-pizarra .gondola-bloque-precio,
+.gondola-modelo-colgante .gondola-bloque-precio,
+.gondola-modelo-corchetes .gondola-bloque-precio,
+.gondola-modelo-sello .gondola-bloque-precio,
+.gondola-modelo-banderin .gondola-bloque-precio,
+.gondola-modelo-columna .gondola-bloque-precio {
+  align-items: center;
+}
+
+.gondola-modelo-pizarra .gondola-logo,
+.gondola-modelo-colgante .gondola-logo,
+.gondola-modelo-corchetes .gondola-logo {
+  object-position: center;
+}
+
+.gondola-modelo-pizarra .gondola-nombre {
+  font-weight: 700;
+}
+
+/* Ticket: precio abajo a la derecha. */
+.gondola-modelo-ticket .gondola-bloque-precio {
+  justify-content: flex-end;
+  align-items: flex-end;
+}
+
+.gondola-modelo-ticket .gondola-nombre {
+  font-weight: 500;
+}
+
+/* Columna y sello: el nombre centrado en alto junto a la regla o al sello. */
+.gondola-modelo-columna .gondola-caja-nombre,
+.gondola-modelo-sello .gondola-caja-nombre {
+  align-items: center;
+}
+
+/* Subrayado: precio abajo a la izquierda con la raya gruesa solo bajo el número. */
+.gondola-modelo-subrayado .gondola-bloque-precio {
+  justify-content: flex-end;
+}
+
+.gondola-modelo-subrayado .gondola-precio {
+  font-weight: 800;
+  border-bottom: var(--g-subrayado) solid var(--et-acento);
+}
+
+.gondola-modelo-subrayado .gondola-nombre {
+  font-weight: 700;
+}
+
+/* Colgante: el precio va en naranja tinta (color de la plantilla). */
+.gondola-modelo-colgante .gondola-precio {
+  font-weight: 700;
+}
+
+.gondola-modelo-colgante .gondola-logo,
+.gondola-modelo-colgante .gondola-nombre {
+  color: var(--et-texto);
+}
+
+/* Doble línea: nombre en mayúsculas finas y espaciadas, precio liviano apoyado en la regla de abajo. */
+.gondola-modelo-doble .gondola-bloque-precio {
+  justify-content: flex-end;
+}
+
+.gondola-modelo-doble .gondola-precio {
+  font-weight: 500;
+}
+
+/* Centavos arriba: "$" y centavos chicos, alineados con el tope del entero. */
+.gondola-modelo-centavos .gondola-caja-nombre {
+  align-items: flex-end;
+}
+
+.gondola-modelo-centavos .gondola-precio {
+  display: flex;
+  align-items: flex-start;
+  white-space: nowrap;
+}
+
+.gondola-modelo-centavos .gondola-precio-prefijo {
+  margin-top: 0.12em;
+  margin-right: 0.08em;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.gondola-modelo-centavos .gondola-precio-entero {
+  line-height: 1;
+}
+
+.gondola-modelo-centavos .gondola-precio-centavos {
+  margin-top: 0.12em;
+  margin-left: 0.06em;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: underline;
+  text-decoration-thickness: 0.06em;
+  text-underline-offset: 0.1em;
+}
+
+/* Banderín: el nombre apoyado sobre la figura. */
+.gondola-modelo-banderin .gondola-caja-nombre {
+  align-items: flex-end;
+}

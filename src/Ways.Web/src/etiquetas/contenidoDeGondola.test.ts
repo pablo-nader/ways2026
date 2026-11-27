@@ -4,6 +4,7 @@ import {
   contenidoDeGondola,
   elegirPromocion,
   formatearPrecioDeGondola,
+  partirPrecio,
   porcentajeDeDescuento,
   textoDePromocion,
   tieneOferta,
@@ -125,5 +126,23 @@ describe('contenidoDeGondola', () => {
 
   it('una oferta que no baja el precio no tacha nada', () => {
     expect(contenidoDeGondola(fila({ ofertas: [descuento] }), true).precioTachado).toBeNull()
+  })
+})
+
+describe('partirPrecio', () => {
+  it('separa signo, entero y centavos', () => {
+    expect(partirPrecio('$ 12.345,67')).toEqual({ prefijo: '$', entero: '12.345', centavos: '67' })
+  })
+
+  it('un precio sin decimales no tiene centavos', () => {
+    expect(partirPrecio(formatearPrecioDeGondola(2700))).toEqual({ prefijo: '$', entero: '2.700', centavos: null })
+  })
+
+  it('la promoción conserva la cantidad en el prefijo', () => {
+    expect(partirPrecio('3x $ 2.700,50')).toEqual({ prefijo: '3x $', entero: '2.700', centavos: '50' })
+  })
+
+  it('un texto sin signo pesos queda entero', () => {
+    expect(partirPrecio('1.000')).toEqual({ prefijo: '', entero: '1.000', centavos: null })
   })
 })

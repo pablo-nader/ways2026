@@ -1,26 +1,37 @@
-/** Ancho medio de un carácter en negrita, relativo al tamaño de la fuente (sans-serif). */
-const ANCHO_DE_CARACTER = 0.68
-const ANCHO_DE_DIGITO = 0.62
-const INTERLINEADO = 1.1
-const PASO_MM = 0.25
-const FUENTE_MINIMA_MM = 2.2
-const RELLENO_HORIZONTAL = 0.88
-const ALTO_DE_NOMBRE = 0.34
-const ALTO_DE_NOMBRE_CON_OFERTA = 0.24
-const ALTO_DE_PRECIO = 0.3
-const ALTO_DE_PRECIO_CON_OFERTA = 0.2
-const ALTO_DEL_LOGO = 0.11
-const ALTO_DEL_TACHADO = 0.07
-const ALTO_DE_LA_PROMOCION = 0.09
-const INTERLINEADO_DE_LA_PROMOCION = 1.2
-const RELLENO_DE_LA_PROMOCION_MM = 1.2
-/** Relleno vertical de la etiqueta (4% arriba y abajo) y reserva para el borde y la franja decorativa más gruesos. */
-const RELLENO_VERTICAL = 0.08
-const RESERVA_DE_BORDES_MM = 3.4
-
 export const MAXIMO_DE_LINEAS_DEL_NOMBRE = 2
+export const FUENTE_MINIMA_MM = 2.2
+export const INTERLINEADO_DEL_NOMBRE = 1.12
+export const INTERLINEADO_DE_LA_LINEA_CHICA = 1.25
+const PASO_MM = 0.1
 
 export type MedidaDeCelda = { anchoMm: number; altoMm: number }
+export type MedidaDeCaja = { anchoMm: number; altoMm: number }
+
+/** Ancho de la fuente: condensado (wdth 75), normal (wdth 100) o ancho (mayúsculas con espaciado). */
+export type AnchoDeFuente = 'condensado' | 'normal' | 'ancho'
+
+/**
+ * Ancho medio de un carácter del nombre (Instrument Sans) relativo al tamaño de la fuente. Medido en el
+ * navegador con nombres en mayúsculas, el caso más ancho, y redondeado hacia arriba.
+ */
+export const ANCHO_DE_CARACTER_DEL_NOMBRE = { condensado: 0.43, normal: 0.6, ancho: 0.68 } as const satisfies Record<AnchoDeFuente, number>
+
+/**
+ * Anchos en em de Bricolage Grotesque en negrita (wdth 100, opsz 96 fijo en el CSS), medidos en el navegador
+ * y redondeados hacia arriba.
+ */
+const ANCHO_DE_GLIFO_DEL_PRECIO: Readonly<Record<string, number>> = { ' ': 0.26, '.': 0.26, ',': 0.21, '-': 0.33, '%': 0.96, x: 0.56 }
+/** Dígitos tabulares y "$"; también cubre cualquier otro carácter. */
+const ANCHO_DE_DIGITO_DEL_PRECIO = 0.6
+/** Con wdth 75 los glifos del precio miden un 72% de los normales; se deja margen. */
+export const ESCALA_DE_ANCHO_DEL_PRECIO = { condensado: 0.75, normal: 1, ancho: 1 } as const satisfies Record<AnchoDeFuente, number>
+
+/** Ancho en em de un texto de precio con la fuente normal. */
+export function anchoDelPrecioEnEm(texto: string): number {
+  let ancho = 0
+  for (const caracter of texto) ancho += ANCHO_DE_GLIFO_DEL_PRECIO[caracter] ?? ANCHO_DE_DIGITO_DEL_PRECIO
+  return ancho
+}
 
 /** Corte voraz por palabras; una palabra más larga que la línea se parte por caracteres, igual que `overflow-wrap: anywhere`. */
 export function partirEnLineas(texto: string, caracteresPorLinea: number): string[] {
@@ -51,48 +62,30 @@ export function partirEnLineas(texto: string, caracteresPorLinea: number): strin
   return lineas
 }
 
-/** Mayor tamaño de fuente, en milímetros, con el que el nombre entra en dos líneas dentro de la celda. */
-export function tamanioDeFuenteDelNombre(nombre: string, celda: MedidaDeCelda, conOferta = false): number {
-  const anchoUtil = celda.anchoMm * RELLENO_HORIZONTAL
-  const altoDisponible = celda.altoMm * (conOferta ? ALTO_DE_NOMBRE_CON_OFERTA : ALTO_DE_NOMBRE)
-  const maximo = celda.altoMm * 0.13
+function redondearHaciaAbajo(mm: number): number {
+  return Math.floor(mm * 100) / 100
+}
 
-  for (let fuente = maximo; fuente > FUENTE_MINIMA_MM; fuente -= PASO_MM) {
-    const lineas = partirEnLineas(nombre, anchoUtil / (fuente * ANCHO_DE_CARACTER))
-    if (lineas.length <= MAXIMO_DE_LINEAS_DEL_NOMBRE && lineas.length * fuente * INTERLINEADO <= altoDisponible) {
-      return Math.round(fuente * 100) / 100
+export type NombreAjustado = { fuenteMm: number; lineas: string[] }
+
+/**
+ * Mayor fuente (hasta `maximoMm`) con la que el nombre entra en dos líneas dentro de la caja.
+ * Si ni con la fuente mínima entra, devuelve la mínima y el CSS recorta a dos líneas.
+ */
+export function ajustarNombre(nombre: string, caja: MedidaDeCaja, anchoDeCaracter: number, maximoMm: number): NombreAjustado {
+  const tope = Math.min(maximoMm, caja.altoMm / INTERLINEADO_DEL_NOMBRE)
+  for (let fuente = tope; fuente >= FUENTE_MINIMA_MM; fuente -= PASO_MM) {
+    const lineas = partirEnLineas(nombre, caja.anchoMm / (fuente * anchoDeCaracter))
+    if (lineas.length <= MAXIMO_DE_LINEAS_DEL_NOMBRE && lineas.length * fuente * INTERLINEADO_DEL_NOMBRE <= caja.altoMm) {
+      return { fuenteMm: redondearHaciaAbajo(fuente), lineas }
     }
   }
-  return FUENTE_MINIMA_MM
+  return { fuenteMm: FUENTE_MINIMA_MM, lineas: partirEnLineas(nombre, caja.anchoMm / (FUENTE_MINIMA_MM * anchoDeCaracter)) }
 }
 
-/** Tamaño de fuente en milímetros del precio: grande, pero sin pasarse del ancho ni, con oferta, del alto que dejan el tachado y la promoción. */
-export function tamanioDeFuenteDelPrecio(textoDelPrecio: string, celda: MedidaDeCelda, conOferta = false): number {
-  const porAncho = (celda.anchoMm * RELLENO_HORIZONTAL) / (Math.max(1, textoDelPrecio.length) * ANCHO_DE_DIGITO)
-  const porAlto = celda.altoMm * (conOferta ? ALTO_DE_PRECIO_CON_OFERTA : ALTO_DE_PRECIO)
-  return Math.round(Math.min(porAlto, porAncho) * 100) / 100
-}
-
-export type PresupuestoVertical = {
-  logoMm: number
-  nombreMm: number
-  precioMm: number
-  tachadoMm: number
-  promocionMm: number
-  /** Suma de las alturas de los bloques, más relleno y bordes: debe caber en la celda. */
-  totalMm: number
-}
-
-/** Alturas, en milímetros, de cada bloque de la etiqueta; con `conOferta` incluyen el tachado y la píldora de promoción. */
-export function presupuestoVertical(nombre: string, textoDelPrecio: string, celda: MedidaDeCelda, conOferta: boolean): PresupuestoVertical {
-  const nombreMm = tamanioDeFuenteDelNombre(nombre, celda, conOferta)
-  const lineasDelNombre = Math.min(MAXIMO_DE_LINEAS_DEL_NOMBRE, Math.max(1, partirEnLineas(nombre, (celda.anchoMm * RELLENO_HORIZONTAL) / (nombreMm * ANCHO_DE_CARACTER)).length))
-  const precioMm = tamanioDeFuenteDelPrecio(textoDelPrecio, celda, conOferta)
-  const logoMm = celda.altoMm * ALTO_DEL_LOGO
-  const tachadoMm = conOferta ? celda.altoMm * ALTO_DEL_TACHADO : 0
-  const promocionMm = conOferta ? celda.altoMm * ALTO_DE_LA_PROMOCION : 0
-  const alturaDePromocion = conOferta ? promocionMm * INTERLINEADO_DE_LA_PROMOCION + RELLENO_DE_LA_PROMOCION_MM : 0
-  const totalMm =
-    logoMm + lineasDelNombre * nombreMm * INTERLINEADO + tachadoMm + precioMm + alturaDePromocion + celda.altoMm * RELLENO_VERTICAL + RESERVA_DE_BORDES_MM
-  return { logoMm, nombreMm, precioMm, tachadoMm, promocionMm, totalMm }
+/** Mayor fuente con la que una línea que mide `anchoEnEm` entra en la caja, sin cortar. */
+export function fuenteParaUnaLinea(anchoEnEm: number, caja: MedidaDeCaja, interlineado = 1): number {
+  const porAncho = caja.anchoMm / Math.max(0.5, anchoEnEm)
+  const porAlto = caja.altoMm / interlineado
+  return Math.max(0, redondearHaciaAbajo(Math.min(porAncho, porAlto)))
 }
