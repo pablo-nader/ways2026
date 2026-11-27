@@ -135,7 +135,10 @@ describe('EtiquetasGondola', () => {
   })
 
   it('conserva la selección entre páginas y arma la vista previa con los elegidos', async () => {
-    const imprimir = vi.spyOn(window, 'print').mockImplementation(() => undefined)
+    let hojasEnLaImpresion = 0
+    const imprimir = vi.spyOn(window, 'print').mockImplementation(() => {
+      hojasEnLaImpresion = document.querySelectorAll('body > .gondola-impresion [data-testid="gondola-hoja"]').length
+    })
     await renderYEsperarGrilla()
 
     await userEvent.click(screen.getByLabelText('Seleccionar Artículo 1'))
@@ -154,6 +157,8 @@ describe('EtiquetasGondola', () => {
 
     await userEvent.click(imprimirBoton)
     expect(imprimir).toHaveBeenCalledTimes(1)
+    expect(hojasEnLaImpresion).toBe(1)
+    expect(document.querySelector('.gondola-impresion')).toBeNull()
   })
 
   it('seleccionar la página elige las 25 filas y limpiar vacía la selección', async () => {

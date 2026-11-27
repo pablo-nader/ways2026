@@ -18,8 +18,8 @@
   grid-template-columns: repeat(var(--et-columnas), var(--et-celda-ancho));
   grid-template-rows: repeat(var(--et-filas), var(--et-celda-alto));
   gap: 3mm;
-  width: 281mm;
-  height: 194mm;
+  width: 280mm;
+  height: 193mm;
   box-sizing: border-box;
   background: #fff;
   break-after: page;
@@ -32,7 +32,7 @@
   page-break-after: auto;
 }
 
-/* Vista previa en pantalla: la hoja real mide 281 mm, se reduce solo para mostrarla. */
+/* Vista previa en pantalla: la hoja real mide 280 mm, se reduce solo para mostrarla. */
 @media screen {
   .gondola-hojas {
     display: flex;
@@ -68,7 +68,6 @@
 }
 
 .gondola-logo {
-  height: 12%;
   width: auto;
   max-width: 45%;
   object-fit: contain;
@@ -106,7 +105,6 @@
 }
 
 .gondola-precio-tachado {
-  font-size: 4mm;
   line-height: 1;
   opacity: 0.75;
   text-decoration: line-through;
@@ -119,7 +117,6 @@
   border-radius: 10mm;
   background: var(--et-acento);
   color: var(--et-sobre-acento);
-  font-size: 5mm;
   font-weight: 800;
   line-height: 1.2;
   white-space: nowrap;
@@ -153,4 +150,35 @@
 
 .gondola-deco-liso {
   border-color: transparent;
+}
+
+/* Impresión: las hojas salen de un portal colgado de body; todo lo demás se oculta para que el shell no desplace las páginas. */
+.gondola-impresion {
+  display: none;
+}
+
+@media print {
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  body > *:not(.gondola-impresion) {
+    display: none !important;
+  }
+
+  .gondola-impresion {
+    display: block;
+  }
+
+  .gondola-impresion .gondola-hojas {
+    display: block;
+  }
+
+  .gondola-impresion .gondola-hoja {
+    zoom: 1;
+    border: 0;
+  }
 }

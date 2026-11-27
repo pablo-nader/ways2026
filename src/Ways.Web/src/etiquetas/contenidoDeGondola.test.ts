@@ -45,6 +45,10 @@ describe('textoDePromocion', () => {
     expect(textoDePromocion(promocion())).toBe('3x $ 2.700')
   })
 
+  it('la cantidad con decimales usa coma, no punto', () => {
+    expect(textoDePromocion(promocion({ cantidad: 1.5, precioUnitarioFinal: 1000 }))).toBe('1,5x $ 1.500')
+  })
+
   it('no arrastra ruido de coma flotante', () => {
     expect(textoDePromocion(promocion({ cantidad: 3, precioUnitarioFinal: 0.1 }))).toBe('3x $ 0,30')
   })

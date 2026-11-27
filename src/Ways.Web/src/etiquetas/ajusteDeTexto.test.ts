@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { partirEnLineas, tamanioDeFuenteDelNombre, tamanioDeFuenteDelPrecio, MAXIMO_DE_LINEAS_DEL_NOMBRE } from './ajusteDeTexto'
+import { partirEnLineas, presupuestoVertical, tamanioDeFuenteDelNombre, tamanioDeFuenteDelPrecio, MAXIMO_DE_LINEAS_DEL_NOMBRE } from './ajusteDeTexto'
 import { ETIQUETAS_POR_HOJA, disposicionDeHoja } from './disposicionDeHojas'
 
 describe('partirEnLineas', () => {
@@ -43,7 +43,7 @@ describe('tamanioDeFuenteDelNombre', () => {
     for (const porHoja of ETIQUETAS_POR_HOJA) {
       const c = celda(porHoja)
       const fuente = tamanioDeFuenteDelNombre(nombre, c)
-      const lineas = partirEnLineas(nombre, (c.anchoMm * 0.88) / (fuente * 0.56))
+      const lineas = partirEnLineas(nombre, (c.anchoMm * 0.88) / (fuente * 0.68))
       expect(lineas.length).toBeLessThanOrEqual(MAXIMO_DE_LINEAS_DEL_NOMBRE)
     }
   })
@@ -67,5 +67,24 @@ describe('tamanioDeFuenteDelPrecio', () => {
 
   it('un precio largo se achica para no pasarse del ancho', () => {
     expect(tamanioDeFuenteDelPrecio('$ 1.234.567,89', celda)).toBeLessThan(tamanioDeFuenteDelPrecio('$ 90', celda))
+  })
+})
+
+describe('presupuestoVertical', () => {
+  const nombre = 'Aceite de girasol alto oleico Cocinero botella 900 ml'
+
+  for (const porHoja of ETIQUETAS_POR_HOJA) {
+    for (const conOferta of [false, true]) {
+      it(`${porHoja} por hoja ${conOferta ? 'con' : 'sin'} oferta: la suma de los bloques entra en la celda`, () => {
+        const d = disposicionDeHoja(porHoja)
+        const presupuesto = presupuestoVertical(nombre, '$ 12.345,67', { anchoMm: d.celdaAnchoMm, altoMm: d.celdaAltoMm }, conOferta)
+        expect(presupuesto.totalMm).toBeLessThanOrEqual(d.celdaAltoMm)
+      })
+    }
+  }
+
+  it('con oferta el precio es más chico que sin oferta', () => {
+    const celda = { anchoMm: 68, altoMm: 46 }
+    expect(tamanioDeFuenteDelPrecio('$ 90', celda, true)).toBeLessThan(tamanioDeFuenteDelPrecio('$ 90', celda))
   })
 })

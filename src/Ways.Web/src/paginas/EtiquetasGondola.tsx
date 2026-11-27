@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal, flushSync } from 'react-dom'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeEtiquetas, MAXIMO_DE_ARTICULOS_POR_HOJA } from '../api/etiquetas'
@@ -197,6 +198,25 @@ function PantallaEtiquetasGondola() {
     setAvisoDeTope(resultado.excedido)
   }
 
+  const [imprimiendo, setImprimiendo] = useState(false)
+
+  useEffect(() => {
+    const alEmpezar = () => flushSync(() => setImprimiendo(true))
+    const alTerminar = () => setImprimiendo(false)
+    window.addEventListener('beforeprint', alEmpezar)
+    window.addEventListener('afterprint', alTerminar)
+    return () => {
+      window.removeEventListener('beforeprint', alEmpezar)
+      window.removeEventListener('afterprint', alTerminar)
+    }
+  }, [])
+
+  const imprimir = () => {
+    flushSync(() => setImprimiendo(true))
+    window.print()
+    setImprimiendo(false)
+  }
+
   const limpiarSeleccion = () => {
     setSeleccion(SELECCION_VACIA)
     setAvisoDeTope(false)
@@ -266,7 +286,7 @@ function PantallaEtiquetasGondola() {
             </div>
           </div>
           <div className="col-12 col-md-2 text-md-end">
-            <button type="button" className="btn btn-primary" disabled={!puedeImprimir} onClick={() => window.print()}>
+            <button type="button" className="btn btn-primary" disabled={!puedeImprimir} onClick={imprimir}>
               Imprimir
             </button>
           </div>
@@ -386,8 +406,19 @@ function PantallaEtiquetasGondola() {
       </div>
 
       {paraImprimir !== null && paraImprimir.filas.length > 0 && (
-        <HojasDeGondola filas={paraImprimir.filas} porHoja={porHoja} plantilla={plantilla} conOfertas={conOfertas} />
+        <div className="d-print-none">
+          <HojasDeGondola filas={paraImprimir.filas} porHoja={porHoja} plantilla={plantilla} conOfertas={conOfertas} />
+        </div>
       )}
+      {imprimiendo &&
+        paraImprimir !== null &&
+        paraImprimir.filas.length > 0 &&
+        createPortal(
+          <div className="gondola-impresion">
+            <HojasDeGondola filas={paraImprimir.filas} porHoja={porHoja} plantilla={plantilla} conOfertas={conOfertas} />
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

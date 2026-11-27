@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { FilaDeEtiqueta } from '../api/tipos'
-import { tamanioDeFuenteDelNombre, tamanioDeFuenteDelPrecio } from './ajusteDeTexto'
+import { presupuestoVertical } from './ajusteDeTexto'
 import { contenidoDeGondola, formatearPrecioDeGondola } from './contenidoDeGondola'
 import { dividirEnHojas, disposicionDeHoja, type DisposicionDeHoja, type EtiquetasPorHoja } from './disposicionDeHojas'
 import { rutaDelLogoDeGondola, type PlantillaDeGondola } from './plantillasDeGondola'
@@ -17,20 +17,22 @@ function EtiquetaDeGondola({ fila, plantilla, disposicion, conOfertas }: PropsDe
   const celda = { anchoMm: disposicion.celdaAnchoMm, altoMm: disposicion.celdaAltoMm }
   const contenido = contenidoDeGondola(fila, conOfertas)
   const textoDelPrecio = formatearPrecioDeGondola(contenido.precio)
+  const conOferta = contenido.precioTachado !== null || contenido.promocion !== null
+  const medidas = presupuestoVertical(fila.nombre, textoDelPrecio, celda, conOferta)
 
   return (
     <article className={`gondola-etiqueta gondola-deco-${plantilla.decoracion}`} data-testid="gondola-etiqueta">
-      <img className="gondola-logo" src={rutaDelLogoDeGondola(plantilla.tono)} alt="Ways" />
-      <h3 className="gondola-nombre" style={{ fontSize: `${tamanioDeFuenteDelNombre(fila.nombre, celda)}mm` }}>
+      <img className="gondola-logo" src={rutaDelLogoDeGondola(plantilla.tono)} alt="Ways" style={{ height: `${medidas.logoMm}mm` }} />
+      <h3 className="gondola-nombre" style={{ fontSize: `${medidas.nombreMm}mm` }}>
         {fila.nombre}
       </h3>
       <div className="gondola-bloque-precio">
         {contenido.precioTachado !== null && (
-          <div className="gondola-precio-tachado" data-testid="gondola-precio-tachado">
+          <div className="gondola-precio-tachado" data-testid="gondola-precio-tachado" style={{ fontSize: `${medidas.tachadoMm}mm` }}>
             {formatearPrecioDeGondola(contenido.precioTachado)}
           </div>
         )}
-        <div className="gondola-precio" data-testid="gondola-precio" style={{ fontSize: `${tamanioDeFuenteDelPrecio(textoDelPrecio, celda)}mm` }}>
+        <div className="gondola-precio" data-testid="gondola-precio" style={{ fontSize: `${medidas.precioMm}mm` }}>
           {textoDelPrecio}
         </div>
       </div>
@@ -40,7 +42,7 @@ function EtiquetaDeGondola({ fila, plantilla, disposicion, conOfertas }: PropsDe
         </span>
       )}
       {contenido.promocion !== null && (
-        <div className="gondola-promocion" data-testid="gondola-promocion">
+        <div className="gondola-promocion" data-testid="gondola-promocion" style={{ fontSize: `${medidas.promocionMm}mm` }}>
           {contenido.promocion}
         </div>
       )}

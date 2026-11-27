@@ -17,10 +17,17 @@ export function formatearPrecioDeGondola(valor: number): string {
   return formatearImporte(valor, { simbolo: true, decimales: entero ? 0 : 2 })
 }
 
+const FORMATO_DE_CANTIDAD = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 3 })
+
+/** Cantidad con coma decimal ("1,5"), sin ceros de más. */
+export function formatearCantidadDePromocion(cantidad: number): string {
+  return FORMATO_DE_CANTIDAD.format(cantidad)
+}
+
 /** Total del lote: cantidad por precio unitario, redondeado a centavos para no arrastrar ruido de coma flotante. */
 export function textoDePromocion(promocion: PromocionDeEtiqueta): string {
   const total = Math.round(promocion.cantidad * promocion.precioUnitarioFinal * 100) / 100
-  return `${promocion.cantidad}x ${formatearPrecioDeGondola(total)}`
+  return `${formatearCantidadDePromocion(promocion.cantidad)}x ${formatearPrecioDeGondola(total)}`
 }
 
 /** La promoción que se muestra: la de menor cantidad (la más alcanzable); a igual cantidad, la de menor precio unitario. */
