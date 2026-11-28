@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PLANTILLAS_DE_GONDOLA, plantillaDeGondolaPorId, PLANTILLA_POR_DEFECTO_DE_GONDOLA, rutaDelLogoDeGondola } from './plantillasDeGondola'
+import { IDS_DE_MODELO } from './modelosDeGondola'
+import { PLANTILLAS_DE_GONDOLA, plantillaDeGondolaPorId, PLANTILLA_POR_DEFECTO_DE_GONDOLA } from './plantillasDeGondola'
 
 describe('PLANTILLAS_DE_GONDOLA', () => {
-  it('son 10: 5 claras y 5 oscuras', () => {
+  it('son 10', () => {
     expect(PLANTILLAS_DE_GONDOLA).toHaveLength(10)
-    expect(PLANTILLAS_DE_GONDOLA.filter((p) => p.tono === 'claro')).toHaveLength(5)
-    expect(PLANTILLAS_DE_GONDOLA.filter((p) => p.tono === 'oscuro')).toHaveLength(5)
   })
 
   it('ids y nombres no se repiten', () => {
@@ -13,30 +12,32 @@ describe('PLANTILLAS_DE_GONDOLA', () => {
     expect(new Set(PLANTILLAS_DE_GONDOLA.map((p) => p.nombre)).size).toBe(10)
   })
 
-  it('ninguna repite la combinación de fondo y precio de otra', () => {
-    expect(new Set(PLANTILLAS_DE_GONDOLA.map((p) => `${p.colores.fondo}|${p.colores.precio}|${p.decoracion}`)).size).toBe(10)
+  it('cada una tiene un diseño propio: los 10 modelos, sin repetir', () => {
+    expect(PLANTILLAS_DE_GONDOLA.map((p) => p.modelo).sort()).toEqual([...IDS_DE_MODELO].sort())
   })
 
-  it('todos los colores son hexadecimales', () => {
+  it('no tienen fondo: solo colores de tinta', () => {
     for (const plantilla of PLANTILLAS_DE_GONDOLA) {
-      for (const color of Object.values(plantilla.colores)) expect(color).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(Object.keys(plantilla.colores).sort()).toEqual(['acento', 'borde', 'precio', 'texto'])
+    }
+  })
+
+  it('solo usan la paleta de la marca Ways y neutros oscuros', () => {
+    const marca = ['#f7941d', '#e8830c', '#9a5200', '#3a2606', '#c4c4ca']
+    const neutros = ['#000000', '#1c1c1f']
+    for (const plantilla of PLANTILLAS_DE_GONDOLA) {
+      for (const color of Object.values(plantilla.colores)) expect([...marca, ...neutros]).toContain(color)
+      expect(Object.values(plantilla.colores).some((color) => marca.includes(color))).toBe(true)
     }
   })
 })
 
 describe('plantillaDeGondolaPorId', () => {
   it('encuentra por id', () => {
-    expect(plantillaDeGondolaPorId('oceano').nombre).toBe('Océano')
+    expect(plantillaDeGondolaPorId('banderin').nombre).toBe('Banderín')
   })
 
   it('un id desconocido cae a la plantilla por defecto', () => {
     expect(plantillaDeGondolaPorId('no-existe')).toBe(PLANTILLA_POR_DEFECTO_DE_GONDOLA)
-  })
-})
-
-describe('rutaDelLogoDeGondola', () => {
-  it('trazo negro sobre fondos claros y blanco sobre oscuros', () => {
-    expect(rutaDelLogoDeGondola('claro')).toBe('/marca/ways-logo-claro.png')
-    expect(rutaDelLogoDeGondola('oscuro')).toBe('/marca/ways-logo-oscuro.png')
   })
 })

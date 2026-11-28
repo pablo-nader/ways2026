@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
+using Ways.Application.Etiquetas;
 using Ways.Application.Precios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Common;
@@ -35,7 +36,8 @@ public class ServicioDeGrillaDeArticulos(
     IRelojDelSistema reloj,
     ServicioDePrecios servicioDePrecios,
     IContextoDeUsuario contexto,
-    IOptions<OpcionesDeGrillaDeArticulos> opciones)
+    IOptions<OpcionesDeGrillaDeArticulos> opciones,
+    ServicioDeEtiquetas servicioDeEtiquetas)
 {
     public async Task<PaginaDeArticulosGrilla> ListarAsync(
         string? codigo = null,
@@ -49,12 +51,30 @@ public class ServicioDeGrillaDeArticulos(
         int tamanio = 25,
         CancellationToken ct = default,
         string? orden = null,
-        string? direccion = null)
+        string? direccion = null,
+        bool conOfertaVigente = false,
+        int? idPuntoVenta = null,
+        int? idListaPrecio = null)
     {
         if (idProveedor is not null && sinProveedor)
         {
             throw new ErrorDominio(
                 "filtro_proveedor_ambiguo", "No se puede combinar idProveedor con sinProveedor.", 400);
+        }
+
+        // La oferta vigente depende de la empresa del punto de venta y de la lista: sin ellos no hay nada que resolver,
+        // y con ellos pero sin el filtro no se usarían — en ambos casos se rechaza en vez de ignorar.
+        var contextoDeOferta = idPuntoVenta is not null && idListaPrecio is not null;
+        if (conOfertaVigente && !contextoDeOferta)
+        {
+            throw new ErrorDominio(
+                "filtro_oferta_sin_contexto", "conOfertaVigente exige idPuntoVenta e idListaPrecio.", 400);
+        }
+
+        if (!conOfertaVigente && (idPuntoVenta is not null || idListaPrecio is not null))
+        {
+            throw new ErrorDominio(
+                "contexto_de_oferta_sin_filtro", "idPuntoVenta e idListaPrecio solo se usan con conOfertaVigente.", 400);
         }
 
         var ordenPedido = OrdenDeGrillaDeArticulos.Interpretar(orden, direccion, PuedeVerCostos);
@@ -68,11 +88,15 @@ public class ServicioDeGrillaDeArticulos(
         var hayFiltroDePrecio = precioDesde is not null || precioHasta is not null;
         var ordenaPorPrecio = ordenPedido is { Columna: ColumnaDeOrdenDeGrilla.Precio };
 
-        return hayFiltroDePrecio || ordenaPorPrecio
+        var contextoOferta = conOfertaVigente ? new ContextoDeOferta(idPuntoVenta!.Value, idListaPrecio!.Value) : (ContextoDeOferta?)null;
+
+        return hayFiltroDePrecio || ordenaPorPrecio || conOfertaVigente
             ? await ListarEnMemoriaAsync(
-                query, listaDefault, precioDesde, precioHasta, hayFiltroDePrecio, ordenPedido, pagina, tamanio, ct)
+                query, listaDefault, precioDesde, precioHasta, hayFiltroDePrecio, ordenPedido, contextoOferta, pagina, tamanio, ct)
             : await ListarSinFiltroDePrecioAsync(query, listaDefault, pagina, tamanio, ct);
     }
+
+    private readonly record struct ContextoDeOferta(int IdPuntoVenta, int IdListaPrecio);
 
     /// <summary>"Lista default del tenant" (Context de esta slice) = la COMPARTIDA
     /// (<c>id_empresa IS NULL</c>, <c>ux_listas_precio_default_compartido</c>) — esta grilla no
@@ -113,12 +137,24 @@ public class ServicioDeGrillaDeArticulos(
     /// (<c>Where</c>) conserva esa secuencia.</summary>
     private async Task<PaginaDeArticulosGrilla> ListarEnMemoriaAsync(
         IQueryable<FilaCandidata> query, ListaDefault? listaDefault, decimal? precioDesde, decimal? precioHasta,
-        bool hayFiltroDePrecio, OrdenDeGrillaDeArticulos? orden, int pagina, int tamanio, CancellationToken ct)
+        bool hayFiltroDePrecio, OrdenDeGrillaDeArticulos? orden, ContextoDeOferta? contextoDeOferta,
+        int pagina, int tamanio, CancellationToken ct)
     {
         var totalCandidatos = await query.CountAsync(ct);
-        var tope = opciones.Value.TopeDeCandidatosPorFiltroDePrecio;
 
-        if (totalCandidatos > tope)
+        if (contextoDeOferta is not null && totalCandidatos > opciones.Value.TopeDeCandidatosPorFiltroDeOferta)
+        {
+            throw new ErrorDominio(
+                "filtro_oferta_excede_tope",
+                $"El filtro de oferta vigente no puede evaluar más de {opciones.Value.TopeDeCandidatosPorFiltroDeOferta} "
+                    + "artículos candidatos; refiná codigo/nombre/idProveedor/sinProveedor/activo antes de acotar por oferta.",
+                400);
+        }
+
+        var tope = opciones.Value.TopeDeCandidatosPorFiltroDePrecio;
+        var evaluaPrecio = hayFiltroDePrecio || orden is { Columna: ColumnaDeOrdenDeGrilla.Precio };
+
+        if (evaluaPrecio && totalCandidatos > tope)
         {
             throw hayFiltroDePrecio
                 ? new ErrorDominio(
@@ -134,6 +170,14 @@ public class ServicioDeGrillaDeArticulos(
         }
 
         var candidatos = await query.ToListAsync(ct);
+
+        if (contextoDeOferta is { } oferta)
+        {
+            var conOferta = await servicioDeEtiquetas.IdsConOfertaVigenteAsync(
+                candidatos.Select(c => c.Id).ToList(), oferta.IdPuntoVenta, oferta.IdListaPrecio, ct);
+            candidatos = candidatos.Where(c => conOferta.Contains(c.Id)).ToList();
+        }
+
         var precios = await ResolverPreciosAsync(candidatos, listaDefault, ct);
 
         var filtrados = candidatos

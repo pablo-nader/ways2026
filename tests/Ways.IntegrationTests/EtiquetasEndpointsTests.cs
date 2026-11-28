@@ -981,4 +981,53 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
             contadorUno.Consultas <= 14,
             $"Se esperaban a lo sumo 14 consultas en el camino de ids explícitos (design: Testing Strategy), se emitieron {contadorUno.Consultas}.");
     }
+
+    // ---- grilla de artículos con oferta vigente ---------------------------------------------
+
+    /// <summary>El filtro <c>conOfertaVigente</c> de <c>GET /api/articulos/grilla</c> deja solo los artículos con oferta
+    /// para el punto de venta y la lista (una de otra empresa no cuenta), pagina y cuenta sobre ese conjunto, y un
+    /// supervisor lo puede usar. Sin contexto, o con un punto de venta inexistente, responde 400 y 404.</summary>
+    [Fact]
+    public async Task LaGrillaDeArticulosFiltraPorOfertaVigenteYPaginaSobreEseConjunto()
+    {
+        var (idTenant, _, idPuntoVenta, idArea, idAlicuotaIva, idLista, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(LaGrillaDeArticulosFiltraPorOfertaVigenteYPaginaSobreEseConjunto));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var idEmpresaB = await SembrarEmpresaAsync(idTenant, "Empresa B de la grilla");
+
+        var conOferta = new List<int>();
+        for (var i = 1; i <= 3; i++)
+        {
+            var sin = await SembrarArticuloAsync(idTenant, $"grilla-sin-{i}", idArea, idAlicuotaIva);
+            await SembrarPrecioAsync(sin, idLista, 100m);
+            var con = await SembrarArticuloAsync(idTenant, $"grilla-con-{i}", idArea, idAlicuotaIva);
+            await SembrarPrecioAsync(con, idLista, 100m);
+            await CrearOfertaAsync(admin, OfertaDeArticulo(con, porcentaje: 10m));
+            conOferta.Add(con);
+        }
+
+        var deOtraEmpresa = await SembrarArticuloAsync(idTenant, "grilla-otra-empresa", idArea, idAlicuotaIva);
+        await SembrarPrecioAsync(deOtraEmpresa, idLista, 100m);
+        await CrearOfertaAsync(admin, OfertaDeArticulo(deOtraEmpresa, porcentaje: 10m, idEmpresa: idEmpresaB));
+
+        var contexto = $"conOfertaVigente=true&idPuntoVenta={idPuntoVenta}&idListaPrecio={idLista}";
+        var primera = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>($"/api/articulos/grilla?{contexto}&pagina=1&tamanio=2");
+        var segunda = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>($"/api/articulos/grilla?{contexto}&pagina=2&tamanio=2");
+
+        Assert.Equal(3, primera!.Total);
+        Assert.Equal(2, primera.Items.Count);
+        Assert.Single(segunda!.Items);
+        Assert.Equal(conOferta.Order(), primera.Items.Concat(segunda.Items).Select(i => i.Id).Order());
+
+        using var supervisor = await ClienteLogueadoAsync(
+            await SembrarSupervisorAsync(idTenant, nameof(LaGrillaDeArticulosFiltraPorOfertaVigenteYPaginaSobreEseConjunto)), PasswordSupervisor);
+        var comoSupervisor = await supervisor.GetFromJsonAsync<PaginaDeArticulosGrilla>($"/api/articulos/grilla?{contexto}");
+        Assert.Equal(3, comoSupervisor!.Total);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/articulos/grilla?conOfertaVigente=true")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync($"/api/articulos/grilla?idListaPrecio={idLista}")).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            (await admin.GetAsync($"/api/articulos/grilla?conOfertaVigente=true&idPuntoVenta=999999&idListaPrecio={idLista}")).StatusCode);
+    }
 }

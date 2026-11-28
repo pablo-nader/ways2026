@@ -6,7 +6,13 @@ import {
   type OrdenDeGrillaDeArticulos,
 } from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
-import type { FilaDeGrillaDeArticulos, FiltrosDeGrillaDeArticulos, PaginaDeGrillaDeArticulos, ProveedorListado } from '../../api/tipos'
+import type {
+  FilaDeGrillaDeArticulos,
+  FiltrosDeGrillaDeArticulos,
+  OfertaVigenteDeGrilla,
+  PaginaDeGrillaDeArticulos,
+  ProveedorListado,
+} from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { EncabezadoOrdenable } from '../../componentes/grilla'
@@ -30,17 +36,29 @@ function formatearPrecio(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
+/** Modo de selección de la grilla: columna de casillas al principio y sin la columna de acciones (Editar/Baja). */
+export type SeleccionDeGrilla = {
+  ids: ReadonlySet<number>
+  onAlternar: (fila: FilaDeGrillaDeArticulos) => void
+  /** `marcar` es el estado al que el usuario quiere llevar a TODA la página visible. */
+  onAlternarPagina: (filas: readonly FilaDeGrillaDeArticulos[], marcar: boolean) => void
+}
+
 type Props = {
   /** Ya ordenados por `ordenarProveedoresPorEtiqueta` — la grilla no reordena, solo lista. */
   proveedores: ProveedorListado[]
   /** Mismo flag que gobierna el modal en `Articulos.tsx` (guardando/eliminando/escrituras
    * hijas en vuelo): mientras es `true`, Editar/Baja quedan inertes en toda fila. */
-  ocupado: boolean
+  ocupado?: boolean
   /** El padre pide un refresco (post guardado/baja) incrementando este contador — la grilla
    * refetchea con los MISMOS `filtros`/página en curso, nunca los resetea. */
-  pedidoDeRefresco: number
+  pedidoDeRefresco?: number
   /** `disparador` es el botón que se pulsó, capturado en su `onClick`: no depende de que el navegador lo enfoque. */
-  onEliminar: (fila: FilaDeGrillaDeArticulos, disparador: HTMLElement) => void
+  onEliminar?: (fila: FilaDeGrillaDeArticulos, disparador: HTMLElement) => void
+  /** Con selección, la grilla no muestra Editar/Baja: `onEliminar` no se usa. */
+  seleccion?: SeleccionDeGrilla
+  /** Deja solo los artículos con oferta vigente para ese punto de venta y lista (filtro del servidor). */
+  ofertaVigente?: OfertaVigenteDeGrilla | null
 }
 
 /**
@@ -52,8 +70,18 @@ type Props = {
  * reporta como fallido; acá el guardado y el refresco de la grilla son dos fuentes de error
  * completamente separadas, cada una con su propio banner — regla 14).
  */
-export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEliminar }: Props) {
-  const [filtros, setFiltros] = useState<FiltrosDeGrillaDeArticulos>(filtrosDeGrillaDeArticulosVacios())
+export function GrillaDeArticulos({
+  proveedores,
+  ocupado = false,
+  pedidoDeRefresco = 0,
+  onEliminar,
+  seleccion,
+  ofertaVigente = null,
+}: Props) {
+  const [filtros, setFiltros] = useState<FiltrosDeGrillaDeArticulos>(() => ({ ...filtrosDeGrillaDeArticulosVacios(), ofertaVigente }))
+  const idPuntoVentaDeOferta = ofertaVigente?.idPuntoVenta ?? null
+  const idListaDeOferta = ofertaVigente?.idListaPrecio ?? null
+  const esPrimerRenderDeOfertaRef = useRef(true)
   // El orden es del servidor (esta grilla pagina en el servidor: ordenar solo la página cargada
   // mentiría); `null` = orden de siempre. Es una preferencia de vista como el tamaño de página:
   // "Limpiar" no la toca.
@@ -128,6 +156,16 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pedidoDeRefresco])
 
+  // Prender, apagar o cambiar el contexto de oferta es otro conjunto de artículos: vuelve a la página 1 y conserva el resto.
+  useEffect(() => {
+    if (esPrimerRenderDeOfertaRef.current) {
+      esPrimerRenderDeOfertaRef.current = false
+      return
+    }
+    const siguiente = idPuntoVentaDeOferta === null || idListaDeOferta === null ? null : { idPuntoVenta: idPuntoVentaDeOferta, idListaPrecio: idListaDeOferta }
+    setFiltros((prev) => ({ ...prev, ofertaVigente: siguiente, pagina: 1 }))
+  }, [idPuntoVentaDeOferta, idListaDeOferta])
+
   function programarCambioDeTexto(cambios: Partial<BorradorDeTexto>) {
     const nuevo = { ...borradorRef.current, ...cambios }
     borradorRef.current = nuevo
@@ -166,7 +204,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
     borradorRef.current = borradorVacio()
     setBorrador(borradorVacio())
     // El tamaño de página es una preferencia de visualización, no un filtro: Limpiar no lo toca.
-    setFiltros((prev) => ({ ...filtrosDeGrillaDeArticulosVacios(), tamanio: prev.tamanio }))
+    setFiltros((prev) => ({ ...filtrosDeGrillaDeArticulosVacios(), tamanio: prev.tamanio, ofertaVigente: prev.ofertaVigente }))
   }
 
   // Mismo criterio que la grilla anterior (`Articulos.tsx`): mientras `ocupado`, un click simple
@@ -190,7 +228,9 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
     filtros.idProveedor !== null ||
     filtros.sinProveedor ||
     filtros.activo !== null
-  const valorSelectProveedor = filtros.sinProveedor ? 'sin-proveedor' : (filtros.idProveedor?.toString() ?? '')
+  const filasDeLaPagina = pagina?.items ?? []
+  const paginaMarcada = seleccion !== undefined && filasDeLaPagina.length > 0 && filasDeLaPagina.every((fila) => seleccion.ids.has(fila.id))
+  const valorSelectProveedor =filtros.sinProveedor ? 'sin-proveedor' : (filtros.idProveedor?.toString() ?? '')
 
   return (
     <>
@@ -211,6 +251,18 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
+                  {seleccion && (
+                    <th scope="col" style={{ width: '2.5rem' }}>
+                      <input
+                        type="checkbox"
+                        className="form-check-input"
+                        aria-label="Seleccionar la página"
+                        checked={paginaMarcada}
+                        disabled={cargando || filasDeLaPagina.length === 0}
+                        onChange={() => seleccion.onAlternarPagina(filasDeLaPagina, !paginaMarcada)}
+                      />
+                    </th>
+                  )}
                   <EncabezadoOrdenable columna="codigo" orden={orden} onAlternar={alternarOrden}>
                     Código
                   </EncabezadoOrdenable>
@@ -232,11 +284,14 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternarOrden}>
                     Estado
                   </EncabezadoOrdenable>
-                  <th scope="col" className="text-end">
-                    Acciones
-                  </th>
+                  {!seleccion && (
+                    <th scope="col" className="text-end">
+                      Acciones
+                    </th>
+                  )}
                 </tr>
                 <tr>
+                  {seleccion && <th scope="col" />}
                   <th scope="col">
                     <input
                       type="search"
@@ -303,30 +358,50 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   </th>
                   <th scope="col" />
                   <th scope="col">
-                    <select
-                      className="form-select form-select-sm"
-                      aria-label="Filtrar por estado"
-                      value={filtros.activo === null ? '' : String(filtros.activo)}
-                      onChange={(e) => {
-                        const valor = e.target.value
-                        cambiarFiltroInmediato({ activo: valor === '' ? null : valor === 'true' })
-                      }}
-                    >
-                      <option value="">Todos los estados</option>
-                      <option value="true">Activos</option>
-                      <option value="false">Inactivos</option>
-                    </select>
+                    <div className="d-flex gap-1">
+                      <select
+                        className="form-select form-select-sm"
+                        aria-label="Filtrar por estado"
+                        value={filtros.activo === null ? '' : String(filtros.activo)}
+                        onChange={(e) => {
+                          const valor = e.target.value
+                          cambiarFiltroInmediato({ activo: valor === '' ? null : valor === 'true' })
+                        }}
+                      >
+                        <option value="">Todos los estados</option>
+                        <option value="true">Activos</option>
+                        <option value="false">Inactivos</option>
+                      </select>
+                      {seleccion && (
+                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={limpiarFiltros}>
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
                   </th>
-                  <th scope="col" className="text-end">
-                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={limpiarFiltros}>
-                      Limpiar
-                    </button>
-                  </th>
+                  {!seleccion && (
+                    <th scope="col" className="text-end">
+                      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={limpiarFiltros}>
+                        Limpiar
+                      </button>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody style={cargando ? { opacity: 0.6 } : undefined}>
-                {pagina?.items.map((a) => (
+                {filasDeLaPagina.map((a) => (
                   <tr key={a.id}>
+                    {seleccion && (
+                      <td>
+                        <input
+                          type="checkbox"
+                          className="form-check-input"
+                          aria-label={`Seleccionar ${a.nombre}`}
+                          checked={seleccion.ids.has(a.id)}
+                          onChange={() => seleccion.onAlternar(a)}
+                        />
+                      </td>
+                    )}
                     <td className="text-body-secondary small">{a.codigoInterno}</td>
                     <td className="fw-semibold">{a.nombre}</td>
                     <td>{formatearPrecio(a.costoNominal)}</td>
@@ -342,24 +417,26 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                         {a.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    <td className="text-end text-nowrap">
-                      {/* <Link> real (no un botón con navigate): permite click-del-medio/Ctrl-click
-                          para abrir en pestaña nueva, con la navegación en ESTA pestaña bloqueada
-                          mientras `ocupado` — ver `alClickearEditar`. */}
-                      <EnlaceIcono
-                        icono="editar"
-                        to={`/articulos/edit/${a.id}`}
-                        className="me-1"
-                        style={ocupado ? { opacity: 0.65 } : undefined}
-                        aria-disabled={ocupado}
-                        onClick={alClickearEditar}
-                      />
-                      <BotonIcono
-                        icono="eliminar"
-                        disabled={ocupado}
-                        onClick={(evento) => onEliminar(a, evento.currentTarget)}
-                      />
-                    </td>
+                    {!seleccion && (
+                      <td className="text-end text-nowrap">
+                        {/* <Link> real (no un botón con navigate): permite click-del-medio/Ctrl-click
+                            para abrir en pestaña nueva, con la navegación en ESTA pestaña bloqueada
+                            mientras `ocupado` — ver `alClickearEditar`. */}
+                        <EnlaceIcono
+                          icono="editar"
+                          to={`/articulos/edit/${a.id}`}
+                          className="me-1"
+                          style={ocupado ? { opacity: 0.65 } : undefined}
+                          aria-disabled={ocupado}
+                          onClick={alClickearEditar}
+                        />
+                        <BotonIcono
+                          icono="eliminar"
+                          disabled={ocupado}
+                          onClick={(evento) => onEliminar?.(a, evento.currentTarget)}
+                        />
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {pagina !== null && pagina.items.length === 0 && (
@@ -372,6 +449,8 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                             Limpiar filtros
                           </button>
                         </>
+                      ) : filtros.ofertaVigente ? (
+                        'No hay artículos con oferta vigente.'
                       ) : (
                         'Todavía no hay artículos.'
                       )}

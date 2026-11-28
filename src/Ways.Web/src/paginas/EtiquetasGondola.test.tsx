@@ -1,7 +1,15 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DatosDeEtiquetas, FilaDeEtiqueta, ListaPrecioAsignable, PuntoVentaListado, SolicitudDeEtiquetas } from '../api/tipos'
+import type {
+  DatosDeEtiquetas,
+  FilaDeEtiqueta,
+  FilaDeGrillaDeArticulos,
+  ListaPrecioAsignable,
+  PaginaDeGrillaDeArticulos,
+  PuntoVentaListado,
+  SolicitudDeEtiquetas,
+} from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 import { EtiquetasGondola } from './EtiquetasGondola'
 
@@ -39,12 +47,15 @@ vi.mock('../puntoVenta/usePuntoVenta', () => ({
 }))
 
 const TOTAL_DE_ARTICULOS = 30
-const TAMANIO = 25
 const listas: ListaPrecioAsignable[] = [
   { id: 4, nombre: 'Mayorista', esDefault: false },
   { id: 3, nombre: 'General', esDefault: true },
 ]
 const oferta = { idOferta: 1, nombre: '15%', descuentoUnitario: 15 }
+
+function conOferta(id: number): boolean {
+  return id % 10 === 0
+}
 
 function fila(id: number, idLista: number): FilaDeEtiqueta {
   const precio = idLista === 3 ? 100 * id : 80 * id
@@ -55,26 +66,45 @@ function fila(id: number, idLista: number): FilaDeEtiqueta {
     nombre: `Artículo ${id}`,
     unidadVenta: 'Unidad',
     precioOriginal: precio,
-    precioFinal: id % 10 === 0 ? precio - 15 : precio,
-    ofertas: id % 10 === 0 ? [oferta] : [],
+    precioFinal: conOferta(id) ? precio - 15 : precio,
+    ofertas: conOferta(id) ? [oferta] : [],
     promociones: [],
   }
 }
 
 function datosDe(solicitud: SolicitudDeEtiquetas): DatosDeEtiquetas {
-  const ids = solicitud.idsArticulo ?? Array.from({ length: TOTAL_DE_ARTICULOS }, (_, i) => i + 1)
-  const filas = ids.map((id) => fila(id, solicitud.idListaPrecio)).filter((f) => !solicitud.filtro?.soloConOfertaVigente || f.ofertas.length > 0)
-  return { idListaPrecio: solicitud.idListaPrecio, nombreDeLista: 'General', momento: '2026-11-27T10:00:00Z', filas, excluidos: [], truncado: false }
+  const ids = solicitud.idsArticulo ?? []
+  return { idListaPrecio: solicitud.idListaPrecio, nombreDeLista: 'General', momento: '2026-11-27T10:00:00Z', filas: ids.map((id) => fila(id, solicitud.idListaPrecio)), excluidos: [], truncado: false }
 }
 
-function articulosDe(ruta: string) {
+function filaDeGrilla(id: number): FilaDeGrillaDeArticulos {
+  return {
+    id,
+    codigoInterno: `A${id}`,
+    nombre: `Artículo ${id}`,
+    precio: 100 * id,
+    costoNominal: 50 * id,
+    idProveedorHabitual: null,
+    proveedor: null,
+    activo: true,
+    disponibleOnline: false,
+    disponibleVenta: true,
+    tieneImagen: false,
+  }
+}
+
+function grillaDe(ruta: string): PaginaDeGrillaDeArticulos {
   const consulta = new URLSearchParams(ruta.split('?')[1])
   const pagina = Number(consulta.get('pagina'))
-  const desde = (pagina - 1) * TAMANIO
-  const items = Array.from({ length: TOTAL_DE_ARTICULOS }, (_, i) => i + 1)
-    .slice(desde, desde + TAMANIO)
-    .map((id) => ({ id, codigoInterno: `A${id}`, nombre: `Artículo ${id}` }))
-  return { items, total: TOTAL_DE_ARTICULOS, pagina, tamanio: TAMANIO }
+  const tamanio = Number(consulta.get('tamanio'))
+  const soloOfertas = consulta.get('conOfertaVigente') === 'true'
+  const todos = Array.from({ length: TOTAL_DE_ARTICULOS }, (_, i) => i + 1).filter((id) => !soloOfertas || conOferta(id))
+  const desde = (pagina - 1) * tamanio
+  return { items: todos.slice(desde, desde + tamanio).map(filaDeGrilla), total: todos.length, pagina, tamanio, nombreListaPrecio: 'General' }
+}
+
+function rutasDeGrilla(): string[] {
+  return apiGetMock.mock.calls.map((llamada) => llamada[0] as string).filter((ruta) => ruta.startsWith('/articulos/grilla'))
 }
 
 beforeEach(() => {
@@ -82,7 +112,8 @@ beforeEach(() => {
   apiPostMock.mockReset()
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/listas-precio') return Promise.resolve(listas)
-    if (ruta.startsWith('/articulos?')) return Promise.resolve(articulosDe(ruta))
+    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 200 })
+    if (ruta.startsWith('/articulos/grilla')) return Promise.resolve(grillaDe(ruta))
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
   apiPostMock.mockImplementation((ruta: string, cuerpo: SolicitudDeEtiquetas) => {
@@ -105,40 +136,57 @@ async function renderYEsperarGrilla() {
   await screen.findByRole('option', { name: 'General' })
   await waitFor(() => expect(screen.getByLabelText('Lista de precios')).toHaveValue('3'))
   await screen.findByText('Artículo 1')
-  await screen.findByText('$ 100')
 }
 
 describe('EtiquetasGondola', () => {
+  it('lista los artículos con la grilla de artículos: columnas, filtros y selección, sin acciones', async () => {
+    await renderYEsperarGrilla()
+    expect(screen.getByLabelText('Filtrar por código')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por proveedor')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Costo/ })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Acciones' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Seleccionar Artículo 1')).toBeInTheDocument()
+    expect(rutasDeGrilla()[0]).toBe('/articulos/grilla?pagina=1&tamanio=25')
+  })
+
   it('elige la lista por defecto y pide los precios con ella', async () => {
     await renderYEsperarGrilla()
+    await userEvent.click(screen.getByLabelText('Seleccionar Artículo 1'))
     await waitFor(() => expect(solicitudes().some((s) => s.idListaPrecio === 3 && s.idPuntoVenta === 7)).toBe(true))
     expect(solicitudes().every((s) => s.idListaPrecio === 3)).toBe(true)
   })
 
-  it('al cambiar de lista la grilla muestra los precios de esa lista', async () => {
-    await renderYEsperarGrilla()
-    await userEvent.selectOptions(screen.getByLabelText('Lista de precios'), '4')
-    await screen.findByText('$ 80')
-  })
-
-  it('ofrece 10 plantillas: 5 claras y 5 oscuras', async () => {
+  it('ofrece las 10 plantillas en una sola lista', async () => {
     await renderYEsperarGrilla()
     const plantilla = screen.getByLabelText('Plantilla')
     expect(within(plantilla).getAllByRole('option')).toHaveLength(10)
-    expect(within(within(plantilla).getByRole('group', { name: 'Claras' })).getAllByRole('option')).toHaveLength(5)
-    expect(within(within(plantilla).getByRole('group', { name: 'Oscuras' })).getAllByRole('option')).toHaveLength(5)
+    expect(within(plantilla).queryByRole('group')).not.toBeInTheDocument()
   })
 
-  it('Imprimir está deshabilitado sin selección', async () => {
+  it('Imprimir y Vista previa están deshabilitados sin selección', async () => {
     await renderYEsperarGrilla()
     expect(screen.getByRole('button', { name: 'Imprimir' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Vista previa' })).toBeDisabled()
+  })
+
+  it('las hojas no se muestran en la página: solo aparecen al abrir la vista previa, y se cierra', async () => {
+    await renderYEsperarGrilla()
+    await userEvent.click(screen.getByLabelText('Seleccionar Artículo 1'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Imprimir' })).toBeEnabled())
+    expect(screen.queryByTestId('gondola-hoja')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }))
+    const dialogo = await screen.findByRole('dialog')
+    expect(within(dialogo).getAllByTestId('gondola-hoja')).toHaveLength(1)
+    expect(within(dialogo).getAllByTestId('gondola-etiqueta')).toHaveLength(1)
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cerrar vista previa' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('gondola-hoja')).not.toBeInTheDocument()
   })
 
   it('conserva la selección entre páginas y arma la vista previa con los elegidos', async () => {
-    let hojasEnLaImpresion = 0
-    const imprimir = vi.spyOn(window, 'print').mockImplementation(() => {
-      hojasEnLaImpresion = document.querySelectorAll('body > .gondola-impresion [data-testid="gondola-hoja"]').length
-    })
     await renderYEsperarGrilla()
 
     await userEvent.click(screen.getByLabelText('Seleccionar Artículo 1'))
@@ -150,15 +198,44 @@ describe('EtiquetasGondola', () => {
     expect(await screen.findByLabelText('Seleccionar Artículo 1')).toBeChecked()
 
     await waitFor(() => expect(solicitudes().some((s) => s.idsArticulo?.join(',') === '1,26')).toBe(true))
-    const imprimirBoton = screen.getByRole('button', { name: 'Imprimir' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Vista previa' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }))
+    const dialogo = await screen.findByRole('dialog')
+    expect(within(dialogo).getAllByTestId('gondola-etiqueta')).toHaveLength(2)
+  })
+
+  it('Imprimir desde la vista previa imprime las hojas por el portal del body y no deja nada colgado', async () => {
+    let hojasEnLaImpresion = 0
+    let modalEnLaImpresion = false
+    const imprimir = vi.spyOn(window, 'print').mockImplementation(() => {
+      hojasEnLaImpresion = document.querySelectorAll('body > .gondola-impresion [data-testid="gondola-hoja"]').length
+      modalEnLaImpresion = document.querySelector('body > .gondola-impresion [role="dialog"]') !== null
+    })
+    await renderYEsperarGrilla()
+    await userEvent.click(screen.getByLabelText('Seleccionar Artículo 1'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Vista previa' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }))
+    const dialogo = await screen.findByRole('dialog')
+    const imprimirBoton = within(dialogo).getByRole('button', { name: 'Imprimir' })
     await waitFor(() => expect(imprimirBoton).toBeEnabled())
-    expect(screen.getAllByTestId('gondola-hoja')).toHaveLength(1)
-    expect(screen.getAllByTestId('gondola-etiqueta')).toHaveLength(2)
 
     await userEvent.click(imprimirBoton)
+
     expect(imprimir).toHaveBeenCalledTimes(1)
     expect(hojasEnLaImpresion).toBe(1)
+    expect(modalEnLaImpresion).toBe(false)
     expect(document.querySelector('.gondola-impresion')).toBeNull()
+  })
+
+  it('Imprimir de la página sigue imprimiendo sin abrir la vista previa', async () => {
+    const imprimir = vi.spyOn(window, 'print').mockImplementation(() => undefined)
+    await renderYEsperarGrilla()
+    await userEvent.click(screen.getByLabelText('Seleccionar Artículo 1'))
+    const boton = screen.getByRole('button', { name: 'Imprimir' })
+    await waitFor(() => expect(boton).toBeEnabled())
+    await userEvent.click(boton)
+    expect(imprimir).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('seleccionar la página elige las 25 filas y limpiar vacía la selección', async () => {
@@ -169,12 +246,12 @@ describe('EtiquetasGondola', () => {
     expect(screen.getByText('0 seleccionados')).toBeInTheDocument()
   })
 
-  it('con Ofertas pide el filtro de ofertas vigentes y lista solo esos artículos', async () => {
+  it('con Ofertas pide el filtro de oferta vigente al servidor con el punto de venta y la lista', async () => {
     await renderYEsperarGrilla()
     await userEvent.click(screen.getByLabelText('Ofertas'))
 
-    await waitFor(() => expect(solicitudes().some((s) => s.filtro?.soloConOfertaVigente === true)).toBe(true))
     await waitFor(() => expect(screen.queryByText('Artículo 1')).not.toBeInTheDocument())
+    expect(rutasDeGrilla().at(-1)).toBe('/articulos/grilla?conOfertaVigente=true&idPuntoVenta=7&idListaPrecio=3&pagina=1&tamanio=25')
     expect(screen.getByText('Artículo 10')).toBeInTheDocument()
     expect(screen.getByText('Artículo 20')).toBeInTheDocument()
     expect(screen.getByText('Artículo 30')).toBeInTheDocument()
@@ -185,6 +262,8 @@ describe('EtiquetasGondola', () => {
     await userEvent.click(screen.getByLabelText('Ofertas'))
     await screen.findByText('Artículo 10')
     await userEvent.click(screen.getByLabelText('Seleccionar Artículo 10'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Vista previa' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }))
 
     expect(await screen.findByTestId('gondola-precio-tachado')).toHaveTextContent('$ 1.000')
     expect(screen.getByTestId('gondola-precio')).toHaveTextContent('$ 985')

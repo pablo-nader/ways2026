@@ -17,6 +17,23 @@ export function formatearPrecioDeGondola(valor: number): string {
   return formatearImporte(valor, { simbolo: true, decimales: entero ? 0 : 2 })
 }
 
+export type PrecioPartido = {
+  /** Todo lo que va antes del número, con el signo pesos: "$" o "3x $". */
+  prefijo: string
+  entero: string
+  /** Los centavos sin la coma; `null` cuando el precio no tiene decimales. */
+  centavos: string | null
+}
+
+/** Parte un precio ya formateado ("$ 12.345,67", "3x $ 2.700") para la tipografía de supermercado, sin volver a formatear números. */
+export function partirPrecio(texto: string): PrecioPartido {
+  const signo = texto.lastIndexOf('$')
+  const prefijo = signo >= 0 ? texto.slice(0, signo + 1).trim() : ''
+  const numero = (signo >= 0 ? texto.slice(signo + 1) : texto).trim()
+  const coma = numero.lastIndexOf(',')
+  return coma >= 0 ? { prefijo, entero: numero.slice(0, coma), centavos: numero.slice(coma + 1) } : { prefijo, entero: numero, centavos: null }
+}
+
 const FORMATO_DE_CANTIDAD = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 3 })
 
 /** Cantidad con coma decimal ("1,5"), sin ceros de más. */

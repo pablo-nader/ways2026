@@ -32,6 +32,13 @@ describe('construirQueryDeGrillaDeArticulos', () => {
     expect(construirQueryDeGrillaDeArticulos(filtros())).toBe('?pagina=1&tamanio=25')
   })
 
+  it('manda conOfertaVigente con el punto de venta y la lista, antes de la paginación; con null no manda nada', () => {
+    expect(construirQueryDeGrillaDeArticulos(filtros({ ofertaVigente: { idPuntoVenta: 7, idListaPrecio: 3 } }))).toBe(
+      '?conOfertaVigente=true&idPuntoVenta=7&idListaPrecio=3&pagina=1&tamanio=25',
+    )
+    expect(construirQueryDeGrillaDeArticulos(filtros({ ofertaVigente: null }))).toBe('?pagina=1&tamanio=25')
+  })
+
   it('manda codigo recortado, nunca en blanco', () => {
     expect(construirQueryDeGrillaDeArticulos(filtros({ codigo: '  A001  ' }))).toContain('codigo=A001')
     expect(construirQueryDeGrillaDeArticulos(filtros({ codigo: '   ' }))).not.toContain('codigo=')

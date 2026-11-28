@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { partirEnLineas, presupuestoVertical, tamanioDeFuenteDelNombre, tamanioDeFuenteDelPrecio, MAXIMO_DE_LINEAS_DEL_NOMBRE } from './ajusteDeTexto'
-import { ETIQUETAS_POR_HOJA, disposicionDeHoja } from './disposicionDeHojas'
+import {
+  ajustarNombre,
+  ANCHO_DE_CARACTER_DEL_NOMBRE,
+  anchoDelPrecioEnEm,
+  ESCALA_DE_ANCHO_DEL_PRECIO,
+  FUENTE_MINIMA_MM,
+  fuenteParaUnaLinea,
+  INTERLINEADO_DEL_NOMBRE,
+  MAXIMO_DE_LINEAS_DEL_NOMBRE,
+  partirEnLineas,
+} from './ajusteDeTexto'
 
 describe('partirEnLineas', () => {
   it('corta por palabras sin pasarse del ancho', () => {
@@ -16,75 +25,70 @@ describe('partirEnLineas', () => {
   })
 })
 
-describe('tamanioDeFuenteDelNombre', () => {
-  const celda = (porHoja: (typeof ETIQUETAS_POR_HOJA)[number]) => {
-    const d = disposicionDeHoja(porHoja)
-    return { anchoMm: d.celdaAnchoMm, altoMm: d.celdaAltoMm }
-  }
+describe('ajustarNombre', () => {
+  const caja = { anchoMm: 60, altoMm: 12 }
+  const factor = ANCHO_DE_CARACTER_DEL_NOMBRE.normal
 
   it('un nombre corto usa la fuente más grande', () => {
-    const corto = tamanioDeFuenteDelNombre('Sal', celda(8))
-    const largo = tamanioDeFuenteDelNombre('Aceite de girasol alto oleico Cocinero botella 900 ml', celda(8))
-    expect(corto).toBeGreaterThan(largo)
+    expect(ajustarNombre('Sal', caja, factor, 20).fuenteMm).toBeGreaterThan(ajustarNombre('Aceite de girasol alto oleico Cocinero 900 ml', caja, factor, 20).fuenteMm)
+  })
+
+  it('nunca pasa del tope pedido ni del alto de una línea', () => {
+    expect(ajustarNombre('Sal', caja, factor, 4).fuenteMm).toBeLessThanOrEqual(4)
+    expect(ajustarNombre('Sal', caja, factor, 50).fuenteMm).toBeLessThanOrEqual(caja.altoMm / INTERLINEADO_DEL_NOMBRE)
   })
 
   it('la fuente nunca crece al alargar el nombre', () => {
-    const base = 'Galletitas surtidas '
     let anterior = Number.POSITIVE_INFINITY
     for (let repeticiones = 1; repeticiones <= 8; repeticiones++) {
-      const tamanio = tamanioDeFuenteDelNombre(base.repeat(repeticiones).trim(), celda(16))
-      expect(tamanio).toBeLessThanOrEqual(anterior)
-      anterior = tamanio
+      const { fuenteMm } = ajustarNombre('Galletitas surtidas '.repeat(repeticiones).trim(), caja, factor, 10)
+      expect(fuenteMm).toBeLessThanOrEqual(anterior)
+      anterior = fuenteMm
     }
   })
 
-  it('el nombre elegido entra siempre en dos líneas para todos los formatos', () => {
-    const nombre = 'Fideos tallarines al huevo Matarazzo paquete familiar 500 g'
-    for (const porHoja of ETIQUETAS_POR_HOJA) {
-      const c = celda(porHoja)
-      const fuente = tamanioDeFuenteDelNombre(nombre, c)
-      const lineas = partirEnLineas(nombre, (c.anchoMm * 0.88) / (fuente * 0.68))
-      expect(lineas.length).toBeLessThanOrEqual(MAXIMO_DE_LINEAS_DEL_NOMBRE)
-    }
+  it('el resultado entra en dos líneas dentro de la caja', () => {
+    const { fuenteMm, lineas } = ajustarNombre('Fideos tallarines al huevo Matarazzo paquete familiar 500 g', caja, factor, 10)
+    expect(lineas.length).toBeLessThanOrEqual(MAXIMO_DE_LINEAS_DEL_NOMBRE)
+    expect(lineas.length * fuenteMm * INTERLINEADO_DEL_NOMBRE).toBeLessThanOrEqual(caja.altoMm)
+    for (const linea of lineas) expect(linea.length * fuenteMm * factor).toBeLessThanOrEqual(caja.anchoMm)
   })
 
-  it('una celda más chica reduce la fuente', () => {
-    const nombre = 'Yerba mate con palo Taragüi 1 kg'
-    expect(tamanioDeFuenteDelNombre(nombre, celda(16))).toBeLessThan(tamanioDeFuenteDelNombre(nombre, celda(2)))
-  })
-
-  it('un nombre imposible cae al mínimo en vez de desbordar o romper', () => {
-    expect(tamanioDeFuenteDelNombre('x'.repeat(400), celda(16))).toBe(2.2)
+  it('un nombre imposible cae al mínimo en vez de romper', () => {
+    expect(ajustarNombre('x'.repeat(400), caja, factor, 10).fuenteMm).toBe(FUENTE_MINIMA_MM)
   })
 })
 
-describe('tamanioDeFuenteDelPrecio', () => {
-  const celda = { anchoMm: 90, altoMm: 90 }
-
-  it('un precio corto usa el tope por alto', () => {
-    expect(tamanioDeFuenteDelPrecio('$ 90', celda)).toBe(27)
+describe('anchoDelPrecioEnEm', () => {
+  it('los separadores y el espacio son más angostos que los dígitos', () => {
+    expect(anchoDelPrecioEnEm('$ 1.234,50')).toBeCloseTo(7 * 0.6 + 0.26 + 0.26 + 0.21, 6)
   })
 
-  it('un precio largo se achica para no pasarse del ancho', () => {
-    expect(tamanioDeFuenteDelPrecio('$ 1.234.567,89', celda)).toBeLessThan(tamanioDeFuenteDelPrecio('$ 90', celda))
+  it('un texto vacío no mide nada', () => {
+    expect(anchoDelPrecioEnEm('')).toBe(0)
   })
 })
 
-describe('presupuestoVertical', () => {
-  const nombre = 'Aceite de girasol alto oleico Cocinero botella 900 ml'
+describe('fuenteParaUnaLinea', () => {
+  const caja = { anchoMm: 90, altoMm: 27 }
 
-  for (const porHoja of ETIQUETAS_POR_HOJA) {
-    for (const conOferta of [false, true]) {
-      it(`${porHoja} por hoja ${conOferta ? 'con' : 'sin'} oferta: la suma de los bloques entra en la celda`, () => {
-        const d = disposicionDeHoja(porHoja)
-        const presupuesto = presupuestoVertical(nombre, '$ 12.345,67', { anchoMm: d.celdaAnchoMm, altoMm: d.celdaAltoMm }, conOferta)
-        expect(presupuesto.totalMm).toBeLessThanOrEqual(d.celdaAltoMm)
-      })
-    }
-  }
+  it('un texto corto usa el alto de la caja', () => {
+    expect(fuenteParaUnaLinea(anchoDelPrecioEnEm('$ 9'), caja)).toBe(27)
+  })
 
-  it('con oferta el precio es más chico que sin oferta', () => {
-    const celda = { anchoMm: 68, altoMm: 46 }
-    expect(tamanioDeFuenteDelPrecio('$ 90', celda, true)).toBeLessThan(tamanioDeFuenteDelPrecio('$ 90', celda))
+  it('un texto largo se achica para no pasarse del ancho', () => {
+    const ancho = anchoDelPrecioEnEm('$ 1.234.567,89')
+    const fuente = fuenteParaUnaLinea(ancho, caja)
+    expect(fuente).toBeLessThan(27)
+    expect(ancho * fuente).toBeLessThanOrEqual(caja.anchoMm)
+  })
+
+  it('el condensado entra más grande que el normal', () => {
+    const ancho = anchoDelPrecioEnEm('$ 12.345,67')
+    expect(fuenteParaUnaLinea(ancho * ESCALA_DE_ANCHO_DEL_PRECIO.condensado, caja)).toBeGreaterThan(fuenteParaUnaLinea(ancho, caja))
+  })
+
+  it('el interlineado reduce la fuente que entra a lo alto', () => {
+    expect(fuenteParaUnaLinea(1, caja, 1.25)).toBeCloseTo(27 / 1.25, 1)
   })
 })

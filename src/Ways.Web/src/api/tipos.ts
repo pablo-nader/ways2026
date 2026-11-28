@@ -952,6 +952,9 @@ export type CodigoProveedorListado = { idCodigoProveedor: number; idArticulo: nu
 
 /** `activo: null` viaja como filtro OMITIDO ("todos") — a diferencia de `ArticuloListado.activo`,
  * que nunca es nullable porque ahí es el estado de una fila ya conocida, no un filtro. */
+/** Contexto del filtro de oferta vigente de la grilla: la oferta depende de la empresa del punto de venta y de la lista. */
+export type OfertaVigenteDeGrilla = { idPuntoVenta: number; idListaPrecio: number }
+
 export type FiltrosDeGrillaDeArticulos = {
   codigo: string
   nombre: string
@@ -960,6 +963,8 @@ export type FiltrosDeGrillaDeArticulos = {
   idProveedor: number | null
   sinProveedor: boolean
   activo: boolean | null
+  /** Ausente o `null` = sin filtro de oferta. */
+  ofertaVigente?: OfertaVigenteDeGrilla | null
   pagina: number
   tamanio: number
 }
